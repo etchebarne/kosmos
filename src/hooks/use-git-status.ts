@@ -10,36 +10,39 @@ export function useGitStatus(workspacePath: string | null, active = true) {
   const inflightRef = useRef(false);
   const pendingRef = useRef(false);
 
-  const refresh = useCallback(async (silent = false) => {
-    if (!workspacePath) return;
+  const refresh = useCallback(
+    async (silent = false) => {
+      if (!workspacePath) return;
 
-    // If already running, mark pending and return — avoids git process pileup
-    if (inflightRef.current) {
-      pendingRef.current = true;
-      return;
-    }
-
-    inflightRef.current = true;
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      const result = await invoke<GitStatusInfo>("get_git_status", {
-        path: workspacePath,
-      });
-      setStatus(result);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-      inflightRef.current = false;
-
-      // If a refresh was requested while we were busy, do one more pass
-      if (pendingRef.current) {
-        pendingRef.current = false;
-        refresh(true);
+      // If already running, mark pending and return — avoids git process pileup
+      if (inflightRef.current) {
+        pendingRef.current = true;
+        return;
       }
-    }
-  }, [workspacePath]);
+
+      inflightRef.current = true;
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const result = await invoke<GitStatusInfo>("get_git_status", {
+          path: workspacePath,
+        });
+        setStatus(result);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setLoading(false);
+        inflightRef.current = false;
+
+        // If a refresh was requested while we were busy, do one more pass
+        if (pendingRef.current) {
+          pendingRef.current = false;
+          refresh(true);
+        }
+      }
+    },
+    [workspacePath],
+  );
 
   // Fetch on mount/active-change and watch for file changes while active
   useEffect(() => {
