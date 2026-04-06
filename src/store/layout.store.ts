@@ -102,7 +102,7 @@ function openTabInBestPane(
 
   // Find the best pane to open a new tab in
   const editorPanes = leaves.filter((leaf) =>
-    leaf.tabs.some((t) => t.type === "editor" || t.type === "changes"),
+    leaf.tabs.some((t) => t.type === "editor" || t.type === "changes" || t.type === "infinity"),
   );
 
   let targetPaneId: string | null = null;
@@ -375,8 +375,19 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
         }
       }
 
-      // No existing search tab — add one to the first pane
-      const targetLeaf = leaves[0];
+      // No existing search tab — prefer a pane with editor/infinity tabs
+      const primaryPanes = leaves.filter((leaf) =>
+        leaf.tabs.some((t) => t.type === "editor" || t.type === "changes" || t.type === "infinity"),
+      );
+      let targetLeaf;
+      if (primaryPanes.length === 1) {
+        targetLeaf = primaryPanes[0];
+      } else if (primaryPanes.length > 1) {
+        const lastUsed = primaryPanes.find((p) => p.id === state.lastEditorPaneId);
+        targetLeaf = lastUsed ?? primaryPanes[0];
+      } else {
+        targetLeaf = leaves[0];
+      }
       if (!targetLeaf) return state;
 
       const tab = createTab("search", "Search");
