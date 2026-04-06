@@ -145,7 +145,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
         <div className="flex items-center gap-1">
           <button
             className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer disabled:opacity-50"
-            onClick={refresh}
+            onClick={() => refresh()}
             disabled={loading}
             title="Refresh"
           >

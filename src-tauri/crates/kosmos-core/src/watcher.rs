@@ -95,6 +95,11 @@ impl WatcherManager {
         // respects nested .gitignore files, global gitignore, and .git/info/exclude.
         // This typically reduces watched directories by 10-20x on large repos
         // (e.g. 54K → 2.4K for a monorepo with node_modules).
+        //
+        // The ignore crate with hidden(false) walks into .git — we must exclude
+        // .git and ALL its subdirectories (starts_with, not equality) to avoid
+        // watching internal git files that change on every git command.
+        let git_dir_prefix = watch_path.join(".git");
         let dirs: Vec<PathBuf> = WalkBuilder::new(path)
             .hidden(false)
             .git_ignore(true)
@@ -103,7 +108,7 @@ impl WatcherManager {
             .build()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map_or(false, |ft| ft.is_dir()))
-            .filter(|e| e.path() != Path::new(path).join(".git"))
+            .filter(|e| !e.path().starts_with(&git_dir_prefix))
             .map(|e| e.into_path())
             .collect();
 

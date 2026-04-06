@@ -10,7 +10,7 @@ export function useGitStatus(workspacePath: string | null, active = true) {
   const inflightRef = useRef(false);
   const pendingRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
     if (!workspacePath) return;
 
     // If already running, mark pending and return — avoids git process pileup
@@ -20,7 +20,7 @@ export function useGitStatus(workspacePath: string | null, active = true) {
     }
 
     inflightRef.current = true;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const result = await invoke<GitStatusInfo>("get_git_status", {
@@ -36,7 +36,7 @@ export function useGitStatus(workspacePath: string | null, active = true) {
       // If a refresh was requested while we were busy, do one more pass
       if (pendingRef.current) {
         pendingRef.current = false;
-        refresh();
+        refresh(true);
       }
     }
   }, [workspacePath]);
@@ -50,7 +50,7 @@ export function useGitStatus(workspacePath: string | null, active = true) {
     invoke("watch_workspace", { path: workspacePath });
 
     const unlisten = listen("git-changed", () => {
-      refresh();
+      refresh(true);
     });
 
     return () => {
