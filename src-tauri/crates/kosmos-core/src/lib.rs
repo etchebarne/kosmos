@@ -33,9 +33,8 @@ pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// conflicts (e.g. OpenSSL version mismatches) in child processes like shells,
 /// LSP servers, and git. WebKit subprocesses still need it, so we only strip it
 /// from child processes we spawn, not from the global process environment.
-#[cfg(target_os = "linux")]
 pub fn is_appimage() -> bool {
-    std::env::var_os("APPIMAGE").is_some()
+    cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
 }
 
 /// Strip AppImage-injected environment variables from a `tokio::process::Command`

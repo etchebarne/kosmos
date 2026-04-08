@@ -54,15 +54,18 @@ impl EventSink for TauriEventSink {
 /// installs (deb/AUR) should be updated through the package manager instead.
 #[tauri::command]
 fn is_appimage() -> bool {
-    cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
+    kosmos_core::is_appimage()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Work around WebKitGTK DMABuf renderer crashes on some Linux/Wayland compositors
+    // SAFETY: called before any threads are spawned (Tauri hasn't started yet).
+    // `set_var` is unsafe in edition 2024 because it's not thread-safe, but here
+    // we're still single-threaded.
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
