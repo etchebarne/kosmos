@@ -106,25 +106,25 @@ export function InfinityNode({ id, data }: NodeProps<InfinityNodeType>) {
           borderWidth: 8,
         }}
       />
-      <div className="flex flex-col h-full w-full bg-[var(--color-bg-page)] border border-[var(--color-border-primary)] shadow-lg">
+      <div className="flex flex-col h-full w-full bg-[var(--color-bg-page)] border border-[var(--color-border-primary)] rounded-lg shadow-lg overflow-hidden">
         {/* Title bar — drag handle */}
-        <div className="infinity-node-handle flex items-center gap-2 px-2 h-7 shrink-0 bg-[var(--color-bg-surface)] border-b border-[var(--color-border-secondary)] cursor-grab select-none">
+        <div className="infinity-node-handle flex items-center gap-2 px-3 h-9 shrink-0 bg-[var(--color-bg-surface)] border-b border-[var(--color-border-secondary)] cursor-grab select-none">
           <TabIcon
             name={data.icon}
-            size={12}
+            size={14}
             className="shrink-0 text-[var(--color-text-tertiary)]"
           />
-          <span className="text-[11px] text-[var(--color-text-secondary)] truncate flex-1">
+          <span className="text-xs text-[var(--color-text-secondary)] truncate flex-1">
             {data.title}
           </span>
           <button
-            className="flex items-center justify-center w-4 h-4 hover:bg-[var(--color-bg-hover)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+            className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
             onClick={() => removeNode(data.tabId, id)}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <svg
-              width="8"
-              height="8"
+              width="10"
+              height="10"
               viewBox="0 0 8 8"
               fill="none"
               stroke="currentColor"
