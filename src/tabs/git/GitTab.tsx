@@ -6,6 +6,8 @@ import {
   Check,
   CircleNotch,
   DotsThree,
+  ArrowUp,
+  ArrowDown,
 } from "@phosphor-icons/react";
 import { useActiveWorkspace, useIsWorkspaceActive } from "../../contexts/WorkspaceContext";
 import { GitChangeNode } from "./GitChangeNode";
@@ -325,6 +327,18 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
                   <ArrowsClockwise size={12} />
                 )}
                 <span className="font-medium">{currentAction.label}</span>
+                {!actionRunning && !actionDone && (status?.ahead ?? 0) > 0 && (
+                  <span className="flex items-center gap-0.5 text-[10px] text-[var(--color-text-tertiary)]">
+                    <ArrowUp size={10} />
+                    {status!.ahead}
+                  </span>
+                )}
+                {!actionRunning && !actionDone && (status?.behind ?? 0) > 0 && (
+                  <span className="flex items-center gap-0.5 text-[10px] text-[var(--color-text-tertiary)]">
+                    <ArrowDown size={10} />
+                    {status!.behind}
+                  </span>
+                )}
               </button>
               <button
                 className="flex items-center px-1 py-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed rounded-none"

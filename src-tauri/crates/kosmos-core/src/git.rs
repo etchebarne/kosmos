@@ -92,6 +92,8 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
             last_commit_message: None,
             has_remote: false,
             is_repo: false,
+            ahead: 0,
+            behind: 0,
         });
     }
 
@@ -99,6 +101,25 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
     let remote_branch = run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await?;
     let last_commit_message = run_git(dir, &["log", "-1", "--pretty=%s"]).await?;
     let has_remote = run_git(dir, &["remote"]).await?.is_some_and(|s| !s.trim().is_empty());
+
+    let (ahead, behind) = if remote_branch.is_some() {
+        let counts = run_git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).await?;
+        counts
+            .and_then(|s| {
+                let parts: Vec<&str> = s.split('\t').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].trim().parse::<u32>().unwrap_or(0),
+                        parts[1].trim().parse::<u32>().unwrap_or(0),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
 
     let status_output = run_git(dir, &["status", "--porcelain", "-unormal"]).await?;
 
@@ -180,6 +201,8 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
         last_commit_message,
         has_remote,
         is_repo: true,
+        ahead,
+        behind,
     })
 }
 

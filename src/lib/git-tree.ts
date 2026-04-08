@@ -13,6 +13,8 @@ export interface GitStatusInfo {
   lastCommitMessage: string | null;
   hasRemote: boolean;
   isRepo: boolean;
+  ahead: number;
+  behind: number;
 }
 
 export interface TreeNode {

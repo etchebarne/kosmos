@@ -23,6 +23,8 @@ pub struct GitStatusInfo {
     pub last_commit_message: Option<String>,
     pub has_remote: bool,
     pub is_repo: bool,
+    pub ahead: u32,
+    pub behind: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
