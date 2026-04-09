@@ -8,8 +8,7 @@ use crate::CoreError;
 #[cfg(target_os = "windows")]
 use crate::CREATE_NO_WINDOW;
 
-#[tracing::instrument(level = "debug")]
-pub(crate) async fn run_git(path: &Path, args: &[&str]) -> Result<Option<String>, CoreError> {
+fn git_command(path: &Path, args: &[&str]) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(args)
         .current_dir(path)
@@ -18,12 +17,15 @@ pub(crate) async fn run_git(path: &Path, args: &[&str]) -> Result<Option<String>
     crate::sanitize_child_env(&mut cmd);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd.output().await?;
+    cmd
+}
 
+#[tracing::instrument(level = "debug")]
+pub(crate) async fn run_git(path: &Path, args: &[&str]) -> Result<Option<String>, CoreError> {
+    let output = git_command(path, args).output().await?;
     if !output.status.success() {
         return Ok(None);
     }
-
     let text = String::from_utf8_lossy(&output.stdout)
         .trim_end()
         .to_string();
@@ -36,14 +38,7 @@ pub(crate) async fn run_git(path: &Path, args: &[&str]) -> Result<Option<String>
 
 #[tracing::instrument(level = "debug")]
 pub(crate) async fn run_git_strict(path: &Path, args: &[&str]) -> Result<(), CoreError> {
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.args(args).current_dir(path);
-    #[cfg(target_os = "linux")]
-    crate::sanitize_child_env(&mut cmd);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd.output().await?;
-
+    let output = git_command(path, args).output().await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr)
             .trim()
