@@ -1,7 +1,8 @@
+#[macro_use]
+mod remote;
 mod git;
 mod lsp;
 mod plugins;
-mod remote;
 mod search;
 mod settings;
 mod tabs;

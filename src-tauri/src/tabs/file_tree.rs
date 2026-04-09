@@ -2,11 +2,13 @@ use std::path::Path;
 
 use kosmos_protocol::requests::Request;
 use kosmos_protocol::types::DirEntry;
+use kosmos_protocol::ToStringErr;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::remote::router::BackendRouter;
+use crate::remote::routing::{resolve, Route};
 
 /// Extract the `wsl://distro` prefix from a full remote path.
 fn remote_prefix<'a>(full_path: &'a str, linux_path: &str) -> Result<&'a str, String> {
@@ -17,36 +19,32 @@ fn remote_prefix<'a>(full_path: &'a str, linux_path: &str) -> Result<&'a str, St
     Ok(&full_path[..cutoff])
 }
 
-/// Return an error when a remote path has no connected agent.
-fn no_agent_error(path: &str) -> String {
-    format!("Remote agent not connected for path: {path}")
-}
-
 #[tauri::command]
 pub async fn read_dir(
     router: State<'_, BackendRouter>,
     path: String,
 ) -> Result<Vec<DirEntry>, String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        let val = agent
-            .request(Request::ReadDir {
-                path: remote_path.clone(),
-            })
-            .await?;
-        let mut entries: Vec<DirEntry> =
-            serde_json::from_value(val).map_err(|e| e.to_string())?;
-        let prefix = remote_prefix(&path, &remote_path)?;
-        for entry in &mut entries {
-            entry.path = format!("{}{}", prefix, entry.path);
+    match resolve(&router, &path).await? {
+        Route::Remote(agent, remote_path) => {
+            let val = agent
+                .request(Request::ReadDir {
+                    path: remote_path.clone(),
+                })
+                .await?;
+            let mut entries: Vec<DirEntry> =
+                serde_json::from_value(val).str_err()?;
+            let prefix = remote_prefix(&path, &remote_path)?;
+            for entry in &mut entries {
+                entry.path = format!("{}{}", prefix, entry.path);
+            }
+            Ok(entries)
         }
-        Ok(entries)
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        tokio::task::spawn_blocking(move || kosmos_core::file_tree::read_dir(&path))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())
+        Route::Local => {
+            tokio::task::spawn_blocking(move || kosmos_core::file_tree::read_dir(&path))
+                .await
+                .str_err()?
+                .str_err()
+        }
     }
 }
 
@@ -56,61 +54,38 @@ pub async fn move_file(
     source: String,
     dest_dir: String,
 ) -> Result<String, String> {
-    if let Some((agent, remote_source)) = router.resolve(&source).await {
-        let prefix = remote_prefix(&source, &remote_source)?.to_string();
-        let remote_dest = router
-            .resolve(&dest_dir)
-            .await
-            .map(|(_, p)| p)
-            .unwrap_or(dest_dir);
-        let val = agent
-            .request(Request::MoveFile {
-                source: remote_source,
-                dest_dir: remote_dest,
-            })
-            .await?;
-        let linux_path: String = serde_json::from_value(val).map_err(|e| e.to_string())?;
-        Ok(format!("{}{}", prefix, linux_path))
-    } else if BackendRouter::is_remote_path(&source) {
-        Err(no_agent_error(&source))
-    } else {
-        kosmos_core::file_tree::move_file(&source, &dest_dir).map_err(|e| e.to_string())
+    match resolve(&router, &source).await? {
+        Route::Remote(agent, remote_source) => {
+            let prefix = remote_prefix(&source, &remote_source)?.to_string();
+            let remote_dest = router
+                .resolve(&dest_dir)
+                .await
+                .map(|(_, p)| p)
+                .unwrap_or(dest_dir);
+            let val = agent
+                .request(Request::MoveFile {
+                    source: remote_source,
+                    dest_dir: remote_dest,
+                })
+                .await?;
+            let linux_path: String = serde_json::from_value(val).str_err()?;
+            Ok(format!("{}{}", prefix, linux_path))
+        }
+        Route::Local => {
+            kosmos_core::file_tree::move_file(&source, &dest_dir).str_err()
+        }
     }
 }
 
-#[tauri::command]
-pub async fn create_file(
-    router: State<'_, BackendRouter>,
-    path: String,
-) -> Result<(), String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        agent
-            .request(Request::CreateFile { path: remote_path })
-            .await?;
-        Ok(())
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        kosmos_core::file_tree::create_file(&path).map_err(|e| e.to_string())
-    }
-}
+routed_cmd!(void fn create_file(path) {
+    request(p) => Request::CreateFile { path: p },
+    local => async { kosmos_core::file_tree::create_file(&path) },
+});
 
-#[tauri::command]
-pub async fn create_dir(
-    router: State<'_, BackendRouter>,
-    path: String,
-) -> Result<(), String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        agent
-            .request(Request::CreateDir { path: remote_path })
-            .await?;
-        Ok(())
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        kosmos_core::file_tree::create_dir(&path).map_err(|e| e.to_string())
-    }
-}
+routed_cmd!(void fn create_dir(path) {
+    request(p) => Request::CreateDir { path: p },
+    local => async { kosmos_core::file_tree::create_dir(&path) },
+});
 
 #[tauri::command]
 pub async fn rename_entry(
@@ -118,20 +93,21 @@ pub async fn rename_entry(
     path: String,
     new_name: String,
 ) -> Result<String, String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        let prefix = remote_prefix(&path, &remote_path)?.to_string();
-        let val = agent
-            .request(Request::RenameEntry {
-                path: remote_path,
-                new_name,
-            })
-            .await?;
-        let linux_path: String = serde_json::from_value(val).map_err(|e| e.to_string())?;
-        Ok(format!("{}{}", prefix, linux_path))
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        kosmos_core::file_tree::rename_entry(&path, &new_name).map_err(|e| e.to_string())
+    match resolve(&router, &path).await? {
+        Route::Remote(agent, remote_path) => {
+            let prefix = remote_prefix(&path, &remote_path)?.to_string();
+            let val = agent
+                .request(Request::RenameEntry {
+                    path: remote_path,
+                    new_name,
+                })
+                .await?;
+            let linux_path: String = serde_json::from_value(val).str_err()?;
+            Ok(format!("{}{}", prefix, linux_path))
+        }
+        Route::Local => {
+            kosmos_core::file_tree::rename_entry(&path, &new_name).str_err()
+        }
     }
 }
 
@@ -141,61 +117,38 @@ pub async fn copy_entry(
     source: String,
     dest_dir: String,
 ) -> Result<String, String> {
-    if let Some((agent, remote_source)) = router.resolve(&source).await {
-        let prefix = remote_prefix(&source, &remote_source)?.to_string();
-        let remote_dest = router
-            .resolve(&dest_dir)
-            .await
-            .map(|(_, p)| p)
-            .unwrap_or(dest_dir);
-        let val = agent
-            .request(Request::CopyEntry {
-                source: remote_source,
-                dest_dir: remote_dest,
-            })
-            .await?;
-        let linux_path: String = serde_json::from_value(val).map_err(|e| e.to_string())?;
-        Ok(format!("{}{}", prefix, linux_path))
-    } else if BackendRouter::is_remote_path(&source) {
-        Err(no_agent_error(&source))
-    } else {
-        kosmos_core::file_tree::copy_entry(&source, &dest_dir).map_err(|e| e.to_string())
+    match resolve(&router, &source).await? {
+        Route::Remote(agent, remote_source) => {
+            let prefix = remote_prefix(&source, &remote_source)?.to_string();
+            let remote_dest = router
+                .resolve(&dest_dir)
+                .await
+                .map(|(_, p)| p)
+                .unwrap_or(dest_dir);
+            let val = agent
+                .request(Request::CopyEntry {
+                    source: remote_source,
+                    dest_dir: remote_dest,
+                })
+                .await?;
+            let linux_path: String = serde_json::from_value(val).str_err()?;
+            Ok(format!("{}{}", prefix, linux_path))
+        }
+        Route::Local => {
+            kosmos_core::file_tree::copy_entry(&source, &dest_dir).str_err()
+        }
     }
 }
 
-#[tauri::command]
-pub async fn trash_entry(
-    router: State<'_, BackendRouter>,
-    path: String,
-) -> Result<(), String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        agent
-            .request(Request::TrashEntry { path: remote_path })
-            .await?;
-        Ok(())
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        kosmos_core::file_tree::trash_entry(&path).map_err(|e| e.to_string())
-    }
-}
+routed_cmd!(void fn trash_entry(path) {
+    request(p) => Request::TrashEntry { path: p },
+    local => async { kosmos_core::file_tree::trash_entry(&path) },
+});
 
-#[tauri::command]
-pub async fn delete_entry(
-    router: State<'_, BackendRouter>,
-    path: String,
-) -> Result<(), String> {
-    if let Some((agent, remote_path)) = router.resolve(&path).await {
-        agent
-            .request(Request::DeleteEntry { path: remote_path })
-            .await?;
-        Ok(())
-    } else if BackendRouter::is_remote_path(&path) {
-        Err(no_agent_error(&path))
-    } else {
-        kosmos_core::file_tree::delete_entry(&path).map_err(|e| e.to_string())
-    }
-}
+routed_cmd!(void fn delete_entry(path) {
+    request(p) => Request::DeleteEntry { path: p },
+    local => async { kosmos_core::file_tree::delete_entry(&path) },
+});
 
 #[tauri::command]
 pub fn reveal_in_explorer(app: AppHandle, path: &str) -> Result<(), String> {
