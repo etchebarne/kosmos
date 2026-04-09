@@ -97,14 +97,36 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
         });
     }
 
-    let branch = run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
-    let remote_branch = run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).await?;
-    let last_commit_message = run_git(dir, &["log", "-1", "--pretty=%s"]).await?;
-    let has_remote = run_git(dir, &["remote"]).await?.is_some_and(|s| !s.trim().is_empty());
+    // All queries below are read-only and run with GIT_OPTIONAL_LOCKS=0,
+    // so they can safely execute concurrently.
+    let (
+        branch,
+        remote_branch,
+        last_commit_message,
+        remote_output,
+        counts,
+        status_output,
+        staged_raw,
+        unstaged_raw,
+    ) = tokio::join!(
+        run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+        run_git(dir, &["log", "-1", "--pretty=%s"]),
+        run_git(dir, &["remote"]),
+        run_git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]),
+        run_git(dir, &["status", "--porcelain", "-unormal"]),
+        run_git(dir, &["diff", "--cached", "--numstat"]),
+        run_git(dir, &["diff", "--numstat"]),
+    );
+
+    let branch = branch?;
+    let remote_branch = remote_branch?;
+    let last_commit_message = last_commit_message?;
+    let has_remote = remote_output?.is_some_and(|s| !s.trim().is_empty());
+    let status_output = status_output?;
 
     let (ahead, behind) = if remote_branch.is_some() {
-        let counts = run_git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).await?;
-        counts
+        counts?
             .and_then(|s| {
                 let parts: Vec<&str> = s.split('\t').collect();
                 if parts.len() == 2 {
@@ -121,13 +143,11 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
         (0, 0)
     };
 
-    let status_output = run_git(dir, &["status", "--porcelain", "-unormal"]).await?;
-
-    let staged_stats = run_git(dir, &["diff", "--cached", "--numstat"]).await?
+    let staged_stats = staged_raw?
         .map(|s| parse_numstat(&s))
         .unwrap_or_default();
 
-    let unstaged_stats = run_git(dir, &["diff", "--numstat"]).await?
+    let unstaged_stats = unstaged_raw?
         .map(|s| parse_numstat(&s))
         .unwrap_or_default();
 
