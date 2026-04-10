@@ -52,6 +52,9 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const [editorReady, setEditorReady] = useState(false);
   const lspOpenedRef = useRef(false);
   const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
+  const blameWidgetRef = useRef<editor.IContentWidget | null>(null);
+  const blameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blameLineRef = useRef<number>(0);
 
   const editorFontSize = useEditorStore((s) => s.editorFontSize);
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
@@ -157,6 +160,71 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     };
   }, [refreshDiffDecorations]);
 
+  // ── Inline git blame (GitLens-style) ──
+
+  const clearBlameWidget = useCallback(() => {
+    const ed = editorRef.current;
+    if (ed && blameWidgetRef.current) {
+      ed.removeContentWidget(blameWidgetRef.current);
+      blameWidgetRef.current = null;
+    }
+  }, []);
+
+  const updateBlame = useCallback(
+    async (lineNumber: number) => {
+      const ed = editorRef.current;
+      const ws = workspaceRef.current;
+      const fp = filePathRef.current;
+      if (!ed || !ws || !fp) return;
+
+      // If the line hasn't changed, skip
+      if (lineNumber === blameLineRef.current) return;
+      blameLineRef.current = lineNumber;
+
+      const relative = fp.startsWith(ws.path + "/") ? fp.slice(ws.path.length + 1) : fp;
+
+      try {
+        const blame = await invoke<string | null>("git_blame_line", {
+          path: ws.path,
+          file: relative,
+          line: lineNumber,
+        });
+
+        // Cursor may have moved while we were fetching
+        if (blameLineRef.current !== lineNumber) return;
+
+        clearBlameWidget();
+        if (blame) {
+          const model = ed.getModel();
+          const endCol = model ? model.getLineMaxColumn(lineNumber) : 1;
+          const domNode = document.createElement("div");
+          domNode.className = "git-blame-inline";
+          domNode.textContent = blame;
+          const widget: editor.IContentWidget = {
+            getId: () => "git-blame-widget",
+            getDomNode: () => domNode,
+            getPosition: () => ({
+              position: { lineNumber, column: endCol },
+              preference: [0], // EXACT
+            }),
+          };
+          blameWidgetRef.current = widget;
+          ed.addContentWidget(widget);
+        }
+      } catch {
+        clearBlameWidget();
+      }
+    },
+    [clearBlameWidget],
+  );
+
+  // Trigger initial blame when editor + workspace are ready
+  useEffect(() => {
+    if (!editorReady || !workspace) return;
+    const pos = editorRef.current?.getPosition();
+    if (pos) updateBlame(pos.lineNumber);
+  }, [editorReady, workspace, updateBlame]);
+
   // Sync font size from store to the editor instance
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: editorFontSize });
@@ -213,6 +281,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           pendingChangesRef.current = [];
         }
       }
+
+      if (blameTimerRef.current != null) {
+        clearTimeout(blameTimerRef.current);
+        blameTimerRef.current = null;
+      }
+      clearBlameWidget();
 
       lspOpenedRef.current = false;
       changeDisposableRef.current?.dispose();
@@ -336,6 +410,18 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Minus, () => zoomEditorOut());
     // eslint-disable-next-line no-bitwise
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Digit0, () => resetEditorZoom());
+
+    // Debounced inline blame on cursor move
+    instance.onDidChangeCursorPosition((e) => {
+      if (blameTimerRef.current != null) clearTimeout(blameTimerRef.current);
+      // Clear immediately when moving away
+      clearBlameWidget();
+      blameLineRef.current = 0;
+      blameTimerRef.current = setTimeout(() => {
+        blameTimerRef.current = null;
+        updateBlame(e.position.lineNumber);
+      }, 500);
+    });
 
     // Listen for content changes and debounce LSP didChange notifications.
     // Sending on every keystroke floods the server; batching with a short

@@ -120,6 +120,11 @@ routed_cmd!(val fn git_diff_untracked(path, file: String) -> String {
     local => kosmos_core::git::git_diff_untracked(&path, &file),
 });
 
+routed_cmd!(val fn git_blame_line(path, file: String, line: u32) -> Option<String> {
+    request(p) => Request::GitBlameLine { path: p, file, line },
+    local => kosmos_core::git::git_blame_line(&path, &file, line),
+});
+
 routed_cmd!(void fn git_init(path) {
     request(p) => Request::GitInit { path: p },
     local => kosmos_core::git::git_init(&path),

@@ -128,6 +128,11 @@ pub enum Request {
         path: String,
         file: String,
     },
+    GitBlameLine {
+        path: String,
+        file: String,
+        line: u32,
+    },
     GitInit {
         path: String,
     },

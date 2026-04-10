@@ -372,6 +372,81 @@ pub async fn git_diff_untracked(path: &str, file: &str) -> Result<String, CoreEr
     Ok(diff)
 }
 
+/// Return a one-line blame summary for a single line: "author, relative-date • message"
+pub async fn git_blame_line(
+    path: &str,
+    file: &str,
+    line: u32,
+) -> Result<Option<String>, CoreError> {
+    let dir = Path::new(path);
+    let line_spec = format!("{line},{line}");
+    let output = run_git(
+        dir,
+        &["blame", "-L", &line_spec, "--porcelain", "--", file],
+    )
+    .await?;
+    let Some(raw) = output else {
+        return Ok(None);
+    };
+
+    let mut author = String::new();
+    let mut date_relative = String::new();
+    let mut summary = String::new();
+    let mut is_uncommitted = false;
+
+    for l in raw.lines() {
+        if let Some(v) = l.strip_prefix("author ") {
+            author = v.to_string();
+            if v == "Not Committed Yet" {
+                is_uncommitted = true;
+            }
+        } else if let Some(v) = l.strip_prefix("summary ") {
+            summary = v.to_string();
+        } else if let Some(v) = l.strip_prefix("author-time ") {
+            // Compute relative time from epoch timestamp
+            if let Ok(epoch) = v.parse::<i64>() {
+                date_relative = relative_time(epoch);
+            }
+        }
+    }
+
+    if is_uncommitted {
+        return Ok(None);
+    }
+
+    if author.is_empty() && summary.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(format!("{author}, {date_relative} \u{2022} {summary}")))
+}
+
+fn relative_time(epoch: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let diff = now - epoch;
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let m = diff / 60;
+        if m == 1 { "1 minute ago".to_string() } else { format!("{m} minutes ago") }
+    } else if diff < 86400 {
+        let h = diff / 3600;
+        if h == 1 { "1 hour ago".to_string() } else { format!("{h} hours ago") }
+    } else if diff < 2_592_000 {
+        let d = diff / 86400;
+        if d == 1 { "1 day ago".to_string() } else { format!("{d} days ago") }
+    } else if diff < 31_536_000 {
+        let mo = diff / 2_592_000;
+        if mo == 1 { "1 month ago".to_string() } else { format!("{mo} months ago") }
+    } else {
+        let y = diff / 31_536_000;
+        if y == 1 { "1 year ago".to_string() } else { format!("{y} years ago") }
+    }
+}
+
 pub async fn git_init(path: &str) -> Result<(), CoreError> {
     let dir = Path::new(path);
     run_git_strict(dir, &["init", "-b", "main"]).await
