@@ -110,9 +110,9 @@ routed_cmd!(void fn git_trash_all_untracked(path) {
     local => kosmos_core::git::git_trash_all_untracked(&path),
 });
 
-routed_cmd!(val fn git_diff(path, file: String) -> String {
-    request(p) => Request::GitDiff { path: p, file },
-    local => kosmos_core::git::git_diff(&path, &file),
+routed_cmd!(val fn git_diff(path, file: String, staged: bool) -> String {
+    request(p) => Request::GitDiff { path: p, file, staged },
+    local => kosmos_core::git::git_diff(&path, &file, staged),
 });
 
 routed_cmd!(val fn git_diff_untracked(path, file: String) -> String {

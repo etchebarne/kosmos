@@ -70,6 +70,7 @@ export function ChangesTab({ tab }: TabContentProps) {
   const workspace = useActiveWorkspace();
   const meta = getChangesMeta(tab);
   const filePath = meta?.filePath ?? "";
+  const staged = meta?.staged ?? false;
   const isUntracked = meta?.isUntracked ?? false;
 
   const [patch, setPatch] = useState<string | null>(null);
@@ -89,6 +90,7 @@ export function ChangesTab({ tab }: TabContentProps) {
         result = await invoke<string>("git_diff", {
           path: workspace.path,
           file: filePath,
+          staged,
         });
       }
       setPatch(result || "");
@@ -97,7 +99,7 @@ export function ChangesTab({ tab }: TabContentProps) {
       setError(String(e));
       setPatch(null);
     }
-  }, [workspace?.path, filePath, isUntracked]);
+  }, [workspace?.path, filePath, staged, isUntracked]);
 
   // Initial load
   useEffect(() => {

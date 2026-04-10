@@ -338,16 +338,19 @@ pub async fn git_trash_all_untracked(path: &str) -> Result<(), CoreError> {
     run_git_strict(dir, &["clean", "-fd"]).await
 }
 
-pub async fn git_diff(path: &str, file: &str) -> Result<String, CoreError> {
+pub async fn git_diff(path: &str, file: &str, staged: bool) -> Result<String, CoreError> {
     let dir = Path::new(path);
-    let unstaged = run_git(dir, &["diff", "--", file]).await?;
-    if let Some(ref s) = unstaged {
-        if !s.is_empty() {
-            return Ok(s.clone());
-        }
+    let (primary, fallback) = if staged {
+        (vec!["diff", "--cached", "--", file], vec!["diff", "--", file])
+    } else {
+        (vec!["diff", "--", file], vec!["diff", "--cached", "--", file])
+    };
+    let result = run_git(dir, &primary).await?;
+    if result.as_ref().is_some_and(|s| !s.is_empty()) {
+        return Ok(result.unwrap());
     }
-    let staged = run_git(dir, &["diff", "--cached", "--", file]).await?;
-    Ok(staged.unwrap_or_default())
+    let fallback_result = run_git(dir, &fallback).await?;
+    Ok(fallback_result.unwrap_or_default())
 }
 
 pub async fn git_diff_untracked(path: &str, file: &str) -> Result<String, CoreError> {

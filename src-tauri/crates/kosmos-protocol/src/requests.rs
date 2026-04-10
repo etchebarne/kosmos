@@ -122,6 +122,7 @@ pub enum Request {
     GitDiff {
         path: String,
         file: String,
+        staged: bool,
     },
     GitDiffUntracked {
         path: String,

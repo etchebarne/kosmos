@@ -163,8 +163,8 @@ pub(crate) async fn dispatch(
                 .str_err()?;
             Ok(serde_json::Value::Null)
         }
-        Request::GitDiff { path, file } => {
-            let r = kosmos_core::git::git_diff(&path, &file).await.str_err()?;
+        Request::GitDiff { path, file, staged } => {
+            let r = kosmos_core::git::git_diff(&path, &file, staged).await.str_err()?;
             Ok(to_json(r)?)
         }
         Request::GitDiffUntracked { path, file } => {
