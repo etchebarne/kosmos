@@ -2,11 +2,13 @@ import { useEffect, useRef } from "react";
 import { NodeResizer, type NodeProps, useReactFlow } from "@xyflow/react";
 import type { InfinityNode as InfinityNodeType } from "../../store/infinity.store";
 import { useInfinityStore } from "../../store/infinity.store";
+import { useLayoutStore } from "../../store/layout.store";
 import { getTabDefinition } from "../registry";
 import { TabIcon } from "../../components/shared/TabIcon";
 
 export function InfinityNode({ id, data }: NodeProps<InfinityNodeType>) {
   const removeNode = useInfinityStore((s) => s.removeNode);
+  const isDirty = useLayoutStore((s) => s.dirtyTabs.has(`infinity-${id}`));
   const contentRef = useRef<HTMLDivElement>(null);
   const reactFlow = useReactFlow();
   const definition = getTabDefinition(data.tabType);
@@ -116,6 +118,12 @@ export function InfinityNode({ id, data }: NodeProps<InfinityNodeType>) {
           />
           <span className="text-xs text-[var(--color-text-secondary)] truncate flex-1">
             {data.title}
+            {isDirty && (
+              <span
+                className="inline-block w-2 h-2 ml-1.5 align-middle bg-[var(--color-text-primary)]"
+                style={{ borderRadius: "50%" }}
+              />
+            )}
           </span>
           <button
             className="flex items-center justify-center w-5 h-5 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
