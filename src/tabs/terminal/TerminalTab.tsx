@@ -296,21 +296,9 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
 
         fitAddon.fit();
 
-        try {
-          await spawnTerminal();
-        } catch (e) {
-          terminal.write(`\x1b[31mFailed to start shell: ${e}\x1b[0m\r\n`);
-          return;
-        }
-
-        if (disposed) {
-          invoke("terminal_close", { id: terminalId });
-          return;
-        }
-
-        spawned = true;
-
-        // Terminal output → xterm
+        // Register event listeners BEFORE spawning so no early output is lost.
+        // The shell may emit its prompt before spawn() returns (especially on
+        // subsequent tabs where the binary is already cached in memory).
         const unlisten = await listen<string>(`terminal-data-${terminalId}`, (event) => {
           terminal.write(event.payload);
         });
@@ -344,6 +332,20 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
           cleanups.push(() => restartHandler.dispose());
         });
         cleanups.push(unlistenExit);
+
+        try {
+          await spawnTerminal();
+        } catch (e) {
+          terminal.write(`\x1b[31mFailed to start shell: ${e}\x1b[0m\r\n`);
+          return;
+        }
+
+        if (disposed) {
+          invoke("terminal_close", { id: terminalId });
+          return;
+        }
+
+        spawned = true;
 
         // Keyboard input → PTY. On failure (dead agent), auto-reconnect.
         const onData = terminal.onData((data) => {
