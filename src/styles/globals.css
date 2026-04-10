@@ -32,6 +32,23 @@
   --diffs-line-height: 20px;
 }
 
+/* Git diff gutter indicators */
+.diff-gutter-added,
+.diff-gutter-modified,
+.diff-gutter-deleted {
+  width: 3px !important;
+  margin-left: 3px;
+}
+.diff-gutter-added {
+  background: var(--color-status-green);
+}
+.diff-gutter-modified {
+  background: var(--color-accent-blue);
+}
+.diff-gutter-deleted {
+  background: var(--color-status-red);
+}
+
 /* Search preview match highlights */
 .search-match-line-highlight {
   background: rgba(75, 142, 245, 0.12) !important;

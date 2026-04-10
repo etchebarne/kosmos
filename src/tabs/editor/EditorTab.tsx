@@ -26,6 +26,7 @@ import type { TabContentProps } from "../types";
 import { defineKosmosTheme } from "./monaco-theme";
 import { registerEditorOpener } from "./editor-opener";
 import { editorCache } from "./editor-cache";
+import { parseDiffChanges, buildDiffDecorations } from "./diff-decorations";
 
 // ── Language detection from file extension (for early LSP start) ──
 
@@ -50,6 +51,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editorReady, setEditorReady] = useState(false);
   const lspOpenedRef = useRef(false);
+  const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
 
   const editorFontSize = useEditorStore((s) => s.editorFontSize);
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
@@ -112,6 +114,48 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       setError(String(e));
     }
   }, [filePath, workspace, fileUri, getClient]);
+
+  // ── Git diff gutter decorations ──
+
+  const refreshDiffDecorations = useCallback(async () => {
+    const ed = editorRef.current;
+    const ws = workspaceRef.current;
+    const fp = filePathRef.current;
+    if (!ed || !ws || !fp) return;
+
+    // Convert absolute path to workspace-relative
+    const relative = fp.startsWith(ws.path + "/") ? fp.slice(ws.path.length + 1) : fp;
+
+    try {
+      const patch = await invoke<string>("git_diff", {
+        path: ws.path,
+        file: relative,
+        staged: false,
+      });
+      const changes = parseDiffChanges(patch);
+      const decorations = buildDiffDecorations(changes);
+      diffDecorationsRef.current?.clear();
+      diffDecorationsRef.current = ed.createDecorationsCollection(decorations);
+    } catch {
+      // File may not be tracked by git — clear any stale decorations
+      diffDecorationsRef.current?.clear();
+    }
+  }, []);
+
+  // Refresh diff decorations when editor + workspace are ready
+  useEffect(() => {
+    if (editorReady && workspace) refreshDiffDecorations();
+  }, [editorReady, workspace, refreshDiffDecorations]);
+
+  // Refresh diff decorations when git state changes
+  useEffect(() => {
+    const unlisten = listen("git-changed", () => {
+      refreshDiffDecorations();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [refreshDiffDecorations]);
 
   // Sync font size from store to the editor instance
   useEffect(() => {
