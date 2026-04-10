@@ -96,5 +96,6 @@ export const kosmosEmber: Theme = {
     additionNumberBg: "rgba(52, 211, 153, 0.10)",
     additionHoverBg: "rgba(52, 211, 153, 0.10)",
     additionEmphasis: "rgba(52, 211, 153, 0.20)",
+    modificationNumberBg: "rgba(234, 179, 8, 0.10)",
   },
 };

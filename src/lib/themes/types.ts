@@ -98,5 +98,6 @@ export interface Theme {
     additionNumberBg: string;
     additionHoverBg: string;
     additionEmphasis: string;
+    modificationNumberBg: string;
   };
 }

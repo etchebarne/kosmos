@@ -32,21 +32,27 @@
   --diffs-line-height: 20px;
 }
 
-/* Git diff gutter indicators */
-.diff-gutter-added,
-.diff-gutter-modified,
-.diff-gutter-deleted {
-  width: 3px !important;
-  margin-left: 3px;
-}
+/* Git diff gutter indicators — fill the line-number column */
 .diff-gutter-added {
-  background: var(--color-status-green);
+  background: var(--color-diff-addition-number-bg) !important;
 }
 .diff-gutter-modified {
-  background: var(--color-accent-blue);
+  background: var(--color-diff-modification-number-bg) !important;
 }
 .diff-gutter-deleted {
-  background: var(--color-status-red);
+  background: var(--color-diff-deletion-number-bg) !important;
+}
+
+/* Inline git blame */
+.git-blame-inline {
+  color: var(--color-text-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-style: italic;
+  font-size: 12px;
+  opacity: 0.6;
+  white-space: nowrap;
+  padding-left: 2em;
+  pointer-events: none;
 }
 
 /* Search preview match highlights */

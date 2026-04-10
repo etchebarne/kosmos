@@ -96,5 +96,6 @@ export const kosmosLight: Theme = {
     additionNumberBg: "rgba(25, 135, 84, 0.12)",
     additionHoverBg: "rgba(25, 135, 84, 0.12)",
     additionEmphasis: "rgba(25, 135, 84, 0.22)",
+    modificationNumberBg: "rgba(180, 130, 0, 0.12)",
   },
 };

@@ -101,7 +101,7 @@ export function buildDiffDecorations(changes: LineChange[]): editor.IModelDeltaD
     },
     options: {
       isWholeLine: true,
-      linesDecorationsClassName: DECORATION_CLASS[c.type],
+      marginClassName: DECORATION_CLASS[c.type],
     },
   }));
 }
