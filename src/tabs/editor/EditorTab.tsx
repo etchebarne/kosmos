@@ -63,7 +63,9 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
   const workspace = useActiveWorkspace();
   const startServer = useLspStore((s) => s.startServer);
+  const startCompanions = useLspStore((s) => s.startCompanions);
   const getClient = useLspStore((s) => s.getClient);
+  const getCompanionClients = useLspStore((s) => s.getCompanionClients);
   const lspLanguageRef = useRef<string>("plaintext");
 
   const fileUri = filePath ? pathToFileUri(filePath) : null;
@@ -112,11 +114,14 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       if (workspace && fileUri) {
         const client = getClient(workspace.path, lspLanguageRef.current);
         client?.didSave(fileUri, contentRef.current);
+        for (const companion of getCompanionClients(workspace.path, lspLanguageRef.current)) {
+          companion.didSave(fileUri, contentRef.current);
+        }
       }
     } catch (e) {
       setError(String(e));
     }
-  }, [filePath, workspace, fileUri, getClient]);
+  }, [filePath, workspace, fileUri, getClient, getCompanionClients]);
 
   // ── Git diff gutter decorations ──
 
@@ -253,13 +258,23 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       if (cancelled || !client || !editorRef.current) return;
       lspOpenedRef.current = true;
       versionRef.current = 1;
-      client.didOpen(fileUri, lspLang, versionRef.current, editorRef.current.getValue());
+      const text = editorRef.current.getValue();
+      client.didOpen(fileUri, lspLang, versionRef.current, text);
+
+      // Start companion servers (e.g. tailwindcss) and send didOpen to them
+      startCompanions(workspace.path, lspLang, filePath ?? null, monacoRef.current!).then(() => {
+        if (cancelled) return;
+        const companions = getCompanionClients(workspace.path, lspLang);
+        for (const companion of companions) {
+          companion.didOpen(fileUri, lspLang, versionRef.current, text);
+        }
+      });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [editorReady, workspace, fileUri, startServer]);
+  }, [editorReady, workspace, fileUri, startServer, startCompanions, getCompanionClients]);
 
   // Cleanup on unmount: flush pending changes, didClose, change listener, editor instance.
   // Uses refs to always access the latest workspace/fileUri/filePath values.
@@ -275,11 +290,15 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         debounceTimerRef.current = null;
       }
       if (pendingChangesRef.current.length > 0 && ws && uri) {
-        const client = useLspStore.getState().getClient(ws.path, lspLanguageRef.current);
+        const state = useLspStore.getState();
+        const client = state.getClient(ws.path, lspLanguageRef.current);
         if (client) {
           client.didChange(uri, versionRef.current, pendingChangesRef.current);
-          pendingChangesRef.current = [];
         }
+        for (const companion of state.getCompanionClients(ws.path, lspLanguageRef.current)) {
+          companion.didChange(uri, versionRef.current, pendingChangesRef.current);
+        }
+        pendingChangesRef.current = [];
       }
 
       if (blameTimerRef.current != null) {
@@ -293,8 +312,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       useLayoutStore.getState().setTabDirty(tab.id, false);
       if (fp) editorCache.delete(fp);
       if (ws && uri) {
-        const client = useLspStore.getState().getClient(ws.path, lspLanguageRef.current);
+        const state = useLspStore.getState();
+        const client = state.getClient(ws.path, lspLanguageRef.current);
         client?.didClose(uri);
+        for (const companion of state.getCompanionClients(ws.path, lspLanguageRef.current)) {
+          companion.didClose(uri);
+        }
       }
     };
   }, []);
@@ -348,8 +371,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         const uri = fileUriRef.current;
         if (ws && uri) {
           versionRef.current++;
-          const client = useLspStore.getState().getClient(ws.path, lspLanguageRef.current);
+          const state = useLspStore.getState();
+          const client = state.getClient(ws.path, lspLanguageRef.current);
           client?.didChange(uri, versionRef.current, [{ text: newContent }]);
+          for (const companion of state.getCompanionClients(ws.path, lspLanguageRef.current)) {
+            companion.didChange(uri, versionRef.current, [{ text: newContent }]);
+          }
         }
       } catch {
         // File may have been deleted — ignore
@@ -478,8 +505,11 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         debounceTimerRef.current = null;
         if (pendingChangesRef.current.length === 0) return;
         const currentClient = getClient(workspace.path, lspLanguageRef.current);
-        if (!currentClient) return;
-        currentClient.didChange(fileUri, versionRef.current, pendingChangesRef.current);
+        currentClient?.didChange(fileUri, versionRef.current, pendingChangesRef.current);
+        // Mirror changes to companion servers (e.g. tailwindcss)
+        for (const companion of getCompanionClients(workspace.path, lspLanguageRef.current)) {
+          companion.didChange(fileUri, versionRef.current, pendingChangesRef.current);
+        }
         pendingChangesRef.current = [];
       }, DIDCHANGE_DEBOUNCE_MS);
     });

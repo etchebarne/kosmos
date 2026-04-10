@@ -169,6 +169,11 @@ pub async fn lsp_language_groups() -> Result<HashMap<String, String>, String> {
 }
 
 #[tauri::command]
+pub async fn lsp_companion_servers() -> Result<HashMap<String, Vec<String>>, String> {
+    Ok(LspManager::companion_servers())
+}
+
+#[tauri::command]
 pub async fn lsp_scan_projects(
     state: State<'_, Arc<LspManager>>,
     router: State<'_, BackendRouter>,

@@ -21,14 +21,22 @@ type GetFn = () => LspState;
 // ── Language group resolution (single source of truth: backend) ──
 
 let languageGroupMap: Record<string, string> | null = null;
+/** companion language → list of primary server language groups it serves */
+let companionMap: Record<string, string[]> | null = null;
 
 export async function ensureLanguageGroups(): Promise<void> {
   if (languageGroupMap) return;
   try {
-    languageGroupMap = await invoke<Record<string, string>>("lsp_language_groups");
+    const [groups, companions] = await Promise.all([
+      invoke<Record<string, string>>("lsp_language_groups"),
+      invoke<Record<string, string[]>>("lsp_companion_servers"),
+    ]);
+    languageGroupMap = groups;
+    companionMap = companions;
   } catch (err) {
     console.warn("[kosmos:lsp] Failed to load language groups:", err);
     languageGroupMap = {};
+    companionMap = {};
   }
 }
 
@@ -46,6 +54,36 @@ function getMonacoLanguages(serverLanguage: string): string[] {
     }
   }
   return languages;
+}
+
+/** Returns companion server language IDs that should run alongside a primary server. */
+export function getCompanionsFor(primaryServerLang: string): string[] {
+  if (!companionMap) return [];
+  const companions: string[] = [];
+  for (const [companionLang, targets] of Object.entries(companionMap)) {
+    if (targets.includes(primaryServerLang)) {
+      companions.push(companionLang);
+    }
+  }
+  return companions;
+}
+
+/** Returns true if this server language is a companion (not a primary). */
+export function isCompanionServer(serverLang: string): boolean {
+  return companionMap != null && serverLang in companionMap;
+}
+
+/** For a companion server, returns all Monaco language IDs it should provide features for. */
+export function getCompanionTargetLanguages(companionLang: string): string[] {
+  const targets = companionMap?.[companionLang];
+  if (!targets) return [];
+  const langs: string[] = [];
+  for (const group of targets) {
+    for (const lang of getMonacoLanguages(group)) {
+      if (!langs.includes(lang)) langs.push(lang);
+    }
+  }
+  return langs;
 }
 
 // Track in-flight server starts so concurrent callers share the same promise
@@ -74,7 +112,10 @@ export function ensureProviders(
 ) {
   if (info.providerDisposables.length > 0 || !info.client) return;
 
-  const monacoLangs = getMonacoLanguages(serverLang);
+  // Companion servers register providers for the languages they serve, not their own id
+  const monacoLangs = isCompanionServer(serverLang)
+    ? getCompanionTargetLanguages(serverLang)
+    : getMonacoLanguages(serverLang);
   const providerDisposables = registerLspProviders(monaco, info.client, monacoLangs);
 
   if (serverLang === "typescript") {

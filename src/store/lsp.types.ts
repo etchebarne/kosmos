@@ -49,6 +49,13 @@ export interface LspState {
     monaco: Monaco,
   ) => Promise<LspClient | null>;
   getClient: (workspacePath: string, languageId: string) => LspClient | null;
+  getCompanionClients: (workspacePath: string, languageId: string) => LspClient[];
+  startCompanions: (
+    workspacePath: string,
+    primaryServerLang: string,
+    filePath: string | null,
+    monaco: Monaco,
+  ) => Promise<void>;
   stopWorkspace: (workspacePath: string) => Promise<void>;
   checkAvailability: (workspacePath: string) => Promise<void>;
   installServer: (workspacePath: string, serverName: string) => Promise<void>;

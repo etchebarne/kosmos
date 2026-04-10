@@ -18,6 +18,8 @@ struct ServerEntry {
     args: Vec<String>,
     #[serde(default)]
     markers: Vec<String>,
+    #[serde(default, rename = "companionTo")]
+    companion_to: Vec<String>,
 }
 
 const SERVERS_JSON: &str = include_str!("servers.json");
@@ -69,6 +71,19 @@ pub fn language_groups() -> HashMap<String, String> {
         }
     }
     groups
+}
+
+/// Returns companion server language → list of primary server language groups it serves.
+/// E.g. { "tailwindcss": ["typescript", "css", "html", ...] }
+pub fn companion_servers() -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in SERVERS.iter() {
+        if entry.companion_to.is_empty() {
+            continue;
+        }
+        map.insert(entry.languages[0].clone(), entry.companion_to.clone());
+    }
+    map
 }
 
 // ── Binary availability ──

@@ -81,7 +81,8 @@
     "server": "tailwindcss-language-server",
     "bin": "tailwindcss-language-server",
     "args": ["--stdio"],
-    "markers": ["tailwind.config.js", "tailwind.config.ts", "package.json"]
+    "markers": ["tailwind.config.js", "tailwind.config.ts", "package.json"],
+    "companionTo": ["typescript", "css", "html", "svelte", "vue", "astro"]
   },
   {
     "languages": ["python"],

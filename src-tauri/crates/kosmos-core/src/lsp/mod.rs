@@ -310,6 +310,10 @@ impl LspManager {
         detection::language_groups()
     }
 
+    pub fn companion_servers() -> HashMap<String, Vec<String>> {
+        detection::companion_servers()
+    }
+
     // ── Registry / installer ──
 
     fn load_full_registry(&self) -> Vec<RegistryEntry> {

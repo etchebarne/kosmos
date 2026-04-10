@@ -147,6 +147,7 @@ pub fn run() {
             lsp::lsp_stop_workspace,
             lsp::lsp_check_availability,
             lsp::lsp_language_groups,
+            lsp::lsp_companion_servers,
             lsp::lsp_scan_projects,
             lsp::lsp_resolve_root,
             lsp::lsp_registry_list,

@@ -3,6 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { invoke } from "@tauri-apps/api/core";
 import type { Monaco } from "@monaco-editor/react";
 import { useToastStore } from "./toast.store";
+import type { LspClient } from "../lib/lsp/client";
 import type { ServerStatus, LspState, ServerAvailability } from "./lsp.types";
 import {
   SHUTDOWN_TIMEOUT_MS,
@@ -12,6 +13,7 @@ import {
 import {
   ensureLanguageGroups,
   resolveServerLanguage,
+  getCompanionsFor,
   pending,
   setServerInfo,
   ensureProviders,
@@ -195,6 +197,35 @@ export const useLspStore = create<LspState>()(
         const serverLang = resolveServerLanguage(languageId);
         const info = get().servers[workspacePath]?.[serverLang];
         return info?.status === "running" ? info.client : null;
+      },
+
+      getCompanionClients: (workspacePath, languageId) => {
+        const serverLang = resolveServerLanguage(languageId);
+        const companions = getCompanionsFor(serverLang);
+        const clients: LspClient[] = [];
+        for (const companionLang of companions) {
+          const info = get().servers[workspacePath]?.[companionLang];
+          if (info?.status === "running" && info.client) {
+            clients.push(info.client);
+          }
+        }
+        return clients;
+      },
+
+      startCompanions: async (workspacePath, primaryServerLang, filePath, monaco) => {
+        const serverLang = resolveServerLanguage(primaryServerLang);
+        const companions = getCompanionsFor(serverLang);
+        for (const companionLang of companions) {
+          const existing = get().servers[workspacePath]?.[companionLang];
+          if (existing) continue; // already started or starting
+
+          // Start the companion server (reuses the same initializeServer flow)
+          get()
+            .startServer(workspacePath, companionLang, filePath, monaco)
+            .catch((err) => {
+              console.warn(`[kosmos:lsp] Companion ${companionLang} failed:`, err);
+            });
+        }
       },
 
       installServer: async (workspacePath, serverName) => {
