@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import {
@@ -17,6 +18,7 @@ import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monaco
 import { useThemeListener } from "../../hooks/use-theme-listener";
 import { getEditorMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
+import { ContextMenu, type ContextMenuItem } from "../../components/shared/ContextMenu";
 import { BASE_EDITOR_OPTIONS } from "../../lib/monaco-config";
 import { initExtMap, languageIdFromExt } from "../../lib/ext-to-lang";
 import { normalizePath, getFileExtension } from "../../lib/path-utils";
@@ -60,6 +62,8 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const lspLanguageRef = useRef<string>("plaintext");
 
   const fileUri = filePath ? pathToFileUri(filePath) : null;
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const isExternalUpdateRef = useRef(false);
 
@@ -381,6 +385,75 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     });
   }
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const contextMenuItems: ContextMenuItem[] = (() => {
+    const ed = editorRef.current;
+    const hasSelection = ed ? !ed.getSelection()?.isEmpty() : false;
+    return [
+      {
+        label: "Cut",
+        disabled: !hasSelection,
+        onClick: () => {
+          if (!ed) return;
+          const sel = ed.getSelection();
+          if (!sel || sel.isEmpty()) return;
+          const text = ed.getModel()!.getValueInRange(sel);
+          navigator.clipboard.writeText(text);
+          ed.executeEdits("context-menu", [{ range: sel, text: "" }]);
+          ed.focus();
+        },
+      },
+      {
+        label: "Copy",
+        disabled: !hasSelection,
+        onClick: () => {
+          if (!ed) return;
+          const sel = ed.getSelection();
+          if (!sel || sel.isEmpty()) return;
+          navigator.clipboard.writeText(ed.getModel()!.getValueInRange(sel));
+          ed.focus();
+        },
+      },
+      {
+        label: "Paste",
+        onClick: async () => {
+          if (!ed) return;
+          try {
+            const text = await readText();
+            if (text) {
+              ed.trigger("context-menu", "type", { text });
+            }
+          } catch {
+            /* clipboard empty or inaccessible */
+          }
+          ed.focus();
+        },
+      },
+      { separator: true as const },
+      {
+        label: "Select All",
+        onClick: () => {
+          if (!ed) return;
+          const model = ed.getModel();
+          if (!model) return;
+          const lastLine = model.getLineCount();
+          const lastCol = model.getLineMaxColumn(lastLine);
+          ed.setSelection({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: lastLine,
+            endColumn: lastCol,
+          });
+          ed.focus();
+        },
+      },
+    ];
+  })();
+
   if (!filePath) {
     return <StateView message="No file path" />;
   }
@@ -394,7 +467,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" onContextMenu={handleContextMenu}>
       <div className="flex-1 min-h-0">
         <Editor
           path={fileUri ?? undefined}
@@ -417,6 +490,14 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           }}
         />
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
