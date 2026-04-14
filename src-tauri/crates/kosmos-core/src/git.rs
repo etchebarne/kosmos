@@ -159,6 +159,7 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
             let y = bytes[1] as char;
             let file_path = &line[3..];
 
+            let is_untracked_dir = file_path.ends_with('/') && x == '?' && y == '?';
             let file_path = file_path.trim_end_matches('/');
             if file_path.is_empty() {
                 continue;
@@ -169,6 +170,43 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
             } else {
                 file_path
             };
+
+            // Untracked directories: enumerate files within instead of showing
+            // the directory as a single entry.
+            if is_untracked_dir {
+                let dir_path = dir.join(file_path);
+                fn collect_files(base: &Path, current: &Path, out: &mut Vec<String>) {
+                    if let Ok(entries) = std::fs::read_dir(current) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                collect_files(base, &path, out);
+                            } else if let Ok(rel) = path.strip_prefix(base) {
+                                out.push(rel.to_string_lossy().into_owned());
+                            }
+                        }
+                    }
+                }
+                let mut files = Vec::new();
+                collect_files(dir, &dir_path, &mut files);
+                for rel_path in files {
+                    let full_path = dir.join(&rel_path);
+                    let count = std::fs::metadata(&full_path)
+                        .ok()
+                        .filter(|m| m.len() <= 1_024 * 1_024)
+                        .and_then(|_| std::fs::read_to_string(&full_path).ok())
+                        .map(|s| s.lines().count() as i32)
+                        .unwrap_or(0);
+                    changes.push(GitFileChange {
+                        path: rel_path,
+                        status: "untracked".to_string(),
+                        staged: false,
+                        additions: count,
+                        deletions: 0,
+                    });
+                }
+                continue;
+            }
 
             let staged = x != ' ' && x != '?';
 
