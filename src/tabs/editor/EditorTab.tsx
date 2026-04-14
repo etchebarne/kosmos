@@ -204,6 +204,8 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           const endCol = model ? model.getLineMaxColumn(lineNumber) : 1;
           const domNode = document.createElement("div");
           domNode.className = "git-blame-inline";
+          domNode.style.fontSize = `${ed.getOption(/* EditorOption.fontSize */ 61) * 0.85}px`;
+          domNode.style.lineHeight = `${ed.getOption(/* EditorOption.lineHeight */ 75)}px`;
           domNode.textContent = blame;
           const widget: editor.IContentWidget = {
             getId: () => "git-blame-widget",
@@ -233,6 +235,15 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   // Sync font size from store to the editor instance
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: editorFontSize });
+    // Update existing blame widget font size to match
+    const widget = blameWidgetRef.current;
+    if (widget) {
+      const ed = editorRef.current;
+      const fs = ed?.getOption(/* EditorOption.fontSize */ 61);
+      const lh = ed?.getOption(/* EditorOption.lineHeight */ 75);
+      if (fs) widget.getDomNode().style.fontSize = `${fs * 0.85}px`;
+      if (lh) widget.getDomNode().style.lineHeight = `${lh}px`;
+    }
   }, [editorFontSize]);
 
   // Re-apply Monaco theme when the app theme changes

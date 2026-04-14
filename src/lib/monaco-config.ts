@@ -22,4 +22,5 @@ export const BASE_EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = 
   roundedSelection: false,
   contextmenu: false,
   automaticLayout: true,
+  fixedOverflowWidgets: true,
 };
