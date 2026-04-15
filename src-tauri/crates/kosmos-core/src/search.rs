@@ -65,35 +65,28 @@ pub struct FuzzyFileMatch {
     pub indices: Vec<usize>,
 }
 
-/// Fuzzy-search workspace files, returning scored + sorted results with match
-/// indices for highlight rendering. Matching and scoring run entirely in Rust.
-pub fn fuzzy_search_files(
-    path: &str,
+/// Fuzzy-match against a pre-built file list. Use this when the caller
+/// maintains a cached file list to avoid repeated directory walks.
+pub fn fuzzy_match_files(
+    files: &[String],
     query: &str,
     max_results: Option<usize>,
-) -> Result<Vec<FuzzyFileMatch>, String> {
+) -> Vec<FuzzyFileMatch> {
     let max = max_results.unwrap_or(50);
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
     let q_chars: Vec<char> = trimmed.chars().collect();
     let case_insensitive = q_chars.iter().all(|c| !c.is_uppercase());
 
-    let prefix = RootPrefix::new(path);
     let mut matches: Vec<FuzzyFileMatch> = Vec::new();
 
-    for entry in build_walker(path).flatten() {
-        if entry.file_type().map_or(true, |ft| !ft.is_file()) {
-            continue;
-        }
-        let full = entry.path().to_string_lossy();
-        let relative = prefix.make_relative(&full);
-
-        if let Some((score, indices)) = fuzzy_match(&q_chars, &relative, case_insensitive) {
+    for path in files {
+        if let Some((score, indices)) = fuzzy_match(&q_chars, path, case_insensitive) {
             matches.push(FuzzyFileMatch {
-                path: relative,
+                path: path.clone(),
                 score,
                 indices,
             });
@@ -102,7 +95,17 @@ pub fn fuzzy_search_files(
 
     matches.sort_by(|a, b| b.score.cmp(&a.score));
     matches.truncate(max);
-    Ok(matches)
+    matches
+}
+
+/// Convenience: walk + fuzzy-match in one call (used by the remote agent).
+pub fn fuzzy_search_files(
+    path: &str,
+    query: &str,
+    max_results: Option<usize>,
+) -> Result<Vec<FuzzyFileMatch>, String> {
+    let files = list_workspace_files(path)?;
+    Ok(fuzzy_match_files(&files, query, max_results))
 }
 
 /// Two-pass fuzzy match: forward scan to verify, then try all starting

@@ -15,31 +15,35 @@ use kosmos_protocol::events::Event;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing_subscriber::{fmt, EnvFilter};
 
-struct TauriEventSink(AppHandle);
+struct TauriEventSink {
+    handle: AppHandle,
+    file_cache: Arc<search::FileListCache>,
+}
 
 impl EventSink for TauriEventSink {
     fn emit(&self, event: Event) {
         match event {
             Event::GitChanged => {
-                let _ = self.0.emit("git-changed", ());
+                let _ = self.handle.emit("git-changed", ());
             }
             Event::FileTreeChanged { dirs } => {
-                let _ = self.0.emit("file-tree-changed", dirs);
+                self.file_cache.invalidate();
+                let _ = self.handle.emit("file-tree-changed", dirs);
             }
             Event::FileContentChanged { files } => {
-                let _ = self.0.emit("file-content-changed", files);
+                let _ = self.handle.emit("file-content-changed", files);
             }
             Event::TerminalData { id, data } => {
-                let _ = self.0.emit(&format!("terminal-data-{}", id), data);
+                let _ = self.handle.emit(&format!("terminal-data-{}", id), data);
             }
             Event::TerminalExit { id } => {
-                let _ = self.0.emit(&format!("terminal-exit-{}", id), ());
+                let _ = self.handle.emit(&format!("terminal-exit-{}", id), ());
             }
             Event::LspMessage { server_id, message } => {
-                let _ = self.0.emit(&format!("lsp-message:{}", server_id), &message);
+                let _ = self.handle.emit(&format!("lsp-message:{}", server_id), &message);
             }
             Event::LspStopped { server_id, error } => {
-                let _ = self.0.emit(
+                let _ = self.handle.emit(
                     &format!("lsp-status:{}", server_id),
                     &serde_json::json!({
                         "status": "stopped",
@@ -93,7 +97,14 @@ pub fn run() {
                 }
             }
 
-            let events: Arc<dyn EventSink> = Arc::new(TauriEventSink(handle.clone()));
+            // File list cache for fuzzy search (invalidated by the watcher)
+            let file_cache = Arc::new(search::FileListCache::new());
+            app.manage(file_cache.clone());
+
+            let events: Arc<dyn EventSink> = Arc::new(TauriEventSink {
+                handle: handle.clone(),
+                file_cache,
+            });
 
             // Watcher
             app.manage(Arc::new(kosmos_core::watcher::WatcherManager::new(events.clone())));
