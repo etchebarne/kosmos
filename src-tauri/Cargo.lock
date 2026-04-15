@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "kosmos"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "flate2",
  "ignore",
@@ -2403,7 +2403,7 @@ dependencies = [
 
 [[package]]
 name = "kosmos-agent"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "kosmos-core",
  "kosmos-protocol",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "kosmos-core"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "flate2",
  "ignore",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "kosmos-protocol"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "serde",
  "serde_json",
