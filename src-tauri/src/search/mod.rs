@@ -1,4 +1,4 @@
-use kosmos_core::search::ContentMatch;
+use kosmos_core::search::{ContentMatch, FuzzyFileMatch};
 use kosmos_protocol::requests::Request;
 use kosmos_protocol::ToStringErr;
 use tauri::State;
@@ -28,18 +28,18 @@ pub async fn list_workspace_files(
     }
 }
 
-/// Search file contents for a query string (case-insensitive).
+/// Fuzzy-search workspace files in Rust, returning scored results with match indices.
 #[tauri::command]
-pub async fn search_in_files(
+pub async fn fuzzy_search_files(
     router: State<'_, BackendRouter>,
     path: String,
     query: String,
     max_results: Option<usize>,
-) -> Result<Vec<ContentMatch>, String> {
+) -> Result<Vec<FuzzyFileMatch>, String> {
     match resolve(&router, &path).await? {
         Route::Remote(agent, remote_path) => {
             let val = agent
-                .request(Request::SearchInFiles {
+                .request(Request::FuzzySearchFiles {
                     path: remote_path,
                     query,
                     max_results,
@@ -50,7 +50,39 @@ pub async fn search_in_files(
         Route::Local => {
             let root = path;
             tokio::task::spawn_blocking(move || {
-                kosmos_core::search::search_in_files(&root, &query, max_results)
+                kosmos_core::search::fuzzy_search_files(&root, &query, max_results)
+            })
+            .await
+            .str_err()?
+        }
+    }
+}
+
+/// Search file contents for a query string (literal or regex).
+#[tauri::command]
+pub async fn search_in_files(
+    router: State<'_, BackendRouter>,
+    path: String,
+    query: String,
+    max_results: Option<usize>,
+    use_regex: Option<bool>,
+) -> Result<Vec<ContentMatch>, String> {
+    match resolve(&router, &path).await? {
+        Route::Remote(agent, remote_path) => {
+            let val = agent
+                .request(Request::SearchInFiles {
+                    path: remote_path,
+                    query,
+                    max_results,
+                    use_regex,
+                })
+                .await?;
+            serde_json::from_value(val).str_err()
+        }
+        Route::Local => {
+            let root = path;
+            tokio::task::spawn_blocking(move || {
+                kosmos_core::search::search_in_files(&root, &query, max_results, use_regex)
             })
             .await
             .str_err()?

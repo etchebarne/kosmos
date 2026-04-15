@@ -209,12 +209,21 @@ pub(crate) async fn dispatch(
             let r = kosmos_core::search::list_workspace_files(&path)?;
             Ok(to_json(r)?)
         }
-        Request::SearchInFiles {
+        Request::FuzzySearchFiles {
             path,
             query,
             max_results,
         } => {
-            let r = kosmos_core::search::search_in_files(&path, &query, max_results)?;
+            let r = kosmos_core::search::fuzzy_search_files(&path, &query, max_results)?;
+            Ok(to_json(r)?)
+        }
+        Request::SearchInFiles {
+            path,
+            query,
+            max_results,
+            use_regex,
+        } => {
+            let r = kosmos_core::search::search_in_files(&path, &query, max_results, use_regex)?;
             Ok(to_json(r)?)
         }
 

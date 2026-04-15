@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { MagnifyingGlass, File, TextT, ArrowElbowDownLeft } from "@phosphor-icons/react";
+import { MagnifyingGlass, File, TextT, ArrowElbowDownLeft, Asterisk } from "@phosphor-icons/react";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { useLayoutStore } from "../../store/layout.store";
 import { getFileName, joinPath } from "../../lib/path-utils";
 import { revealPosition } from "../editor/editor-cache";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
-import { fuzzyMatch, highlightedParts } from "./fuzzy";
+import { highlightedParts } from "./fuzzy";
 import { FilePreview } from "./FilePreview";
 import type { TabContentProps } from "../types";
 
@@ -31,53 +31,61 @@ interface ContentResult {
 export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
   const [mode, setMode] = useState<SearchMode>("files");
   const [query, setQuery] = useState("");
-  const [allFiles, setAllFiles] = useState<string[]>([]);
+  const [fileResults, setFileResults] = useState<FileResult[]>([]);
+  const [fileLoading, setFileLoading] = useState(false);
   const [contentResults, setContentResults] = useState<ContentResult[]>([]);
   const [contentLoading, setContentLoading] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeWorkspace = useActiveWorkspace();
-
-  // Load all files when workspace changes
-  useEffect(() => {
-    if (!activeWorkspace) return;
-    invoke<string[]>("list_workspace_files", { path: activeWorkspace.path })
-      .then(setAllFiles)
-      .catch((e) => console.warn("Failed to list files:", e));
-  }, [activeWorkspace?.path]);
 
   // Auto-focus input on mount
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 0);
   }, []);
 
-  // Fuzzy file results — match against filename only
-  const fileResults: FileResult[] = useMemo(() => {
-    if (mode !== "files" || !query.trim()) return [];
-    const matches: FileResult[] = [];
-    for (const path of allFiles) {
-      const fileName = getFileName(path);
-      const m = fuzzyMatch(query, fileName);
-      if (m) {
-        const nameOffset = path.length - fileName.length;
-        matches.push({
-          path,
-          score: m.score,
-          indices: m.indices.map((i) => i + nameOffset),
-        });
-      }
+  // Fuzzy file search via Rust backend (debounced)
+  useEffect(() => {
+    if (mode !== "files") return;
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    if (!query.trim() || !activeWorkspace) {
+      setFileResults([]);
+      setFileLoading(false);
+      return;
     }
-    matches.sort((a, b) => b.score - a.score);
-    return matches.slice(0, 50);
-  }, [mode, query, allFiles]);
+
+    setFileLoading(true);
+    searchTimerRef.current = setTimeout(() => {
+      invoke<FileResult[]>("fuzzy_search_files", {
+        path: activeWorkspace.path,
+        query: query.trim(),
+        maxResults: 50,
+      })
+        .then((results) => {
+          setFileResults(results);
+          setFileLoading(false);
+          setSelectedIndex(0);
+        })
+        .catch((e) => {
+          console.warn("Fuzzy search failed:", e);
+          setFileLoading(false);
+        });
+    }, 80);
+
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [mode, query, activeWorkspace?.path]);
 
   // Content search with debounce
   useEffect(() => {
     if (mode !== "content") return;
-    if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
     if (!query.trim() || !activeWorkspace) {
       setContentResults([]);
@@ -86,11 +94,12 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     }
 
     setContentLoading(true);
-    contentTimerRef.current = setTimeout(() => {
+    searchTimerRef.current = setTimeout(() => {
       invoke<ContentResult[]>("search_in_files", {
         path: activeWorkspace.path,
         query: query.trim(),
         maxResults: 100,
+        useRegex,
       })
         .then((results) => {
           setContentResults(results);
@@ -104,9 +113,9 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     }, 300);
 
     return () => {
-      if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [mode, query, activeWorkspace?.path]);
+  }, [mode, query, activeWorkspace?.path, useRegex]);
 
   // Reset selected index when results change
   useEffect(() => {
@@ -199,6 +208,19 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
         />
+        {mode === "content" && (
+          <button
+            className={`p-1 rounded transition-colors cursor-pointer ${
+              useRegex
+                ? "text-[var(--color-accent-blue)] bg-[var(--color-bg-input)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+            }`}
+            onClick={() => setUseRegex((r) => !r)}
+            title="Use regular expression"
+          >
+            <Asterisk size={14} />
+          </button>
+        )}
         {mode === "content" && contentResults.length > 0 && (
           <span className="text-[11px] text-[var(--color-text-muted)] shrink-0 font-mono">
             {selectedIndex + 1} / {contentResults.length}
@@ -250,6 +272,10 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
             {!query.trim() ? (
               <div className="px-4 py-6 text-xs text-[var(--color-text-muted)] text-center">
                 Type to search for files...
+              </div>
+            ) : fileLoading ? (
+              <div className="px-4 py-6 text-xs text-[var(--color-text-muted)] text-center">
+                Searching...
               </div>
             ) : fileResults.length === 0 ? (
               <div className="px-4 py-6 text-xs text-[var(--color-text-muted)] text-center">

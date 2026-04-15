@@ -156,10 +156,16 @@ pub enum Request {
     ListWorkspaceFiles {
         path: String,
     },
+    FuzzySearchFiles {
+        path: String,
+        query: String,
+        max_results: Option<usize>,
+    },
     SearchInFiles {
         path: String,
         query: String,
         max_results: Option<usize>,
+        use_regex: Option<bool>,
     },
 
     // ── Workspace watcher ──

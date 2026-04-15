@@ -203,6 +203,7 @@ pub fn run() {
             remote::commands::remote_is_connected,
             remote::commands::remote_ensure_connected,
             search::list_workspace_files,
+            search::fuzzy_search_files,
             search::search_in_files,
             plugins::plugin_list,
             plugins::plugin_install,
