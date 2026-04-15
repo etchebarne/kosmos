@@ -8,6 +8,7 @@ import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
 import { useGitStatus } from "../../hooks/use-git-status";
 import { GitFileTreeContext, buildGitColorLookup } from "./git-file-tree-context";
+import { getCached, getOrFetch, invalidate } from "./file-tree-cache";
 import type { TabContentProps } from "../types";
 
 export interface DirEntry {
@@ -20,11 +21,14 @@ export interface DirEntry {
 export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   const activeWorkspace = useActiveWorkspace();
   const isActive = useIsWorkspaceActive();
+  const workspacePath = activeWorkspace?.path ?? null;
 
-  const [entries, setEntries] = useState<DirEntry[]>([]);
+  // Serve from cache for instant render when prefetch has completed
+  const initialEntries = workspacePath ? getCached(workspacePath) : null;
+  const [entries, setEntries] = useState<DirEntry[]>(initialEntries ?? []);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const { status: gitStatus } = useGitStatus(activeWorkspace?.path ?? null, isActive);
+  const [loading, setLoading] = useState(!initialEntries);
+  const { status: gitStatus } = useGitStatus(workspacePath, isActive);
 
   const getGitColor = useMemo(() => {
     if (!activeWorkspace || !gitStatus?.isRepo) return () => null;
@@ -32,20 +36,24 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   }, [activeWorkspace, gitStatus]);
 
   const loadRoot = useCallback(async () => {
-    if (!activeWorkspace) return;
+    if (!workspacePath) return;
+    // If cache already provided entries, skip redundant load
+    if (getCached(workspacePath)) {
+      setEntries(getCached(workspacePath)!);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke<DirEntry[]>("read_dir", {
-        path: activeWorkspace.path,
-      });
+      const result = await getOrFetch(workspacePath);
       setEntries(result);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [activeWorkspace]);
+  }, [workspacePath]); // Depend on path string, not object reference
 
   useEffect(() => {
     loadRoot();
@@ -83,7 +91,10 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     let pending = new Set<string>();
 
     const unlisten = listen<string[]>("file-tree-changed", (event) => {
-      for (const dir of event.payload) pending.add(dir);
+      for (const dir of event.payload) {
+        invalidate(dir);
+        pending.add(dir);
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         for (const dir of pending) {

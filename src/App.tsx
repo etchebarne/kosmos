@@ -15,6 +15,7 @@ import { useLspStore } from "./store/lsp.store";
 import { useUpdateStore } from "./store/update.store";
 import { initPlugins } from "./plugins";
 import { applyTheme } from "./lib/themes";
+import { prefetch as prefetchFileTree } from "./tabs/file-tree/file-tree-cache";
 import "overlayscrollbars/overlayscrollbars.css";
 import "./styles/globals.css";
 
@@ -51,6 +52,8 @@ function App() {
   useLayoutEffect(() => {
     if (!ready) return;
     const path = activeIndex !== null ? (workspaces[activeIndex]?.path ?? null) : null;
+    // Start loading file tree entries before tabs mount
+    if (path) prefetchFileTree(path);
     setWorkspace(path);
   }, [ready, activeIndex, workspaces, setWorkspace]);
 
