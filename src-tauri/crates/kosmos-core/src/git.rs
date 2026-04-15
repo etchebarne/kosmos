@@ -146,104 +146,15 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
         .map(|s| parse_numstat(&s))
         .unwrap_or_default();
 
-    let mut changes = Vec::new();
-
-    if let Some(status) = status_output {
-        for line in status.lines() {
-            if line.len() < 4 {
-                continue;
-            }
-
-            let bytes = line.as_bytes();
-            let x = bytes[0] as char;
-            let y = bytes[1] as char;
-            let file_path = &line[3..];
-
-            let is_untracked_dir = file_path.ends_with('/') && x == '?' && y == '?';
-            let file_path = file_path.trim_end_matches('/');
-            if file_path.is_empty() {
-                continue;
-            }
-
-            let file_path = if file_path.contains(" -> ") {
-                file_path.split(" -> ").last().unwrap_or(file_path)
-            } else {
-                file_path
-            };
-
-            // Untracked directories: enumerate files within instead of showing
-            // the directory as a single entry.
-            if is_untracked_dir {
-                let dir_path = dir.join(file_path);
-                fn collect_files(base: &Path, current: &Path, out: &mut Vec<String>) {
-                    if let Ok(entries) = std::fs::read_dir(current) {
-                        for entry in entries.filter_map(|e| e.ok()) {
-                            let path = entry.path();
-                            if path.is_dir() {
-                                collect_files(base, &path, out);
-                            } else if let Ok(rel) = path.strip_prefix(base) {
-                                out.push(rel.to_string_lossy().into_owned());
-                            }
-                        }
-                    }
-                }
-                let mut files = Vec::new();
-                collect_files(dir, &dir_path, &mut files);
-                for rel_path in files {
-                    let full_path = dir.join(&rel_path);
-                    let count = std::fs::metadata(&full_path)
-                        .ok()
-                        .filter(|m| m.len() <= 1_024 * 1_024)
-                        .and_then(|_| std::fs::read_to_string(&full_path).ok())
-                        .map(|s| s.lines().count() as i32)
-                        .unwrap_or(0);
-                    changes.push(GitFileChange {
-                        path: rel_path,
-                        status: "untracked".to_string(),
-                        staged: false,
-                        additions: count,
-                        deletions: 0,
-                    });
-                }
-                continue;
-            }
-
-            let staged = x != ' ' && x != '?';
-
-            let status_str = match (x, y) {
-                ('?', '?') => "untracked",
-                ('A', _) => "added",
-                (_, 'D') if x == ' ' => "deleted",
-                ('D', _) => "deleted",
-                ('R', _) => "renamed",
-                _ => "modified",
-            };
-
-            let (additions, deletions) = if x == '?' && y == '?' {
-                let full_path = dir.join(file_path);
-                // Cap line-counting to 1 MB to avoid reading huge untracked files
-                let count = std::fs::metadata(&full_path)
-                    .ok()
-                    .filter(|m| m.len() <= 1_024 * 1_024)
-                    .and_then(|_| std::fs::read_to_string(&full_path).ok())
-                    .map(|s| s.lines().count() as i32)
-                    .unwrap_or(0);
-                (count, 0)
-            } else if staged {
-                staged_stats.get(file_path).copied().unwrap_or((0, 0))
-            } else {
-                unstaged_stats.get(file_path).copied().unwrap_or((0, 0))
-            };
-
-            changes.push(GitFileChange {
-                path: file_path.to_string(),
-                status: status_str.to_string(),
-                staged,
-                additions,
-                deletions,
-            });
-        }
-    }
+    // Parsing git status involves blocking I/O (reading untracked files to
+    // count lines). Run on the blocking pool so we don't stall the Tokio
+    // runtime and freeze the UI.
+    let dir_owned = dir.to_path_buf();
+    let mut changes = tokio::task::spawn_blocking(move || {
+        build_change_list(&dir_owned, status_output, &staged_stats, &unstaged_stats)
+    })
+    .await
+    .map_err(|e| CoreError::Other(e.to_string()))?;
 
     changes.sort_by(|a, b| a.path.cmp(&b.path));
 
@@ -257,6 +168,134 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
         ahead,
         behind,
     })
+}
+
+/// Cap on files enumerated from a single untracked directory. Prevents freezes
+/// when large directories (e.g. node_modules/) appear untracked after a branch
+/// switch with different .gitignore rules.
+const MAX_UNTRACKED_DIR_FILES: usize = 1_000;
+
+fn build_change_list(
+    dir: &Path,
+    status_output: Option<String>,
+    staged_stats: &HashMap<String, (i32, i32)>,
+    unstaged_stats: &HashMap<String, (i32, i32)>,
+) -> Vec<GitFileChange> {
+    let mut changes = Vec::new();
+
+    let Some(status) = status_output else {
+        return changes;
+    };
+
+    for line in status.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+
+        let bytes = line.as_bytes();
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let file_path = &line[3..];
+
+        let is_untracked_dir = file_path.ends_with('/') && x == '?' && y == '?';
+        let file_path = file_path.trim_end_matches('/');
+        if file_path.is_empty() {
+            continue;
+        }
+
+        let file_path = if file_path.contains(" -> ") {
+            file_path.split(" -> ").last().unwrap_or(file_path)
+        } else {
+            file_path
+        };
+
+        // Untracked directories: enumerate files within instead of showing
+        // the directory as a single entry.
+        if is_untracked_dir {
+            let dir_path = dir.join(file_path);
+            let mut files = Vec::new();
+            collect_untracked_files(dir, &dir_path, &mut files, MAX_UNTRACKED_DIR_FILES);
+            // Skip per-file line counting for directory-enumerated files —
+            // reading hundreds/thousands of files just for "+N" counts is the
+            // main source of slowness. The diff viewer still counts on demand.
+            for rel_path in files {
+                changes.push(GitFileChange {
+                    path: rel_path,
+                    status: "untracked".to_string(),
+                    staged: false,
+                    additions: 0,
+                    deletions: 0,
+                });
+            }
+            continue;
+        }
+
+        let staged = x != ' ' && x != '?';
+
+        let status_str = match (x, y) {
+            ('?', '?') => "untracked",
+            ('A', _) => "added",
+            (_, 'D') if x == ' ' => "deleted",
+            ('D', _) => "deleted",
+            ('R', _) => "renamed",
+            _ => "modified",
+        };
+
+        let (additions, deletions) = if x == '?' && y == '?' {
+            let full_path = dir.join(file_path);
+            // Cap line-counting to 1 MB to avoid reading huge untracked files
+            let count = std::fs::metadata(&full_path)
+                .ok()
+                .filter(|m| m.len() <= 1_024 * 1_024)
+                .and_then(|_| std::fs::read_to_string(&full_path).ok())
+                .map(|s| s.lines().count() as i32)
+                .unwrap_or(0);
+            (count, 0)
+        } else if staged {
+            staged_stats.get(file_path).copied().unwrap_or((0, 0))
+        } else {
+            unstaged_stats.get(file_path).copied().unwrap_or((0, 0))
+        };
+
+        changes.push(GitFileChange {
+            path: file_path.to_string(),
+            status: status_str.to_string(),
+            staged,
+            additions,
+            deletions,
+        });
+    }
+
+    changes
+}
+
+/// Recursively collect files in an untracked directory.
+///
+/// Uses `entry.file_type()` (which reads from the dirent and does NOT follow
+/// symlinks) instead of `Path::is_dir()` (which calls `stat()` and follows
+/// symlinks). This prevents infinite recursion when symlinks create cycles.
+///
+/// Stops after `max` files to avoid freezing on huge directories.
+fn collect_untracked_files(base: &Path, current: &Path, out: &mut Vec<String>, max: usize) {
+    if out.len() >= max {
+        return;
+    }
+    let entries = match std::fs::read_dir(current) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        if out.len() >= max {
+            return;
+        }
+        let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+        let path = entry.path();
+        if is_dir {
+            collect_untracked_files(base, &path, out, max);
+        } else if let Ok(rel) = path.strip_prefix(base) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
 }
 
 pub async fn git_stage(path: &str, files: Vec<String>) -> Result<(), CoreError> {
