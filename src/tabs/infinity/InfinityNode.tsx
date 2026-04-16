@@ -143,8 +143,22 @@ export function InfinityNode({ id, data }: NodeProps<InfinityNodeType>) {
           </button>
         </div>
 
-        {/* Content — nodrag to prevent drag */}
-        <div ref={contentRef} className="flex-1 overflow-hidden nodrag">
+        {/* Content — nodrag to prevent drag.
+            Stop contextmenu from bubbling to ReactFlow's onNodeContextMenu so
+            the inner tab's own context menu takes precedence. Inner handlers
+            still fire first during bubble phase before reaching this wrapper.
+            preventDefault is needed because React's stopPropagation also stops
+            native bubbling, so the document-level preventDefault in main.tsx
+            won't fire — without this the native browser menu would appear
+            when an inner tab has no contextmenu handler of its own. */}
+        <div
+          ref={contentRef}
+          className="flex-1 overflow-hidden nodrag"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
           <Component tab={pseudoTab} paneId={`infinity-${id}`} />
         </div>
       </div>

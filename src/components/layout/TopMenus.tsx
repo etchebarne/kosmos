@@ -235,12 +235,16 @@ const TopMenuButton = forwardRef<
           ? "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)]"
           : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-text-primary)]"
       }`}
-      // Stop the native mousedown from reaching the document-level listener
-      // in ContextMenu's useClickOutside — otherwise clicking an open menu's
-      // button closes the menu via the outside-click handler, then the React
-      // onClick reopens it.
-      onMouseDown={(e) => e.nativeEvent.stopPropagation()}
-      onClick={onClick}
+      // When clicking this button while its menu is open, ContextMenu's
+      // capture-phase useClickOutside already closes the menu at mousedown.
+      // `active` in this onClick closure reflects the state at click dispatch
+      // (React batches state updates across a user event), so if it's true
+      // the user's intent — "close the menu" — is already fulfilled. Skipping
+      // `onClick()` here prevents the close-then-reopen flicker.
+      onClick={() => {
+        if (active) return;
+        onClick();
+      }}
       onMouseEnter={onHover}
     >
       {label}
