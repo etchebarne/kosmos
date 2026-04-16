@@ -655,7 +655,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
             bracketPairColorization: { enabled: true },
             guides: {
               indentation: true,
-              bracketPairs: true,
+              bracketPairs: false,
             },
             hover: { above: false },
           }}
