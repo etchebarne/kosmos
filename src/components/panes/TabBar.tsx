@@ -8,6 +8,17 @@ import { TabIcon } from "../shared/TabIcon";
 import { ContextMenu } from "../shared/ContextMenu";
 import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { Tab } from "../../types";
+import { getEditorMeta } from "../../types";
+import { FileIcon } from "../../tabs/file-tree/file-icons";
+import { useIsDarkTheme } from "../../lib/themes";
+
+/** Split a file path into its basename and extension (matching the file-tree's shape). */
+function parseFilePath(filePath: string): { name: string; extension: string | null } {
+  const name = filePath.split(/[/\\]/).pop() ?? filePath;
+  const dotIdx = name.lastIndexOf(".");
+  const extension = dotIdx > 0 ? name.slice(dotIdx + 1) : null;
+  return { name, extension };
+}
 
 /** Per-tab dirty indicator — subscribes only to its own tab's dirty state. */
 const DirtyDot = memo(function DirtyDot({ tabId }: { tabId: string }) {
@@ -37,6 +48,7 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
   const addTab = useLayoutStore((s) => s.addTab);
   const setDragState = useDragStore((s) => s.setDragState);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tab: Tab } | null>(null);
+  const isDark = useIsDarkTheme();
 
   const handleTabMouseDown = useCallback(
     (e: React.MouseEvent, tab: Tab) => {
@@ -88,6 +100,10 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
     >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
+        const editorMeta = getEditorMeta(tab);
+        const iconColorClass = isActive
+          ? "text-[var(--color-accent-blue)]"
+          : "text-[var(--color-text-tertiary)]";
         return (
           <div
             key={tab.id}
@@ -111,11 +127,22 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
               setContextMenu({ x: e.clientX, y: e.clientY, tab });
             }}
           >
-            <TabIcon
-              name={tab.icon}
-              size={14}
-              className={`shrink-0 ${isActive ? "text-[var(--color-accent-blue)]" : "text-[var(--color-text-tertiary)]"}`}
-            />
+            {editorMeta ? (
+              (() => {
+                const { name, extension } = parseFilePath(editorMeta.filePath);
+                return (
+                  <FileIcon
+                    name={name}
+                    extension={extension}
+                    size={14}
+                    className={iconColorClass}
+                    isDark={isDark}
+                  />
+                );
+              })()
+            ) : (
+              <TabIcon name={tab.icon} size={14} className={`shrink-0 ${iconColorClass}`} />
+            )}
             <span
               className={`text-xs ${isActive ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)]"}`}
             >
