@@ -3,6 +3,8 @@ import type { editor } from "monaco-editor";
 export interface EditorCacheEntry {
   instance: editor.IStandaloneCodeEditor;
   pendingReveal?: { lineNumber: number; column: number };
+  /** Save this editor's buffer to disk. Registered by EditorTab on mount. */
+  save?: () => Promise<void> | void;
 }
 
 export const editorCache = new Map<string, EditorCacheEntry>();

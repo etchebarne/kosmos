@@ -65,6 +65,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
   const zoomEditorOut = useEditorStore((s) => s.zoomEditorOut);
   const resetEditorZoom = useEditorStore((s) => s.resetEditorZoom);
+  const setLastClickedEditor = useEditorStore((s) => s.setLastClickedEditor);
 
   const workspace = useActiveWorkspace();
   const startServer = useLspStore((s) => s.startServer);
@@ -345,7 +346,11 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       lspOpenedRef.current = false;
       changeDisposableRef.current?.dispose();
       useLayoutStore.getState().setTabDirty(tab.id, false);
-      if (fp) editorCache.delete(fp);
+      if (fp) {
+        editorCache.delete(fp);
+        const es = useEditorStore.getState();
+        if (es.lastClickedEditorFilePath === fp) es.setLastClickedEditor(null);
+      }
       if (ws && uri) {
         const state = useLspStore.getState();
         const client = state.getClient(ws.path, lspLanguageRef.current);
@@ -476,7 +481,14 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     if (filePath) {
       const cached = editorCache.get(filePath);
       const pendingReveal = cached?.pendingReveal;
-      editorCache.set(filePath, { instance, pendingReveal: undefined });
+      editorCache.set(filePath, {
+        instance,
+        pendingReveal: undefined,
+        save: () => saveFileRef.current(),
+      });
+      // This editor just mounted and took focus — treat it as the last-clicked
+      // editor so top menu actions target it.
+      setLastClickedEditor(filePath);
       if (pendingReveal) {
         // Defer reveal — @monaco-editor/react toggles the container from
         // display:none to display:block after onMount, triggering a
@@ -488,6 +500,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         }, 50);
       }
     }
+
+    // Any focus event on this editor flags it as the "last-clicked" target
+    // for top menu actions (Save, Undo, Cut, Select All, ...).
+    instance.onDidFocusEditorWidget(() => {
+      if (filePath) setLastClickedEditor(filePath);
+    });
 
     // Bind Ctrl+S / zoom keys via onKeyDown (per-editor) rather than
     // addCommand. Monaco's addCommand uses a single global keybinding
