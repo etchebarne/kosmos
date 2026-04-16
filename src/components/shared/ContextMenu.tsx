@@ -1,4 +1,5 @@
 import { useRef, useState, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { useClickOutside } from "../../hooks/use-click-outside";
 
 export type ContextMenuItem =
@@ -33,7 +34,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     setPos({ left, top });
   }, [x, y]);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       className="fixed z-50 min-w-[140px] py-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[3px_3px_0_rgba(0,0,0,0.25)] animate-fade-in-down"
@@ -62,6 +63,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           </button>
         ),
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
