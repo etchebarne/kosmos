@@ -45,6 +45,11 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const contentRef = useRef<string | null>(null);
+  // Monaco's alternativeVersionId snapshot at the last saved/loaded baseline.
+  // Dirty is derived by comparing it to the model's current id: if the user
+  // undoes back to this baseline, dirty clears automatically (same approach
+  // VS Code uses). Survives stray change events better than a plain flag.
+  const savedVersionIdRef = useRef(0);
   const versionRef = useRef(0);
   const changeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const pendingChangesRef = useRef<TextDocumentContentChangeEvent[]>([]);
@@ -92,6 +97,11 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       const result = await invoke<string>("read_file", { path: filePath });
       setContent(result);
       contentRef.current = result;
+      // If the editor already exists (rare: loadFile re-runs after mount),
+      // rebaseline the saved version id. The common path is initial load,
+      // where the editor mounts after this and captures its id in onMount.
+      const model = editorRef.current?.getModel();
+      if (model) savedVersionIdRef.current = model.getAlternativeVersionId();
       setTabDirty(tab.id, false);
     } catch (e) {
       setError(String(e));
@@ -106,22 +116,36 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
   const saveFile = useCallback(async () => {
     if (!filePath || contentRef.current === null) return;
+    // Snapshot the version id we're about to persist. We capture *before*
+    // the async write so edits made during the write don't get baselined
+    // as saved.
+    const model = editorRef.current?.getModel();
+    const savingVersionId = model?.getAlternativeVersionId() ?? 0;
+    const savingContent = contentRef.current;
     try {
-      await invoke("write_file", { path: filePath, content: contentRef.current });
-      setTabDirty(tab.id, false);
+      await invoke("write_file", { path: filePath, content: savingContent });
+      savedVersionIdRef.current = savingVersionId;
+      // Re-evaluate dirty against the (possibly newer) current version id.
+      const currentVid = editorRef.current?.getModel()?.getAlternativeVersionId() ?? 0;
+      setTabDirty(tab.id, currentVid !== savingVersionId);
 
       // Notify LSP of save
       if (workspace && fileUri) {
         const client = getClient(workspace.path, lspLanguageRef.current);
-        client?.didSave(fileUri, contentRef.current);
+        client?.didSave(fileUri, savingContent);
         for (const companion of getCompanionClients(workspace.path, lspLanguageRef.current)) {
-          companion.didSave(fileUri, contentRef.current);
+          companion.didSave(fileUri, savingContent);
         }
       }
     } catch (e) {
       setError(String(e));
     }
   }, [filePath, workspace, fileUri, getClient, getCompanionClients]);
+
+  // Keep a ref to saveFile so the once-registered onKeyDown handler always
+  // calls the latest closure (picks up workspace/fileUri after they load).
+  const saveFileRef = useRef(saveFile);
+  saveFileRef.current = saveFile;
 
   // ── Git diff gutter decorations ──
 
@@ -333,19 +357,35 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     };
   }, []);
 
-  // Focus the editor when this tab becomes the active tab in its pane.
-  // Without this, DOM focus stays on the previously-focused element (e.g. a file
-  // tree <button>), causing Space to re-trigger that button's click instead of
-  // typing in the editor.
   const isActiveTab = useLayoutStore((s) => {
     const leaf = findLeaf(s.layout, paneId);
     return leaf?.activeTabId === tab.id;
   });
 
+  // Refocus Monaco when this tab becomes active in its pane. Tabs stay
+  // mounted across switches (portaled into inert containers), so DOM focus
+  // is dropped by the `inert` attribute when leaving. Without this refocus,
+  // Ctrl+S — bound via Monaco's addCommand, which only fires when the
+  // editor has focus — silently no-ops on return, and the dirty dot looks
+  // stuck. Ctrl+S intentionally only acts on the focused editor so that
+  // with split panes / multiple visible editors there's no ambiguity about
+  // which file gets saved.
+  //
+  // Run in rAF so the PanePortalContext's useLayoutEffect has already
+  // removed `inert`; calling focus() on an inert element silently fails.
+  // Only take focus if it's currently outside this editor — avoids
+  // stealing focus from a widget the user intentionally clicked inside.
   useEffect(() => {
-    if (isActiveTab && editorRef.current) {
-      editorRef.current.focus();
-    }
+    if (!isActiveTab) return;
+    const raf = requestAnimationFrame(() => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      const active = document.activeElement;
+      const editorDom = ed.getDomNode();
+      const focusAlreadyInside = editorDom && active && editorDom.contains(active);
+      if (!focusAlreadyInside) ed.focus();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [isActiveTab]);
 
   // Reload editor content when the file is modified externally and the editor is clean.
@@ -373,6 +413,11 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           isExternalUpdateRef.current = true;
           ed.setValue(newContent);
           isExternalUpdateRef.current = false;
+          // Content now matches disk again — rebaseline the saved version id
+          // so the dirty dot stays off.
+          const model = ed.getModel();
+          if (model) savedVersionIdRef.current = model.getAlternativeVersionId();
+          setTabDirty(tab.id, false);
         } else {
           setContent(newContent);
         }
@@ -414,6 +459,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     if (model) resolveModelLanguage(monaco, model);
     lspLanguageRef.current = model?.getLanguageId() ?? "plaintext";
 
+    // Baseline the saved version id to the model's current id. Editor just
+    // mounted with on-disk content, so this is our "clean" reference point.
+    savedVersionIdRef.current = model?.getAlternativeVersionId() ?? 0;
+    // Defensive: make sure the dirty flag is cleared on mount.
+    useLayoutStore.getState().setTabDirty(tab.id, false);
+
     // Signal that the editor is mounted — the LSP useEffect will handle
     // starting the server and sending didOpen when all conditions are met.
     setEditorReady(true);
@@ -438,16 +489,43 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       }
     }
 
-    // eslint-disable-next-line no-bitwise
-    instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveFile());
-
-    // Zoom keybindings
-    // eslint-disable-next-line no-bitwise
-    instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Equal, () => zoomEditorIn());
-    // eslint-disable-next-line no-bitwise
-    instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Minus, () => zoomEditorOut());
-    // eslint-disable-next-line no-bitwise
-    instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Digit0, () => resetEditorZoom());
+    // Bind Ctrl+S / zoom keys via onKeyDown (per-editor) rather than
+    // addCommand. Monaco's addCommand uses a single global keybinding
+    // registry — if two editors are mounted and both addCommand(Ctrl+S),
+    // the second registration overrides the first, so only one editor's
+    // handler ever fires. onKeyDown is a plain per-instance event, scoped
+    // to this editor's focus, with no cross-instance interference.
+    //
+    // Refs keep the handler reading the latest store actions / saveFile
+    // closure without rebinding on every render.
+    instance.onKeyDown((e) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl || e.shiftKey || e.altKey) return;
+      if (e.keyCode === monaco.KeyCode.KeyS) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveFileRef.current();
+        return;
+      }
+      if (e.keyCode === monaco.KeyCode.Equal) {
+        e.preventDefault();
+        e.stopPropagation();
+        zoomEditorIn();
+        return;
+      }
+      if (e.keyCode === monaco.KeyCode.Minus) {
+        e.preventDefault();
+        e.stopPropagation();
+        zoomEditorOut();
+        return;
+      }
+      if (e.keyCode === monaco.KeyCode.Digit0) {
+        e.preventDefault();
+        e.stopPropagation();
+        resetEditorZoom();
+        return;
+      }
+    });
 
     // Debounced inline blame on cursor move
     instance.onDidChangeCursorPosition((e) => {
@@ -471,7 +549,18 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       contentRef.current = instance.getValue();
       // Skip dirty flag for programmatic reloads from external file changes
       if (isExternalUpdateRef.current) return;
-      if (!dirty) setTabDirty(tab.id, true);
+
+      // Derive dirty from Monaco's alternativeVersionId — self-correcting
+      // on undo, resilient to stray change events. Read the current store
+      // state (not the stale `dirty` render-time value) so we only call
+      // setTabDirty when the flag actually needs to flip.
+      const m = instance.getModel();
+      const vid = m?.getAlternativeVersionId() ?? 0;
+      const shouldBeDirty = vid !== savedVersionIdRef.current;
+      const store = useLayoutStore.getState();
+      if (shouldBeDirty !== store.dirtyTabs.has(tab.id)) {
+        store.setTabDirty(tab.id, shouldBeDirty);
+      }
 
       if (!workspace || !fileUri) return;
       const client = getClient(workspace.path, lspLanguageRef.current);
