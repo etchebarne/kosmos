@@ -52,6 +52,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const savedVersionIdRef = useRef(0);
   const versionRef = useRef(0);
   const changeDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const middleDragCleanupRef = useRef<(() => void) | null>(null);
   const pendingChangesRef = useRef<TextDocumentContentChangeEvent[]>([]);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editorReady, setEditorReady] = useState(false);
@@ -345,6 +346,8 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
       lspOpenedRef.current = false;
       changeDisposableRef.current?.dispose();
+      middleDragCleanupRef.current?.();
+      middleDragCleanupRef.current = null;
       useLayoutStore.getState().setTabDirty(tab.id, false);
       if (fp) {
         editorCache.delete(fp);
@@ -544,6 +547,52 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         return;
       }
     });
+
+    // Suppress middle-click paste when the user middle-drags to select text.
+    // On Linux, middle-click pastes the X11 PRIMARY selection; without this,
+    // a middle-drag selection would be overwritten on release by the paste
+    // that fires at mouseup. VSCode has the same behavior — drag selects,
+    // no paste on release. A plain middle-click (no drag) still pastes.
+    const editorDom = instance.getDomNode();
+    if (editorDom) {
+      let middleDragged = false;
+      let middleDownX = 0;
+      let middleDownY = 0;
+      const DRAG_THRESHOLD = 3;
+
+      const onMouseDown = (e: MouseEvent) => {
+        if (e.button !== 1) return;
+        middleDragged = false;
+        middleDownX = e.clientX;
+        middleDownY = e.clientY;
+      };
+      const onMouseMove = (e: MouseEvent) => {
+        if (!(e.buttons & 4)) return;
+        if (
+          Math.abs(e.clientX - middleDownX) > DRAG_THRESHOLD ||
+          Math.abs(e.clientY - middleDownY) > DRAG_THRESHOLD
+        ) {
+          middleDragged = true;
+        }
+      };
+      const onMouseUp = (e: MouseEvent) => {
+        if (e.button !== 1 || !middleDragged) return;
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      editorDom.addEventListener("mousedown", onMouseDown, true);
+      editorDom.addEventListener("mousemove", onMouseMove, true);
+      editorDom.addEventListener("mouseup", onMouseUp, true);
+      editorDom.addEventListener("auxclick", onMouseUp, true);
+
+      middleDragCleanupRef.current = () => {
+        editorDom.removeEventListener("mousedown", onMouseDown, true);
+        editorDom.removeEventListener("mousemove", onMouseMove, true);
+        editorDom.removeEventListener("mouseup", onMouseUp, true);
+        editorDom.removeEventListener("auxclick", onMouseUp, true);
+      };
+    }
 
     // Debounced inline blame on cursor move
     instance.onDidChangeCursorPosition((e) => {
