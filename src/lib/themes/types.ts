@@ -22,6 +22,7 @@ export interface Theme {
       tertiary: string;
       muted: string;
     };
+    logo: string;
     border: {
       primary: string;
       secondary: string;

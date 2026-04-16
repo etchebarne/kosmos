@@ -35,6 +35,7 @@ export function applyTheme(name: string) {
     "--color-text-secondary": theme.ui.text.secondary,
     "--color-text-tertiary": theme.ui.text.tertiary,
     "--color-text-muted": theme.ui.text.muted,
+    "--color-logo": theme.ui.logo,
     "--color-border-primary": theme.ui.border.primary,
     "--color-border-secondary": theme.ui.border.secondary,
     "--color-divider": theme.ui.border.divider,

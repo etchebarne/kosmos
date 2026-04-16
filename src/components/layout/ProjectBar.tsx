@@ -1,14 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useLayoutEffect } from "react";
-import {
-  MagnifyingGlass,
-  Plus,
-  Desktop,
-  Cloud,
-  ArrowsClockwise,
-  Minus,
-  Square,
-  X,
-} from "@phosphor-icons/react";
+import { Plus, ArrowsClockwise, Minus, Square, X } from "@phosphor-icons/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -19,9 +10,11 @@ import { Tooltip } from "../shared/Tooltip";
 import { useLayoutStore } from "../../store/layout.store";
 import { DRAG_THRESHOLD } from "../../lib/drag-threshold";
 import { RemoteDialog } from "./RemoteDialog";
+import { TopMenus } from "./TopMenus";
 import { useUpdateStore } from "../../store/update.store";
 
 const FLIP_DURATION = 150;
+const HEADER_HEIGHT = 36;
 
 export function ProjectBar() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -182,8 +175,6 @@ export function ProjectBar() {
     [getDropIndex, snapshotPositions, reorderWorkspace, switchWorkspace],
   );
 
-  const active = activeIndex !== null ? workspaces[activeIndex] : null;
-
   const handleOpenFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
     if (selected) {
@@ -211,42 +202,20 @@ export function ProjectBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex items-center gap-2 h-[52px] min-h-[52px] pl-3 bg-[var(--color-project-bar-bg)] border-b border-[var(--color-border-primary)]"
+      className="relative flex items-center bg-[var(--color-project-bar-bg)] border-b border-[var(--color-border-primary)]"
+      style={{ height: HEADER_HEIGHT, minHeight: HEADER_HEIGHT }}
     >
-      {active && (
-        <div className="flex items-center gap-1.5">
-          {active.connection && active.connection.type !== "local" && (
-            <Tooltip
-              content={
-                active.connection.type === "wsl"
-                  ? `WSL: ${active.connection.distro}`
-                  : active.connection.type === "ssh"
-                    ? `SSH: ${active.connection.host}`
-                    : ""
-              }
-            >
-              <div className="flex items-center justify-center text-[var(--color-accent-blue)]">
-                {active.connection.type === "wsl" ? <Desktop size={14} /> : <Cloud size={14} />}
-              </div>
-            </Tooltip>
-          )}
-          <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-            {active.name}
-          </span>
-        </div>
-      )}
-      <div className="flex-1" data-tauri-drag-region />
-      <UpdateButton />
-      <button
-        className="flex items-center gap-1.5 w-[220px] h-8 px-2.5 bg-[var(--color-bg-input)] cursor-pointer hover:bg-[var(--color-bg-surface)] transition-colors"
-        onClick={() => useLayoutStore.getState().openSearch()}
-      >
-        <MagnifyingGlass size={13} className="text-[var(--color-text-muted)] shrink-0" />
-        <span className="text-xs text-[var(--color-text-muted)]">Search files...</span>
-        <div className="flex-1" />
-        <span className="text-[10px] text-[var(--color-text-muted)] font-mono">Ctrl+P</span>
-      </button>
-      <div className="flex items-center gap-2">
+      {/* ── Left: logo + top menus ── */}
+      <div className="flex items-center h-full pl-3 gap-2">
+        <KosmosLogo />
+        <TopMenus />
+      </div>
+
+      {/* spacer for drag region */}
+      <div className="flex-1 h-full" data-tauri-drag-region />
+
+      {/* ── Middle: workspaces (absolutely centered) ── */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5">
         {workspaces.map((w, i) => {
           const isActive = i === activeIndex;
           const isDragged = dragPath === w.path;
@@ -268,7 +237,7 @@ export function ProjectBar() {
                   }
                 }}
                 draggable={false}
-                className="font-mono w-8 h-8 flex items-center justify-center text-[13px] font-bold shrink-0 hover:opacity-85 overflow-hidden select-none"
+                className="font-mono w-6 h-6 flex items-center justify-center text-[11px] font-bold shrink-0 hover:opacity-85 overflow-hidden select-none rounded-sm"
                 style={{
                   backgroundColor: w.avatarUrl ? undefined : isActive ? w.color : `${w.color}40`,
                   color: isActive ? getTheme().terminal.brightWhite : w.color,
@@ -296,16 +265,23 @@ export function ProjectBar() {
             </Tooltip>
           );
         })}
+        <button
+          ref={addButtonRef}
+          className="w-6 h-6 flex items-center justify-center border border-[var(--color-border-secondary)] text-[var(--color-text-muted)] shrink-0 hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] rounded-sm"
+          onClick={handleAddClick}
+        >
+          <Plus size={12} />
+        </button>
       </div>
-      <button
-        ref={addButtonRef}
-        className="w-8 h-8 flex items-center justify-center border border-[var(--color-border-secondary)] text-[var(--color-text-muted)] shrink-0 hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
-        onClick={handleAddClick}
-      >
-        <Plus size={14} />
-      </button>
 
-      <WindowControls />
+      {/* spacer for drag region */}
+      <div className="flex-1 h-full" data-tauri-drag-region />
+
+      {/* ── Right: update button + window controls ── */}
+      <div className="flex items-center h-full">
+        <UpdateButton />
+        <WindowControls />
+      </div>
 
       {contextMenu && (
         <ContextMenu
@@ -344,27 +320,55 @@ export function ProjectBar() {
   );
 }
 
+function KosmosLogo() {
+  // Kosmos logo. Uses currentColor so the theme's --color-logo controls its appearance.
+  return (
+    <div
+      className="flex items-center justify-center shrink-0"
+      style={{ color: "var(--color-logo)" }}
+      aria-label="Kosmos"
+    >
+      <svg
+        width="17"
+        height="14"
+        viewBox="0 0 160 133"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M81.6304 43.2982C105.663 49.779 96.2076 69.8639 80.8422 78.1903C104.087 74.6223 121.408 45.2811 100.936 33.3861C67.5553 13.9908 26.4722 44.0913 15.4408 57.1757C-3.27985 79.3803 -5.44038 105.153 11.501 120.616C30.8988 138.321 62.1936 131.983 82.0242 124.581C49.3235 125.375 41.0498 119.824 33.9581 112.686C4.40924 82.9488 47.5986 34.1211 81.6304 43.2982Z"
+          fill="currentColor"
+        />
+        <path
+          d="M78.3696 88.3487C54.3366 81.8962 63.7924 61.899 79.1578 53.6089C55.9125 57.1614 38.5923 86.3744 59.0643 98.2175C92.4447 117.528 133.528 87.559 144.559 74.5318C163.28 52.4241 165.44 26.7641 148.499 11.3684C129.101 -6.25952 97.8064 0.0515693 77.9759 7.42062C110.677 6.63073 118.95 12.1575 126.042 19.2634C155.591 48.8712 112.401 97.4857 78.3696 88.3487Z"
+          fill="currentColor"
+        />
+      </svg>
+    </div>
+  );
+}
+
 function WindowControls() {
   const appWindow = getCurrentWindow();
   return (
-    <div className="flex items-center ml-2">
+    <div className="flex items-center ml-1 h-full">
       <button
-        className="w-[46px] h-[52px] flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg-surface)] transition-colors"
+        className="w-[42px] h-full flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg-surface)] transition-colors"
         onClick={() => appWindow.minimize()}
       >
-        <Minus size={14} />
+        <Minus size={12} />
       </button>
       <button
-        className="w-[46px] h-[52px] flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg-surface)] transition-colors"
+        className="w-[42px] h-full flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg-surface)] transition-colors"
         onClick={() => appWindow.toggleMaximize()}
       >
-        <Square size={10} weight="bold" />
+        <Square size={9} weight="bold" />
       </button>
       <button
-        className="w-[46px] h-[52px] flex items-center justify-center text-[var(--color-text-muted)] hover:bg-red-500/80 hover:text-white transition-colors"
+        className="w-[42px] h-full flex items-center justify-center text-[var(--color-text-muted)] hover:bg-red-500/80 hover:text-white transition-colors"
         onClick={() => appWindow.close()}
       >
-        <X size={14} />
+        <X size={12} />
       </button>
     </div>
   );
@@ -380,11 +384,11 @@ function UpdateButton() {
   return (
     <Tooltip content={`Update to ${update.version}`}>
       <button
-        className="flex items-center gap-1.5 h-8 px-2.5 text-xs text-[var(--color-accent-blue)] bg-[var(--color-bg-input)] cursor-pointer hover:bg-[var(--color-bg-surface)] transition-colors disabled:opacity-50 disabled:cursor-default"
+        className="flex items-center gap-1.5 h-7 px-2.5 mr-1 text-[11px] text-[var(--color-accent-blue)] bg-[var(--color-bg-input)] cursor-pointer hover:bg-[var(--color-bg-surface)] transition-colors disabled:opacity-50 disabled:cursor-default"
         onClick={installUpdate}
         disabled={installing}
       >
-        <ArrowsClockwise size={13} className={installing ? "animate-spin" : ""} />
+        <ArrowsClockwise size={12} className={installing ? "animate-spin" : ""} />
         <span>{installing ? "Updating..." : "Update Kosmos"}</span>
       </button>
     </Tooltip>

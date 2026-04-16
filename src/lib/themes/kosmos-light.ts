@@ -23,6 +23,7 @@ export const kosmosLight: Theme = {
       tertiary: "#8a8a8a",
       muted: "#b0b0b0",
     },
+    logo: "#000000",
     border: {
       primary: "#d4d4d4",
       secondary: "#c4c4c4",

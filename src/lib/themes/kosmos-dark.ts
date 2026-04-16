@@ -23,6 +23,7 @@ export const kosmosDark: Theme = {
       tertiary: "#6b6b6b",
       muted: "#4a4a4a",
     },
+    logo: "#ffffff",
     border: {
       primary: "#2e2e2e",
       secondary: "#3a3a3a",
