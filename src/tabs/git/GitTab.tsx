@@ -48,6 +48,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
     items: ContextMenuItem[];
   } | null>(null);
   const branchBarRef = useRef<HTMLDivElement>(null);
+  const branchButtonRef = useRef<HTMLButtonElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
   useClickOutside(actionMenuRef, () => setShowActionMenu(false), showActionMenu);
@@ -300,6 +301,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
           className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--color-border-primary)]"
         >
           <button
+            ref={branchButtonRef}
             className="flex items-center gap-1.5 min-w-0 hover:bg-[var(--color-bg-elevated)] transition-colors cursor-pointer px-1.5 py-1 -mx-1.5 rounded-none group"
             onClick={() => setShowBranchPicker((v) => !v)}
           >
@@ -376,6 +378,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
             onClose={() => setShowBranchPicker(false)}
             onSwitch={refresh}
             anchorRef={branchBarRef}
+            ignoreRef={branchButtonRef}
           />
         )}
 

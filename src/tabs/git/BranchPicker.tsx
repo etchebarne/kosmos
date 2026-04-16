@@ -16,9 +16,16 @@ interface BranchPickerProps {
   onClose: () => void;
   onSwitch: () => void;
   anchorRef: React.RefObject<HTMLElement | null>;
+  ignoreRef?: React.RefObject<HTMLElement | null>;
 }
 
-export function BranchPicker({ workspacePath, onClose, onSwitch, anchorRef }: BranchPickerProps) {
+export function BranchPicker({
+  workspacePath,
+  onClose,
+  onSwitch,
+  anchorRef,
+  ignoreRef,
+}: BranchPickerProps) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -33,7 +40,9 @@ export function BranchPicker({ workspacePath, onClose, onSwitch, anchorRef }: Br
       .finally(() => setLoading(false));
   }, [workspacePath]);
 
-  useClickOutside(ref, onClose);
+  // Ignore clicks on the anchor button — its onClick already toggles the
+  // picker closed; closing here too would race with the open-toggle and reopen.
+  useClickOutside(ref, onClose, true, ignoreRef);
 
   // Close on Escape
   useEffect(() => {

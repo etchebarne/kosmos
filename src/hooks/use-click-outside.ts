@@ -4,6 +4,7 @@ export function useClickOutside(
   ref: RefObject<HTMLElement | null>,
   callback: () => void,
   enabled = true,
+  ignoreRef?: RefObject<HTMLElement | null>,
 ) {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -11,7 +12,9 @@ export function useClickOutside(
   useEffect(() => {
     if (!enabled) return;
     const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (ref.current && !ref.current.contains(target)) {
+        if (ignoreRef?.current?.contains(target)) return;
         callbackRef.current();
       }
     };
@@ -20,5 +23,5 @@ export function useClickOutside(
     // outside the ref reliably close — regardless of what consumes the event.
     document.addEventListener("mousedown", handle, true);
     return () => document.removeEventListener("mousedown", handle, true);
-  }, [enabled]); // ref is a stable RefObject — not a dependency
+  }, [enabled]); // ref + ignoreRef are stable RefObjects — not dependencies
 }
