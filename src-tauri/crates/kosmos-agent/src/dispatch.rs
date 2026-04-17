@@ -205,26 +205,38 @@ pub(crate) async fn dispatch(
         }
 
         // ── Search ──
-        Request::ListWorkspaceFiles { path } => {
-            let r = kosmos_core::search::list_workspace_files(&path)?;
-            Ok(to_json(r)?)
-        }
-        Request::FuzzySearchFiles {
-            path,
-            query,
-            max_results,
-        } => {
-            let r = kosmos_core::search::fuzzy_search_files(&path, &query, max_results)?;
-            Ok(to_json(r)?)
-        }
         Request::SearchInFiles {
             path,
             query,
             max_results,
             use_regex,
         } => {
-            let r = kosmos_core::search::search_in_files(&path, &query, max_results, use_regex)?;
+            // Align the agent's fff picker with the requested workspace before grepping,
+            // so content search works even if the host queried without first calling
+            // FffSetWorkspace.
+            state.fff.set_workspace(std::path::Path::new(&path))?;
+            let r = state
+                .fff
+                .grep(&query, max_results.unwrap_or(100), use_regex.unwrap_or(false))?;
             Ok(to_json(r)?)
+        }
+
+        // ── fff ──
+        Request::FffSetWorkspace { path } => {
+            state.fff.set_workspace(std::path::Path::new(&path))?;
+            Ok(serde_json::Value::Null)
+        }
+        Request::FffSearchFiles {
+            path: _,
+            query,
+            max_results,
+        } => {
+            let hits = state.fff.search(&query, max_results.unwrap_or(50))?;
+            Ok(to_json(hits)?)
+        }
+        Request::FffTrackAccess { path } => {
+            state.fff.track_access(std::path::Path::new(&path))?;
+            Ok(serde_json::Value::Null)
         }
 
         // ── Watcher ──

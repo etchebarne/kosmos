@@ -153,19 +153,24 @@ pub enum Request {
     },
 
     // ── Search ──
-    ListWorkspaceFiles {
-        path: String,
-    },
-    FuzzySearchFiles {
-        path: String,
-        query: String,
-        max_results: Option<usize>,
-    },
     SearchInFiles {
         path: String,
         query: String,
         max_results: Option<usize>,
         use_regex: Option<bool>,
+    },
+
+    // ── fff (fff-search) ──
+    FffSetWorkspace {
+        path: String,
+    },
+    FffSearchFiles {
+        path: String,
+        query: String,
+        max_results: Option<usize>,
+    },
+    FffTrackAccess {
+        path: String,
     },
 
     // ── Workspace watcher ──

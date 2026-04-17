@@ -119,10 +119,16 @@ pub(crate) async fn daemon_main() {
         tx: event_tx.clone(),
     });
 
+    let fff = kosmos_core::fff_picker::FffPicker::new(data_dir.join("fff-frecency.lmdb"))
+        .unwrap_or_else(|e| {
+            panic!("Failed to initialize fff frecency database: {e}");
+        });
+
     let state = Arc::new(AgentState {
         watcher: kosmos_core::watcher::WatcherManager::new(events.clone()),
         terminals: kosmos_core::terminal::TerminalManager::new(events.clone()),
         lsp: kosmos_core::lsp::LspManager::new(events, servers_dir, None),
+        fff,
     });
 
     tracing::info!("Listening on {}", sock_path.display());

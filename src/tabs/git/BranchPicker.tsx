@@ -3,12 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { GitBranch, Trash } from "@phosphor-icons/react";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { useClickOutside } from "../../hooks/use-click-outside";
+import { highlightedParts } from "../search/fuzzy";
 
 interface GitBranchInfo {
   name: string;
   isRemote: boolean;
   isCurrent: boolean;
   lastCommitDate: string | null;
+}
+
+interface FuzzyHit {
+  text: string;
+  score: number;
+  indices: number[];
 }
 
 interface BranchPickerProps {
@@ -30,6 +37,8 @@ export function BranchPicker({
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState<string | null>(null);
+  const [matchIndices, setMatchIndices] = useState<Map<string, number[]>>(new Map());
+  const [filtered, setFiltered] = useState<GitBranchInfo[]>([]);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -95,7 +104,43 @@ export function BranchPicker({
     [workspacePath, onSwitch],
   );
 
-  const filtered = branches.filter((b) => b.name.toLowerCase().includes(search.toLowerCase()));
+  // Fuzzy-filter the branches through the Rust matcher so ranking, highlighting,
+  // and case/separator handling match the file picker.
+  useEffect(() => {
+    let cancelled = false;
+    const trimmed = search.trim();
+
+    if (!trimmed) {
+      setFiltered(branches);
+      setMatchIndices(new Map());
+      return;
+    }
+
+    invoke<FuzzyHit[]>("fuzzy_match", {
+      query: trimmed,
+      items: branches.map((b) => b.name),
+      mode: "plain",
+    })
+      .then((hits) => {
+        if (cancelled) return;
+        const byName = new Map(branches.map((b) => [b.name, b] as const));
+        const ordered = hits.map((h) => byName.get(h.text)).filter((b): b is GitBranchInfo => !!b);
+        setFiltered(ordered);
+        setMatchIndices(new Map(hits.map((h) => [h.text, h.indices])));
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.warn("branch fuzzy_match failed:", e);
+        // Fallback to substring filtering so the picker stays usable.
+        const q = trimmed.toLowerCase();
+        setFiltered(branches.filter((b) => b.name.toLowerCase().includes(q)));
+        setMatchIndices(new Map());
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [search, branches]);
 
   // Position the dropdown above the anchor
   const position = useMemo(() => {
@@ -166,7 +211,16 @@ export function BranchPicker({
                           : "text-[var(--color-text-primary)]"
                       }`}
                     >
-                      {branch.name}
+                      {highlightedParts(branch.name, matchIndices.get(branch.name) ?? []).map(
+                        (p, i) =>
+                          p.highlighted ? (
+                            <span key={i} className="text-[var(--color-accent-blue)] font-semibold">
+                              {p.text}
+                            </span>
+                          ) : (
+                            <span key={i}>{p.text}</span>
+                          ),
+                      )}
                     </span>
                     {branch.lastCommitDate && (
                       <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">

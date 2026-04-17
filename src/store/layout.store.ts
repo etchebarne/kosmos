@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { PaneNode, PaneSplit, Tab } from "../types";
 import {
   genId,
@@ -341,10 +342,13 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
       return { layout };
     }),
 
-  openFile: (filePath, fileName, sourcePaneId) =>
+  openFile: (filePath, fileName, sourcePaneId) => {
+    // Fire-and-forget frecency update so fff boosts this file next time.
+    invoke("fff_track_access", { path: filePath }).catch(() => {});
     set((state) =>
       openTabInBestPane(state, "editor", filePath, fileName, { filePath }, sourcePaneId),
-    ),
+    );
+  },
 
   openChanges: (filePath, fileName, staged, isUntracked, sourcePaneId) =>
     set((state) =>

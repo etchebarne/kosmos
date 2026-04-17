@@ -17,7 +17,6 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 struct TauriEventSink {
     handle: AppHandle,
-    file_cache: Arc<search::FileListCache>,
 }
 
 impl EventSink for TauriEventSink {
@@ -27,7 +26,6 @@ impl EventSink for TauriEventSink {
                 let _ = self.handle.emit("git-changed", ());
             }
             Event::FileTreeChanged { dirs } => {
-                self.file_cache.invalidate();
                 let _ = self.handle.emit("file-tree-changed", dirs);
             }
             Event::FileContentChanged { files } => {
@@ -97,13 +95,11 @@ pub fn run() {
                 }
             }
 
-            // File list cache for fuzzy search (invalidated by the watcher)
-            let file_cache = Arc::new(search::FileListCache::new());
-            app.manage(file_cache.clone());
+            // fff-search picker (workspace indexer + frecency DB)
+            app.manage(search::FffPickerState::new());
 
             let events: Arc<dyn EventSink> = Arc::new(TauriEventSink {
                 handle: handle.clone(),
-                file_cache,
             });
 
             // Watcher
@@ -213,8 +209,10 @@ pub fn run() {
             remote::commands::remote_disconnect,
             remote::commands::remote_is_connected,
             remote::commands::remote_ensure_connected,
-            search::list_workspace_files,
-            search::fuzzy_search_files,
+            search::fff_set_workspace,
+            search::fff_search_files,
+            search::fff_track_access,
+            search::fuzzy_match,
             search::search_in_files,
             plugins::plugin_list,
             plugins::plugin_install,

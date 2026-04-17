@@ -2,6 +2,11 @@
 members = [".", "crates/kosmos-protocol", "crates/kosmos-core", "crates/kosmos-agent"]
 resolver = "2"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
 [package]
 name = "kosmos"
 version = "0.2.0"

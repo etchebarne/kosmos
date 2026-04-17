@@ -12,6 +12,7 @@ pub(crate) struct AgentState {
     watcher: kosmos_core::watcher::WatcherManager,
     terminals: kosmos_core::terminal::TerminalManager,
     lsp: kosmos_core::lsp::LspManager,
+    fff: kosmos_core::fff_picker::FffPicker,
 }
 
 // ── Helpers ──

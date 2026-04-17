@@ -1,6 +1,8 @@
 pub mod editor;
 pub mod error;
+pub mod fff_picker;
 pub mod file_tree;
+pub mod fuzzy;
 pub mod git;
 pub mod git_stash;
 pub mod lsp;

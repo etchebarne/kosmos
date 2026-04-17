@@ -46,10 +46,16 @@ pub(crate) async fn inline_main() {
         writer: stdout_writer.clone(),
     });
 
+    let fff = kosmos_core::fff_picker::FffPicker::new(data_dir.join("fff-frecency.lmdb"))
+        .unwrap_or_else(|e| {
+            panic!("Failed to initialize fff frecency database: {e}");
+        });
+
     let state = Arc::new(AgentState {
         watcher: kosmos_core::watcher::WatcherManager::new(events.clone()),
         terminals: kosmos_core::terminal::TerminalManager::new(events.clone()),
         lsp: kosmos_core::lsp::LspManager::new(events, servers_dir, None),
+        fff,
     });
 
     let writer = stdout_writer.clone();

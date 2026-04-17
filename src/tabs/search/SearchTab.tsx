@@ -14,8 +14,15 @@ import type { TabContentProps } from "../types";
 type SearchMode = "files" | "content";
 
 interface FileResult {
+  /** Absolute path. */
   path: string;
+  /** Bare filename. */
+  name: string;
+  /** Path relative to the workspace root — what gets matched and highlighted. */
+  relative_path: string;
+  /** fff combined score (higher is better). */
   score: number;
+  /** Byte offsets into `relative_path` that matched the query. */
   indices: number[];
 }
 
@@ -48,7 +55,16 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     setTimeout(() => inputRef.current?.focus(), 0);
   }, []);
 
-  // Fuzzy file search via Rust backend (debounced)
+  // Point fff at the active workspace so its background indexer + watcher spin up.
+  // Idempotent for the same path on the Rust side.
+  useEffect(() => {
+    if (!activeWorkspace) return;
+    invoke("fff_set_workspace", { path: activeWorkspace.path }).catch((e) => {
+      console.warn("fff_set_workspace failed:", e);
+    });
+  }, [activeWorkspace?.path]);
+
+  // Fuzzy file search via fff (debounced)
   useEffect(() => {
     if (mode !== "files") return;
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -61,7 +77,7 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
 
     setFileLoading(true);
     searchTimerRef.current = setTimeout(() => {
-      invoke<FileResult[]>("fuzzy_search_files", {
+      invoke<FileResult[]>("fff_search_files", {
         path: activeWorkspace.path,
         query: query.trim(),
         maxResults: 50,
@@ -72,7 +88,7 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
           setSelectedIndex(0);
         })
         .catch((e) => {
-          console.warn("Fuzzy search failed:", e);
+          console.warn("fff search failed:", e);
           setFileLoading(false);
         });
     }, 80);
@@ -149,7 +165,9 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     (index: number) => {
       if (mode === "files") {
         const r = fileResults[index];
-        if (r) openFile(r.path);
+        if (!r || !activeWorkspace) return;
+        // fff already returns an absolute path; just pass it through to the layout store.
+        useLayoutStore.getState().openFile(r.path, r.name, paneId);
       } else {
         const r = contentResults[index];
         if (r) {
@@ -160,7 +178,7 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
         }
       }
     },
-    [mode, fileResults, contentResults, openFile, activeWorkspace],
+    [mode, fileResults, contentResults, openFile, activeWorkspace, paneId],
   );
 
   // Keyboard navigation
@@ -298,10 +316,10 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
                     <File size={14} className="text-[var(--color-text-muted)] shrink-0" />
                     <div className="flex flex-col min-w-0 flex-1">
                       <span className="text-[12px] text-[var(--color-text-primary)] font-medium truncate">
-                        {getFileName(r.path)}
+                        {r.name}
                       </span>
                       <span className="text-[10px] text-[var(--color-text-tertiary)] truncate">
-                        {highlightedParts(r.path, r.indices).map((p, j) =>
+                        {highlightedParts(r.relative_path, r.indices).map((p, j) =>
                           p.highlighted ? (
                             <span key={j} className="text-[var(--color-accent-blue)] font-semibold">
                               {p.text}
