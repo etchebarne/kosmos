@@ -165,7 +165,7 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
         >
           <div className="flex items-center gap-0.5 px-3 py-2 w-max">
             <button
-              className="text-xs px-1 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] shrink-0"
+              className="text-xs px-1 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] shrink-0 rounded"
               onClick={() => navigateBreadcrumb(0)}
             >
               /
@@ -174,7 +174,7 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
               <span key={i} className="flex items-center shrink-0">
                 <span className="text-[10px] text-[var(--color-text-muted)]">/</span>
                 <button
-                  className={`text-xs px-1 py-0.5 hover:bg-[var(--color-bg-hover)] ${
+                  className={`text-xs px-1 py-0.5 hover:bg-[var(--color-bg-hover)] rounded ${
                     i === segments.length - 1
                       ? "text-[var(--color-text-primary)] font-medium"
                       : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
@@ -203,7 +203,7 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
               {/* Go up */}
               {cwd !== "/" && (
                 <button
-                  className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)] text-left"
+                  className="flex items-center gap-2.5 mx-2 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)] text-left rounded-md"
                   onClick={navigateUp}
                 >
                   <span className="w-4 text-center text-[var(--color-text-muted)]">..</span>
@@ -213,7 +213,7 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
               {dirs.map((entry) => (
                 <button
                   key={entry.name}
-                  className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)] text-left"
+                  className="flex items-center gap-2.5 mx-2 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)] text-left rounded-md"
                   onClick={() => navigate(entry.name)}
                 >
                   <svg
@@ -244,14 +244,14 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
           </span>
           <div className="flex gap-2 shrink-0">
             <button
-              className="h-7 px-3 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-[var(--color-border-secondary)] hover:border-[var(--color-border-primary)]"
+              className="h-7 px-3 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-[var(--color-border-secondary)] hover:border-[var(--color-border-primary)] rounded-md"
               onClick={onClose}
               disabled={connecting}
             >
               Cancel
             </button>
             <button
-              className="h-7 px-3 text-xs text-white bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] disabled:opacity-50"
+              className="h-7 px-3 text-xs text-white bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] disabled:opacity-50 rounded-md"
               onClick={handleConnect}
               disabled={connecting}
             >

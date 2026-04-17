@@ -166,7 +166,7 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
         );
       })}
       <button
-        className="flex items-center justify-center w-7 h-7 mx-1 text-[var(--color-text-muted)] shrink-0 hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-border-primary)]"
+        className="flex items-center justify-center w-7 h-7 mx-1 text-[var(--color-text-muted)] shrink-0 hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-border-primary)] rounded-md"
         onClick={() => addTab(paneId)}
       >
         <Plus size={14} />

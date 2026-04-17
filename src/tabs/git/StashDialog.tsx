@@ -78,14 +78,14 @@ function StashEntryRow({
           {entry.message}
         </span>
         <button
-          className="shrink-0 px-2 py-0.5 text-[11px] text-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue-hover)] transition-colors cursor-pointer"
+          className="shrink-0 px-2 py-0.5 text-[11px] text-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue-hover)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer rounded"
           onClick={() => onPop(entry.index)}
           title="Apply and remove this stash"
         >
           Apply
         </button>
         <button
-          className="shrink-0 p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-status-red)] transition-colors cursor-pointer"
+          className="shrink-0 p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-status-red)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer rounded"
           onClick={() => onDrop(entry.index)}
           title="Delete this stash"
         >

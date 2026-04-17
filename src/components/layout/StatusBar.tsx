@@ -107,7 +107,7 @@ export function StatusBar() {
   };
 
   return (
-    <div className="flex items-center gap-3 h-6 min-h-6 px-4 bg-[var(--color-accent-blue)] pill-depth text-white text-[11px] rounded-full">
+    <div className="flex items-center gap-3 h-6 min-h-6 px-4 bg-[var(--color-bg-page)] pill-depth border border-[var(--color-border-primary)] text-[var(--color-text-secondary)] text-[11px] rounded-full overflow-hidden">
       <div className="flex items-center gap-1">
         <GitBranch size={12} />
         <span>{branch ?? "Not a git repo"}</span>
@@ -119,8 +119,8 @@ export function StatusBar() {
           const label = item.message ?? item.title;
           const pct = item.percentage != null ? ` ${item.percentage}%` : "";
           return (
-            <div className="flex items-center gap-1.5 text-white/70">
-              <div className="w-1.5 h-1.5 bg-sky-400 animate-pulse" />
+            <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
+              <div className="w-1.5 h-1.5 bg-[var(--color-accent-blue)] animate-pulse" />
               <span className="max-w-[200px] truncate">
                 {label}
                 {pct}
@@ -133,7 +133,7 @@ export function StatusBar() {
         {showLsp && (
           <>
             <button
-              className={`flex items-center gap-1.5 ${focusedServer.status === "unavailable" ? "cursor-pointer hover:text-white" : "cursor-default"}`}
+              className={`flex items-center gap-1.5 ${focusedServer.status === "unavailable" ? "cursor-pointer hover:text-[var(--color-text-primary)]" : "cursor-default"}`}
               title={focusedServer.errorMessage ?? focusedServer.serverName}
               onClick={() =>
                 handleLspClick(
@@ -146,10 +146,13 @@ export function StatusBar() {
               <div
                 className={`w-1.5 h-1.5 ${STATUS_COLORS[focusedServer.status]} ${focusedServer.status === "installing" ? "animate-pulse" : ""}`}
               />
-              <span className="text-white/80">
+              <span className="text-[var(--color-text-secondary)]">
                 {focusedServer.serverName}
                 {STATUS_LABELS[focusedServer.status] && (
-                  <span className="text-white/50"> ({STATUS_LABELS[focusedServer.status]})</span>
+                  <span className="text-[var(--color-text-muted)]">
+                    {" "}
+                    ({STATUS_LABELS[focusedServer.status]})
+                  </span>
                 )}
               </span>
             </button>
@@ -167,13 +170,13 @@ export function StatusBar() {
                 </p>
                 <div className="flex justify-end gap-2">
                   <button
-                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer rounded-md"
                     onClick={() => setInstallDialog(null)}
                   >
                     Cancel
                   </button>
                   <button
-                    className="px-3 py-1.5 text-xs bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] text-white transition-colors cursor-pointer"
+                    className="px-3 py-1.5 text-xs bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] text-white transition-colors cursor-pointer rounded-md"
                     onClick={handleInstall}
                   >
                     Install
