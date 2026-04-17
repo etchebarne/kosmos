@@ -18,6 +18,8 @@ jobs:
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
+      - uses: mlugg/setup-zig@v2
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
@@ -25,7 +27,7 @@ jobs:
       - name: Build kosmos-agent
         working-directory: src-tauri
         run: |
-          cargo build -p kosmos-agent --release --target x86_64-unknown-linux-musl --target-dir target/agent-linux
+          cargo build -p kosmos-agent --release --target x86_64-unknown-linux-musl --target-dir target/agent-linux --features kosmos-core/zlob
           mkdir -p resources
           cp target/agent-linux/x86_64-unknown-linux-musl/release/kosmos-agent resources/kosmos-agent
 
@@ -43,16 +45,16 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-latest
-            args: ""
+            args: --features kosmos-core/zlob
             id: linux
           - platform: macos-latest
-            args: --target aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --features kosmos-core/zlob
             id: macos-arm
           - platform: macos-latest
-            args: --target x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --features kosmos-core/zlob
             id: macos-x64
           - platform: windows-latest
-            args: ""
+            args: --features kosmos-core/zlob
             id: windows
 
     runs-on: ${{ matrix.platform }}
@@ -77,6 +79,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: mlugg/setup-zig@v2
 
       - uses: swatinem/rust-cache@v2
         with:

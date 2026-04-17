@@ -8,6 +8,9 @@ default = ["installer"]
 # The installer feature pulls in heavy deps (reqwest, zip, flate2, tar)
 # needed for downloading/extracting LSP servers.
 installer = ["dep:zip", "dep:flate2", "dep:tar"]
+# Enable fff-search's Zig-compiled glob matcher. Required in CI; requires
+# Zig on PATH at build time.
+zlob = ["fff-search/zlob"]
 
 [dependencies]
 kosmos-protocol = { path = "../kosmos-protocol", features = ["async"] }
