@@ -6,6 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { TabIcon } from "../../components/shared/TabIcon";
+import { OptionCard } from "../../components/shared/OptionCard";
 import { StateView } from "../../components/shared/StateView";
 import { getTheme } from "../../lib/themes";
 import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE } from "../../store/editor.store";
@@ -46,18 +47,18 @@ function ShellPicker({
       ) : (
         <div className="grid grid-cols-1 @[360px]:grid-cols-2 gap-2 w-full @[360px]:w-[320px]">
           {shells.map((shell, i) => (
-            <button
+            <OptionCard
               key={`${shell.program}-${i}`}
-              className="flex items-center gap-3 px-3 py-2.5 bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-left hover:border-[var(--color-accent-blue)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              icon={
+                <TabIcon
+                  name="terminal"
+                  size={16}
+                  className="shrink-0 text-[var(--color-text-tertiary)]"
+                />
+              }
+              label={shell.name}
               onClick={() => onSelect(shell)}
-            >
-              <TabIcon
-                name="terminal"
-                size={16}
-                className="shrink-0 text-[var(--color-text-tertiary)]"
-              />
-              <span className="text-xs text-[var(--color-text-primary)]">{shell.name}</span>
-            </button>
+            />
           ))}
         </div>
       )}

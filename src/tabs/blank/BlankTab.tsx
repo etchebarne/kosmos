@@ -1,6 +1,7 @@
 import { getVisibleTabDefinitions } from "../registry";
 import { useLayoutStore } from "../../store/layout.store";
 import { TabIcon } from "../../components/shared/TabIcon";
+import { OptionCard } from "../../components/shared/OptionCard";
 import type { TabContentProps } from "../types";
 
 export function BlankTab({ tab, paneId }: TabContentProps) {
@@ -20,18 +21,18 @@ export function BlankTab({ tab, paneId }: TabContentProps) {
       ) : (
         <div className="grid grid-cols-1 @[360px]:grid-cols-2 gap-2 w-full @[360px]:w-[320px]">
           {definitions.map((def) => (
-            <button
+            <OptionCard
               key={def.type}
-              className="flex items-center gap-3 px-3 py-2.5 bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-left hover:border-[var(--color-accent-blue)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              icon={
+                <TabIcon
+                  name={def.icon}
+                  size={16}
+                  className="shrink-0 text-[var(--color-text-tertiary)]"
+                />
+              }
+              label={def.title}
               onClick={() => transformTab(paneId, tab.id, def.type)}
-            >
-              <TabIcon
-                name={def.icon}
-                size={16}
-                className="shrink-0 text-[var(--color-text-tertiary)]"
-              />
-              <span className="text-xs text-[var(--color-text-primary)]">{def.title}</span>
-            </button>
+            />
           ))}
         </div>
       )}

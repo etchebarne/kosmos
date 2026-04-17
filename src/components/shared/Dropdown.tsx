@@ -23,7 +23,7 @@ export function Dropdown({ value, options, onChange }: DropdownProps) {
   return (
     <div ref={ref} className="relative">
       <button
-        className={`flex items-center justify-between gap-3 text-xs px-3 py-1.5 min-w-[120px] border transition-colors bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] ${
+        className={`flex items-center justify-between gap-3 text-xs px-3 py-1.5 min-w-[120px] border transition-colors bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] rounded-md ${
           open
             ? "border-[var(--color-accent-blue)]"
             : "border-[var(--color-border-secondary)] hover:border-[var(--color-border-primary)]"
@@ -40,7 +40,7 @@ export function Dropdown({ value, options, onChange }: DropdownProps) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 min-w-full py-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[3px_3px_0_rgba(0,0,0,0.25)] animate-fade-in-down origin-top">
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-full py-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[3px_3px_0_rgba(0,0,0,0.25)] animate-fade-in-down origin-top rounded-md">
           {options.map((opt) => (
             <button
               key={opt.value}

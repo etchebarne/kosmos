@@ -84,9 +84,12 @@ function App() {
   const hasWorkspace = activeIndex !== null;
 
   return (
-    <div className="font-ui flex flex-col h-screen w-screen overflow-hidden">
+    <div
+      data-tauri-drag-region
+      className="font-ui flex flex-col h-screen w-screen overflow-hidden gap-1.5 p-1.5 bg-[var(--color-bg-page)]"
+    >
       <ProjectBar />
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 flex rounded-xl overflow-hidden bg-[var(--color-bg-surface)] border border-[var(--color-border-primary)]">
         {workspaces.map((ws) => {
           const wsLayout = allLayouts[ws.path];
           if (!wsLayout) return null;

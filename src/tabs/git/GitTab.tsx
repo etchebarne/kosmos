@@ -19,7 +19,6 @@ import { BranchPicker } from "./BranchPicker";
 import { StashDialog } from "./StashDialog";
 import { useGitStatus } from "../../hooks/use-git-status";
 import { useGitActions as useGitRemoteActions, GIT_ACTIONS } from "../../hooks/use-git-actions";
-import { useClickOutside } from "../../hooks/use-click-outside";
 import { buildChangeTree, getNodeFiles } from "../../lib/git-tree";
 import type { TreeNode } from "../../lib/git-tree";
 import { useLayoutStore } from "../../store/layout.store";
@@ -38,22 +37,15 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
   const [commitMessage, setCommitMessage] = useState("");
   const [committing, setCommitting] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
-  const [showActionMenu, setShowActionMenu] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showStashDialog, setShowStashDialog] = useState(false);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
     items: ContextMenuItem[];
+    placement?: "top-start" | "top-end" | "bottom-start" | "bottom-end";
   } | null>(null);
   const branchBarRef = useRef<HTMLDivElement>(null);
   const branchButtonRef = useRef<HTMLButtonElement>(null);
-  const actionMenuRef = useRef<HTMLDivElement>(null);
-
-  useClickOutside(actionMenuRef, () => setShowActionMenu(false), showActionMenu);
-
-  useClickOutside(moreMenuRef, () => setShowMoreMenu(false), showMoreMenu);
 
   const {
     handleStageAll,
@@ -171,55 +163,25 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
           >
             {allStaged ? "Unstage All" : "Stage All"}
           </button>
-          <div className="relative" ref={moreMenuRef}>
-            <button
-              className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
-              onClick={() => setShowMoreMenu((v) => !v)}
-            >
-              <DotsThree size={14} />
-            </button>
-            {showMoreMenu && (
-              <div className="absolute top-full right-0 mt-1 min-w-[180px] py-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-lg z-50">
-                <button
-                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)] cursor-pointer"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    handleStashAll();
-                  }}
-                >
-                  Stash All
-                </button>
-                <button
-                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)] cursor-pointer"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    setShowStashDialog(true);
-                  }}
-                >
-                  View Stash
-                </button>
-                <div className="my-1 border-t border-[var(--color-border-primary)]" />
-                <button
-                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)] cursor-pointer"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    handleDiscardAllTracked();
-                  }}
-                >
-                  Discard Tracked Changes
-                </button>
-                <button
-                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)] cursor-pointer"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    handleTrashAllUntracked();
-                  }}
-                >
-                  Trash Untracked Files
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+              setContextMenu({
+                x: rect.right,
+                y: rect.bottom + 4,
+                items: [
+                  { label: "Stash All", onClick: handleStashAll },
+                  { label: "View Stash", onClick: () => setShowStashDialog(true) },
+                  { separator: true },
+                  { label: "Discard Tracked Changes", onClick: handleDiscardAllTracked },
+                  { label: "Trash Untracked Files", onClick: handleTrashAllUntracked },
+                ],
+              });
+            }}
+          >
+            <DotsThree size={14} />
+          </button>
         </div>
       </div>
 
@@ -280,6 +242,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
           x={contextMenu.x}
           y={contextMenu.y}
           items={contextMenu.items}
+          placement={contextMenu.placement}
           onClose={() => setContextMenu(null)}
         />
       )}
@@ -314,8 +277,8 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
             <CaretDown size={12} className="text-[var(--color-text-tertiary)] shrink-0" />
           </button>
 
-          <div className="relative flex items-center" ref={actionMenuRef}>
-            <div className="flex bg-[var(--color-bg-elevated)] border border-[var(--color-border-secondary)] rounded-none overflow-hidden">
+          <div className="relative flex items-center">
+            <div className="flex bg-[var(--color-bg-elevated)] border border-[var(--color-border-secondary)] rounded-md overflow-hidden">
               <button
                 className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed rounded-none border-r border-[var(--color-border-secondary)]"
                 onClick={() => handleRunAction()}
@@ -344,32 +307,24 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
               </button>
               <button
                 className="flex items-center px-1 py-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed rounded-none"
-                onClick={() => setShowActionMenu((v) => !v)}
+                onClick={(e) => {
+                  const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                  setContextMenu({
+                    x: rect.right,
+                    y: rect.top - 4,
+                    placement: "bottom-end",
+                    items: GIT_ACTIONS.map((action) => ({
+                      label: action.label,
+                      active: action.key === activeAction,
+                      onClick: () => handleRunAction(action.key),
+                    })),
+                  });
+                }}
                 disabled={!status?.hasRemote}
               >
                 <CaretDown size={12} />
               </button>
             </div>
-            {showActionMenu && (
-              <div className="absolute bottom-full right-0 mb-1 min-w-[140px] bg-[var(--color-bg-elevated)] border border-[var(--color-border-secondary)] shadow-lg z-50">
-                {GIT_ACTIONS.map((action) => (
-                  <button
-                    key={action.key}
-                    className={`w-full text-left px-3 py-2 text-xs transition-colors cursor-pointer rounded-none ${
-                      action.key === activeAction
-                        ? "text-[var(--color-text-primary)] bg-[var(--color-bg-surface)] font-medium"
-                        : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-text-primary)]"
-                    }`}
-                    onClick={() => {
-                      setShowActionMenu(false);
-                      handleRunAction(action.key);
-                    }}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
         {showBranchPicker && activeWorkspace && (
@@ -404,7 +359,7 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
           </ScrollArea>
           <div className="absolute bottom-3 right-3 pointer-events-none">
             <button
-              className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[var(--color-bg-elevated)] border border-[var(--color-border-secondary)] text-[11px] font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed rounded-none shadow-sm pointer-events-auto"
+              className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[var(--color-bg-elevated)] border border-[var(--color-border-secondary)] text-[11px] font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-surface)] hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed rounded-md shadow-sm pointer-events-auto"
               onClick={handleCommit}
               disabled={committing || !commitMessage.trim() || stagedCount === 0}
             >

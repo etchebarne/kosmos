@@ -156,7 +156,7 @@ export function BranchPicker({
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-lg flex flex-col rounded-none overflow-hidden"
+      className="fixed z-50 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-lg flex flex-col rounded-md overflow-hidden"
       style={{
         bottom: position.bottom,
         left: position.left,

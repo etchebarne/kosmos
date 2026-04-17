@@ -4,7 +4,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { Setting } from "../../components/shared/Setting";
-import { SectionTitle } from "../../components/shared/SectionTitle";
 import { Dropdown } from "../../components/shared/Dropdown";
 import { useSettingsStore } from "../../store/settings.store";
 import type { TabContentProps } from "../types";
@@ -57,7 +56,7 @@ function SettingControlRenderer({
     case "switch":
       return (
         <button
-          className={`relative flex items-center w-8 h-[18px] border transition-colors ${
+          className={`relative flex items-center w-8 h-[18px] border transition-colors rounded-full ${
             value
               ? "bg-[var(--color-accent-blue)] border-[var(--color-accent-blue)]"
               : "bg-[var(--color-bg-surface)] border-[var(--color-border-primary)] hover:border-[var(--color-border-hover)]"
@@ -65,7 +64,7 @@ function SettingControlRenderer({
           onClick={() => onChange(!value)}
         >
           <span
-            className={`absolute top-0.5 w-3.5 h-3.5 bg-white transition-transform ${
+            className={`absolute top-0.5 w-3.5 h-3.5 bg-white transition-transform rounded-full ${
               value ? "left-[16px]" : "left-[2px]"
             }`}
           />
@@ -80,7 +79,7 @@ function SettingControlRenderer({
           max={control.max}
           step={control.step}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="text-xs w-16 bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-[var(--color-text-primary)] px-2 py-1 outline-none hover:border-[var(--color-border-primary)] focus:border-[var(--color-accent-blue)] transition-colors text-center"
+          className="text-xs w-16 bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-[var(--color-text-primary)] px-2 py-1 outline-none hover:border-[var(--color-border-primary)] focus:border-[var(--color-accent-blue)] transition-colors text-center rounded-md"
         />
       );
   }
@@ -100,12 +99,12 @@ function AccordionSection({
   onChange: (key: string, value: unknown) => void;
 }) {
   return (
-    <div className="mb-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)]">
+    <div className="mb-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)] rounded-md">
       <button
         className={`flex items-center gap-3 w-full px-4 py-3 text-left transition-colors border-b ${
           expanded
-            ? "bg-[var(--color-bg-surface)] border-[var(--color-border-primary)]"
-            : "border-transparent hover:bg-[var(--color-bg-hover)]"
+            ? "bg-[var(--color-bg-surface)] border-[var(--color-border-primary)] rounded-t-md"
+            : "border-transparent hover:bg-[var(--color-bg-hover)] rounded-md"
         }`}
         onClick={onToggle}
       >
@@ -119,11 +118,13 @@ function AccordionSection({
       </button>
 
       {expanded && (
-        <div className="px-4 py-2 bg-[var(--color-bg-page)]">
+        <div className="p-2 bg-[var(--color-bg-page)] rounded-b-md">
           {section.groups.map((group, groupIdx) => (
-            <div key={group.title} className={`flex flex-col ${groupIdx > 0 ? "mt-6" : "mt-2"}`}>
-              <SectionTitle>{group.title}</SectionTitle>
-              <div className="mt-2 flex flex-col gap-1 border-l-2 border-[var(--color-border-secondary)] pl-3">
+            <div key={group.title} className={`flex flex-col ${groupIdx > 0 ? "mt-4" : ""}`}>
+              <h4 className="text-xs font-bold text-[var(--color-text-secondary)] px-3 pt-3 pb-1">
+                {group.title}
+              </h4>
+              <div className="flex flex-col">
                 {group.settings.map((entry) => (
                   <Setting key={entry.key} label={entry.label} description={entry.description}>
                     <SettingControlRenderer

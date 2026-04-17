@@ -202,7 +202,7 @@ export function ProjectBar() {
   return (
     <div
       data-tauri-drag-region
-      className="relative flex items-center bg-[var(--color-project-bar-bg)] border-b border-[var(--color-border-primary)]"
+      className="relative flex items-center bg-[var(--color-bg-surface)] rounded-full overflow-hidden border border-[var(--color-border-primary)]"
       style={{ height: HEADER_HEIGHT, minHeight: HEADER_HEIGHT }}
     >
       {/* ── Left: logo + top menus ── */}

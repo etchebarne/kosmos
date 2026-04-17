@@ -107,7 +107,7 @@ export function StatusBar() {
   };
 
   return (
-    <div className="flex items-center gap-3 h-6 min-h-6 px-3 bg-[var(--color-accent-blue)] text-white text-[11px]">
+    <div className="flex items-center gap-3 h-6 min-h-6 px-4 bg-[var(--color-accent-blue)] text-white text-[11px] rounded-full">
       <div className="flex items-center gap-1">
         <GitBranch size={12} />
         <span>{branch ?? "Not a git repo"}</span>

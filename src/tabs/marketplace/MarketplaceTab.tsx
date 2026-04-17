@@ -52,7 +52,7 @@ function InstalledPluginCard({ plugin }: { plugin: InstalledPlugin }) {
   };
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)]">
+    <div className="flex items-start gap-3 px-4 py-3 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)] rounded-md">
       <PuzzlePiece
         size={20}
         weight="duotone"
@@ -131,7 +131,7 @@ function RegistryPluginCard({ entry, installed }: { entry: RegistryEntry; instal
   };
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)]">
+    <div className="flex items-start gap-3 px-4 py-3 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[2px_2px_0_rgba(0,0,0,0.15)] rounded-md">
       <PuzzlePiece
         size={20}
         weight="duotone"
@@ -178,12 +178,12 @@ function RegistryPluginCard({ entry, installed }: { entry: RegistryEntry; instal
       </div>
       <div className="shrink-0">
         {installed ? (
-          <span className="text-[10px] text-[var(--color-text-tertiary)] px-2 py-1 border border-[var(--color-border-secondary)]">
+          <span className="text-[10px] text-[var(--color-text-tertiary)] px-2 py-1 border border-[var(--color-border-secondary)] rounded-md">
             Installed
           </span>
         ) : (
           <button
-            className="flex items-center gap-1 text-[11px] px-2.5 py-1 bg-[var(--color-accent-blue)] text-white hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1 text-[11px] px-2.5 py-1 bg-[var(--color-accent-blue)] text-white hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 rounded-md"
             onClick={handleInstall}
             disabled={isInstalling || installing !== null}
           >
@@ -269,7 +269,7 @@ export function MarketplaceTab({ tab: _tab, paneId: _paneId }: TabContentProps) 
           placeholder="Search extensions..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full text-xs bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-[var(--color-text-primary)] px-3 py-2 mb-6 outline-none hover:border-[var(--color-border-primary)] focus:border-[var(--color-accent-blue)] transition-colors placeholder:text-[var(--color-text-muted)]"
+          className="w-full text-xs bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-[var(--color-text-primary)] px-3 py-2 mb-6 outline-none hover:border-[var(--color-border-primary)] focus:border-[var(--color-accent-blue)] transition-colors placeholder:text-[var(--color-text-muted)] rounded-md"
         />
 
         {/* Installed */}
