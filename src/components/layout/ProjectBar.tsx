@@ -14,7 +14,7 @@ import { TopMenus } from "./TopMenus";
 import { useUpdateStore } from "../../store/update.store";
 
 const FLIP_DURATION = 150;
-const HEADER_HEIGHT = 36;
+const HEADER_HEIGHT = 40;
 
 export function ProjectBar() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -202,7 +202,7 @@ export function ProjectBar() {
   return (
     <div
       data-tauri-drag-region
-      className="relative flex items-center bg-[var(--color-bg-surface)] rounded-full overflow-hidden border border-[var(--color-border-primary)]"
+      className="relative flex items-center bg-[var(--color-bg-page)] pill-depth rounded-full overflow-hidden border border-[var(--color-border-primary)]"
       style={{ height: HEADER_HEIGHT, minHeight: HEADER_HEIGHT }}
     >
       {/* ── Left: logo + top menus ── */}

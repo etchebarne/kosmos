@@ -94,7 +94,7 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
     <div
       ref={tabBarRef}
       role="tablist"
-      className="flex items-center h-9 min-h-9 bg-[var(--color-project-bar-bg)] border-b border-[var(--color-border-primary)] overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:h-0"
+      className="flex items-center h-9 min-h-9 bg-[var(--color-project-bar-bg)] pill-depth border-b border-[var(--color-border-primary)] overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:h-0"
       data-tabbar-pane={paneId}
       onWheel={handleWheel}
     >
@@ -110,7 +110,7 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
             role="tab"
             aria-selected={isActive}
             data-tab
-            className={`group flex items-center gap-2 h-full px-3 cursor-grab select-none whitespace-nowrap ${
+            className={`group flex items-center gap-2 h-full px-3 cursor-grab select-none whitespace-nowrap pill-depth ${
               isActive
                 ? "bg-[var(--color-tab-active-bg)] border-b-2 border-[var(--color-accent-blue)]"
                 : "bg-[var(--color-tab-inactive-bg)] border-b border-[var(--color-border-primary)] hover:bg-[var(--color-bg-surface)]"

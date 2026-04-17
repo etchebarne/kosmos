@@ -89,7 +89,7 @@ function App() {
       className="font-ui flex flex-col h-screen w-screen overflow-hidden gap-1.5 p-1.5 bg-[var(--color-bg-page)]"
     >
       <ProjectBar />
-      <div className="flex-1 min-h-0 flex rounded-xl overflow-hidden bg-[var(--color-bg-surface)] border border-[var(--color-border-primary)]">
+      <div className="flex-1 min-h-0 flex rounded-xl overflow-hidden bg-[var(--color-bg-surface)] pill-depth border border-[var(--color-border-primary)]">
         {workspaces.map((ws) => {
           const wsLayout = allLayouts[ws.path];
           if (!wsLayout) return null;

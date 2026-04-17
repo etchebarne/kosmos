@@ -57,6 +57,7 @@ export function applyTheme(name: string) {
   for (const [key, value] of Object.entries(vars)) {
     root.style.setProperty(key, value);
   }
+  root.setAttribute("data-theme", theme.type);
 
   window.dispatchEvent(new CustomEvent("theme-changed"));
 }
