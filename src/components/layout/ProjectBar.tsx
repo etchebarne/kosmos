@@ -3,7 +3,7 @@ import { Plus, ArrowsClockwise, Minus, Square, X } from "@phosphor-icons/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getTheme } from "../../lib/themes";
+import { minidenticon } from "minidenticons";
 import { useWorkspaceStore } from "../../store/workspace.store";
 import { ContextMenu } from "../shared/ContextMenu";
 import { Tooltip } from "../shared/Tooltip";
@@ -15,6 +15,17 @@ import { useUpdateStore } from "../../store/update.store";
 
 const FLIP_DURATION = 150;
 const HEADER_HEIGHT = 40;
+
+const identiconCache = new Map<string, string>();
+function identiconSvg(seed: string): string {
+  const cached = identiconCache.get(seed);
+  if (cached) return cached;
+  const svg = minidenticon(seed)
+    .replace("<svg ", '<svg width="100%" height="100%" ')
+    .replace(/fill="hsl\([^)]+\)"/, 'fill="currentColor"');
+  identiconCache.set(seed, svg);
+  return svg;
+}
 
 export function ProjectBar() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -237,11 +248,15 @@ export function ProjectBar() {
                   }
                 }}
                 draggable={false}
-                className="font-mono w-6 h-6 flex items-center justify-center text-[11px] font-bold shrink-0 hover:opacity-85 overflow-hidden select-none rounded-sm"
+                className={`w-6 h-6 flex items-center justify-center shrink-0 overflow-hidden select-none rounded-full transition-colors ${
+                  w.avatarUrl
+                    ? ""
+                    : isActive
+                      ? "bg-[var(--color-bg-input)] text-[var(--color-text-primary)] ring-1 ring-inset ring-[var(--color-border-primary)]"
+                      : "bg-[var(--color-bg-surface)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border-primary)] hover:text-[var(--color-text-secondary)]"
+                }`}
                 style={{
-                  backgroundColor: w.avatarUrl ? undefined : isActive ? w.color : `${w.color}40`,
-                  color: isActive ? getTheme().terminal.brightWhite : w.color,
-                  opacity: isDragged ? 0.5 : w.avatarUrl && !isActive ? 0.4 : undefined,
+                  opacity: isDragged ? 0.5 : !isActive ? 0.6 : 1,
                   cursor: dragPath !== null ? "grabbing" : "pointer",
                 }}
                 onMouseDown={(e) => handleWorkspaceMouseDown(e, i)}
@@ -254,12 +269,14 @@ export function ProjectBar() {
                     draggable={false}
                     className="w-full h-full object-cover pointer-events-none"
                     onError={(e) => {
-                      // Hide broken image, show fallback letter
                       (e.target as HTMLImageElement).style.display = "none";
                     }}
                   />
                 ) : (
-                  w.name[0].toUpperCase()
+                  <span
+                    className="w-full h-full flex items-center justify-center pointer-events-none"
+                    dangerouslySetInnerHTML={{ __html: identiconSvg(w.path) }}
+                  />
                 )}
               </button>
             </Tooltip>
@@ -267,7 +284,7 @@ export function ProjectBar() {
         })}
         <button
           ref={addButtonRef}
-          className="w-6 h-6 flex items-center justify-center border border-[var(--color-border-secondary)] text-[var(--color-text-muted)] shrink-0 hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] rounded-sm"
+          className="w-6 h-6 flex items-center justify-center border border-[var(--color-border-secondary)] text-[var(--color-text-muted)] shrink-0 hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] rounded-full"
           onClick={handleAddClick}
         >
           <Plus size={12} />
