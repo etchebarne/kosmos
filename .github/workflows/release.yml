@@ -50,13 +50,17 @@ jobs:
             args: --features kosmos-core/zlob
             id: linux
           - platform: macos-latest
+            target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin --features kosmos-core/zlob
             id: macos-arm
           - platform: macos-latest
+            target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin --features kosmos-core/zlob
             id: macos-x64
+          # zlob's zig-compiled C lib conflicts with MSVC's dynamic vcruntime
+          # on windows-msvc (LNK2005 on __CxxFrameHandler3), so keep it off here.
           - platform: windows-latest
-            args: --features kosmos-core/zlob
+            args: ""
             id: windows
 
     runs-on: ${{ matrix.platform }}
@@ -126,7 +130,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # .app.tar.gz is already uploaded by tauri-action; just collect the sig
-          target=$(echo "${{ matrix.args }}" | sed 's/--target //')
+          target="${{ matrix.target }}"
           sig="src-tauri/target/${target}/release/bundle/macos/kosmos.app.tar.gz.sig"
           mkdir -p updater-sig
           if [ "$target" = "aarch64-apple-darwin" ]; then
