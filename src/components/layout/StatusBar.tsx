@@ -9,15 +9,6 @@ import { languageIdFromExt } from "../../lib/ext-to-lang";
 import { getFileExtension } from "../../lib/path-utils";
 import { Dialog } from "../shared/Dialog";
 
-const STATUS_COLORS: Record<ServerStatus, string> = {
-  running: "bg-emerald-400",
-  starting: "bg-yellow-400",
-  error: "bg-red-400",
-  unavailable: "bg-orange-400",
-  installing: "bg-blue-400",
-  stopped: "bg-neutral-400",
-};
-
 const STATUS_LABELS: Record<ServerStatus, string> = {
   running: "",
   starting: "starting...",
@@ -119,8 +110,7 @@ export function StatusBar() {
           const label = item.message ?? item.title;
           const pct = item.percentage != null ? ` ${item.percentage}%` : "";
           return (
-            <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <div className="w-1.5 h-1.5 bg-[var(--color-accent-blue)] animate-pulse" />
+            <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] animate-pulse">
               <span className="max-w-[200px] truncate">
                 {label}
                 {pct}
@@ -133,7 +123,7 @@ export function StatusBar() {
         {showLsp && (
           <>
             <button
-              className={`flex items-center gap-1.5 ${focusedServer.status === "unavailable" ? "cursor-pointer hover:text-[var(--color-text-primary)]" : "cursor-default"}`}
+              className={`flex items-center ${focusedServer.status === "unavailable" ? "cursor-pointer hover:text-[var(--color-text-primary)]" : "cursor-default"} ${focusedServer.status === "installing" ? "animate-pulse" : ""}`}
               title={focusedServer.errorMessage ?? focusedServer.serverName}
               onClick={() =>
                 handleLspClick(
@@ -143,9 +133,6 @@ export function StatusBar() {
                 )
               }
             >
-              <div
-                className={`w-1.5 h-1.5 ${STATUS_COLORS[focusedServer.status]} ${focusedServer.status === "installing" ? "animate-pulse" : ""}`}
-              />
               <span className="text-[var(--color-text-secondary)]">
                 {focusedServer.serverName}
                 {STATUS_LABELS[focusedServer.status] && (
