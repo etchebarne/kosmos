@@ -18,10 +18,8 @@ export function useClickOutside(
         callbackRef.current();
       }
     };
-    // Capture phase: runs before any descendant can stopPropagation on the
-    // native event (e.g. React Flow's drag handlers), so clicks anywhere
-    // outside the ref reliably close — regardless of what consumes the event.
+    // Capture phase so descendants (e.g. React Flow) can't stopPropagation us.
     document.addEventListener("mousedown", handle, true);
     return () => document.removeEventListener("mousedown", handle, true);
-  }, [enabled]); // ref + ignoreRef are stable RefObjects — not dependencies
+  }, [enabled]);
 }

@@ -1,13 +1,13 @@
 import { useState, useCallback, useRef } from "react";
 import { CaretRight, Folder, FolderOpen } from "@phosphor-icons/react";
-import { getNodeFiles } from "../../lib/git-tree";
-import type { TreeNode } from "../../lib/git-tree";
+import { getNodeFiles } from "../../lib/gitTree";
+import type { TreeNode } from "../../lib/gitTree";
 import { useDragStore } from "../../store/drag.store";
-import { startDragThreshold } from "../../lib/drag-threshold";
-import { gitStatusColor } from "../../lib/git-colors";
-import { getFileExtension } from "../../lib/path-utils";
+import { startDragThreshold } from "../../lib/dragThreshold";
+import { gitStatusColor } from "../../lib/gitColors";
+import { getFileExtension } from "../../lib/pathUtils";
 import { useIsDarkTheme } from "../../lib/themes";
-import { FileIcon } from "../file-tree/file-icons";
+import { FileIcon } from "../fileTree/fileIcons";
 
 interface GitChangeNodeProps {
   node: TreeNode;

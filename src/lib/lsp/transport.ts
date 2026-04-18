@@ -35,20 +35,13 @@ interface StatusPayload {
   error?: string | null;
 }
 
-/** Default request timeout in milliseconds. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-/**
- * Handle returned by sendRequest that allows cancellation.
- */
-export interface CancellablePromise<T> extends Promise<T> {
+interface CancellablePromise<T> extends Promise<T> {
   cancel: () => void;
 }
 
-/**
- * Tauri-based JSON-RPC transport for LSP.
- * Sends messages via invoke("lsp_send") and receives via Tauri events.
- */
+/** JSON-RPC over invoke("lsp_send") + Tauri events. */
 export class TauriLspTransport {
   private serverId: string;
   private requestId = 0;
@@ -116,7 +109,6 @@ export class TauriLspTransport {
           clearTimeout(timer);
           this.pendingRequests.delete(id);
           reject(new Error(`LSP request '${method}' cancelled`));
-          // Send $/cancelRequest notification to server
           this.sendNotification("$/cancelRequest", { id });
         }
       };
@@ -192,7 +184,6 @@ export class TauriLspTransport {
       return;
     }
 
-    // Response to a request we sent (has id, no method)
     if ("id" in msg && msg.id != null && !("method" in msg)) {
       const response = msg as JsonRpcResponse;
       const pending = this.pendingRequests.get(response.id);
@@ -200,7 +191,7 @@ export class TauriLspTransport {
         clearTimeout(pending.timer);
         this.pendingRequests.delete(response.id);
         if (response.error) {
-          // RequestCancelled (-32800) is expected after $/cancelRequest — don't log it
+          // -32800 (RequestCancelled) follows our $/cancelRequest; expected.
           if (response.error.code !== -32800) {
             pending.reject(
               new Error(`LSP error ${response.error.code}: ${response.error.message}`),
@@ -215,9 +206,7 @@ export class TauriLspTransport {
       return;
     }
 
-    // Server-initiated request (has both id and method) — must always respond
-    // per JSON-RPC spec. Use handler result for known methods, proper error
-    // for unknown ones so the server doesn't block waiting.
+    // Server requests must always get a response; unhandled methods return -32601.
     if ("method" in msg && "id" in msg && msg.id != null) {
       const request = msg as JsonRpcRequest;
       const handler = this.requestHandlers.get(request.method);
@@ -233,7 +222,6 @@ export class TauriLspTransport {
       return;
     }
 
-    // Server notification (has method, no id)
     if ("method" in msg) {
       const notification = msg as JsonRpcNotification;
       const handlers = this.notificationHandlers.get(notification.method);

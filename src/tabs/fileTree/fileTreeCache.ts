@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DirEntry } from "./FileTreeTab";
+import type { DirEntry } from "./fileTreeTypes";
 
 const cache = new Map<string, DirEntry[]>();
 const inflight = new Map<string, Promise<DirEntry[]>>();

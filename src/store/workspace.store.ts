@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { getTauriStore } from "../lib/tauri-store";
+import { getTauriStore } from "../lib/tauriStore";
 import { useLspStore } from "./lsp.store";
-import { cleanupEditorInstances } from "../tabs/editor/editor-cache";
-import { getFileName } from "../lib/path-utils";
+import { cleanupEditorInstances } from "../tabs/editor/editorCache";
+import { getFileName } from "../lib/pathUtils";
 
 const WORKSPACE_COLORS = [
   "#4B8EF5",
@@ -60,7 +60,7 @@ async function fetchAvatarUrl(path: string): Promise<string | null> {
     const owner = await invoke<string | null>("get_git_remote_owner", { path });
     if (owner) return `https://github.com/${owner}.png?size=64`;
   } catch {
-    // Not a git repo or no remote — ignore
+    // Not a git repo or no remote.
   }
   return null;
 }
@@ -95,23 +95,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   init: async () => {
     const s = await getTauriStore("workspace.json");
     const raw = (await s.get<Workspace[]>("workspaces")) ?? [];
-    // Migrate workspaces saved before the connection field existed
+    // Default connection for pre-remote saves.
     const workspaces = raw.map((w) => ({
       ...w,
       connection: w.connection ?? { type: "local" as const },
     }));
     const activeIndex = (await s.get<number>("activeIndex")) ?? null;
-    // Collect remote workspace paths that need connecting
     const remotePaths = new Set(
       workspaces.filter((w) => w.connection.type !== "local").map((w) => w.path),
     );
 
     set({ workspaces, activeIndex, ready: true, connectingPaths: remotePaths });
 
-    // Resolve GitHub avatars for workspaces that don't have one yet
     resolveAvatars();
 
-    // Reconnect remote workspaces in the background
     for (const w of workspaces) {
       if (w.connection.type !== "local") {
         invoke("remote_ensure_connected", {
@@ -147,7 +144,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     persist(workspaces, activeIndex);
     set({ workspaces, activeIndex });
 
-    // Resolve avatar in the background
     resolveAvatars();
   },
 
@@ -173,7 +169,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const [moved] = workspaces.splice(fromIndex, 1);
     workspaces.splice(toIndex, 0, moved);
 
-    // Update activeIndex to follow the active workspace
     let activeIndex = state.activeIndex;
     if (activeIndex !== null) {
       if (activeIndex === fromIndex) {
@@ -195,13 +190,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const workspaces = state.workspaces.filter((_, i) => i !== index);
     let activeIndex: number | null = state.activeIndex;
 
-    // Stop LSP servers and clean up editor caches for the closed workspace
     if (closedPath) {
       useLspStore.getState().stopWorkspace(closedPath);
       cleanupEditorInstances(closedPath);
     }
 
-    // Disconnect remote agent
     const closedWorkspace = state.workspaces[index];
     if (closedWorkspace?.connection?.type !== "local") {
       invoke("remote_disconnect", { workspacePath: closedPath }).catch((e) =>

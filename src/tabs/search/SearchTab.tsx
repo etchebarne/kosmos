@@ -3,11 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { MagnifyingGlass, File, TextT, ArrowElbowDownLeft, Asterisk } from "@phosphor-icons/react";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { useLayoutStore } from "../../store/layout.store";
-import { getFileName, joinPath } from "../../lib/path-utils";
-import { revealPosition } from "../editor/editor-cache";
+import { getFileName, joinPath } from "../../lib/pathUtils";
+import { revealPosition } from "../editor/editorCache";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
-import { highlightedParts } from "./fuzzy";
+import { HighlightedText } from "./fuzzy";
 import { FilePreview } from "./FilePreview";
 import type { TabContentProps } from "../types";
 
@@ -33,8 +33,6 @@ interface ContentResult {
   text: string;
 }
 
-// ── Main component ──
-
 export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
   const [mode, setMode] = useState<SearchMode>("files");
   const [query, setQuery] = useState("");
@@ -50,13 +48,11 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
 
   const activeWorkspace = useActiveWorkspace();
 
-  // Auto-focus input on mount
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 0);
   }, []);
 
-  // Point fff at the active workspace so its background indexer + watcher spin up.
-  // Idempotent for the same path on the Rust side.
+  // Kick off fff's background indexer/watcher; idempotent for the same path.
   useEffect(() => {
     if (!activeWorkspace) return;
     invoke("fff_set_workspace", { path: activeWorkspace.path }).catch((e) => {
@@ -64,7 +60,6 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     });
   }, [activeWorkspace?.path]);
 
-  // Fuzzy file search via fff (debounced)
   useEffect(() => {
     if (mode !== "files") return;
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -98,7 +93,6 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     };
   }, [mode, query, activeWorkspace?.path]);
 
-  // Content search with debounce
   useEffect(() => {
     if (mode !== "content") return;
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -133,24 +127,20 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     };
   }, [mode, query, activeWorkspace?.path, useRegex]);
 
-  // Reset selected index when results change
   useEffect(() => {
     setSelectedIndex(0);
   }, [fileResults.length, contentResults.length]);
 
   const resultCount = (mode === "files" ? fileResults : contentResults).length;
 
-  // Currently selected content result for preview
   const selectedContent =
     mode === "content" && contentResults.length > 0 ? contentResults[selectedIndex] : null;
 
-  // Full path for preview
   const previewPath = useMemo(() => {
     if (!selectedContent || !activeWorkspace) return null;
     return joinPath(activeWorkspace.path, selectedContent.path);
   }, [selectedContent, activeWorkspace]);
 
-  // Open file handler
   const openFile = useCallback(
     (filePath: string) => {
       if (!activeWorkspace) return;
@@ -166,7 +156,6 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
       if (mode === "files") {
         const r = fileResults[index];
         if (!r || !activeWorkspace) return;
-        // fff already returns an absolute path; just pass it through to the layout store.
         useLayoutStore.getState().openFile(r.path, r.name, paneId);
       } else {
         const r = contentResults[index];
@@ -181,7 +170,6 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     [mode, fileResults, contentResults, openFile, activeWorkspace, paneId],
   );
 
-  // Keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "ArrowDown") {
@@ -202,7 +190,6 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
     [resultCount, selectedIndex, handleSelect],
   );
 
-  // Scroll selected item into view
   useEffect(() => {
     const item = listRef.current?.querySelector(`[data-index="${selectedIndex}"]`);
     item?.scrollIntoView({ block: "nearest" });
@@ -319,15 +306,7 @@ export function SearchTab({ tab: _tab, paneId }: TabContentProps) {
                         {r.name}
                       </span>
                       <span className="text-[10px] text-[var(--color-text-tertiary)] truncate">
-                        {highlightedParts(r.relative_path, r.indices).map((p, j) =>
-                          p.highlighted ? (
-                            <span key={j} className="text-[var(--color-accent-blue)] font-semibold">
-                              {p.text}
-                            </span>
-                          ) : (
-                            <span key={j}>{p.text}</span>
-                          ),
-                        )}
+                        <HighlightedText text={r.relative_path} indices={r.indices} />
                       </span>
                     </div>
                     {i === selectedIndex && (

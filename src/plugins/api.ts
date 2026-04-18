@@ -3,25 +3,18 @@ import { listen } from "@tauri-apps/api/event";
 import { registerTab, unregisterTab } from "../tabs/registry";
 import { useLayoutStore } from "../store/layout.store";
 import { useToastStore } from "../store/toast.store";
-import { findAllLeaves } from "../lib/pane-tree";
+import { findAllLeaves } from "../lib/paneTree";
 import type { KosmosPluginAPI, Disposable, ChildProcess } from "./types";
 import type { TabDefinition } from "../tabs/types";
 
-// ── Command registry ──
-
 const commands = new Map<string, () => void>();
-
-// ── Shared event bus for inter-plugin communication ──
 
 type EventCallback = (data: unknown) => void;
 const eventBus = new Map<string, Set<EventCallback>>();
 
 let processIdCounter = 0;
 
-/**
- * Create a fresh KosmosPluginAPI instance for a specific plugin.
- * Each plugin gets its own API so we can track disposables per-plugin.
- */
+/** One API instance per plugin so disposables can be tracked per-plugin. */
 export function createPluginAPI(pluginId: string): {
   api: KosmosPluginAPI;
   disposables: Disposable[];
@@ -100,7 +93,6 @@ export function createPluginAPI(pluginId: string): {
         const stderrCbs = new Set<(data: string) => void>();
         const exitCbs = new Set<(code: number) => void>();
 
-        // Listen for Tauri events from the spawned process
         const unlistenStdout = await listen<string>(`plugin-process-stdout-${pid}`, (e) =>
           stdoutCbs.forEach((cb) => cb(e.payload)),
         );
@@ -109,13 +101,11 @@ export function createPluginAPI(pluginId: string): {
         );
         const unlistenExit = await listen<number>(`plugin-process-exit-${pid}`, (e) => {
           exitCbs.forEach((cb) => cb(e.payload));
-          // Auto-cleanup listeners on exit
           unlistenStdout();
           unlistenStderr();
           unlistenExit();
         });
 
-        // Ensure listeners are cleaned up on plugin deactivation
         disposables.push({
           dispose: () => {
             unlistenStdout();

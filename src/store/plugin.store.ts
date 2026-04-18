@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { getTauriStore } from "../lib/tauri-store";
+import { getTauriStore } from "../lib/tauriStore";
 import {
   registryEntryId,
   type InstalledPlugin,
@@ -49,7 +49,6 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
   init: async () => {
     await get().scan();
     set({ ready: true });
-    // Fetch registry in background — don't block startup
     get().fetchRegistry();
   },
 
@@ -61,7 +60,7 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 
     const plugins: Record<string, InstalledPlugin> = {};
     for (const { manifest, path } of manifests) {
-      // Use directory name as key — matches the registry-derived ID for marketplace installs
+      // Directory name matches the registry-derived ID so marketplace installs keep their key.
       const dirName = path.split(/[\\/]/).pop() ?? manifest.name;
       plugins[dirName] = {
         pluginId: dirName,
@@ -115,7 +114,6 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     };
     set({ plugins });
 
-    // Persist disabled set
     const disabled = new Set<string>();
     for (const [id, p] of Object.entries(plugins)) {
       if (!p.enabled) disabled.add(id);

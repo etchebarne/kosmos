@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildChangeTree } from "../git-tree";
-import type { GitFileChange } from "../git-tree";
+import { buildChangeTree } from "../gitTree";
+import type { GitFileChange } from "../gitTree";
 
 function change(path: string, status = "modified"): GitFileChange {
   return { path, status, staged: false, additions: 0, deletions: 0 };

@@ -4,19 +4,18 @@ import type { IndexProgress, LspState } from "./lsp.types";
 export const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 /** Maximum restart attempts before giving up. */
-export const MAX_RESTART_ATTEMPTS = 5;
+const MAX_RESTART_ATTEMPTS = 5;
 /** Base delay for exponential backoff in milliseconds. */
-export const BASE_RESTART_DELAY_MS = 1_000;
+const BASE_RESTART_DELAY_MS = 1_000;
 /** Maximum delay cap for exponential backoff in milliseconds. */
-export const MAX_RESTART_DELAY_MS = 30_000;
+const MAX_RESTART_DELAY_MS = 30_000;
 
-// Track active progress tokens across all servers.
 // Key: "workspacePath\0serverLang\0token"
 export const progressEntries = new Map<
   string,
   { progress: IndexProgress; timer: ReturnType<typeof setTimeout> | null }
 >();
-/** Max time a progress token can live without an "end" event (5 minutes). */
+/** Discard progress tokens whose server never emits "end". */
 export const PROGRESS_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function progressKey(
@@ -27,13 +26,12 @@ export function progressKey(
   return `${workspacePath}\0${serverLang}\0${token}`;
 }
 
-// Track restart state per server (key: "workspacePath:serverLang")
+// Key: "workspacePath:serverLang"
 export const restartState = new Map<string, { attempts: number; startTimestamp: number }>();
 
 type SetFn = (fn: (state: WritableDraft<LspState>) => void) => void;
 type GetFn = () => LspState;
 
-// Throttled progress sync state
 const pendingSyncWorkspaces = new Set<string>();
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -98,14 +96,13 @@ export function handleServerStopped(
       }
     });
 
-    // Attempt automatic restart with exponential backoff + jitter
     if (!monacoRef) return;
 
     const key = `${workspacePath}:${serverLang}`;
     const rs = restartState.get(key);
     let attempts = rs?.attempts ?? 0;
 
-    // If server ran >60s before crashing, reset attempts (it was stable)
+    // Reset the backoff if the server stayed up >60s — it was stable.
     if (rs && Date.now() - rs.startTimestamp > 60_000) attempts = 0;
 
     if (attempts >= MAX_RESTART_ATTEMPTS) {

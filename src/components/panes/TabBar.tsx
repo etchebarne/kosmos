@@ -3,13 +3,13 @@ import autoAnimate from "@formkit/auto-animate";
 import { Plus, X } from "@phosphor-icons/react";
 import { useLayoutStore } from "../../store/layout.store";
 import { useDragStore } from "../../store/drag.store";
-import { startDragThreshold } from "../../lib/drag-threshold";
+import { startDragThreshold } from "../../lib/dragThreshold";
 import { TabIcon } from "../shared/TabIcon";
 import { ContextMenu } from "../shared/ContextMenu";
 import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { Tab } from "../../types";
 import { getEditorMeta } from "../../types";
-import { FileIcon } from "../../tabs/file-tree/file-icons";
+import { FileIcon } from "../../tabs/fileTree/fileIcons";
 import { useIsDarkTheme } from "../../lib/themes";
 
 /** Split a file path into its basename and extension (matching the file-tree's shape). */

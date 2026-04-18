@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getNodeFiles } from "../../lib/git-tree";
-import type { TreeNode, GitStatusInfo } from "../../lib/git-tree";
+import { getNodeFiles } from "../../lib/gitTree";
+import type { TreeNode, GitStatusInfo } from "../../lib/gitTree";
 
 export function useGitActions(
   workspacePath: string | null,

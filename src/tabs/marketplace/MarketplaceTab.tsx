@@ -211,7 +211,6 @@ export function MarketplaceTab({ tab: _tab, paneId: _paneId }: TabContentProps) 
   );
   const [filter, setFilter] = useState("");
 
-  // Refresh registry on mount
   useEffect(() => {
     fetchRegistry();
   }, [fetchRegistry]);

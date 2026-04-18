@@ -7,6 +7,18 @@ import { createPluginAPI } from "./api";
 import type { Disposable, PluginModule, InstalledPlugin } from "./types";
 import type { TabContentProps } from "../tabs/types";
 
+/**
+ * Globals used by the blob-URL React/JSX bridge modules to resolve bare
+ * `react` / `react/jsx-runtime` specifiers from extension bundles.
+ * See `buildReactBlobUrl` / `buildJsxBlobUrl` below.
+ */
+declare global {
+  interface Window {
+    __kr?: typeof React;
+    __kj?: typeof JsxRuntime;
+  }
+}
+
 /** Tracks disposables per plugin so we can clean up on deactivation. */
 const pluginDisposables = new Map<string, Disposable[]>();
 
@@ -51,16 +63,11 @@ function rewriteReactImports(code: string): string {
     .replace(/from\s*["']react["']/g, `from"${reactBlobUrl}"`);
 }
 
-/**
- * Initialize the plugin system.
- * 1. Scans for installed plugins via the store.
- * 2. Registers stub tabs for each plugin's contributed tabs.
- * 3. Eagerly activates enabled plugins.
- */
+/** Scan installed plugins, register stub tabs, and eagerly activate enabled ones. */
 export async function initPlugins() {
-  // Bridge React to blob-URL modules that extensions will import from.
-  (window as any).__kr = React;
-  (window as any).__kj = JsxRuntime;
+  // Expose React for the blob-URL modules that plugins import from.
+  window.__kr = React;
+  window.__kj = JsxRuntime;
   reactBlobUrl = buildReactBlobUrl();
   jsxBlobUrl = buildJsxBlobUrl();
 
@@ -80,11 +87,7 @@ export async function initPlugins() {
   }
 }
 
-/**
- * Register stub tab definitions from a plugin's manifest.
- * These lightweight stubs appear in the blank-tab menu immediately
- * without loading the plugin's actual code.
- */
+/** Register stub tabs so they appear in the menu before the plugin is loaded. */
 function registerPluginStubs(pluginId: string, plugin: InstalledPlugin) {
   const tabs = plugin.manifest.contributes?.tabs;
   if (!tabs) return;
@@ -95,16 +98,12 @@ function registerPluginStubs(pluginId: string, plugin: InstalledPlugin) {
       title: tab.title,
       icon: tab.icon,
       defaultSize: tab.defaultSize,
-      // Stub component that triggers lazy activation
       component: createLazyTabComponent(pluginId, tab.type),
     });
   }
 }
 
-/**
- * Create a React component that triggers plugin activation on first render,
- * then re-renders with the real component once loaded.
- */
+/** Activates the plugin on first render, then swaps in the real component. */
 function createLazyTabComponent(pluginId: string, tabType: string): ComponentType<TabContentProps> {
   const LazyPluginTab = (props: TabContentProps) => {
     const [Component, setComponent] = useState<ComponentType<TabContentProps> | null>(null);
@@ -123,7 +122,6 @@ function createLazyTabComponent(pluginId: string, tabType: string): ComponentTyp
         }
       };
 
-      // If plugin was already activated eagerly on startup, just resolve
       const plugin = usePluginStore.getState().plugins[pluginId];
       if (plugin?.activated) {
         resolve();
@@ -169,21 +167,18 @@ function createLazyTabComponent(pluginId: string, tabType: string): ComponentTyp
   return LazyPluginTab;
 }
 
-/**
- * Activate a plugin by dynamically importing its entry point and calling activate().
- * No-op if already activated.
- */
-export async function activatePlugin(pluginId: string): Promise<void> {
+/** Dynamic-import the plugin entry and call activate(). No-op if already active. */
+async function activatePlugin(pluginId: string): Promise<void> {
   const store = usePluginStore.getState();
   const plugin = store.plugins[pluginId];
   if (!plugin || plugin.activated) return;
 
-  // Mark as activated early to prevent double-activation
+  // Flip the flag early so a concurrent resolve() doesn't double-activate.
   store.markActivated(pluginId);
 
   try {
-    // Read plugin JS through Tauri (file:// imports are blocked by the webview's origin policy),
-    // rewrite bare react specifiers, then load via a blob URL (same-origin, works with import()).
+    // file:// imports are blocked by the webview origin policy; load via a same-origin
+    // blob URL, rewriting bare "react" specifiers to a shared React blob.
     const entryPath = `${plugin.path}/${plugin.manifest.main}`.split("\\").join("/");
     const raw: string = await invoke("read_file", { path: entryPath });
     const blob = new Blob([rewriteReactImports(raw)], { type: "text/javascript" });
@@ -202,7 +197,6 @@ export async function activatePlugin(pluginId: string): Promise<void> {
 
     await mod.activate(api);
   } catch (err) {
-    // Revert activation state on failure
     const plugins = { ...usePluginStore.getState().plugins };
     if (plugins[pluginId]) {
       plugins[pluginId] = { ...plugins[pluginId], activated: false };

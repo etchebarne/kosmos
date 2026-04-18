@@ -38,9 +38,3 @@ export const useFileClipboard = create<FileClipboardState>((set) => ({
   set: (clipboard) => set({ clipboard }),
   clear: () => set({ clipboard: null }),
 }));
-
-/** Reset both stores — call when the file tree unmounts. */
-export function resetFileTreeStores() {
-  useFileTreeSelection.getState().clear();
-  useFileClipboard.getState().clear();
-}

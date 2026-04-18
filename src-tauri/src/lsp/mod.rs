@@ -86,8 +86,7 @@ pub async fn lsp_send(
     let wp = remote_servers.get(&server_id).await;
     if let Some(wp) = wp {
         if let Some((agent, _)) = router.resolve(&wp).await {
-            // Fire-and-forget: the LSP response comes back via events, not
-            // the agent response. Waiting would just cause timeouts.
+            // LSP responses arrive via events; waiting on the agent reply would time out.
             agent
                 .notify(Request::LspSend {
                     server_id,
@@ -187,7 +186,7 @@ pub async fn lsp_scan_projects(
             .await?;
         let mut projects: Vec<DetectedProject> =
             serde_json::from_value(result).str_err()?;
-        // Prepend wsl prefix to project_root so the frontend can route lsp_start correctly
+        // Re-prefix remote project_root so the frontend routes lsp_start back to the agent.
         if let Some(prefix) = wsl_prefix(&workspace_path) {
             for project in &mut projects {
                 project.project_root = format!("{}{}", prefix, project.project_root);

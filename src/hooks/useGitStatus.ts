@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { GitStatusInfo } from "../lib/git-tree";
+import type { GitStatusInfo } from "../lib/gitTree";
 
 export function useGitStatus(workspacePath: string | null, active = true) {
   const [status, setStatus] = useState<GitStatusInfo | null>(null);
@@ -14,7 +14,7 @@ export function useGitStatus(workspacePath: string | null, active = true) {
     async (silent = false) => {
       if (!workspacePath) return;
 
-      // If already running, mark pending and return — avoids git process pileup
+      // Collapse concurrent calls to avoid a git process pileup.
       if (inflightRef.current) {
         pendingRef.current = true;
         return;
@@ -34,7 +34,6 @@ export function useGitStatus(workspacePath: string | null, active = true) {
         setLoading(false);
         inflightRef.current = false;
 
-        // If a refresh was requested while we were busy, do one more pass
         if (pendingRef.current) {
           pendingRef.current = false;
           refresh(true);
@@ -44,7 +43,6 @@ export function useGitStatus(workspacePath: string | null, active = true) {
     [workspacePath],
   );
 
-  // Fetch on mount/active-change and watch for file changes while active
   useEffect(() => {
     if (!workspacePath || !active) return;
 

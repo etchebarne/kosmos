@@ -1,10 +1,8 @@
 import { useSyncExternalStore } from "react";
 import type { Theme } from "./types";
-import { kosmosDark } from "./kosmos-dark";
-import { kosmosLight } from "./kosmos-light";
-import { kosmosEmber } from "./kosmos-ember";
-
-export type { Theme } from "./types";
+import { kosmosDark } from "./kosmosDark";
+import { kosmosLight } from "./kosmosLight";
+import { kosmosEmber } from "./kosmosEmber";
 
 const themes: Record<string, Theme> = {
   "kosmos-dark": kosmosDark,
@@ -65,11 +63,6 @@ export function applyTheme(name: string) {
 /** Get the currently active theme object. */
 export function getTheme(): Theme {
   return activeTheme;
-}
-
-/** Get list of available theme names. */
-export function getThemeNames(): string[] {
-  return Object.keys(themes);
 }
 
 /** React hook — returns true when the active theme is dark. Re-renders on theme change. */

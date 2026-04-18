@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getTabDefinition } from "../../tabs";
+import { getTabDefinition } from "../../tabs/registry";
 import { ErrorBoundary } from "../shared/ErrorBoundary";
 import type { Tab } from "../../types";
 

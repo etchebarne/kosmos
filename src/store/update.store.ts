@@ -20,8 +20,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   checkForUpdate: async () => {
     try {
-      // On Linux, the Tauri updater only works for AppImage installs.
-      // Package-manager installs (deb/AUR) update through the package manager.
+      // Linux updater only supports AppImage; deb/AUR go via package manager.
       const isLinux = navigator.userAgent.includes("Linux");
       if (isLinux && !(await invoke<boolean>("is_appimage"))) return;
 

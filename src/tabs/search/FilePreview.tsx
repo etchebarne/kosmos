@@ -2,13 +2,13 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import MonacoEditor, { type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { defineKosmosTheme } from "../editor/monaco-theme";
+import { defineKosmosTheme } from "../editor/monacoTheme";
 import { useEditorStore } from "../../store/editor.store";
-import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monaco-languages";
+import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monacoLanguages";
 import { pathToFileUri } from "../../lib/lsp/uri";
-import { BASE_EDITOR_OPTIONS } from "../../lib/monaco-config";
+import { BASE_EDITOR_OPTIONS } from "../../lib/monacoConfig";
 
-export interface FilePreviewProps {
+interface FilePreviewProps {
   filePath: string;
   matchLine: number;
   query: string;
@@ -57,7 +57,6 @@ export function FilePreview({ filePath, matchLine, query }: FilePreviewProps) {
     ed.revealLineInCenter(line);
   }
 
-  // Load file and swap model when filePath changes, then apply decorations
   useEffect(() => {
     const ed = editorRef.current;
     const monaco = monacoRef.current;
@@ -86,7 +85,6 @@ export function FilePreview({ filePath, matchLine, query }: FilePreviewProps) {
     };
   }, [filePath, ready]);
 
-  // Update decorations when matchLine/query changes (same file)
   useEffect(() => {
     const ed = editorRef.current;
     if (!ed || !ready) return;
@@ -104,7 +102,6 @@ export function FilePreview({ filePath, matchLine, query }: FilePreviewProps) {
     setReady(true);
   }
 
-  // Dispose preview models on unmount
   useEffect(() => {
     return () => {
       editorRef.current?.getModel()?.dispose();

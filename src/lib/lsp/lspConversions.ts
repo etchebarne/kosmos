@@ -7,9 +7,7 @@ import {
 } from "vscode-languageserver-protocol";
 import type { LspClient } from "./client";
 
-// ── Position/Range Conversions ──
-// LSP: 0-based line, 0-based character
-// Monaco: 1-based line, 1-based column
+// LSP uses 0-based line/char; Monaco uses 1-based line/column.
 
 export function toMonacoRange(range: {
   start: { line: number; character: number };
@@ -36,8 +34,6 @@ export function toLspRange(range: IRange) {
     end: { line: range.endLineNumber - 1, character: range.endColumn - 1 },
   };
 }
-
-// ── CompletionItemKind Mapping ──
 
 export const completionKindMap: Record<number, number> = {
   [LspCompletionItemKind.Text]: 18,
@@ -67,8 +63,6 @@ export const completionKindMap: Record<number, number> = {
   [LspCompletionItemKind.TypeParameter]: 24,
 };
 
-// ── Diagnostic Severity Mapping ──
-
 export function toMonacoSeverity(monaco: Monaco, severity?: DiagnosticSeverity): number {
   switch (severity) {
     case DiagnosticSeverity.Error:
@@ -84,8 +78,6 @@ export function toMonacoSeverity(monaco: Monaco, severity?: DiagnosticSeverity):
   }
 }
 
-// ── MarkupContent → IMarkdownString ──
-
 export function toMarkdownString(
   content: string | { kind: string; value: string } | { language: string; value: string },
 ): IMarkdownString {
@@ -98,8 +90,6 @@ export function toMarkdownString(
   return { value: `\`\`\`${content.language}\n${content.value}\n\`\`\`` };
 }
 
-// ── Diagnostic deduplication ──
-
 export function markerFingerprint(m: {
   severity: number;
   message: string;
@@ -111,16 +101,12 @@ export function markerFingerprint(m: {
   return `${m.severity}:${m.startLineNumber}:${m.startColumn}:${m.endLineNumber}:${m.endColumn}:${m.message}`;
 }
 
-// ── TextEdit → Monaco edit ──
-
 export function lspTextEditsToMonaco(edits: TextEdit[]): { range: IRange; text: string }[] {
   return edits.map((edit) => ({
     range: toMonacoRange(edit.range),
     text: edit.newText,
   }));
 }
-
-// ── WorkspaceEdit → Monaco workspace edits ──
 
 export function workspaceEditToMonaco(
   monaco: Monaco,
@@ -159,8 +145,6 @@ export function workspaceEditToMonaco(
   return edits;
 }
 
-// ── Safe LSP call wrapper ──
-
 export async function safeLspCall<T>(
   label: string,
   languageId: string,
@@ -174,8 +158,6 @@ export async function safeLspCall<T>(
     return fallback;
   }
 }
-
-// ── Provider Registration ──
 
 export function registerIfCapable(
   capability: unknown,

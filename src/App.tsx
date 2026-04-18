@@ -15,7 +15,7 @@ import { useLspStore } from "./store/lsp.store";
 import { useUpdateStore } from "./store/update.store";
 import { initPlugins } from "./plugins";
 import { applyTheme } from "./lib/themes";
-import { prefetch as prefetchFileTree } from "./tabs/file-tree/file-tree-cache";
+import { prefetch as prefetchFileTree } from "./tabs/fileTree/fileTreeCache";
 import "overlayscrollbars/overlayscrollbars.css";
 import "./styles/globals.css";
 
@@ -48,19 +48,15 @@ function App() {
     useUpdateStore.getState().checkForUpdate();
   }, [init, initSettings]);
 
-  // Sync active workspace path to layout store
   useLayoutEffect(() => {
     if (!ready) return;
     const path = activeIndex !== null ? (workspaces[activeIndex]?.path ?? null) : null;
-    // Start loading file tree entries before tabs mount
     if (path) prefetchFileTree(path);
     setWorkspace(path);
   }, [ready, activeIndex, workspaces, setWorkspace]);
 
-  // Eagerly start LSP servers when a workspace becomes active so they can
-  // index the project in the background before any file is opened.
-  // Uses connectingPaths.size as dependency instead of the Set itself to avoid
-  // identity-based re-renders while still reacting to connection state changes.
+  // Warm up LSPs on workspace switch so indexing happens before first open.
+  // Depend on size (not the Set identity) so we don't re-run on every render.
   const connectingSize = connectingPaths.size;
   useEffect(() => {
     if (!ready || activeIndex === null) return;
@@ -70,7 +66,6 @@ function App() {
     }
   }, [ready, activeIndex, workspaces, connectingSize]);
 
-  // Merge active layout into layouts map for rendering
   const allLayouts = useMemo(() => {
     const result = { ...layouts };
     if (activeWorkspacePath) {

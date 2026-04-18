@@ -1,8 +1,7 @@
 import type { ComponentType } from "react";
 import type { TabContentProps } from "../tabs/types";
 
-// ── Manifest (static JSON in each plugin directory) ──
-
+/** Static JSON in each plugin directory. */
 export interface PluginManifest {
   name: string;
   version: string;
@@ -32,8 +31,6 @@ export interface PluginCommandContribution {
   title: string;
 }
 
-// ── Runtime state ──
-
 export interface InstalledPlugin {
   /** Store key — derived from the plugin's directory name */
   pluginId: string;
@@ -44,20 +41,15 @@ export interface InstalledPlugin {
   activated: boolean;
 }
 
-// ── Plugin module (what the plugin's JS entry exports) ──
-
+/** Exported by each plugin's JS entry. */
 export interface PluginModule {
   activate(api: KosmosPluginAPI): void | Promise<void>;
   deactivate?(): void | Promise<void>;
 }
 
-// ── Disposable ──
-
 export interface Disposable {
   dispose(): void;
 }
-
-// ── Plugin API surface ──
 
 export interface KosmosPluginAPI {
   tabs: {
@@ -123,8 +115,7 @@ export interface ChildProcess {
   kill(): Promise<void>;
 }
 
-// ── Registry (curated marketplace index) ──
-
+/** Entry in the curated marketplace registry. */
 export interface RegistryEntry {
   name: string;
   version: string;

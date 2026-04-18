@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Trash, CaretRight, File } from "@phosphor-icons/react";
 import { Dialog } from "../../components/shared/Dialog";
-import { gitStatusColor, gitStatusLabel } from "../../lib/git-colors";
+import { gitStatusColor, gitStatusLabel } from "../../lib/gitColors";
 
 interface GitStashEntry {
   index: number;
@@ -46,7 +46,7 @@ function StashEntryRow({
       });
       setFiles(result);
     } catch {
-      // silently fail — user can retry by collapsing/expanding
+      // User can retry by toggling expand.
     } finally {
       setFilesLoading(false);
     }

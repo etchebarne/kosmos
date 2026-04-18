@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { GitBranch, Trash } from "@phosphor-icons/react";
 import { ScrollArea } from "../../components/shared/ScrollArea";
-import { useClickOutside } from "../../hooks/use-click-outside";
-import { highlightedParts } from "../search/fuzzy";
+import { useClickOutside } from "../../hooks/useClickOutside";
+import { HighlightedText } from "../search/fuzzy";
 
 interface GitBranchInfo {
   name: string;
@@ -49,11 +49,9 @@ export function BranchPicker({
       .finally(() => setLoading(false));
   }, [workspacePath]);
 
-  // Ignore clicks on the anchor button — its onClick already toggles the
-  // picker closed; closing here too would race with the open-toggle and reopen.
+  // Ignore clicks on the anchor; its onClick already toggles close (avoids reopen race).
   useClickOutside(ref, onClose, true, ignoreRef);
 
-  // Close on Escape
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -62,7 +60,6 @@ export function BranchPicker({
     return () => document.removeEventListener("keydown", handle);
   }, [onClose]);
 
-  // Focus search input on open
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -70,7 +67,7 @@ export function BranchPicker({
   const handleCheckout = useCallback(
     async (branch: GitBranchInfo) => {
       if (branch.isCurrent) return;
-      // For remote branches, strip the remote prefix so git creates a local tracking branch
+      // Strip the "origin/" prefix so checkout creates a tracking branch.
       const branchName = branch.isRemote ? branch.name.replace(/^[^/]+\//, "") : branch.name;
       setSwitching(branch.name);
       try {
@@ -104,8 +101,7 @@ export function BranchPicker({
     [workspacePath, onSwitch],
   );
 
-  // Fuzzy-filter the branches through the Rust matcher so ranking, highlighting,
-  // and case/separator handling match the file picker.
+  // Route through the Rust fuzzy matcher to match the file picker's ranking.
   useEffect(() => {
     let cancelled = false;
     const trimmed = search.trim();
@@ -131,7 +127,7 @@ export function BranchPicker({
       .catch((e) => {
         if (cancelled) return;
         console.warn("branch fuzzy_match failed:", e);
-        // Fallback to substring filtering so the picker stays usable.
+        // Substring fallback keeps the picker usable if the matcher fails.
         const q = trimmed.toLowerCase();
         setFiltered(branches.filter((b) => b.name.toLowerCase().includes(q)));
         setMatchIndices(new Map());
@@ -142,7 +138,6 @@ export function BranchPicker({
     };
   }, [search, branches]);
 
-  // Position the dropdown above the anchor
   const position = useMemo(() => {
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return { bottom: 0, left: 0, width: 0 };
@@ -211,16 +206,10 @@ export function BranchPicker({
                           : "text-[var(--color-text-primary)]"
                       }`}
                     >
-                      {highlightedParts(branch.name, matchIndices.get(branch.name) ?? []).map(
-                        (p, i) =>
-                          p.highlighted ? (
-                            <span key={i} className="text-[var(--color-accent-blue)] font-semibold">
-                              {p.text}
-                            </span>
-                          ) : (
-                            <span key={i}>{p.text}</span>
-                          ),
-                      )}
+                      <HighlightedText
+                        text={branch.name}
+                        indices={matchIndices.get(branch.name) ?? []}
+                      />
                     </span>
                     {branch.lastCommitDate && (
                       <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">

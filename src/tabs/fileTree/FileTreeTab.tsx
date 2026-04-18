@@ -3,12 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useActiveWorkspace, useIsWorkspaceActive } from "../../contexts/WorkspaceContext";
 import { FileTreeNode } from "./FileTreeNode";
-import { useFileTreeSelection } from "./file-tree-stores";
+import { useFileTreeSelection } from "./fileTreeStores";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
-import { useGitStatus } from "../../hooks/use-git-status";
-import { GitFileTreeContext, buildGitColorLookup } from "./git-file-tree-context";
-import { getCached, getOrFetch, invalidate } from "./file-tree-cache";
+import { useGitStatus } from "../../hooks/useGitStatus";
+import { GitFileTreeContext, buildGitColorLookup } from "./gitFileTreeContext";
+import { getCached, getOrFetch, invalidate } from "./fileTreeCache";
 import type { TabContentProps } from "../types";
 
 export interface DirEntry {
@@ -23,7 +23,6 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   const isActive = useIsWorkspaceActive();
   const workspacePath = activeWorkspace?.path ?? null;
 
-  // Serve from cache for instant render when prefetch has completed
   const initialEntries = workspacePath ? getCached(workspacePath) : null;
   const [entries, setEntries] = useState<DirEntry[]>(initialEntries ?? []);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +36,6 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
 
   const loadRoot = useCallback(async () => {
     if (!workspacePath) return;
-    // If cache already provided entries, skip redundant load
     if (getCached(workspacePath)) {
       setEntries(getCached(workspacePath)!);
       setLoading(false);
@@ -53,13 +51,12 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     } finally {
       setLoading(false);
     }
-  }, [workspacePath]); // Depend on path string, not object reference
+  }, [workspacePath]);
 
   useEffect(() => {
     loadRoot();
   }, [loadRoot]);
 
-  // Clear selection when clicking outside the file tree
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -71,8 +68,7 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Start filesystem watcher only for the active workspace — the watcher is a
-  // singleton, so inactive workspaces would replace the active one's watcher.
+  // Only the active workspace watches — the watcher is a singleton per process.
   useEffect(() => {
     if (!activeWorkspace || !isActive) return;
     invoke("watch_workspace", { path: activeWorkspace.path }).catch((e) =>
@@ -83,9 +79,8 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     };
   }, [activeWorkspace, isActive]);
 
-  // Single Tauri listener for watcher events, debounced and dispatched to nodes
-  // via window CustomEvents. Replaces per-node Tauri listeners to avoid a
-  // thundering herd of concurrent read_dir calls that can starve the runtime.
+  // One listener fans events out via CustomEvents; per-node listeners caused
+  // a read_dir thundering herd that starved the runtime.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let pending = new Set<string>();

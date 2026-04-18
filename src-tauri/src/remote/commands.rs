@@ -60,7 +60,6 @@ pub async fn remote_disconnect(
     remote_servers: State<'_, crate::lsp::RemoteServerMap>,
     workspace_path: String,
 ) -> Result<(), String> {
-    // Clean up LSP server mappings for this workspace
     remote_servers.retain_workspace(&workspace_path).await;
     router.disconnect(&workspace_path).await;
     Ok(())
@@ -86,7 +85,6 @@ pub async fn remote_ensure_connected(
     workspace_path: String,
     connection: ConnectionType,
 ) -> Result<bool, String> {
-    // Already connected
     if router.is_remote(&workspace_path).await {
         return Ok(true);
     }
@@ -94,13 +92,8 @@ pub async fn remote_ensure_connected(
     match &connection {
         ConnectionType::Local => Ok(false),
         ConnectionType::Wsl { distro } => {
-            // Ensure WSL distro is running (wsl -d <distro> -- true)
             deploy::ensure_wsl_running(distro).await?;
-
-            // Deploy agent (fast — just a cp if already exists)
             deploy::deploy_to_wsl(&app, distro).await?;
-
-            // Connect
             router
                 .connect(&workspace_path, connection.clone())
                 .await?;

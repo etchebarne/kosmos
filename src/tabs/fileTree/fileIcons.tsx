@@ -121,8 +121,6 @@ function ScopedSvg({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Types ──
-
 type SvgComponent = ComponentType<SVGProps<SVGSVGElement>>;
 type Themed<T> = { dark: T; light: T };
 type BrandIcon = SvgComponent | Themed<SvgComponent>;
@@ -131,8 +129,6 @@ interface FileIconDef {
   brand?: BrandIcon;
   fallback: Icon;
 }
-
-// ── Themed shorthands ──
 
 const themed = (dark: SvgComponent, light: SvgComponent): Themed<SvgComponent> => ({
   dark,
@@ -148,8 +144,6 @@ const markdown = themed(MarkdownDark, MarkdownLight);
 const r = themed(RDark, RLight);
 const astro = themed(AstroDark, AstroLight);
 const prisma = themed(PrismaDark, PrismaLight);
-
-// ── Icon definitions ──
 
 /** Icons resolved by exact filename. */
 const BY_NAME: Record<string, FileIconDef> = {
@@ -293,8 +287,6 @@ const BY_EXT: Record<string, FileIconDef> = {
   // ── Lock files ──
   lock: { fallback: FileLock },
 };
-
-// ── Public API ──
 
 function resolveBrand(icon: BrandIcon, isDark: boolean): SvgComponent {
   return "dark" in icon ? (isDark ? icon.dark : icon.light) : icon;

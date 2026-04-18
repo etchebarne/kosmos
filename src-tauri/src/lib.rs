@@ -86,8 +86,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Set high-res window icon to avoid blurry taskbar icon on Windows
-            // (Tauri's codegen only reads the first ICO entry, which may be low-res)
+            // Tauri codegen only reads the first ICO entry (often low-res) → set a large PNG.
             if let Some(window) = app.get_webview_window("main") {
                 match tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png")) {
                     Ok(icon) => { let _ = window.set_icon(icon); }
@@ -95,20 +94,15 @@ pub fn run() {
                 }
             }
 
-            // fff-search picker (workspace indexer + frecency DB)
             app.manage(search::FffPickerState::new());
 
             let events: Arc<dyn EventSink> = Arc::new(TauriEventSink {
                 handle: handle.clone(),
             });
 
-            // Watcher
             app.manage(Arc::new(kosmos_core::watcher::WatcherManager::new(events.clone())));
-
-            // Terminal
             app.manage(kosmos_core::terminal::TerminalManager::new(events.clone()));
 
-            // LSP
             let servers_dir = handle
                 .path()
                 .app_data_dir()?
@@ -124,13 +118,8 @@ pub fn run() {
                 custom_registry,
             )));
 
-            // Remote LSP server tracking (server_id -> workspace_path)
             app.manage(lsp::RemoteServerMap::new());
-
-            // Backend router for remote workspaces
             app.manage(remote::router::BackendRouter::new(events.clone()));
-
-            // Plugin process manager
             app.manage(plugins::PluginProcessManager::default());
 
             Ok(())

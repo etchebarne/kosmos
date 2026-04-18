@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getTauriStore } from "../lib/tauri-store";
+import { getTauriStore } from "../lib/tauriStore";
 import { applyTheme } from "../lib/themes";
 
 interface SettingsStore {
@@ -25,7 +25,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const values = (await s.get<Record<string, unknown>>("values")) ?? {};
     set({ values, ready: true });
 
-    // Apply persisted theme
     const colorTheme = values["theme.colorTheme"];
     if (colorTheme !== undefined) {
       applyTheme(String(colorTheme));

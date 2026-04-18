@@ -34,7 +34,6 @@ export function Tooltip({ content, children, delay = 400, side = "bottom" }: Too
     let x = triggerRect.left + triggerRect.width / 2;
     let actualSide = side;
 
-    // Flip side if not enough space
     if (
       side === "bottom" &&
       triggerRect.bottom + padding + tooltipRect.height > window.innerHeight
@@ -46,7 +45,6 @@ export function Tooltip({ content, children, delay = 400, side = "bottom" }: Too
 
     const y = actualSide === "bottom" ? triggerRect.bottom + padding : triggerRect.top - padding;
 
-    // Clamp horizontally so tooltip stays within viewport
     const halfWidth = tooltipRect.width / 2;
     if (x - halfWidth < padding) {
       x = halfWidth + padding;

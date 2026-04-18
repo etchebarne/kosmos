@@ -10,10 +10,6 @@ export function getTabDefinition(type: string): TabDefinition | undefined {
   return registry.get(type);
 }
 
-export function getAllTabDefinitions(): TabDefinition[] {
-  return Array.from(registry.values());
-}
-
 export function unregisterTab(type: string) {
   registry.delete(type);
 }

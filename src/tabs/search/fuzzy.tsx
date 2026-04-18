@@ -1,4 +1,4 @@
-export function highlightedParts(
+function highlightedParts(
   text: string,
   indices: number[],
 ): { text: string; highlighted: boolean }[] {
@@ -19,4 +19,21 @@ export function highlightedParts(
   if (current) parts.push({ text: current, highlighted: isHighlighted });
 
   return parts;
+}
+
+/** Render `text` with `indices` highlighted in accent blue. */
+export function HighlightedText({ text, indices }: { text: string; indices: number[] }) {
+  return (
+    <>
+      {highlightedParts(text, indices).map((p, i) =>
+        p.highlighted ? (
+          <span key={i} className="text-[var(--color-accent-blue)] font-semibold">
+            {p.text}
+          </span>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
+    </>
+  );
 }

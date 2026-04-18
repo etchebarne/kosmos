@@ -5,7 +5,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { useWorkspaceStore } from "../../store/workspace.store";
 import { useEditorStore } from "../../store/editor.store";
 import { useLayoutStore } from "../../store/layout.store";
-import { editorCache } from "../../tabs/editor/editor-cache";
+import { editorCache } from "../../tabs/editor/editorCache";
 
 type MenuName = "file" | "edit" | "selection";
 
@@ -144,7 +144,6 @@ export function TopMenus() {
     const lastPath = lastClickedEditorFilePath;
     const currentTabDirty = (() => {
       if (!lastPath) return false;
-      // Find the tab whose filePath matches; cheap enough walk over dirtyTabs + layout.
       const { layout } = useLayoutStore.getState();
       const stack: (typeof layout)[] = [layout];
       while (stack.length) {
@@ -235,12 +234,8 @@ const TopMenuButton = forwardRef<
           ? "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)]"
           : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-text-primary)]"
       }`}
-      // When clicking this button while its menu is open, ContextMenu's
-      // capture-phase useClickOutside already closes the menu at mousedown.
-      // `active` in this onClick closure reflects the state at click dispatch
-      // (React batches state updates across a user event), so if it's true
-      // the user's intent — "close the menu" — is already fulfilled. Skipping
-      // `onClick()` here prevents the close-then-reopen flicker.
+      // ContextMenu's capture-phase useClickOutside closes on mousedown; re-running
+      // onClick here would flicker it closed-then-open.
       onClick={() => {
         if (active) return;
         onClick();

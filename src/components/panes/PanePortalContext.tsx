@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { findAllLeaves } from "../../lib/pane-tree";
+import { findAllLeaves } from "../../lib/paneTree";
 import { TabContent } from "./TabContent";
 import type { PaneNode, Tab } from "../../types";
 
@@ -61,10 +61,7 @@ class PaneContainerRegistry {
 
 const RegistryContext = createContext<PaneContainerRegistry>(null!);
 
-/**
- * Hook for LeafPane to adopt the stable tab containers for its tabs
- * and attach them to its content area.
- */
+/** Adopt the stable tab containers for this pane's tabs. */
 export function usePaneContainer(
   _paneId: string,
   tabs: Tab[],
@@ -73,17 +70,12 @@ export function usePaneContainer(
 ) {
   const registry = useContext(RegistryContext);
 
-  // Save scroll positions during the RENDER phase — before React commits
-  // DOM changes. At this point the containers are still attached to their
-  // current (possibly soon-to-be-removed) parent, so scroll values are valid.
-  // This is a read-only DOM access, safe during render.
+  // Save scrolls during render (before React reparents) while old parents still exist.
   for (const tab of tabs) {
     registry.saveScroll(tab.id);
   }
 
-  // Move the stable tab containers into the pane's content div.
-  // appendChild moves an existing element — no clone, no unmount.
-  // Runs before paint so there's no visual flash.
+  // appendChild moves containers (not clones), preserving mounted state across panes.
   useLayoutEffect(() => {
     const div = contentRef.current;
     if (!div) return;
@@ -93,17 +85,12 @@ export function usePaneContainer(
     for (const tab of tabs) {
       const tabContainer = registry.getTab(tab.id);
 
-      // Move the tab container into this pane if it isn't already here.
-      // appendChild moves (not clones), so the container automatically
-      // leaves its previous parent pane.
       if (tabContainer.parentElement !== div) {
         div.appendChild(tabContainer);
-        // Notify tab content (e.g. xterm terminals) that their DOM
-        // ancestor changed so they can refresh canvas rendering.
+        // xterm (and similar canvas renderers) needs a repaint after a DOM move.
         tabContainer.dispatchEvent(new Event("pane-changed", { bubbles: true }));
       }
 
-      // Set visibility based on whether this tab is active
       if (tab.id === resolvedActiveId) {
         tabContainer.className = "h-full";
         tabContainer.removeAttribute("inert");
@@ -113,18 +100,13 @@ export function usePaneContainer(
       }
     }
 
-    // Restore scroll positions after the containers have been placed
     for (const tab of tabs) {
       registry.restoreScroll(tab.id);
     }
   });
 }
 
-/**
- * Wraps the pane tree and renders all tab contents into stable containers.
- * Tab components are keyed by tab.id and portaled into persistent DOM elements,
- * so they survive pane moves without remounting.
- */
+/** Renders each tab into a persistent DOM container so pane moves don't remount. */
 export function PanePortalProvider({
   layout,
   children,
@@ -140,13 +122,11 @@ export function PanePortalProvider({
 
   const allLeaves = findAllLeaves(layout);
 
-  // Collect all valid tab IDs for cleanup
   const allTabIds = useMemo(
     () => new Set(allLeaves.flatMap((l) => l.tabs.map((t) => t.id))),
     [allLeaves],
   );
 
-  // Remove containers for tabs that no longer exist
   useEffect(() => {
     registry.cleanup(allTabIds);
   }, [registry, allTabIds]);
@@ -155,7 +135,7 @@ export function PanePortalProvider({
     <RegistryContext.Provider value={registry}>
       {children}
       {allLeaves.flatMap((leaf) =>
-        // Sort by tab.id for stable React reconciliation order
+        // Sort by id to keep React reconciliation order stable across re-renders.
         [...leaf.tabs]
           .sort((a, b) => a.id.localeCompare(b.id))
           .map((tab) =>

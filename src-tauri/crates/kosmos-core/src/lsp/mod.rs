@@ -24,9 +24,6 @@ use detection::{
     scan_workspace_projects, server_language_group,
 };
 
-#[cfg(target_os = "windows")]
-use crate::CREATE_NO_WINDOW;
-
 struct LspServer {
     #[allow(dead_code)]
     child: Child,
@@ -74,10 +71,7 @@ fn spawn_server(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
-    #[cfg(target_os = "linux")]
-    crate::sanitize_child_env(&mut cmd);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    crate::configure_child_process(&mut cmd);
 
     let mut child = cmd.spawn()?;
     let stderr = child.stderr.take();

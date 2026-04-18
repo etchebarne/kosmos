@@ -5,18 +5,12 @@ use kosmos_protocol::types::*;
 
 use crate::CoreError;
 
-#[cfg(target_os = "windows")]
-use crate::CREATE_NO_WINDOW;
-
 fn git_command(path: &Path, args: &[&str]) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(args)
         .current_dir(path)
         .env("GIT_OPTIONAL_LOCKS", "0");
-    #[cfg(target_os = "linux")]
-    crate::sanitize_child_env(&mut cmd);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    crate::configure_child_process(&mut cmd);
     cmd
 }
 

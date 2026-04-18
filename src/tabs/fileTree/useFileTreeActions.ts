@@ -1,9 +1,9 @@
 import { useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getFileName, getParentDir, joinPath } from "../../lib/path-utils";
+import { getFileName, getParentDir, joinPath } from "../../lib/pathUtils";
 import type { ContextMenuItem } from "../../components/shared/ContextMenu";
-import type { DirEntry } from "./FileTreeTab";
-import { useFileTreeSelection } from "./file-tree-stores";
+import type { DirEntry } from "./fileTreeTypes";
+import { useFileTreeSelection } from "./fileTreeStores";
 
 interface UseFileTreeActionsParams {
   entry: DirEntry;
@@ -128,9 +128,7 @@ export function useFileTreeActions({
       }
       if (clipboard.mode === "cut") clearClipboard();
       refreshDir(targetDir);
-    } catch {
-      // silently fail
-    }
+    } catch {}
   }, [clipboard, targetDir, refreshDir, clearClipboard]);
 
   const handleRename = useCallback(
@@ -138,9 +136,7 @@ export function useFileTreeActions({
       try {
         await invoke("rename_entry", { path: entry.path, newName });
         refreshDir(getParentDir(entry.path));
-      } catch {
-        // silently fail
-      }
+      } catch {}
       setRenaming(false);
     },
     [entry.path, refreshDir],
@@ -156,9 +152,7 @@ export function useFileTreeActions({
           await invoke("create_file", { path: fullPath });
         }
         refreshDir(entry.path);
-      } catch {
-        // silently fail
-      }
+      } catch {}
       setCreating(null);
     },
     [entry.path, creating, refreshDir],
@@ -176,9 +170,7 @@ export function useFileTreeActions({
       try {
         await invoke("trash_entry", { path: p });
         dirsToRefresh.add(getParentDir(p));
-      } catch {
-        // silently fail
-      }
+      } catch {}
     }
     for (const d of dirsToRefresh) refreshDir(d);
     useFileTreeSelection.getState().clear();
@@ -192,9 +184,7 @@ export function useFileTreeActions({
       try {
         await invoke("delete_entry", { path: p });
         dirsToRefresh.add(getParentDir(p));
-      } catch {
-        // silently fail
-      }
+      } catch {}
     }
     for (const d of dirsToRefresh) refreshDir(d);
     useFileTreeSelection.getState().clear();

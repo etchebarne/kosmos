@@ -75,7 +75,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
     const el = containerRef.current;
     if (!el) return;
 
-    // Unique ID per effect invocation to avoid Strict Mode race conditions
+    // Unique per effect run so Strict Mode's double-invoke doesn't race the PTY.
     const terminalId = `${tabId}-${++spawnCounter}`;
 
     const t = getTheme().terminal;
@@ -111,10 +111,10 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
-    // Intercept shortcuts before they reach the PTY
+    // Intercept shortcuts before they reach the PTY.
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown" || !e.ctrlKey) return true;
-      // Ctrl+C: copy selection if any, otherwise send SIGINT (like Windows Terminal)
+      // Ctrl+C copies if there's a selection, otherwise passes SIGINT through.
       if (!e.shiftKey && e.key === "c") {
         if (terminal.hasSelection()) {
           e.preventDefault();
@@ -124,7 +124,6 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
         }
         return true;
       }
-      // Ctrl+Shift+V or Ctrl+V: paste
       if (e.key === "V" || e.key === "v") {
         e.preventDefault();
         (async () => {
@@ -135,9 +134,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
               return;
             }
           } catch {}
-          // No text on clipboard (e.g. image data). Forward the image so
-          // TUI apps can read it (WSL: write to WSL fs + shims; Linux:
-          // write to /tmp + wl-copy/xclip). Then send the raw Ctrl+V byte.
+          // Clipboard held an image; forward it so TUI apps (wsl shims / xclip) can paste it.
           await invoke("terminal_forward_clipboard_image", { id: terminalId }).catch((err) => {
             console.warn("clipboard image forward:", err);
           });
@@ -195,7 +192,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
           invoke("terminal_close", { id: terminalId });
           return;
         }
-        // Resize to force TUI applications to redraw their screen
+        // Forcing a resize nudges TUIs to redraw after reconnect.
         fitAddon.fit();
         invoke("terminal_resize", {
           id: terminalId,
@@ -212,14 +209,11 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
       }
     };
 
-    // Resize handling — registered immediately so no resize is missed
     let resizeTimeout: ReturnType<typeof setTimeout>;
     const observer = new ResizeObserver(() => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
-        // Skip resize when the container is hidden (e.g. workspace switched
-        // away). display:none collapses the element to 0×0; fitting then
-        // would send a bogus tiny resize to the PTY, corrupting TUI apps.
+        // display:none collapses the container to 0×0; fitting then corrupts TUIs.
         if (!el.offsetWidth && !el.offsetHeight) return;
 
         fitAddon.fit();
@@ -238,9 +232,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
       observer.disconnect();
     });
 
-    // Refresh terminal rendering when the tab container is moved
-    // between panes. The DOM move can clear the canvas context,
-    // so we re-fit and repaint from the buffer.
+    // Moving the DOM between panes can clear xterm's canvas; re-fit and repaint.
     const onPaneChanged = () => {
       requestAnimationFrame(() => {
         if (disposed) return;
@@ -258,7 +250,6 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
     el.addEventListener("pane-changed", onPaneChanged);
     cleanups.push(() => el.removeEventListener("pane-changed", onPaneChanged));
 
-    // Update xterm colors when the app theme changes
     const onThemeChanged = () => {
       const nt = getTheme().terminal;
       terminal.options.theme = {
@@ -288,18 +279,14 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
     window.addEventListener("theme-changed", onThemeChanged);
     cleanups.push(() => window.removeEventListener("theme-changed", onThemeChanged));
 
-    // Wait for layout to settle before fitting and spawning the shell.
-    // Two rAFs: first enters the next frame, second ensures layout is
-    // computed — this guarantees the container has its final dimensions.
+    // Two rAFs let layout complete before fit() so the container has final dims.
     requestAnimationFrame(() => {
       requestAnimationFrame(async () => {
         if (disposed) return;
 
         fitAddon.fit();
 
-        // Register event listeners BEFORE spawning so no early output is lost.
-        // The shell may emit its prompt before spawn() returns (especially on
-        // subsequent tabs where the binary is already cached in memory).
+        // Register listeners BEFORE spawn — prompt can arrive before spawn() returns.
         const unlisten = await listen<string>(`terminal-data-${terminalId}`, (event) => {
           terminal.write(event.payload);
         });
@@ -310,7 +297,6 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
           const msg = code != null ? `Process exited (code ${code})` : "Process exited";
           terminal.write(`\r\n\x1b[90m[${msg}]\x1b[0m\r\n`);
           terminal.write("\x1b[90m[Press Enter to restart]\x1b[0m");
-          // Allow restarting with Enter key
           const restartHandler = terminal.onData((data) => {
             if (data === "\r" || data === "\n") {
               restartHandler.dispose();
@@ -348,7 +334,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
 
         spawned = true;
 
-        // Keyboard input → PTY. On failure (dead agent), auto-reconnect.
+        // Keystrokes → PTY; a write failure means the agent died, so reconnect.
         const onData = terminal.onData((data) => {
           if (reconnecting) return;
           invoke("terminal_write", { id: terminalId, data }).catch(() => {

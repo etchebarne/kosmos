@@ -12,8 +12,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use super::connection::ConnectionType;
 
-#[cfg(target_os = "windows")]
-use kosmos_core::CREATE_NO_WINDOW;
+use kosmos_core::configure_child_process;
 
 const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -31,7 +30,6 @@ pub struct RemoteAgent {
 
 impl Drop for RemoteAgent {
     fn drop(&mut self) {
-        // Best-effort kill of the child process to avoid orphans.
         if let Ok(mut child) = self.child.try_lock() {
             let _ = child.start_kill();
         }
@@ -49,9 +47,8 @@ impl RemoteAgent {
             }
             ConnectionType::Wsl { distro } => {
                 let mut cmd = tokio::process::Command::new("wsl.exe");
-                // Use -lic so bash sources .bashrc/.profile fully (including
-                // nvm/fnm/volta setup that lives behind the interactive guard).
-                // exec replaces the shell so no stray bash process lingers.
+                // bash -lic so nvm/fnm/volta setup behind the interactive guard is sourced;
+                // exec so no bash wrapper lingers after the agent.
                 let remote_dir = super::deploy::REMOTE_DIR;
                 cmd.args([
                     "-d",
@@ -64,10 +61,7 @@ impl RemoteAgent {
                 cmd.stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
-                #[cfg(target_os = "windows")]
-                {
-                    cmd.creation_flags(CREATE_NO_WINDOW);
-                }
+                configure_child_process(&mut cmd);
                 cmd.spawn()
                     .map_err(|e| format!("Failed to spawn agent: {e}"))?
             }
@@ -124,8 +118,7 @@ impl RemoteAgent {
         tokio::spawn(async move {
             read_agent_stdout(stdout, pending_clone.clone(), on_event).await;
 
-            // Agent died — mark dead and fail all pending requests.
-            // Terminal reconnection is handled by the frontend on next write.
+            // Agent exited: fail pending requests; frontend handles terminal reconnection.
             alive_clone.store(false, Ordering::SeqCst);
             tracing::warn!("Agent process exited");
             let mut p = pending_clone.lock().await;
@@ -143,13 +136,10 @@ impl RemoteAgent {
             connection_type: conn,
         };
 
-        // Keepalive: periodically send a Ping to prevent idle pipe closure.
-        // Stops when the agent dies. We fire-and-forget (id=0, no pending receiver),
-        // so the response is silently discarded by the stdout reader.
+        // Periodic Ping prevents idle pipe closure. id=0 → no receiver, response discarded.
         let keepalive_stdin = agent.stdin.clone();
         let keepalive_alive = alive;
         tokio::spawn(async move {
-            // Pre-serialize since the message never changes
             let msg = RequestMessage {
                 id: 0,
                 request: Request::Ping,
@@ -234,7 +224,6 @@ impl RemoteAgent {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
 
-        // Write the framed message
         {
             let mut stdin = self.stdin.lock().await;
             let header = format!("Content-Length: {}\r\n\r\n", json.len());
@@ -252,7 +241,6 @@ impl RemoteAgent {
             }
         }
 
-        // Wait with timeout
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(response)) => {
                 if let Some(err) = response.error {
@@ -261,12 +249,8 @@ impl RemoteAgent {
                     Ok(response.result.unwrap_or(serde_json::Value::Null))
                 }
             }
-            Ok(Err(_)) => {
-                // Channel closed — agent died
-                Err("Agent connection lost".into())
-            }
+            Ok(Err(_)) => Err("Agent connection lost".into()),
             Err(_) => {
-                // Timeout — clean up pending
                 self.pending.lock().await.remove(&id);
                 Err("Agent request timed out".into())
             }

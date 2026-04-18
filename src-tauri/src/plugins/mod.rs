@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,12 +7,61 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
-use kosmos_core::CREATE_NO_WINDOW;
+use kosmos_core::configure_child_process;
+
+/// A tab a plugin declares in its manifest.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginTabContribution {
+    #[serde(rename = "type")]
+    pub tab_type: String,
+    pub title: String,
+    pub icon: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_size: Option<PluginTabDefaultSize>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginTabDefaultSize {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A command a plugin declares in its manifest.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginCommandContribution {
+    pub id: String,
+    pub title: String,
+}
+
+/// Contributions section of a plugin manifest.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct PluginContributions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<Vec<PluginTabContribution>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commands: Option<Vec<PluginCommandContribution>>,
+}
+
+/// Mirrors the frontend `PluginManifest` interface (see `src/plugins/types.ts`).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PluginManifest {
+    pub name: String,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    pub main: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contributes: Option<PluginContributions>,
+}
 
 #[derive(Serialize)]
 pub struct PluginEntry {
-    manifest: serde_json::Value,
+    manifest: PluginManifest,
     path: String,
 }
 
@@ -44,7 +93,7 @@ pub async fn plugin_list(app: AppHandle) -> Result<Vec<PluginEntry>, String> {
             continue;
         }
         match std::fs::read_to_string(&manifest_path) {
-            Ok(contents) => match serde_json::from_str::<serde_json::Value>(&contents) {
+            Ok(contents) => match serde_json::from_str::<PluginManifest>(&contents) {
                 Ok(manifest) => {
                     entries.push(PluginEntry {
                         manifest,
@@ -76,7 +125,6 @@ pub async fn plugin_install(
 ) -> Result<(), String> {
     let dir = plugins_dir(&app)?;
 
-    // Download
     let bytes = reqwest::get(&url)
         .await
         .map_err(|e| format!("Download failed: {e}"))?
@@ -84,11 +132,9 @@ pub async fn plugin_install(
         .await
         .map_err(|e| format!("Failed to read response: {e}"))?;
 
-    // Determine target directory
     let target = match &plugin_id {
         Some(id) => dir.join(id),
         None => {
-            // Try to derive name from URL (last path segment without extension)
             let name = url
                 .rsplit('/')
                 .next()
@@ -100,24 +146,19 @@ pub async fn plugin_install(
         }
     };
 
-    // Clean existing install
     if target.exists() {
         std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
     }
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
 
-    // Extract based on content
     if url.ends_with(".zip") {
         extract_zip(&bytes, &target)?;
     } else {
-        // Assume tar.gz for everything else
         extract_tar_gz(&bytes, &target)?;
     }
 
-    // If the archive extracted a single top-level directory, hoist its contents up
     hoist_single_child(&target)?;
 
-    // Verify manifest exists
     if !target.join("manifest.json").exists() {
         std::fs::remove_dir_all(&target).ok();
         return Err("Plugin archive does not contain a manifest.json".into());
@@ -147,8 +188,6 @@ pub async fn plugin_fetch_registry(url: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read registry: {e}"))
 }
 
-// ── Shell / process API for plugins ──
-
 /// Tracks spawned child processes so plugins can write to stdin and kill them.
 #[derive(Clone, Default)]
 pub struct PluginProcessManager {
@@ -172,10 +211,7 @@ pub async fn plugin_shell_execute(
 ) -> Result<ShellOutput, String> {
     let mut cmd = Command::new(&command);
     cmd.args(&args);
-    #[cfg(target_os = "linux")]
-    kosmos_core::sanitize_child_env(&mut cmd);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    configure_child_process(&mut cmd);
     if let Some(ref dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -205,17 +241,13 @@ pub async fn plugin_shell_spawn(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "linux")]
-    kosmos_core::sanitize_child_env(&mut cmd);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    configure_child_process(&mut cmd);
     if let Some(ref dir) = cwd {
         cmd.current_dir(dir);
     }
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn: {e}"))?;
 
-    // Extract stdin before moving child into the map
     if let Some(stdin) = child.stdin.take() {
         state
             .stdin_handles
@@ -234,7 +266,6 @@ pub async fn plugin_shell_spawn(
         .await
         .insert(pid.clone(), child.clone());
 
-    // Stream stdout
     if let Some(stdout) = stdout {
         let app_clone = app.clone();
         let pid_clone = pid.clone();
@@ -250,7 +281,6 @@ pub async fn plugin_shell_spawn(
         });
     }
 
-    // Stream stderr
     if let Some(stderr) = stderr {
         let app_clone = app.clone();
         let pid_clone = pid.clone();
@@ -266,7 +296,6 @@ pub async fn plugin_shell_spawn(
         });
     }
 
-    // Wait for exit in background
     {
         let app_clone = app.clone();
         let pid_clone = pid.clone();
@@ -332,8 +361,6 @@ pub async fn plugin_shell_kill(
     Ok(())
 }
 
-// ── Archive extraction helpers ──
-
 fn extract_zip(data: &[u8], target: &std::path::Path) -> Result<(), String> {
     use std::io::{Cursor, Read};
 
@@ -387,8 +414,6 @@ fn hoist_single_child(target: &std::path::Path) -> Result<(), String> {
         let temp = target.with_extension("__hoist_tmp");
         std::fs::rename(&child, &temp).map_err(|e| e.to_string())?;
 
-        // Remove the now-empty target (might still have the temp dir as sibling)
-        // Move temp contents into target
         for entry in std::fs::read_dir(&temp).map_err(|e| e.to_string())?.flatten() {
             let dest = target.join(entry.file_name());
             std::fs::rename(entry.path(), &dest).map_err(|e| e.to_string())?;

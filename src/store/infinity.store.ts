@@ -5,7 +5,7 @@ import {
   type NodeChange,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { genId } from "../lib/pane-tree";
+import { genId } from "../lib/paneTree";
 import { getTabDefinition } from "../tabs/registry";
 
 const GRID_SIZE = 20;
@@ -95,7 +95,6 @@ export const useInfinityStore = create<InfinityStore>((set, get) => ({
       const nodes = state.canvases[tabId] ?? EMPTY_NODES;
       const updated = applyNodeChanges(changes, nodes);
 
-      // Snap dimensions and position to grid during resize
       for (const c of changes) {
         if (c.type === "dimensions" && c.resizing !== undefined) {
           const idx = updated.findIndex((n) => n.id === c.id);

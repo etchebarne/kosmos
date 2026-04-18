@@ -3,7 +3,7 @@ import type { Monaco } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { TauriLspTransport } from "../lib/lsp/transport";
 import { LspClient } from "../lib/lsp/client";
-import { registerLspProviders } from "../lib/lsp/monaco-bridge";
+import { registerLspProviders } from "../lib/lsp/monacoBridge";
 import type { IndexProgress, LspServerInfo, LspState } from "./lsp.types";
 import {
   progressEntries,
@@ -18,8 +18,7 @@ import {
 type SetFn = (fn: (state: WritableDraft<LspState>) => void) => void;
 type GetFn = () => LspState;
 
-// ── Language group resolution (single source of truth: backend) ──
-
+// Backend is authoritative for language groups and companion mapping.
 let languageGroupMap: Record<string, string> | null = null;
 /** companion language → list of primary server language groups it serves */
 let companionMap: Record<string, string[]> | null = null;
@@ -69,12 +68,12 @@ export function getCompanionsFor(primaryServerLang: string): string[] {
 }
 
 /** Returns true if this server language is a companion (not a primary). */
-export function isCompanionServer(serverLang: string): boolean {
+function isCompanionServer(serverLang: string): boolean {
   return companionMap != null && serverLang in companionMap;
 }
 
 /** For a companion server, returns all Monaco language IDs it should provide features for. */
-export function getCompanionTargetLanguages(companionLang: string): string[] {
+function getCompanionTargetLanguages(companionLang: string): string[] {
   const targets = companionMap?.[companionLang];
   if (!targets) return [];
   const langs: string[] = [];
@@ -86,7 +85,7 @@ export function getCompanionTargetLanguages(companionLang: string): string[] {
   return langs;
 }
 
-// Track in-flight server starts so concurrent callers share the same promise
+// Concurrent starts for the same server share this promise.
 export const pending = new Map<string, Promise<LspClient | null>>();
 
 export function setServerInfo(
@@ -112,7 +111,7 @@ export function ensureProviders(
 ) {
   if (info.providerDisposables.length > 0 || !info.client) return;
 
-  // Companion servers register providers for the languages they serve, not their own id
+  // Companions provide features for the languages they serve, not their own id.
   const monacoLangs = isCompanionServer(serverLang)
     ? getCompanionTargetLanguages(serverLang)
     : getMonacoLanguages(serverLang);
@@ -148,7 +147,6 @@ export async function initializeServer(
   await ensureLanguageGroups();
   const serverLang = resolveServerLanguage(languageId);
 
-  // Already running?
   const existing = get().servers[workspacePath]?.[serverLang];
   if (existing && (existing.status === "running" || existing.status === "starting")) {
     return existing.status === "running" ? existing.client : null;
@@ -157,13 +155,11 @@ export async function initializeServer(
     return null;
   }
 
-  // Deduplicate concurrent calls
   const pendingKey = `${workspacePath}:${serverLang}`;
   const inflight = pending.get(pendingKey);
   if (inflight) return inflight;
 
   const promise = (async (): Promise<LspClient | null> => {
-    // Ask Rust to spawn the language server with the resolved project root
     const result = await invoke<{
       serverId: string;
       serverName: string;
@@ -173,11 +169,10 @@ export async function initializeServer(
       languageId,
     });
 
-    // Create transport and client
     const transport = new TauriLspTransport(result.serverId);
     await transport.connect();
-    // For remote workspaces (wsl://distro/path), pass the prefix so the
-    // client can map URIs between editor paths and native Linux paths.
+    // For wsl://distro/path roots, pass the prefix so the client can rewrite URIs
+    // between editor paths and the agent's native Linux paths.
     const wslMatch = projectRoot.match(/^(wsl:\/\/[^/]+)/);
     const client = new LspClient(transport, wslMatch?.[1]);
 
@@ -188,15 +183,13 @@ export async function initializeServer(
     try {
       await client.initialize(projectRoot);
     } catch (err) {
-      // Server died during initialization — re-throw with server name
-      // so the caller can identify which server failed and offer install
+      // Re-throw with the server name so callers can attribute the failure.
       await invoke("lsp_stop", { serverId: result.serverId }).catch(() => {});
       throw new Error(
         `Failed to start ${result.serverName}: ${err instanceof Error ? err.message : err}`,
       );
     }
 
-    // Track work-done progress (indexing, loading, etc.)
     client.onProgress((token, value) => {
       const key = progressKey(workspacePath, serverLang, token);
       if (value.kind === "begin") {
@@ -215,7 +208,7 @@ export async function initializeServer(
             syncProgressState(workspacePath, set);
           }, PROGRESS_TIMEOUT_MS),
         });
-        // Flush immediately so the indicator appears right away
+        // Flush so the indicator shows/hides immediately rather than at next batch.
         flushProgressSync(set);
       } else if (value.kind === "report") {
         const entry = progressEntries.get(key);
@@ -226,18 +219,15 @@ export async function initializeServer(
             percentage: value.percentage ?? entry.progress.percentage,
           };
         }
-        // Throttled — syncProgressState batches report updates
         syncProgressState(workspacePath, set);
       } else if (value.kind === "end") {
         const entry = progressEntries.get(key);
         if (entry?.timer) clearTimeout(entry.timer);
         progressEntries.delete(key);
-        // Flush immediately so the indicator disappears right away
         flushProgressSync(set);
       }
     });
 
-    // Record start timestamp for restart backoff logic
     const startKey = `${workspacePath}:${serverLang}`;
     restartState.set(startKey, { attempts: 0, startTimestamp: Date.now() });
 

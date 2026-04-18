@@ -4,14 +4,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { Setting } from "../../components/shared/Setting";
-import { Dropdown } from "../../components/shared/Dropdown";
+import { Dropdown, type DropdownOption } from "../../components/shared/Dropdown";
 import { useSettingsStore } from "../../store/settings.store";
 import type { TabContentProps } from "../types";
-
-interface DropdownOption {
-  value: string;
-  label: string;
-}
 
 type SettingControl =
   | { type: "dropdown"; options: DropdownOption[] }
@@ -146,7 +141,6 @@ function AccordionSection({
 export function SettingsTab({ tab: _tab, paneId: _paneId }: TabContentProps) {
   const [schema, setSchema] = useState<SettingsSchema | null>(null);
   const [version, setVersion] = useState<string | null>(null);
-  // Default to all sections expanded for a better "editor settings" feel
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const values = useSettingsStore((s) => s.values);
   const setSetting = useSettingsStore((s) => s.set);
@@ -154,7 +148,6 @@ export function SettingsTab({ tab: _tab, paneId: _paneId }: TabContentProps) {
   useEffect(() => {
     invoke<SettingsSchema>("get_settings_schema").then((s) => {
       setSchema(s);
-      // Auto-expand all sections on load
       setExpandedSections(new Set(s.sections.map((sec) => sec.id)));
     });
     getVersion().then(setVersion);

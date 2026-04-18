@@ -1,9 +1,4 @@
-/**
- * Percent-encode a file path for use in a file:// URI.
- * Uses the built-in encodeURI for most characters, then encodes
- * the few reserved characters that encodeURI leaves alone but
- * are unsafe in file URI paths (e.g. #, ?).
- */
+/** encodeURI leaves #, ?, etc. intact; re-encode them manually for file URIs. */
 function encodeFilePath(path: string): string {
   return encodeURI(path).replace(/[#?;@&=+$,!'()*]/g, (ch) => {
     return `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;

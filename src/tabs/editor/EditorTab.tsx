@@ -13,22 +13,20 @@ import { useLspStore } from "../../store/lsp.store";
 import { pathToFileUri } from "../../lib/lsp/uri";
 import { useLayoutStore } from "../../store/layout.store";
 import { useEditorStore } from "../../store/editor.store";
-import { findLeaf } from "../../lib/pane-tree";
-import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monaco-languages";
-import { useThemeListener } from "../../hooks/use-theme-listener";
+import { findLeaf } from "../../lib/paneTree";
+import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monacoLanguages";
+import { useThemeListener } from "../../hooks/useThemeListener";
 import { getEditorMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
 import { ContextMenu, type ContextMenuItem } from "../../components/shared/ContextMenu";
-import { BASE_EDITOR_OPTIONS } from "../../lib/monaco-config";
-import { initExtMap, languageIdFromExt } from "../../lib/ext-to-lang";
-import { normalizePath, getFileExtension } from "../../lib/path-utils";
+import { BASE_EDITOR_OPTIONS } from "../../lib/monacoConfig";
+import { initExtMap, languageIdFromExt } from "../../lib/extToLang";
+import { normalizePath, getFileExtension } from "../../lib/pathUtils";
 import type { TabContentProps } from "../types";
-import { defineKosmosTheme } from "./monaco-theme";
-import { registerEditorOpener } from "./editor-opener";
-import { editorCache } from "./editor-cache";
-import { parseDiffChanges, buildDiffDecorations } from "./diff-decorations";
-
-// ── Language detection from file extension (for early LSP start) ──
+import { defineKosmosTheme } from "./monacoTheme";
+import { registerEditorOpener } from "./editorOpener";
+import { editorCache } from "./editorCache";
+import { parseDiffChanges, buildDiffDecorations } from "./diffDecorations";
 
 function languageIdFromPath(filePath: string): string {
   const ext = getFileExtension(filePath);
@@ -45,10 +43,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const contentRef = useRef<string | null>(null);
-  // Monaco's alternativeVersionId snapshot at the last saved/loaded baseline.
-  // Dirty is derived by comparing it to the model's current id: if the user
-  // undoes back to this baseline, dirty clears automatically (same approach
-  // VS Code uses). Survives stray change events better than a plain flag.
+  // Baseline alternativeVersionId; comparing against current id lets undo clear dirty automatically.
   const savedVersionIdRef = useRef(0);
   const versionRef = useRef(0);
   const changeDisposableRef = useRef<{ dispose: () => void } | null>(null);
@@ -81,7 +76,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
   const isExternalUpdateRef = useRef(false);
 
-  // Refs to keep cleanup closure in sync with latest values
+  // Mirror reactive values into refs so cleanup/listener closures see latest.
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
   const fileUriRef = useRef(fileUri);
@@ -99,9 +94,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       const result = await invoke<string>("read_file", { path: filePath });
       setContent(result);
       contentRef.current = result;
-      // If the editor already exists (rare: loadFile re-runs after mount),
-      // rebaseline the saved version id. The common path is initial load,
-      // where the editor mounts after this and captures its id in onMount.
+      // Rebaseline on the rare re-load after mount; normal path baselines in onMount.
       const model = editorRef.current?.getModel();
       if (model) savedVersionIdRef.current = model.getAlternativeVersionId();
       setTabDirty(tab.id, false);
@@ -118,20 +111,16 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
   const saveFile = useCallback(async () => {
     if (!filePath || contentRef.current === null) return;
-    // Snapshot the version id we're about to persist. We capture *before*
-    // the async write so edits made during the write don't get baselined
-    // as saved.
+    // Snapshot version id before the async write so mid-write edits aren't baselined.
     const model = editorRef.current?.getModel();
     const savingVersionId = model?.getAlternativeVersionId() ?? 0;
     const savingContent = contentRef.current;
     try {
       await invoke("write_file", { path: filePath, content: savingContent });
       savedVersionIdRef.current = savingVersionId;
-      // Re-evaluate dirty against the (possibly newer) current version id.
       const currentVid = editorRef.current?.getModel()?.getAlternativeVersionId() ?? 0;
       setTabDirty(tab.id, currentVid !== savingVersionId);
 
-      // Notify LSP of save
       if (workspace && fileUri) {
         const client = getClient(workspace.path, lspLanguageRef.current);
         client?.didSave(fileUri, savingContent);
@@ -144,12 +133,9 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     }
   }, [filePath, workspace, fileUri, getClient, getCompanionClients]);
 
-  // Keep a ref to saveFile so the once-registered onKeyDown handler always
-  // calls the latest closure (picks up workspace/fileUri after they load).
+  // onKeyDown registers once; ref lets it invoke the latest saveFile closure.
   const saveFileRef = useRef(saveFile);
   saveFileRef.current = saveFile;
-
-  // ── Git diff gutter decorations ──
 
   const refreshDiffDecorations = useCallback(async () => {
     const ed = editorRef.current;
@@ -157,7 +143,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     const fp = filePathRef.current;
     if (!ed || !ws || !fp) return;
 
-    // Convert absolute path to workspace-relative
     const relative = fp.startsWith(ws.path + "/") ? fp.slice(ws.path.length + 1) : fp;
 
     try {
@@ -171,17 +156,15 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       diffDecorationsRef.current?.clear();
       diffDecorationsRef.current = ed.createDecorationsCollection(decorations);
     } catch {
-      // File may not be tracked by git — clear any stale decorations
+      // Untracked file: drop stale decorations.
       diffDecorationsRef.current?.clear();
     }
   }, []);
 
-  // Refresh diff decorations when editor + workspace are ready
   useEffect(() => {
     if (editorReady && workspace) refreshDiffDecorations();
   }, [editorReady, workspace, refreshDiffDecorations]);
 
-  // Refresh diff decorations when git state changes
   useEffect(() => {
     const unlisten = listen("git-changed", () => {
       refreshDiffDecorations();
@@ -190,8 +173,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       unlisten.then((fn) => fn());
     };
   }, [refreshDiffDecorations]);
-
-  // ── Inline git blame (GitLens-style) ──
 
   const clearBlameWidget = useCallback(() => {
     const ed = editorRef.current;
@@ -208,7 +189,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       const fp = filePathRef.current;
       if (!ed || !ws || !fp) return;
 
-      // If the line hasn't changed, skip
       if (lineNumber === blameLineRef.current) return;
       blameLineRef.current = lineNumber;
 
@@ -221,7 +201,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           line: lineNumber,
         });
 
-        // Cursor may have moved while we were fetching
+        // Cursor may have moved during the await; bail if so.
         if (blameLineRef.current !== lineNumber) return;
 
         clearBlameWidget();
@@ -230,15 +210,16 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           const endCol = model ? model.getLineMaxColumn(lineNumber) : 1;
           const domNode = document.createElement("div");
           domNode.className = "git-blame-inline";
-          domNode.style.fontSize = `${ed.getOption(/* EditorOption.fontSize */ 61) * 0.85}px`;
-          domNode.style.lineHeight = `${ed.getOption(/* EditorOption.lineHeight */ 75)}px`;
+          // Numeric ids are Monaco EditorOption (fontSize=61, lineHeight=75).
+          domNode.style.fontSize = `${ed.getOption(61) * 0.85}px`;
+          domNode.style.lineHeight = `${ed.getOption(75)}px`;
           domNode.textContent = blame;
           const widget: editor.IContentWidget = {
             getId: () => "git-blame-widget",
             getDomNode: () => domNode,
             getPosition: () => ({
               position: { lineNumber, column: endCol },
-              preference: [0], // EXACT
+              preference: [0],
             }),
           };
           blameWidgetRef.current = widget;
@@ -251,28 +232,24 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     [clearBlameWidget],
   );
 
-  // Trigger initial blame when editor + workspace are ready
   useEffect(() => {
     if (!editorReady || !workspace) return;
     const pos = editorRef.current?.getPosition();
     if (pos) updateBlame(pos.lineNumber);
   }, [editorReady, workspace, updateBlame]);
 
-  // Sync font size from store to the editor instance
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: editorFontSize });
-    // Update existing blame widget font size to match
     const widget = blameWidgetRef.current;
     if (widget) {
       const ed = editorRef.current;
-      const fs = ed?.getOption(/* EditorOption.fontSize */ 61);
-      const lh = ed?.getOption(/* EditorOption.lineHeight */ 75);
+      const fs = ed?.getOption(61);
+      const lh = ed?.getOption(75);
       if (fs) widget.getDomNode().style.fontSize = `${fs * 0.85}px`;
       if (lh) widget.getDomNode().style.lineHeight = `${lh}px`;
     }
   }, [editorFontSize]);
 
-  // Re-apply Monaco theme when the app theme changes
   const handleThemeChanged = useCallback(() => {
     const monaco = monacoRef.current;
     if (!monaco) return;
@@ -281,9 +258,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
   }, []);
   useThemeListener(handleThemeChanged);
 
-  // Start LSP when both editor and workspace are ready.
-  // Handles the case where workspace loads after the editor mounts (release builds)
-  // and the case where the editor mounts after workspace is already available.
+  // Start LSP once both editor and workspace exist, regardless of mount order.
   useEffect(() => {
     if (!editorReady || !workspace || !fileUri || !monacoRef.current || !editorRef.current) return;
     if (lspOpenedRef.current) return;
@@ -298,7 +273,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       const text = editorRef.current.getValue();
       client.didOpen(fileUri, lspLang, versionRef.current, text);
 
-      // Start companion servers (e.g. tailwindcss) and send didOpen to them
+      // Companions (e.g. tailwindcss) open the same doc alongside the main server.
       startCompanions(workspace.path, lspLang, filePath ?? null, monacoRef.current!).then(() => {
         if (cancelled) return;
         const companions = getCompanionClients(workspace.path, lspLang);
@@ -313,15 +288,13 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     };
   }, [editorReady, workspace, fileUri, startServer, startCompanions, getCompanionClients]);
 
-  // Cleanup on unmount: flush pending changes, didClose, change listener, editor instance.
-  // Uses refs to always access the latest workspace/fileUri/filePath values.
+  // Unmount: flush pending didChange, send didClose, dispose editor resources.
   useEffect(() => {
     return () => {
       const ws = workspaceRef.current;
       const uri = fileUriRef.current;
       const fp = filePathRef.current;
 
-      // Clear debounce timer and flush any pending changes before closing
       if (debounceTimerRef.current != null) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
@@ -370,19 +343,9 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     return leaf?.activeTabId === tab.id;
   });
 
-  // Refocus Monaco when this tab becomes active in its pane. Tabs stay
-  // mounted across switches (portaled into inert containers), so DOM focus
-  // is dropped by the `inert` attribute when leaving. Without this refocus,
-  // Ctrl+S — bound via Monaco's addCommand, which only fires when the
-  // editor has focus — silently no-ops on return, and the dirty dot looks
-  // stuck. Ctrl+S intentionally only acts on the focused editor so that
-  // with split panes / multiple visible editors there's no ambiguity about
-  // which file gets saved.
-  //
-  // Run in rAF so the PanePortalContext's useLayoutEffect has already
-  // removed `inert`; calling focus() on an inert element silently fails.
-  // Only take focus if it's currently outside this editor — avoids
-  // stealing focus from a widget the user intentionally clicked inside.
+  // Tabs stay mounted inside inert panes; refocus after switching so per-editor
+  // key bindings fire. rAF waits for inert to be removed (focus() no-ops on inert).
+  // Skip if focus is already inside to avoid stealing from widgets.
   useEffect(() => {
     if (!isActiveTab) return;
     const raf = requestAnimationFrame(() => {
@@ -396,23 +359,20 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     return () => cancelAnimationFrame(raf);
   }, [isActiveTab]);
 
-  // Reload editor content when the file is modified externally and the editor is clean.
-  // Uses refs for workspace/fileUri/getClient to keep the listener stable across store updates.
+  // Reload from disk on external change, but only while the editor is clean.
   useEffect(() => {
     if (!filePath) return;
 
     const unlisten = listen<string[]>("file-content-changed", async (event) => {
       const changedFiles = event.payload;
-      // Normalize both paths for comparison (backslash-insensitive)
       const normFilePath = normalizePath(filePath);
       if (!changedFiles.some((f) => normalizePath(f) === normFilePath)) return;
 
-      // Don't reload if the user has unsaved edits
       if (dirtyRef.current) return;
 
       try {
         const newContent = await invoke<string>("read_file", { path: filePath });
-        // Skip if content is identical (e.g. triggered by our own save)
+        // Skip self-triggered saves.
         if (newContent === contentRef.current) return;
 
         contentRef.current = newContent;
@@ -421,8 +381,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           isExternalUpdateRef.current = true;
           ed.setValue(newContent);
           isExternalUpdateRef.current = false;
-          // Content now matches disk again — rebaseline the saved version id
-          // so the dirty dot stays off.
           const model = ed.getModel();
           if (model) savedVersionIdRef.current = model.getAlternativeVersionId();
           setTabDirty(tab.id, false);
@@ -430,7 +388,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           setContent(newContent);
         }
 
-        // Notify LSP of the updated content
         const ws = workspaceRef.current;
         const uri = fileUriRef.current;
         if (ws && uri) {
@@ -443,7 +400,7 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
           }
         }
       } catch {
-        // File may have been deleted — ignore
+        // File may have been deleted.
       }
     });
 
@@ -456,31 +413,23 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     editorRef.current = instance;
     monacoRef.current = monaco;
 
-    // Remeasure fonts once loaded — fixes cursor offset when web fonts swap in
+    // Remeasure once webfonts swap in to avoid cursor-glyph offset.
     document.fonts.ready.then(() => {
       if (editorRef.current) monaco.editor.remeasureFonts();
     });
 
-    // Resolve the model to the most specific registered language (e.g.
-    // "typescriptreact" instead of "typescript" for .tsx files).
+    // Pick the narrowest registered language (e.g. typescriptreact over typescript).
     const model = instance.getModel();
     if (model) resolveModelLanguage(monaco, model);
     lspLanguageRef.current = model?.getLanguageId() ?? "plaintext";
 
-    // Baseline the saved version id to the model's current id. Editor just
-    // mounted with on-disk content, so this is our "clean" reference point.
     savedVersionIdRef.current = model?.getAlternativeVersionId() ?? 0;
-    // Defensive: make sure the dirty flag is cleared on mount.
     useLayoutStore.getState().setTabDirty(tab.id, false);
 
-    // Signal that the editor is mounted — the LSP useEffect will handle
-    // starting the server and sending didOpen when all conditions are met.
     setEditorReady(true);
 
-    // Grab keyboard focus so the user can type immediately
     instance.focus();
 
-    // Register editor instance for cross-file navigation
     if (filePath) {
       const cached = editorCache.get(filePath);
       const pendingReveal = cached?.pendingReveal;
@@ -489,14 +438,10 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         pendingReveal: undefined,
         save: () => saveFileRef.current(),
       });
-      // This editor just mounted and took focus — treat it as the last-clicked
-      // editor so top menu actions target it.
       setLastClickedEditor(filePath);
       if (pendingReveal) {
-        // Defer reveal — @monaco-editor/react toggles the container from
-        // display:none to display:block after onMount, triggering a
-        // ResizeObserver → layout() that resets scroll. setTimeout runs
-        // after the ResizeObserver callback settles.
+        // @monaco-editor/react flips display:none→block after onMount, triggering a
+        // ResizeObserver layout that resets scroll; defer reveal past it.
         setTimeout(() => {
           instance.setPosition(pendingReveal);
           instance.revealPositionInCenter(pendingReveal);
@@ -504,21 +449,12 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       }
     }
 
-    // Any focus event on this editor flags it as the "last-clicked" target
-    // for top menu actions (Save, Undo, Cut, Select All, ...).
     instance.onDidFocusEditorWidget(() => {
       if (filePath) setLastClickedEditor(filePath);
     });
 
-    // Bind Ctrl+S / zoom keys via onKeyDown (per-editor) rather than
-    // addCommand. Monaco's addCommand uses a single global keybinding
-    // registry — if two editors are mounted and both addCommand(Ctrl+S),
-    // the second registration overrides the first, so only one editor's
-    // handler ever fires. onKeyDown is a plain per-instance event, scoped
-    // to this editor's focus, with no cross-instance interference.
-    //
-    // Refs keep the handler reading the latest store actions / saveFile
-    // closure without rebinding on every render.
+    // Use per-instance onKeyDown (not addCommand) so multiple editors don't
+    // overwrite each other in Monaco's global keybinding registry.
     instance.onKeyDown((e) => {
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl || e.shiftKey || e.altKey) return;
@@ -548,11 +484,8 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       }
     });
 
-    // Suppress middle-click paste when the user middle-drags to select text.
-    // On Linux, middle-click pastes the X11 PRIMARY selection; without this,
-    // a middle-drag selection would be overwritten on release by the paste
-    // that fires at mouseup. VSCode has the same behavior — drag selects,
-    // no paste on release. A plain middle-click (no drag) still pastes.
+    // On Linux middle-click pastes PRIMARY; suppress paste when a middle-drag selects
+    // text so the selection isn't overwritten on mouseup. Plain click still pastes.
     const editorDom = instance.getDomNode();
     if (editorDom) {
       let middleDragged = false;
@@ -594,10 +527,8 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       };
     }
 
-    // Debounced inline blame on cursor move
     instance.onDidChangeCursorPosition((e) => {
       if (blameTimerRef.current != null) clearTimeout(blameTimerRef.current);
-      // Clear immediately when moving away
       clearBlameWidget();
       blameLineRef.current = 0;
       blameTimerRef.current = setTimeout(() => {
@@ -606,21 +537,14 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
       }, 500);
     });
 
-    // Listen for content changes and debounce LSP didChange notifications.
-    // Sending on every keystroke floods the server; batching with a short
-    // delay reduces load while keeping diagnostics responsive.
+    // Debounce LSP didChange so keystrokes don't flood the server.
     const DIDCHANGE_DEBOUNCE_MS = 200;
 
     changeDisposableRef.current = instance.onDidChangeModelContent((e) => {
-      // Update local state immediately (not debounced)
       contentRef.current = instance.getValue();
-      // Skip dirty flag for programmatic reloads from external file changes
+      // External reload: don't flip dirty.
       if (isExternalUpdateRef.current) return;
 
-      // Derive dirty from Monaco's alternativeVersionId — self-correcting
-      // on undo, resilient to stray change events. Read the current store
-      // state (not the stale `dirty` render-time value) so we only call
-      // setTabDirty when the flag actually needs to flip.
       const m = instance.getModel();
       const vid = m?.getAlternativeVersionId() ?? 0;
       const shouldBeDirty = vid !== savedVersionIdRef.current;
@@ -635,18 +559,14 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
 
       versionRef.current++;
 
-      // Check if server wants full or incremental sync
       const syncKind =
         typeof client.capabilities?.textDocumentSync === "object"
           ? client.capabilities.textDocumentSync.change
           : client.capabilities?.textDocumentSync;
 
-      // Accumulate changes for the debounced send
       if (syncKind === TextDocumentSyncKind.Full) {
-        // For full sync, only the latest snapshot matters
         pendingChangesRef.current = [{ text: instance.getValue() }];
       } else {
-        // For incremental sync, accumulate all changes in order
         const changes = e.changes.map((change) => ({
           range: {
             start: {
@@ -664,7 +584,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         pendingChangesRef.current.push(...changes);
       }
 
-      // Debounce the actual send
       if (debounceTimerRef.current != null) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -673,7 +592,6 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
         if (pendingChangesRef.current.length === 0) return;
         const currentClient = getClient(workspace.path, lspLanguageRef.current);
         currentClient?.didChange(fileUri, versionRef.current, pendingChangesRef.current);
-        // Mirror changes to companion servers (e.g. tailwindcss)
         for (const companion of getCompanionClients(workspace.path, lspLanguageRef.current)) {
           companion.didChange(fileUri, versionRef.current, pendingChangesRef.current);
         }
@@ -689,19 +607,15 @@ export function EditorTab({ tab, paneId }: TabContentProps) {
     initExtMap(monaco);
     registerEditorOpener(monaco);
 
-    // Eagerly start the LSP server while Monaco finishes mounting the editor.
-    // This overlaps server spawn + initialize with editor DOM setup, so
-    // providers are ready sooner. The onMount handler will await the same
-    // shared promise and send didOpen once it resolves.
+    // Eagerly spawn LSP during editor DOM setup so providers are ready sooner.
     if (workspace && filePath) {
       const lang = languageIdFromPath(filePath);
       lspLanguageRef.current = lang;
       startServer(workspace.path, lang, filePath, monaco);
     }
 
-    // Disable Monaco's built-in TS/JS diagnostics unconditionally.
-    // They run in-browser without tsconfig/node_modules so they always
-    // produce false positives. Real diagnostics come from the LSP server.
+    // Monaco's built-in TS/JS checks run without tsconfig/node_modules — always false
+    // positives. Real diagnostics come from the LSP server.
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: true,
       noSyntaxValidation: true,

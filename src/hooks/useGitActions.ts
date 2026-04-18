@@ -13,7 +13,6 @@ const GIT_ACTIONS: { key: GitAction; label: string; command: string }[] = [
 ];
 
 export { GIT_ACTIONS };
-export type { GitAction };
 
 export function useGitActions(
   workspacePath: string | null,

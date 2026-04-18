@@ -8,8 +8,6 @@ use tauri::State;
 use crate::remote::router::BackendRouter;
 use crate::remote::routing::{resolve, Route};
 
-// ── Routed commands ──
-
 routed_cmd!(val fn get_git_branch(path) -> Option<String> {
     request(p) => Request::GetGitBranch { path: p },
     local => kosmos_core::git::get_git_branch(&path),
@@ -155,8 +153,6 @@ routed_cmd!(void fn git_force_push(path) {
     local => kosmos_core::git::git_force_push(&path),
 });
 
-// ── Hand-written commands (custom routing logic) ──
-
 #[tauri::command]
 pub async fn watch_workspace(
     router: State<'_, BackendRouter>,
@@ -171,9 +167,7 @@ pub async fn watch_workspace(
             Ok(())
         }
         Route::Local => {
-            // Setting up recursive inotify watches can block for seconds on large
-            // repos. Fire-and-forget on the blocking pool so this command returns
-            // instantly and doesn't hold up the IPC channel.
+            // Recursive inotify setup can block for seconds on large repos; run off the IPC thread.
             let watcher = Arc::clone(&*watcher);
             tokio::task::spawn_blocking(move || {
                 if let Err(e) = watcher.watch(&path) {

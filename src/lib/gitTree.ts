@@ -28,7 +28,6 @@ export interface TreeNode {
 export function buildChangeTree(changes: GitFileChange[]): TreeNode[] {
   if (changes.length === 0) return [];
 
-  // Build TreeNode tree directly (no intermediate Trie)
   const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
 
   for (const change of changes) {
@@ -57,12 +56,11 @@ export function buildChangeTree(changes: GitFileChange[]): TreeNode[] {
     }
   }
 
-  // Collapse single-child directory chains and sort
   function collapseAndSort(nodes: TreeNode[]): TreeNode[] {
     for (const node of nodes) {
       if (!node.isDir) continue;
 
-      // Collapse: dir with a single dir child merges names
+      // Merge chains like a/b/c into a single "a/b/c" node.
       while (node.children.length === 1 && node.children[0].isDir) {
         const only = node.children[0];
         node.name += "/" + only.name;

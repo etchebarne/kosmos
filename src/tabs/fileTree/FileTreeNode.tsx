@@ -4,17 +4,15 @@ import { CaretRight, Folder, FolderOpen, File } from "@phosphor-icons/react";
 import { useLayoutStore } from "../../store/layout.store";
 import { useIsDarkTheme } from "../../lib/themes";
 import { useDragStore } from "../../store/drag.store";
-import { startDragThreshold } from "../../lib/drag-threshold";
-import { getFileName, getParentDir, normalizePath } from "../../lib/path-utils";
+import { startDragThreshold } from "../../lib/dragThreshold";
+import { getFileName, getParentDir, normalizePath } from "../../lib/pathUtils";
 import { ContextMenu } from "../../components/shared/ContextMenu";
-import type { DirEntry } from "./FileTreeTab";
-import { useFileTreeSelection, useFileClipboard } from "./file-tree-stores";
-import { GitFileTreeContext } from "./git-file-tree-context";
-import { FileIcon } from "./file-icons";
+import type { DirEntry } from "./fileTreeTypes";
+import { useFileTreeSelection, useFileClipboard } from "./fileTreeStores";
+import { GitFileTreeContext } from "./gitFileTreeContext";
+import { FileIcon } from "./fileIcons";
 import { InlineInput } from "./InlineInput";
 import { useFileTreeActions } from "./useFileTreeActions";
-
-// ── Helpers ──
 
 interface FileTreeNodeProps {
   entry: DirEntry;
@@ -26,8 +24,6 @@ interface FileTreeNodeProps {
 
 const INDENT_SIZE = 16;
 const LEFT_PAD = 8;
-
-// ── Main component ──
 
 export function FileTreeNode({
   entry,
@@ -103,7 +99,6 @@ export function FileTreeNode({
       if (dragOccurredRef.current) return;
 
       if (e.shiftKey) {
-        // Range select from anchor to this entry
         const { anchorPath } = useFileTreeSelection.getState();
         if (anchorPath) {
           const allButtons = Array.from(
@@ -123,7 +118,6 @@ export function FileTreeNode({
         return;
       }
 
-      // Normal click
       useFileTreeSelection.getState().select(entry.path);
 
       if (entry.isDir) {
@@ -137,7 +131,7 @@ export function FileTreeNode({
             setLoaded(true);
             setExpanded(true);
           } catch {
-            // silently fail for unreadable dirs
+            // Unreadable dir.
           } finally {
             setLoading(false);
           }
@@ -151,7 +145,7 @@ export function FileTreeNode({
     [entry, loaded, openFile, paneId],
   );
 
-  // Listen for file move events to surgically update children
+  // Surgically patch children on file-tree-move events from siblings.
   useEffect(() => {
     if (!entry.isDir) return;
 
@@ -176,7 +170,6 @@ export function FileTreeNode({
     return () => window.removeEventListener("file-tree-move", handler);
   }, [entry.isDir, entry.path]);
 
-  // Listen for create requests from child file nodes targeting this directory
   useEffect(() => {
     if (!entry.isDir) return;
 
@@ -201,7 +194,6 @@ export function FileTreeNode({
     return () => window.removeEventListener("file-tree-create", handler);
   }, [entry.isDir, entry.path, loaded]);
 
-  // Listen for refresh requests from child nodes (e.g. after rename/trash/delete)
   useEffect(() => {
     if (!entry.isDir) return;
 
@@ -226,7 +218,7 @@ export function FileTreeNode({
     (e: React.MouseEvent) => {
       if (e.button !== 0 || e.shiftKey) return;
 
-      // Directories at the root level (depth 0) aren't draggable
+      // Root-level directories aren't draggable.
       if (entry.isDir && depth === 0) return;
 
       dragOccurredRef.current = false;
@@ -263,7 +255,7 @@ export function FileTreeNode({
             });
           }
         },
-        () => {}, // click is handled by the onClick handler
+        () => {},
       );
     },
     [entry, setDragState],
@@ -273,7 +265,6 @@ export function FileTreeNode({
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      // If right-clicking an unselected entry, select it alone
       if (!useFileTreeSelection.getState().selectedPaths.has(entry.path)) {
         useFileTreeSelection.getState().select(entry.path);
       }

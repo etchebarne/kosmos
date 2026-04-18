@@ -33,8 +33,7 @@ pub async fn terminal_spawn(
     rows: u16,
 ) -> Result<(), String> {
     if let Some((agent, remote_cwd)) = router.resolve(&cwd).await {
-        // Register before spawning so writes arriving immediately after spawn
-        // are routed correctly (avoids race with terminal_write).
+        // Register before spawn so an immediate terminal_write finds the route.
         router
             .register_remote_terminal(id.clone(), agent.clone())
             .await;
@@ -137,11 +136,10 @@ pub async fn terminal_forward_clipboard_image(
     router: State<'_, BackendRouter>,
     id: String,
 ) -> Result<(), String> {
-    // Remote terminals (WSL)
     if let Some(agent) = router.get_remote_terminal(&id).await {
         let distro = match &agent.connection_type {
             ConnectionType::Wsl { distro } => distro.clone(),
-            _ => return Ok(()), // SSH not supported yet
+            _ => return Ok(()),
         };
 
         let image = app
@@ -158,8 +156,7 @@ pub async fn terminal_forward_clipboard_image(
         return Ok(());
     }
 
-    // Local terminals on Linux — read the clipboard image and write it so
-    // the shims deployed at spawn time can serve it.
+    // Local Linux: write the host clipboard image where shims will find it.
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
@@ -178,7 +175,6 @@ pub async fn terminal_forward_clipboard_image(
 /// process since it has display access.
 #[cfg(target_os = "linux")]
 fn read_clipboard_image_linux(app: &AppHandle) -> Result<Vec<u8>, String> {
-    // Try Tauri clipboard API (works on some Linux setups)
     if let Ok(image) = app.clipboard().read_image() {
         let rgba = image.rgba();
         if !rgba.is_empty() {
@@ -186,8 +182,7 @@ fn read_clipboard_image_linux(app: &AppHandle) -> Result<Vec<u8>, String> {
         }
     }
 
-    // Fall back to system tools — these run from the Tauri process which
-    // is the focused Wayland/X11 client and has clipboard access.
+    // Fall back to wl-paste/xclip — these run from Tauri, which owns the clipboard.
     use std::process::Command;
 
     if let Ok(output) = Command::new("wl-paste").args(["--type", "image/png"]).output() {

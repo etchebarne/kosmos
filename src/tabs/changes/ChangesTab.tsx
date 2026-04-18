@@ -6,13 +6,12 @@ import { registerCustomTheme } from "@pierre/diffs";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { getTheme } from "../../lib/themes";
-import { useThemeListener } from "../../hooks/use-theme-listener";
+import { useThemeListener } from "../../hooks/useThemeListener";
 import { getChangesMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
 import type { TabContentProps } from "../types";
 
-// Register a custom theme — the callback reads getTheme() at invocation time
-// so it always returns the current theme colors.
+// The callback reads getTheme() lazily so theme swaps apply to new diffs.
 let themeRegistered = false;
 function ensureTheme() {
   if (themeRegistered) return;
@@ -101,12 +100,10 @@ export function ChangesTab({ tab }: TabContentProps) {
     }
   }, [workspace?.path, filePath, staged, isUntracked]);
 
-  // Initial load
   useEffect(() => {
     loadDiff();
   }, [loadDiff]);
 
-  // Re-fetch when files change on disk
   useEffect(() => {
     const unlisten = listen("git-changed", () => {
       loadDiff();
@@ -116,7 +113,6 @@ export function ChangesTab({ tab }: TabContentProps) {
     };
   }, [loadDiff]);
 
-  // Re-build diff CSS when the app theme changes
   const handleThemeChanged = useCallback(() => setThemeCss(buildThemeCss()), []);
   useThemeListener(handleThemeChanged);
 

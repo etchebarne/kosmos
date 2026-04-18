@@ -2,20 +2,16 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
-#[cfg(target_os = "windows")]
-use kosmos_core::CREATE_NO_WINDOW;
+use kosmos_core::configure_child_process;
 
-/// Remote directory name — dev builds use a separate directory so they don't
-/// kill the production daemon (pkill) or overwrite the production binary.
+/// Dev builds use a separate directory so pkill/overwrite doesn't touch prod.
 pub const REMOTE_DIR: &str = if cfg!(debug_assertions) {
     ".kosmos-agent-dev"
 } else {
     ".kosmos-agent"
 };
 
-/// Locate the agent binary bundled with the app.
-/// In development: src-tauri/resources/kosmos-agent
-/// In production: bundled via Tauri resources
+/// Locate the bundled agent binary, falling back to the dev path under src-tauri/resources.
 fn bundled_agent_path(app: &AppHandle) -> Result<PathBuf, String> {
     let resource_dir = app
         .path()
@@ -27,10 +23,10 @@ fn bundled_agent_path(app: &AppHandle) -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    // Dev fallback: resource_dir is target/debug, resources is at src-tauri/resources
+    // Dev: resource_dir is target/debug; resources live at src-tauri/resources.
     let dev_path = resource_dir
         .parent()
-        .and_then(|p| p.parent()) // target/debug -> target -> src-tauri
+        .and_then(|p| p.parent())
         .map(|p| p.join("resources").join("kosmos-agent"));
 
     if let Some(p) = dev_path {
@@ -58,13 +54,11 @@ pub async fn check_remote_version(distro: &str) -> Option<String> {
 
 /// Ensure a WSL distro is running. Starts it if stopped.
 pub async fn ensure_wsl_running(distro: &str) -> Result<(), String> {
-    // `wsl -d <distro> -- true` will start the distro if it's not running
+    // `wsl -d <distro> -- true` starts a stopped distro as a side effect.
     run_wsl(distro, &["true"]).await?;
     Ok(())
 }
 
-/// Check whether the local (bundled) and remote agent binaries are identical
-/// by comparing SHA256 checksums. Runs both sha256sum commands in parallel.
 async fn binaries_match(distro: &str, local_wsl_path: &str, remote_bin: &str) -> bool {
     let local_args = ["sha256sum", local_wsl_path];
     let remote_args = ["sha256sum", remote_bin];
@@ -80,13 +74,11 @@ async fn binaries_match(distro: &str, local_wsl_path: &str, remote_bin: &str) ->
 
     match (extract_hash(local_result), extract_hash(remote_result)) {
         (Some(local), Some(remote)) => local == remote,
-        _ => false, // If either fails (e.g. remote doesn't exist), assume mismatch
+        _ => false,
     }
 }
 
-/// Deploy the kosmos-agent binary into a WSL distro.
-/// Copies the pre-built Linux binary from the app bundle.
-/// Skips the copy if the remote binary already matches (by SHA256).
+/// Copy the bundled agent into a WSL distro; skip the copy if SHA256 matches.
 pub async fn deploy_to_wsl(app: &AppHandle, distro: &str) -> Result<(), String> {
     let dir = format!("~/{REMOTE_DIR}");
     let bin = format!("~/{REMOTE_DIR}/kosmos-agent");
@@ -96,20 +88,16 @@ pub async fn deploy_to_wsl(app: &AppHandle, distro: &str) -> Result<(), String> 
     let agent_src = bundled_agent_path(app)?;
     let wsl_path = windows_to_wsl_path(&agent_src.to_string_lossy());
 
-    // Skip kill + copy if the remote binary is already identical
     if binaries_match(distro, &wsl_path, &bin).await {
-        // Still deploy shims (cheap, always idempotent)
+        // Shims are always redeployed; the write is idempotent.
         deploy_clipboard_shims(distro).await;
         return Ok(());
     }
 
-    // Binary differs (or doesn't exist) — full deploy
-    // Kill only agents in THIS directory so dev/prod don't interfere.
-    // Use the directory name (without ~/) as the pkill pattern so it matches
-    // regardless of whether tilde was expanded in the process command line.
+    // Match on the bare dir (not ~/REMOTE_DIR) so pkill works whether tilde was expanded.
     let kill_pattern = format!("{REMOTE_DIR}/kosmos-agent");
     let _ = run_wsl(distro, &["pkill", "-f", &kill_pattern]).await;
-    // Remove the daemon socket so ensure_daemon() starts a fresh instance
+    // Drop the daemon socket so ensure_daemon() spawns a fresh instance.
     let sock = format!("~/{REMOTE_DIR}/agent.sock");
     let _ = run_wsl(distro, &["rm", "-f", &sock]).await;
     run_wsl(distro, &["cp", &wsl_path, &bin]).await?;
@@ -120,17 +108,9 @@ pub async fn deploy_to_wsl(app: &AppHandle, distro: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// Deploy lightweight clipboard shim scripts to `~/.local/bin/` so that TUI
-/// apps running inside WSL terminals can read image data from the host
-/// clipboard without requiring `xclip` or `wl-clipboard` to be installed.
-///
-/// The shims serve image data from `/tmp/kosmos-clipboard.png` (written by the
-/// host-side `terminal_forward_clipboard_image` command) and fall back to
-/// `powershell.exe`/`clip.exe` for text operations.
-///
-/// Ubuntu (and most modern distros) add `~/.local/bin` to PATH via `.profile`
-/// when the directory exists. Since deploy runs before the agent starts
-/// (`bash -lc`), the directory is present when `.profile` is sourced.
+/// Install xclip/wl-paste shims in ~/.local/bin so WSL TUIs can read host
+/// clipboard images from /tmp/kosmos-clipboard.png, falling back to PowerShell
+/// for text. Must run before the agent so .profile adds ~/.local/bin to PATH.
 async fn deploy_clipboard_shims(distro: &str) {
     let home = match wsl_resolve_home(distro).await {
         Ok(h) => h,
@@ -165,7 +145,7 @@ if $image && [ -f "$KOSMOS_IMG" ]; then cat "$KOSMOS_IMG"; exit 0; fi
 powershell.exe -NoProfile -Command 'Get-Clipboard' 2>/dev/null | tr -d '\r'
 "#;
 
-    // Strip \r — source files on Windows have \r\n but shell scripts need \n
+    // Strip CR: Windows source edits may be CRLF, but shell scripts need LF-only.
     let _ = std::fs::write(format!(r"{bin_dir}\xclip"), xclip_shim.replace('\r', ""));
     let _ = std::fs::write(format!(r"{bin_dir}\wl-paste"), wl_paste_shim.replace('\r', ""));
     let _ = run_wsl(distro, &["chmod", "+x",
@@ -174,8 +154,7 @@ powershell.exe -NoProfile -Command 'Get-Clipboard' 2>/dev/null | tr -d '\r'
     ]).await;
 }
 
-/// Deploy the kosmos-agent binary to an SSH host.
-/// Copies the pre-built agent binary via scp.
+/// Copy the bundled agent to an SSH host via scp.
 pub async fn deploy_to_ssh(
     app: &tauri::AppHandle,
     host: &str,
@@ -236,7 +215,7 @@ pub async fn deploy_to_ssh(
 
 /// Convert a Windows path to a WSL-accessible /mnt/ path.
 fn windows_to_wsl_path(win_path: &str) -> String {
-    // Strip \\?\ extended-length prefix that Windows APIs add
+    // Strip the \\?\ extended-length prefix Windows APIs sometimes add.
     let clean = win_path.strip_prefix(r"\\?\").unwrap_or(win_path);
     let normalized = clean.replace('\\', "/");
     if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
@@ -252,10 +231,7 @@ async fn run_wsl(distro: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new("wsl.exe");
     cmd.args(["-d", distro, "--"]);
     cmd.args(args);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    configure_child_process(&mut cmd);
 
     let output = cmd
         .output()
@@ -318,7 +294,7 @@ pub async fn list_wsl_distros() -> Result<Vec<String>, String> {
     {
         let mut cmd = tokio::process::Command::new("wsl.exe");
         cmd.args(["--list", "--quiet"]);
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        configure_child_process(&mut cmd);
 
         let output = cmd
             .output()

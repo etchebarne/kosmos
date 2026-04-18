@@ -51,8 +51,6 @@ impl Default for FffPickerState {
     }
 }
 
-// ── Commands ──
-
 /// Initialize (or switch) the fff index to `path`. Idempotent for the same
 /// path. Local workspaces only — remote agents manage their own picker.
 #[tauri::command]
@@ -179,9 +177,7 @@ pub async fn search_in_files(
             serde_json::from_value(val).str_err()
         }
         Route::Local => {
-            // Make sure fff is pointed at this workspace before querying. Usually
-            // the frontend has already called `fff_set_workspace`, but if a
-            // caller hits content search first we still want the right index.
+            // Re-point fff in case content search is the first call for this workspace.
             let picker = state.get_or_init(&app)?.clone();
             let workspace = path.clone();
             tokio::task::spawn_blocking(move || {

@@ -47,7 +47,6 @@ pub async fn resolve(router: &State<'_, BackendRouter>, path: &str) -> Result<Ro
 /// });
 /// ```
 macro_rules! routed_cmd {
-    // ── returns a deserialized value ──
     (val fn $fn_name:ident($path:ident $(, $arg:ident : $arg_ty:ty)*) -> $ret:ty {
         request($p:ident) => $request:expr,
         local => $local:expr $(,)?
@@ -69,7 +68,6 @@ macro_rules! routed_cmd {
         }
     };
 
-    // ── returns () ──
     (void fn $fn_name:ident($path:ident $(, $arg:ident : $arg_ty:ty)*) {
         request($p:ident) => $request:expr,
         local => $local:expr $(,)?

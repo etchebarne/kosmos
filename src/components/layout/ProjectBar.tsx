@@ -8,7 +8,7 @@ import { useWorkspaceStore } from "../../store/workspace.store";
 import { ContextMenu } from "../shared/ContextMenu";
 import { Tooltip } from "../shared/Tooltip";
 import { useLayoutStore } from "../../store/layout.store";
-import { DRAG_THRESHOLD } from "../../lib/drag-threshold";
+import { DRAG_THRESHOLD } from "../../lib/dragThreshold";
 import { RemoteDialog } from "./RemoteDialog";
 import { TopMenus } from "./TopMenus";
 import { useUpdateStore } from "../../store/update.store";
@@ -38,7 +38,7 @@ export function ProjectBar() {
   const [dragPath, setDragPath] = useState<string | null>(null);
   const dragRef = useRef({ isDragging: false, currentIndex: 0, swapX: null as number | null });
   const workspaceBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  // Snapshot of button positions taken right before a reorder
+  // Pre-reorder positions, consumed by the FLIP animation below.
   const positionsRef = useRef<Map<string, number>>(new Map());
 
   const [contextMenu, setContextMenu] = useState<{
@@ -52,7 +52,7 @@ export function ProjectBar() {
   const [remoteDialog, setRemoteDialog] = useState<string | null>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
 
-  // FLIP animation: after React re-renders with new order, animate from old positions
+  // FLIP animation on reorder: invert to old position, then animate to new.
   useLayoutEffect(() => {
     if (positionsRef.current.size === 0) return;
     const oldPositions = positionsRef.current;
@@ -65,10 +65,8 @@ export function ProjectBar() {
       const deltaX = oldX - newX;
       if (Math.abs(deltaX) < 1) return;
 
-      // Invert: jump to old position
       el.style.transition = "none";
       el.style.transform = `translateX(${deltaX}px)`;
-      // Play: animate to new position
       requestAnimationFrame(() => {
         el.style.transition = `transform ${FLIP_DURATION}ms cubic-bezier(0.16, 1, 0.3, 1)`;
         el.style.transform = "";
@@ -76,14 +74,12 @@ export function ProjectBar() {
     });
   }, [workspaces]);
 
-  // Fetch WSL distros once
   useEffect(() => {
     invoke<string[]>("list_wsl_distros")
       .then(setWslDistros)
       .catch((e) => console.warn("Failed to list WSL distros:", e));
   }, []);
 
-  // Global Ctrl+P shortcut to open search
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
@@ -109,7 +105,6 @@ export function ProjectBar() {
     const refs = workspaceBtnRefs.current;
     const entries = Array.from(refs.entries());
     const state = useWorkspaceStore.getState();
-    // Sort entries by current workspace order
     entries.sort((a, b) => {
       const ai = state.workspaces.findIndex((w) => w.path === a[0]);
       const bi = state.workspaces.findIndex((w) => w.path === b[0]);
@@ -155,7 +150,7 @@ export function ProjectBar() {
           setDragPath(path);
         }
         if (drag.isDragging) {
-          // After a swap, require the cursor to move past a dead zone before allowing another
+          // Dead zone prevents swap ping-pong right after a reorder.
           if (drag.swapX !== null && Math.abs(ev.clientX - drag.swapX) < SWAP_DEAD_ZONE) {
             return;
           }
@@ -196,12 +191,10 @@ export function ProjectBar() {
   const handleAddClick = useCallback(
     (_e: React.MouseEvent) => {
       if (wslDistros.length === 0) {
-        // No WSL distros — just open folder directly
         handleOpenFolder();
         return;
       }
 
-      // Show menu with local + WSL options
       const rect = addButtonRef.current?.getBoundingClientRect();
       if (rect) {
         setAddMenu({ x: rect.left, y: rect.bottom + 4 });
@@ -338,7 +331,7 @@ export function ProjectBar() {
 }
 
 function KosmosLogo() {
-  // Kosmos logo. Uses currentColor so the theme's --color-logo controls its appearance.
+  // currentColor lets --color-logo drive the fill.
   return (
     <div
       className="flex items-center justify-center shrink-0"

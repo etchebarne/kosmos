@@ -20,10 +20,10 @@ import {
   initializeServer,
 } from "./lsp.init";
 
-export type { ServerStatus, ServerAvailability, LspServerInfo, IndexProgress } from "./lsp.types";
+export type { ServerStatus } from "./lsp.types";
 export { resolveServerLanguage } from "./lsp.init";
 
-// Store monaco instance for restarting servers after install
+// Kept so post-install restarts can re-register providers without a new mount.
 let monacoRef: Monaco | null = null;
 
 export const useLspStore = create<LspState>()(
@@ -49,8 +49,7 @@ export const useLspStore = create<LspState>()(
       warmupWorkspace: async (workspacePath) => {
         await ensureLanguageGroups();
 
-        // Deep-scan the workspace tree for project markers (Cargo.toml, package.json, etc.)
-        // at any depth, with each project resolved to its correct root directory.
+        // Deep-scan for project markers at any depth so each server gets its own root.
         let projects: { languageId: string; projectRoot: string; available: boolean }[];
         try {
           projects = await invoke<typeof projects>("lsp_scan_projects", { workspacePath });
@@ -58,8 +57,6 @@ export const useLspStore = create<LspState>()(
           return;
         }
 
-        // Start each available server concurrently in the background.
-        // Each server gets the resolved project root as its cwd and rootUri.
         for (const project of projects) {
           if (!project.available) continue;
 
@@ -85,20 +82,18 @@ export const useLspStore = create<LspState>()(
         await ensureLanguageGroups();
         const serverLang = resolveServerLanguage(languageId);
 
-        // If server is already running (e.g. from warmup), ensure providers are registered
+        // If the server was warmed up, providers still need registering with this Monaco.
         const existing = get().servers[workspacePath]?.[serverLang];
         if (existing && existing.status === "running") {
           ensureProviders(workspacePath, serverLang, existing, monaco, set);
           return existing.client;
         }
 
-        // Don't retry if we know it's unavailable or installing
         if (existing?.status === "unavailable" || existing?.status === "installing") {
           return null;
         }
 
-        // Resolve the actual project root: walk up from the file to find the
-        // nearest project marker (Cargo.toml, package.json, etc.)
+        // Walk up from the file to the nearest project marker for the rootUri.
         let projectRoot = workspacePath;
         if (filePath) {
           try {
@@ -108,12 +103,11 @@ export const useLspStore = create<LspState>()(
               workspacePath,
             });
           } catch {
-            // Fall back to workspace root
+            // Fall back to workspace root.
           }
         }
 
         try {
-          // May share an in-flight promise from warmupWorkspace or another startServer call
           const pendingKey = `${workspacePath}:${serverLang}`;
           const inflight = pending.get(pendingKey);
 
@@ -128,19 +122,16 @@ export const useLspStore = create<LspState>()(
         } catch (err) {
           const errorStr = String(err);
 
-          // No server configured for this language — silently ignore
           if (errorStr.includes("No language server configured")) {
             return null;
           }
 
-          // Detect "not found" errors (binary not on PATH or shim can't resolve)
           const isNotFound =
             /not found|No such file|program not found|os error 2|cannot find|Unknown binary/i.test(
               errorStr,
             );
 
-          // Server binary existed but crashed immediately during init
-          // (e.g. rustup proxy when component isn't installed)
+          // Binary exists but crashed during init (e.g. rustup shim w/o component).
           const isStartupCrash = !isNotFound && errorStr.includes("Language server stopped");
 
           const nameMatch =
@@ -156,7 +147,7 @@ export const useLspStore = create<LspState>()(
 
           console.error(`LSP ${status} for ${serverLang}:`, err);
 
-          // Guard: another concurrent startServer may have already handled this
+          // Race: another startServer may have already set a terminal state.
           const already = get().servers[workspacePath]?.[serverLang];
           if (already?.status === "unavailable" || already?.status === "error") {
             return null;
@@ -217,9 +208,8 @@ export const useLspStore = create<LspState>()(
         const companions = getCompanionsFor(serverLang);
         for (const companionLang of companions) {
           const existing = get().servers[workspacePath]?.[companionLang];
-          if (existing) continue; // already started or starting
+          if (existing) continue;
 
-          // Start the companion server (reuses the same initializeServer flow)
           get()
             .startServer(workspacePath, companionLang, filePath, monaco)
             .catch((err) => {
@@ -291,7 +281,6 @@ export const useLspStore = create<LspState>()(
         const workspace = get().servers[workspacePath];
         if (!workspace) return;
 
-        // Shutdown all servers in parallel
         const shutdownPromises = Object.values(workspace).map(async (info) => {
           for (const d of info.providerDisposables) {
             d.dispose();
@@ -308,7 +297,7 @@ export const useLspStore = create<LspState>()(
               info.client.dispose();
             }
           }
-          // Stop the specific server on the backend by ID (handles resolved roots correctly)
+          // Stop by server_id so multi-root workspaces stop the right server.
           if (info.serverId) {
             await invoke("lsp_stop", { serverId: info.serverId }).catch(() => {});
           }
@@ -316,10 +305,7 @@ export const useLspStore = create<LspState>()(
 
         await Promise.allSettled(shutdownPromises);
 
-        // Clean up progress entries and pending sync for this workspace
         cleanupProgressForWorkspace(workspacePath);
-
-        // Clean up restart state tracking
         cleanupRestartStateForWorkspace(workspacePath);
 
         set((state) => {

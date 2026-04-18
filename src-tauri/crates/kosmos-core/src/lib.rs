@@ -48,6 +48,21 @@ pub fn sanitize_child_env(cmd: &mut tokio::process::Command) {
     }
 }
 
+/// Apply platform-specific child process hardening:
+/// - Linux: strip AppImage-injected env vars so child uses system libraries.
+/// - Windows: suppress the console window that would otherwise flash on spawn.
+///
+/// No-op on macOS. Use this for every background child we spawn (`git`, LSP
+/// servers, shells, plugin processes, WSL/SSH tunnels, etc.) so the details
+/// of each platform live in one place.
+#[allow(unused_variables)]
+pub fn configure_child_process(cmd: &mut tokio::process::Command) {
+    #[cfg(target_os = "linux")]
+    sanitize_child_env(cmd);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
 /// Trait for delivering events from core modules to the host or agent.
 /// The Tauri host implements this to emit Tauri events.
 /// The remote agent implements this to write JSON-RPC notifications to stdout.

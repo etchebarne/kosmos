@@ -8,9 +8,8 @@ import {
   findLeaf,
   findAllLeaves,
   updateNode,
-} from "../lib/pane-tree";
-import "../tabs"; // Initialize tab registry
-import { getTabDefinition } from "../tabs";
+} from "../lib/paneTree";
+import { getTabDefinition } from "../tabs/registry";
 import { useDragStore } from "./drag.store";
 
 interface LayoutStore {
@@ -72,10 +71,6 @@ function makeSplit(
   return { id: genId(), type: "split", direction, children, sizes: [50, 50] };
 }
 
-/**
- * Shared logic for opening a tab in the best available pane.
- * Used by both openFile and openChanges to avoid duplication.
- */
 function openTabInBestPane(
   state: { layout: PaneNode; lastEditorPaneId: string | null },
   tabType: string,
@@ -86,7 +81,6 @@ function openTabInBestPane(
 ) {
   const leaves = findAllLeaves(state.layout);
 
-  // Check if a tab for this file is already open
   for (const leaf of leaves) {
     const existing = leaf.tabs.find(
       (t) => t.type === tabType && (t.metadata?.filePath as string) === filePath,
@@ -101,7 +95,6 @@ function openTabInBestPane(
     }
   }
 
-  // Find the best pane to open a new tab in
   const editorPanes = leaves.filter((leaf) =>
     leaf.tabs.some((t) => t.type === "editor" || t.type === "changes" || t.type === "infinity"),
   );
@@ -145,13 +138,11 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
 
   setWorkspace: (path) =>
     set((state) => {
-      // Save current layout
       const layouts = { ...state.layouts };
       if (state.activeWorkspacePath) {
         layouts[state.activeWorkspacePath] = state.layout;
       }
 
-      // Load or create layout for new workspace
       const layout = path ? (layouts[path] ?? createLeaf()) : createLeaf();
       useDragStore.getState().setDragState(null);
       return { layouts, layout, activeWorkspacePath: path };
@@ -343,7 +334,7 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
     }),
 
   openFile: (filePath, fileName, sourcePaneId) => {
-    // Fire-and-forget frecency update so fff boosts this file next time.
+    // Frecency nudge for fff; fire-and-forget.
     invoke("fff_track_access", { path: filePath }).catch(() => {});
     set((state) =>
       openTabInBestPane(state, "editor", filePath, fileName, { filePath }, sourcePaneId),
@@ -366,7 +357,6 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
     set((state) => {
       const leaves = findAllLeaves(state.layout);
 
-      // Find existing search tab
       for (const leaf of leaves) {
         const existing = leaf.tabs.find((t) => t.type === "search");
         if (existing) {
@@ -379,7 +369,7 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
         }
       }
 
-      // No existing search tab — prefer a pane with editor/infinity tabs
+      // Prefer panes that already host editors/infinity so search lands beside them.
       const primaryPanes = leaves.filter((leaf) =>
         leaf.tabs.some((t) => t.type === "editor" || t.type === "changes" || t.type === "infinity"),
       );

@@ -34,13 +34,14 @@ import {
   type Range,
   TextDocumentSyncKind,
   type FileEvent,
+  type ConfigurationParams,
 } from "vscode-languageserver-protocol";
 import { TauriLspTransport } from "./transport";
 import { pathToFileUri } from "./uri";
 
-// ── Work Done Progress types (LSP 3.15+) ──
+// Work-done progress (LSP 3.15+).
 
-export interface WorkDoneProgressBegin {
+interface WorkDoneProgressBegin {
   kind: "begin";
   title: string;
   cancellable?: boolean;
@@ -48,22 +49,19 @@ export interface WorkDoneProgressBegin {
   percentage?: number;
 }
 
-export interface WorkDoneProgressReport {
+interface WorkDoneProgressReport {
   kind: "report";
   cancellable?: boolean;
   message?: string;
   percentage?: number;
 }
 
-export interface WorkDoneProgressEnd {
+interface WorkDoneProgressEnd {
   kind: "end";
   message?: string;
 }
 
-export type WorkDoneProgressValue =
-  | WorkDoneProgressBegin
-  | WorkDoneProgressReport
-  | WorkDoneProgressEnd;
+type WorkDoneProgressValue = WorkDoneProgressBegin | WorkDoneProgressReport | WorkDoneProgressEnd;
 
 interface ProgressParams {
   token: string | number;
@@ -83,44 +81,32 @@ export class LspClient {
     this.wslRaw = wslPrefix ?? null;
     this.wslEncoded = wslPrefix ? wslPrefix.replace(":", "%3A") : null;
 
-    // Handle server request to create a progress token — just acknowledge it
+    // Stub responses for server→client requests we don't implement;
+    // silence is treated as an error by many servers.
     this.transport.onRequest("window/workDoneProgress/create", () => null);
-
-    // Handle dynamic capability registration — acknowledge without tracking
     this.transport.onRequest("client/registerCapability", () => null);
     this.transport.onRequest("client/unregisterCapability", () => null);
-
-    // Handle workspace/configuration — return empty config for each requested item
     this.transport.onRequest("workspace/configuration", (params) => {
-      const p = params as { items?: unknown[] } | null;
+      const p = params as ConfigurationParams | null;
       return (p?.items ?? []).map(() => ({}));
     });
-
-    // Handle workspace/workspaceFolders — return null (single-root workspace)
     this.transport.onRequest("workspace/workspaceFolders", () => null);
-
-    // Handle window/showMessageRequest — return null (dismiss the dialog)
     this.transport.onRequest("window/showMessageRequest", () => null);
-
-    // Handle workspace/codeLens/refresh, workspace/semanticTokens/refresh, etc.
-    // These ask the client to re-request certain data; acknowledge with null.
     this.transport.onRequest("workspace/codeLens/refresh", () => null);
     this.transport.onRequest("workspace/semanticTokens/refresh", () => null);
     this.transport.onRequest("workspace/inlayHint/refresh", () => null);
     this.transport.onRequest("workspace/diagnostics/refresh", () => null);
   }
 
-  /** Convert an editor URI to a server URI (strip wsl:// prefix from the path). */
+  /** Strip the wsl:// prefix so the server sees native Linux paths. */
   toServerUri(uri: string): string {
     if (!this.wslEncoded) return uri;
-    // file:///wsl%3A//Ubuntu/home/... → file:///home/...
     return uri.replace(`/${this.wslEncoded}`, "").replace(`/${this.wslRaw}`, "");
   }
 
-  /** Convert a server URI back to an editor URI (add wsl:// prefix to the path). */
+  /** Re-inject the wsl:// prefix so the editor resolves to the remote workspace. */
   fromServerUri(uri: string): string {
     if (!this.wslEncoded) return uri;
-    // file:///home/... → file:///wsl%3A//Ubuntu/home/...
     return uri.replace("file:///", `file:///${this.wslEncoded}/`);
   }
 
@@ -233,13 +219,10 @@ export class LspClient {
     const result = await this.transport.sendRequest<InitializeResult>("initialize", params);
     this.capabilities = result.capabilities;
 
-    // Send initialized notification
     this.transport.sendNotification("initialized", {});
 
     return result;
   }
-
-  // ── Document synchronization ──
 
   didOpen(uri: string, languageId: string, version: number, text: string): void {
     if (this.openDocuments.has(uri)) return;
@@ -253,14 +236,12 @@ export class LspClient {
   }
 
   didChange(uri: string, version: number, changes: TextDocumentContentChangeEvent[]): void {
-    // Use full sync if server doesn't support incremental
     const syncKind =
       typeof this.capabilities?.textDocumentSync === "object"
         ? this.capabilities.textDocumentSync.change
         : this.capabilities?.textDocumentSync;
 
-    // For full-sync servers, only the last change matters (it contains the
-    // complete document text). Sending intermediate states is wasteful.
+    // Full-sync servers get the full text in every change; drop intermediates.
     const actualChanges =
       syncKind === TextDocumentSyncKind.Full && changes.length > 1
         ? [changes[changes.length - 1]]
@@ -295,8 +276,6 @@ export class LspClient {
   clearOpenDocuments(): void {
     this.openDocuments.clear();
   }
-
-  // ── Language features ──
 
   async completion(
     uri: string,
@@ -423,13 +402,9 @@ export class LspClient {
     return this.transport.sendRequest("textDocument/documentSymbol", params);
   }
 
-  // ── Workspace notifications ──
-
   didChangeWatchedFiles(changes: FileEvent[]): void {
     this.transport.sendNotification("workspace/didChangeWatchedFiles", { changes });
   }
-
-  // ── Diagnostics ──
 
   onDiagnostics(handler: (params: PublishDiagnosticsParams) => void): void {
     this.transport.onNotification("textDocument/publishDiagnostics", ((params: unknown) => {
@@ -438,8 +413,6 @@ export class LspClient {
       handler(p);
     }) as (params: unknown) => void);
   }
-
-  // ── Lifecycle ──
 
   async shutdown(): Promise<void> {
     await this.transport.sendRequest("shutdown", null);

@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLayoutStore } from "../../store/layout.store";
 import { useDragStore } from "../../store/drag.store";
 import { useInfinityStore } from "../../store/infinity.store";
-import { findLeaf, findAllLeaves } from "../../lib/pane-tree";
+import { findLeaf, findAllLeaves } from "../../lib/paneTree";
 import type { DropZone, TabDragState, FileDragState, ChangesDragState } from "../../types";
 
 interface DropTarget {
@@ -26,7 +26,7 @@ function computeDropTarget(
 ): DropTarget | null {
   const elements = document.elementsFromPoint(x, y);
 
-  // Check tab bar first (higher priority)
+  // Tab bar takes priority over pane body so dragging onto tabs reorders, not splits.
   for (const el of elements) {
     const paneId = (el as HTMLElement).dataset?.tabbarPane;
     if (paneId) {
@@ -55,7 +55,6 @@ function computeDropTarget(
   }
 
   if (isFileDrag) {
-    // Check directory targets in file tree (file drag only, not changes drag)
     if (allowDirectory)
       for (const el of elements) {
         const dirPath = (el as HTMLElement).dataset?.dirPath;
@@ -68,7 +67,6 @@ function computeDropTarget(
         }
       }
 
-    // Check infinity canvas (file drag only)
     for (const el of elements) {
       const infinityTabId = (el as HTMLElement).dataset?.infinityTab;
       if (infinityTabId) {
@@ -81,7 +79,6 @@ function computeDropTarget(
     }
   }
 
-  // Check pane content area
   for (const el of elements) {
     const paneId = (el as HTMLElement).dataset?.paneContent;
     if (paneId) {
@@ -150,7 +147,6 @@ export function DragOverlay() {
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const dropTargetRef = useRef<DropTarget | null>(null);
 
-  // Keep ref in sync for mouseup handler
   dropTargetRef.current = dropTarget;
 
   useEffect(() => {

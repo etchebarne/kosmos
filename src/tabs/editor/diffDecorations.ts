@@ -1,8 +1,8 @@
 import type { editor } from "monaco-editor";
 
-export type ChangeType = "added" | "modified" | "deleted";
+type ChangeType = "added" | "modified" | "deleted";
 
-export interface LineChange {
+interface LineChange {
   type: ChangeType;
   /** First line in the new file (1-based). For "deleted", points to the line *after* the deletion. */
   startLine: number;
@@ -10,31 +10,22 @@ export interface LineChange {
   endLine: number;
 }
 
-/**
- * Parse a unified diff string and extract line-level changes for the new side.
- *
- * Groups consecutive -/+ runs within each hunk:
- * - Only + lines → "added"
- * - Only - lines → "deleted" (placed at the new-side position)
- * - Both - and + → "modified" (the + line range)
- */
+/** Parse a unified diff into new-side line ranges labelled added/modified/deleted. */
 export function parseDiffChanges(patch: string): LineChange[] {
   const changes: LineChange[] = [];
   const lines = patch.split("\n");
 
-  let newLine = 0; // current new-side line number
+  let newLine = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Hunk header: @@ -oldStart[,oldCount] +newStart[,newCount] @@
     const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
     if (hunkMatch) {
       newLine = parseInt(hunkMatch[1], 10);
       continue;
     }
 
-    // Skip file headers and other non-content lines
     if (newLine === 0) continue;
 
     if (line.startsWith(" ")) {
@@ -42,7 +33,6 @@ export function parseDiffChanges(patch: string): LineChange[] {
       continue;
     }
 
-    // Accumulate a change block: consecutive - and + lines
     if (line.startsWith("-") || line.startsWith("+")) {
       let deletions = 0;
       let additions = 0;
@@ -68,17 +58,14 @@ export function parseDiffChanges(patch: string): LineChange[] {
       } else if (additions > 0) {
         changes.push({ type: "added", startLine: addStart, endLine: addStart + additions - 1 });
       } else if (deletions > 0) {
-        // Mark the line before the deletion (or line 1 if at the start)
+        // Gutter marker sits on the line above the deletion.
         const marker = addStart > 1 ? addStart - 1 : 1;
         changes.push({ type: "deleted", startLine: marker, endLine: marker });
       }
 
-      i = j - 1; // outer loop will i++
+      i = j - 1;
       continue;
     }
-
-    // No-newline-at-end-of-file marker or other non-content line
-    // Don't advance newLine
   }
 
   return changes;

@@ -73,14 +73,12 @@ impl BackendRouter {
         }
     }
 
-    /// Connect to a remote workspace. Spawns a kosmos-agent process.
-    /// If already connected to this workspace, skips.
+    /// Connect to a remote workspace, skipping if already alive.
     pub async fn connect(
         &self,
         workspace_path: &str,
         conn: ConnectionType,
     ) -> Result<(), String> {
-        // Quick check under lock — skip if already alive.
         {
             let agents = self.agents.lock().await;
             if let Some(entry) = agents.get(workspace_path) {
@@ -90,13 +88,12 @@ impl BackendRouter {
             }
         }
 
-        // Spawn without holding the lock — this can take seconds for WSL startup.
+        // Spawn without holding the lock — WSL startup can take seconds.
         let sink = self.make_event_sink(workspace_path);
         let agent = Arc::new(RemoteAgent::spawn(conn.clone(), sink).await?);
 
-        // Re-register existing terminals from the daemon. On first connect this
-        // returns an empty list; on reconnect it returns terminals that survived
-        // the connection drop, enabling seamless session resumption.
+        // TerminalList is empty on first connect; on reconnect it returns surviving
+        // sessions from the daemon so we can resume seamlessly.
         if let Ok(val) = agent.request(Request::TerminalList).await {
             if let Ok(ids) = serde_json::from_value::<Vec<String>>(val) {
                 let mut terminals = self.remote_terminals.lock().await;
@@ -106,7 +103,6 @@ impl BackendRouter {
             }
         }
 
-        // Re-acquire lock and insert.
         self.agents.lock().await.insert(
             workspace_path.to_string(),
             AgentEntry {
@@ -123,7 +119,6 @@ impl BackendRouter {
     pub async fn disconnect(&self, workspace_path: &str) {
         let removed = self.agents.lock().await.remove(workspace_path);
         if removed.is_some() {
-            // Clean up terminal mappings that pointed to this workspace's agent
             let mut terminals = self.remote_terminals.lock().await;
             terminals.retain(|_, agent| agent.is_alive());
         }
@@ -155,11 +150,11 @@ impl BackendRouter {
         let rest = path.strip_prefix("wsl://")?;
         let slash = rest.find('/')?;
         let distro = &rest[..slash];
-        let linux_path = &rest[slash..]; // includes leading /
+        let linux_path = &rest[slash..];
 
         let prefix = format!("wsl://{distro}");
 
-        // First pass: check if agent is alive and read backoff info in one lock.
+        // Snapshot liveness and backoff under a single lock.
         let reconnect_info = {
             let agents = self.agents.lock().await;
             let mut found = None;
@@ -168,7 +163,6 @@ impl BackendRouter {
                     if entry.agent.is_alive() {
                         return Some((entry.agent.clone(), linux_path.to_string()));
                     }
-                    // Agent is dead — check backoff before attempting reconnect
                     let backoff_secs = std::cmp::min(1u64 << entry.reconnect_attempts, 60);
                     let should_skip = entry
                         .last_reconnect
@@ -183,14 +177,12 @@ impl BackendRouter {
             found
         };
 
-        // Agent is dead — attempt transparent reconnection.
         if let Some((workspace_key, conn)) = reconnect_info {
 
             tracing::warn!(workspace = %workspace_key, "Agent dead, reconnecting...");
             match self.connect(&workspace_key, conn).await {
                 Ok(()) => {
                     tracing::info!(workspace = %workspace_key, "Reconnected");
-                    // Reset backoff and return the new agent in one lock.
                     let mut agents = self.agents.lock().await;
                     if let Some(entry) = agents.get_mut(&workspace_key) {
                         entry.reconnect_attempts = 0;
@@ -202,7 +194,6 @@ impl BackendRouter {
                 }
                 Err(e) => {
                     tracing::warn!(workspace = %workspace_key, "Reconnection failed: {e}");
-                    // Increment backoff counter
                     let mut agents = self.agents.lock().await;
                     if let Some(entry) = agents.get_mut(&workspace_key) {
                         entry.reconnect_attempts = entry.reconnect_attempts.saturating_add(1);
@@ -230,7 +221,6 @@ impl BackendRouter {
             if agent.is_alive() {
                 return Some(agent.clone());
             }
-            // Agent is dead — clean up this mapping
             terminals.remove(id);
         }
         None

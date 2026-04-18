@@ -5,15 +5,7 @@ import {
   language as tsLanguage,
 } from "monaco-editor/esm/vs/basic-languages/typescript/typescript";
 
-/**
- * Build a Monarch tokenizer for JSX/TSX by extending the base TypeScript
- * grammar with rules that distinguish intrinsic HTML elements (<div>)
- * from component elements (<MyComponent>).
- *
- * Intrinsic (lowercase) tag names get the "tag" token type so the theme
- * can color them differently. Keywords that appear after `<` in generics
- * (e.g. Array<number>) are excluded via the @keywords guard.
- */
+/** TS tokenizer + JSX/TSX tag rules; intrinsic tags get "tag", generics stay "keyword". */
 function createJsxTokenizer(tokenPostfix: string): languages.IMonarchLanguage {
   const lang = structuredClone(tsLanguage);
   lang.tokenPostfix = tokenPostfix;
@@ -29,10 +21,7 @@ function createJsxTokenizer(tokenPostfix: string): languages.IMonarchLanguage {
   return lang;
 }
 
-// Languages that standalone Monaco doesn't register separately.
-// Each entry shares a Monarch tokenizer with an existing language
-// but needs its own ID so the LSP receives the correct languageId
-// in textDocument/didOpen (e.g. "typescriptreact" → ScriptKind.TSX).
+// Extra ids so didOpen sends the LSP the right languageId (e.g. typescriptreact vs typescript).
 const ADDITIONAL_LANGUAGES = [
   {
     id: "typescriptreact",
@@ -50,11 +39,7 @@ const ADDITIONAL_LANGUAGES = [
 
 let registered = false;
 
-/**
- * Register additional languages in Monaco that aren't part of the
- * default standalone distribution. Call once before models are created
- * (e.g. in the Editor's beforeMount callback). Idempotent.
- */
+/** Call before models are created (beforeMount). Idempotent. */
 export function setupMonacoLanguages(monaco: Monaco): void {
   if (registered) return;
   registered = true;
@@ -73,16 +58,7 @@ export function setupMonacoLanguages(monaco: Monaco): void {
   }
 }
 
-/**
- * Ensure the model uses the most specific registered language for its
- * file extension. Standalone Monaco maps both .ts and .tsx to
- * "typescript"; after we register "typescriptreact" (with only .tsx),
- * this function picks the tighter match.
- *
- * When multiple languages claim the same extension, the one with
- * fewer total extensions is more specific (e.g. typescriptreact[.tsx]
- * beats typescript[.ts, .tsx, .cts, .mts]).
- */
+/** Pick the narrowest registered language for the model's extension (e.g. .tsx → typescriptreact). */
 export function resolveModelLanguage(monaco: Monaco, model: editor.ITextModel): void {
   const uri = model.uri.toString();
   const extMatch = uri.match(/\.([^./?#]+)(?:[?#]|$)/);
@@ -95,7 +71,7 @@ export function resolveModelLanguage(monaco: Monaco, model: editor.ITextModel): 
 
   if (candidates.length <= 1) return;
 
-  // Most specific = fewest registered extensions
+  // Fewer registered extensions = tighter fit.
   candidates.sort(
     (a: languages.ILanguageExtensionPoint, b: languages.ILanguageExtensionPoint) =>
       (a.extensions?.length ?? 0) - (b.extensions?.length ?? 0),

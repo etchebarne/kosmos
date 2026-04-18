@@ -2,8 +2,8 @@ import type { Monaco } from "@monaco-editor/react";
 import type { editor, Uri, IRange, IPosition } from "monaco-editor";
 import { fileUriToPath } from "../../lib/lsp/uri";
 import { useLayoutStore } from "../../store/layout.store";
-import { getFileName } from "../../lib/path-utils";
-import { editorOpenerRegistered, revealPosition } from "./editor-cache";
+import { getFileName } from "../../lib/pathUtils";
+import { editorOpenerRegistered, revealPosition } from "./editorCache";
 
 function uriToNormalizedPath(uri: string): string {
   let p = fileUriToPath(uri);

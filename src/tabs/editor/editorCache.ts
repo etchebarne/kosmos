@@ -1,6 +1,6 @@
 import type { editor } from "monaco-editor";
 
-export interface EditorCacheEntry {
+interface EditorCacheEntry {
   instance: editor.IStandaloneCodeEditor;
   pendingReveal?: { lineNumber: number; column: number };
   /** Save this editor's buffer to disk. Registered by EditorTab on mount. */

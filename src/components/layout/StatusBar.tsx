@@ -4,9 +4,9 @@ import { GitBranch } from "@phosphor-icons/react";
 import { useWorkspaceStore } from "../../store/workspace.store";
 import { useLspStore, resolveServerLanguage, type ServerStatus } from "../../store/lsp.store";
 import { useLayoutStore } from "../../store/layout.store";
-import { findLeaf } from "../../lib/pane-tree";
-import { languageIdFromExt } from "../../lib/ext-to-lang";
-import { getFileExtension } from "../../lib/path-utils";
+import { findLeaf } from "../../lib/paneTree";
+import { languageIdFromExt } from "../../lib/extToLang";
+import { getFileExtension } from "../../lib/pathUtils";
 import { Dialog } from "../shared/Dialog";
 
 const STATUS_LABELS: Record<ServerStatus, string> = {
@@ -72,7 +72,6 @@ export function StatusBar() {
 
   const activeProgress = progress?.length ? progress : null;
 
-  // Find the focused editor's server language
   let focusedServerLang: string | null = null;
   if (activePaneId) {
     const leaf = findLeaf(layout, activePaneId);

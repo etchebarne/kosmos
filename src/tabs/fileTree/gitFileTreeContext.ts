@@ -1,8 +1,8 @@
 import { createContext } from "react";
-import type { GitFileChange } from "../../lib/git-tree";
-import { normalizePath } from "../../lib/path-utils";
+import type { GitFileChange } from "../../lib/gitTree";
+import { normalizePath } from "../../lib/pathUtils";
 
-export type GitColorFn = (entryPath: string, isDir: boolean) => string | null;
+type GitColorFn = (entryPath: string, isDir: boolean) => string | null;
 
 export const GitFileTreeContext = createContext<GitColorFn>(() => null);
 

@@ -1,6 +1,6 @@
 import { useRef, useState, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { useClickOutside } from "../../hooks/use-click-outside";
+import { useClickOutside } from "../../hooks/useClickOutside";
 
 export type ContextMenuItem =
   | {
@@ -12,7 +12,7 @@ export type ContextMenuItem =
     }
   | { separator: true };
 
-export type ContextMenuPlacement = "top-start" | "top-end" | "bottom-start" | "bottom-end";
+type ContextMenuPlacement = "top-start" | "top-end" | "bottom-start" | "bottom-end";
 
 interface ContextMenuProps {
   x: number;

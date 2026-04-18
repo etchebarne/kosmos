@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { CaretDown } from "@phosphor-icons/react";
-import { useClickOutside } from "../../hooks/use-click-outside";
+import { useClickOutside } from "../../hooks/useClickOutside";
 
-interface DropdownOption {
+export interface DropdownOption {
   value: string;
   label: string;
 }

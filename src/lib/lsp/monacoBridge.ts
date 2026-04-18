@@ -25,7 +25,7 @@ import {
   workspaceEditToMonaco,
   safeLspCall,
   registerIfCapable,
-} from "./lsp-conversions";
+} from "./lspConversions";
 
 export function registerLspProviders(
   monaco: Monaco,
@@ -35,7 +35,6 @@ export function registerLspProviders(
   const disposables: IDisposable[] = [];
 
   for (const languageId of languageIds) {
-    // Completion Provider (with resolve support)
     if (client.capabilities?.completionProvider) {
       const supportsResolve = client.capabilities.completionProvider.resolveProvider;
 
@@ -141,7 +140,6 @@ export function registerLspProviders(
       );
     }
 
-    // Hover Provider
     registerIfCapable(client.capabilities?.hoverProvider, disposables, () =>
       monaco.languages.registerHoverProvider(languageId, {
         provideHover: async (
@@ -166,7 +164,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Definition Provider
     registerIfCapable(client.capabilities?.definitionProvider, disposables, () =>
       monaco.languages.registerDefinitionProvider(languageId, {
         provideDefinition: async (
@@ -198,7 +195,6 @@ export function registerLspProviders(
       }),
     );
 
-    // References Provider
     registerIfCapable(client.capabilities?.referencesProvider, disposables, () =>
       monaco.languages.registerReferenceProvider(languageId, {
         provideReferences: async (
@@ -220,7 +216,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Signature Help Provider
     registerIfCapable(client.capabilities?.signatureHelpProvider, disposables, () =>
       monaco.languages.registerSignatureHelpProvider(languageId, {
         signatureHelpTriggerCharacters: client.capabilities!.signatureHelpProvider!
@@ -258,7 +253,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Code Action Provider
     registerIfCapable(client.capabilities?.codeActionProvider, disposables, () =>
       monaco.languages.registerCodeActionProvider(languageId, {
         provideCodeActions: async (
@@ -315,7 +309,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Document Formatting Provider
     registerIfCapable(client.capabilities?.documentFormattingProvider, disposables, () =>
       monaco.languages.registerDocumentFormattingEditProvider(languageId, {
         provideDocumentFormattingEdits: async (
@@ -332,7 +325,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Range Formatting Provider
     registerIfCapable(client.capabilities?.documentRangeFormattingProvider, disposables, () =>
       monaco.languages.registerDocumentRangeFormattingEditProvider(languageId, {
         provideDocumentRangeFormattingEdits: async (
@@ -355,7 +347,6 @@ export function registerLspProviders(
       }),
     );
 
-    // Rename Provider
     registerIfCapable(client.capabilities?.renameProvider, disposables, () => {
       const supportsPrepare =
         typeof client.capabilities!.renameProvider === "object" &&
@@ -405,9 +396,8 @@ export function registerLspProviders(
     });
   }
 
-  // Diagnostics (via server notification, not a provider)
+  // Diagnostics arrive as a notification, not a provider.
   client.onDiagnostics((params: PublishDiagnosticsParams) => {
-    // O(1) model lookup via URI parsing instead of scanning all models
     const parsedUri = monaco.Uri.parse(params.uri);
     const model = monaco.editor.getModel(parsedUri);
     if (!model) return;
@@ -421,7 +411,7 @@ export function registerLspProviders(
       tags: d.tags?.map((t) => (t === 1 ? 1 : 2)),
     }));
 
-    // Skip update if markers haven't changed (avoids visual flicker with chatty servers)
+    // Chatty servers republish identical diagnostics; skipping prevents flicker.
     const existing = monaco.editor.getModelMarkers({ resource: model.uri, owner: "lsp" });
     if (existing.length === markers.length) {
       const newKey = markers.map(markerFingerprint).join("\n");
