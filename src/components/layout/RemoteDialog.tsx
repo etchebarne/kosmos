@@ -2,6 +2,7 @@ import { useReducer, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { Dialog } from "../shared/Dialog";
+import { PillButton } from "../shared/PillButton";
 import { ScrollArea } from "../shared/ScrollArea";
 import { useWorkspaceStore } from "../../store/workspace.store";
 
@@ -243,20 +244,12 @@ export function RemoteDialog({ open, onClose, distro }: RemoteDialogProps) {
             {status ?? cwd}
           </span>
           <div className="flex gap-2 shrink-0">
-            <button
-              className="h-7 px-3 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-[var(--color-border-secondary)] hover:border-[var(--color-border-primary)] rounded-md"
-              onClick={onClose}
-              disabled={connecting}
-            >
+            <PillButton variant="ghost" size="sm" onClick={onClose} disabled={connecting}>
               Cancel
-            </button>
-            <button
-              className="h-7 px-3 text-xs text-white bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] disabled:opacity-50 rounded-md"
-              onClick={handleConnect}
-              disabled={connecting}
-            >
+            </PillButton>
+            <PillButton variant="accent" size="sm" onClick={handleConnect} disabled={connecting}>
               {connecting ? "Connecting..." : "Open"}
-            </button>
+            </PillButton>
           </div>
         </div>
       </div>

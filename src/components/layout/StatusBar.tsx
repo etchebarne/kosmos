@@ -8,6 +8,7 @@ import { findLeaf } from "../../lib/paneTree";
 import { languageIdFromExt } from "../../lib/extToLang";
 import { getFileExtension } from "../../lib/pathUtils";
 import { Dialog } from "../shared/Dialog";
+import { PillButton } from "../shared/PillButton";
 
 const STATUS_LABELS: Record<ServerStatus, string> = {
   running: "",
@@ -155,18 +156,12 @@ export function StatusBar() {
                   was not found on your system. Would you like to install it?
                 </p>
                 <div className="flex justify-end gap-2">
-                  <button
-                    className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer rounded-md"
-                    onClick={() => setInstallDialog(null)}
-                  >
+                  <PillButton variant="ghost" size="sm" onClick={() => setInstallDialog(null)}>
                     Cancel
-                  </button>
-                  <button
-                    className="px-3 py-1.5 text-xs bg-[var(--color-accent-blue)] hover:bg-[var(--color-accent-blue-hover)] text-white transition-colors cursor-pointer rounded-md"
-                    onClick={handleInstall}
-                  >
+                  </PillButton>
+                  <PillButton variant="accent" size="sm" onClick={handleInstall}>
                     Install
-                  </button>
+                  </PillButton>
                 </div>
               </div>
             </Dialog>

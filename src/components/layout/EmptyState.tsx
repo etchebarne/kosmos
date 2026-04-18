@@ -1,9 +1,24 @@
-import { FolderOpen, Folder, GitBranch } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { Folder, CaretDown } from "@phosphor-icons/react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../../store/workspace.store";
+import { ContextMenu } from "../shared/ContextMenu";
+import { PillButton } from "../shared/PillButton";
+import { RemoteDialog } from "./RemoteDialog";
 
 export function EmptyState() {
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
+  const [wslDistros, setWslDistros] = useState<string[]>([]);
+  const [wslMenu, setWslMenu] = useState<{ x: number; y: number } | null>(null);
+  const [remoteDialog, setRemoteDialog] = useState<string | null>(null);
+  const wslButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    invoke<string[]>("list_wsl_distros")
+      .then(setWslDistros)
+      .catch((e) => console.warn("Failed to list WSL distros:", e));
+  }, []);
 
   const handleOpenFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
@@ -12,30 +27,78 @@ export function EmptyState() {
     }
   };
 
+  const handleWslClick = () => {
+    const rect = wslButtonRef.current?.getBoundingClientRect();
+    if (rect) setWslMenu({ x: rect.left, y: rect.bottom + 4 });
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center h-full w-full gap-4">
-      <FolderOpen size={40} className="text-[var(--color-text-muted)]" />
-      <div className="flex flex-col items-center justify-center gap-2">
-        <h3 className="text-base font-semibold text-[var(--color-text-primary)]">
-          No Workspace Open
-        </h3>
-        <p className="text-xs text-[var(--color-text-secondary)] text-center leading-relaxed w-[280px]">
-          Open a folder or clone a repository to get started.
-        </p>
-      </div>
-      <div className="flex gap-2.5">
-        <button
-          className="flex items-center gap-1.5 h-8 px-3.5 bg-[var(--color-accent-blue)] text-white text-xs font-medium hover:bg-[var(--color-accent-blue-hover)]"
-          onClick={handleOpenFolder}
+    <div className="relative flex flex-col items-center justify-center h-full w-full overflow-hidden">
+      <div
+        aria-hidden
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        style={{ color: "var(--color-logo)", opacity: 0.03 }}
+      >
+        <svg
+          width="520"
+          height="432"
+          viewBox="0 0 160 133"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
         >
-          <Folder size={13} />
-          <span>Open Folder</span>
-        </button>
-        <button className="flex items-center gap-1.5 h-8 px-3.5 bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)] text-xs font-medium border border-[var(--color-border-secondary)] hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]">
-          <GitBranch size={13} />
-          <span>Clone Repo</span>
-        </button>
+          <path
+            d="M81.6304 43.2982C105.663 49.779 96.2076 69.8639 80.8422 78.1903C104.087 74.6223 121.408 45.2811 100.936 33.3861C67.5553 13.9908 26.4722 44.0913 15.4408 57.1757C-3.27985 79.3803 -5.44038 105.153 11.501 120.616C30.8988 138.321 62.1936 131.983 82.0242 124.581C49.3235 125.375 41.0498 119.824 33.9581 112.686C4.40924 82.9488 47.5986 34.1211 81.6304 43.2982Z"
+            fill="currentColor"
+          />
+          <path
+            d="M78.3696 88.3487C54.3366 81.8962 63.7924 61.899 79.1578 53.6089C55.9125 57.1614 38.5923 86.3744 59.0643 98.2175C92.4447 117.528 133.528 87.559 144.559 74.5318C163.28 52.4241 165.44 26.7641 148.499 11.3684C129.101 -6.25952 97.8064 0.0515693 77.9759 7.42062C110.677 6.63073 118.95 12.1575 126.042 19.2634C155.591 48.8712 112.401 97.4857 78.3696 88.3487Z"
+            fill="currentColor"
+          />
+        </svg>
       </div>
+
+      <div className="relative flex flex-col items-center gap-7">
+        <div className="flex flex-col items-center gap-2">
+          <h1 className="text-xl font-semibold text-[var(--color-text-primary)] tracking-tight">
+            Welcome to Kosmos
+          </h1>
+          <p className="text-xs text-[var(--color-text-secondary)] text-center leading-relaxed max-w-[320px]">
+            Open a folder to start editing, or connect to a remote workspace.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <PillButton onClick={handleOpenFolder} leadingIcon={<Folder size={13} />}>
+            Open Folder
+          </PillButton>
+
+          {wslDistros.length > 0 && (
+            <PillButton
+              ref={wslButtonRef}
+              onClick={handleWslClick}
+              trailingIcon={<CaretDown size={10} weight="bold" />}
+            >
+              WSL
+            </PillButton>
+          )}
+        </div>
+      </div>
+
+      {wslMenu && (
+        <ContextMenu
+          x={wslMenu.x}
+          y={wslMenu.y}
+          items={wslDistros.map((distro) => ({
+            label: distro,
+            onClick: () => setRemoteDialog(distro),
+          }))}
+          onClose={() => setWslMenu(null)}
+        />
+      )}
+
+      {remoteDialog && (
+        <RemoteDialog open distro={remoteDialog} onClose={() => setRemoteDialog(null)} />
+      )}
     </div>
   );
 }

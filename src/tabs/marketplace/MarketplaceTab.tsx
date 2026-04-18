@@ -9,6 +9,7 @@ import {
   ToggleLeft,
   ToggleRight,
 } from "@phosphor-icons/react";
+import { PillButton } from "../../components/shared/PillButton";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { SectionTitle } from "../../components/shared/SectionTitle";
 import { usePluginStore } from "../../store/plugin.store";
@@ -182,18 +183,21 @@ function RegistryPluginCard({ entry, installed }: { entry: RegistryEntry; instal
             Installed
           </span>
         ) : (
-          <button
-            className="flex items-center gap-1 text-[11px] px-2.5 py-1 bg-[var(--color-accent-blue)] text-white hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 rounded-md"
+          <PillButton
+            variant="accent"
+            size="sm"
             onClick={handleInstall}
             disabled={isInstalling || installing !== null}
+            leadingIcon={
+              isInstalling ? (
+                <CircleNotch size={12} className="animate-spin" />
+              ) : (
+                <DownloadSimple size={12} />
+              )
+            }
           >
-            {isInstalling ? (
-              <CircleNotch size={12} className="animate-spin" />
-            ) : (
-              <DownloadSimple size={12} />
-            )}
             Install
-          </button>
+          </PillButton>
         )}
       </div>
     </div>
