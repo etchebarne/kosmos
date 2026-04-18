@@ -102,6 +102,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # fff-search's build.rs refuses to build in CI without the zlob feature.
+          # Windows can't use zlob (see matrix note), so bypass the guard.
+          CI: ${{ matrix.platform == 'windows-latest' && 'false' || 'true' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Kosmos ${{ github.ref_name }}"
