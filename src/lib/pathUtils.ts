@@ -25,3 +25,26 @@ export function joinPath(dir: string, name: string): string {
 export function getFileExtension(filePath: string): string | null {
   return filePath.match(/\.([^./\\]+)$/)?.[1]?.toLowerCase() ?? null;
 }
+
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  ico: "image/x-icon",
+  bmp: "image/bmp",
+  avif: "image/avif",
+  apng: "image/apng",
+};
+
+/** True if the extension maps to a browser-renderable image format. */
+export function isImageExtension(ext: string | null): boolean {
+  return ext !== null && ext in IMAGE_MIME;
+}
+
+/** True if the path has an image extension we can render. */
+export function isImagePath(filePath: string): boolean {
+  return isImageExtension(getFileExtension(filePath));
+}

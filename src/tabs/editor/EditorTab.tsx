@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { Code, Image as ImageIcon } from "@phosphor-icons/react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import {
@@ -21,12 +22,13 @@ import { StateView } from "../../components/shared/StateView";
 import { ContextMenu, type ContextMenuItem } from "../../components/shared/ContextMenu";
 import { BASE_EDITOR_OPTIONS } from "../../lib/monacoConfig";
 import { initExtMap, languageIdFromExt } from "../../lib/extToLang";
-import { normalizePath, getFileExtension } from "../../lib/pathUtils";
+import { normalizePath, getFileExtension, isImagePath } from "../../lib/pathUtils";
 import type { TabContentProps } from "../types";
 import { defineKosmosTheme } from "./monacoTheme";
 import { registerEditorOpener } from "./editorOpener";
 import { editorCache } from "./editorCache";
 import { parseDiffChanges, buildDiffDecorations } from "./diffDecorations";
+import { ImageViewer } from "./ImageViewer";
 
 function languageIdFromPath(filePath: string): string {
   const ext = getFileExtension(filePath);
@@ -35,6 +37,49 @@ function languageIdFromPath(filePath: string): string {
 
 export function EditorTab({ tab, paneId }: TabContentProps) {
   const filePath = getEditorMeta(tab)?.filePath;
+  const isImage = filePath ? isImagePath(filePath) : false;
+  const isSvg = filePath ? getFileExtension(filePath) === "svg" : false;
+  const [showCode, setShowCode] = useState(false);
+
+  if (!isImage) {
+    return <EditorTabContent tab={tab} paneId={paneId} filePath={filePath} />;
+  }
+
+  const showingCode = isSvg && showCode;
+
+  const handleShowPreview = async () => {
+    // Flush any unsaved edits so the preview reflects them.
+    if (filePath) await editorCache.get(filePath)?.save?.();
+    setShowCode(false);
+  };
+
+  return (
+    <div className="relative h-full">
+      {showingCode ? (
+        <EditorTabContent tab={tab} paneId={paneId} filePath={filePath} />
+      ) : (
+        <ImageViewer filePath={filePath!} />
+      )}
+      {isSvg && (
+        <button
+          type="button"
+          onClick={showingCode ? handleShowPreview : () => setShowCode(true)}
+          className="absolute top-2 right-2 z-10 flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-medium bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)] border border-[var(--color-border-secondary)] hover:border-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors rounded cursor-pointer"
+          title={showingCode ? "Show image preview" : "Edit SVG source"}
+        >
+          {showingCode ? <ImageIcon size={12} /> : <Code size={12} />}
+          {showingCode ? "Preview" : "Edit code"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EditorTabContent({
+  tab,
+  paneId,
+  filePath,
+}: TabContentProps & { filePath: string | undefined }) {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

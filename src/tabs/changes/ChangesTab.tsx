@@ -9,6 +9,8 @@ import { getTheme } from "../../lib/themes";
 import { useThemeListener } from "../../hooks/useThemeListener";
 import { getChangesMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
+import { isImagePath, joinPath } from "../../lib/pathUtils";
+import { ImageViewer } from "../editor/ImageViewer";
 import type { TabContentProps } from "../types";
 
 // The callback reads getTheme() lazily so theme swaps apply to new diffs.
@@ -66,12 +68,36 @@ function buildThemeCss(): string {
 }
 
 export function ChangesTab({ tab }: TabContentProps) {
-  const workspace = useActiveWorkspace();
   const meta = getChangesMeta(tab);
   const filePath = meta?.filePath ?? "";
   const staged = meta?.staged ?? false;
   const isUntracked = meta?.isUntracked ?? false;
 
+  if (filePath && isImagePath(filePath)) {
+    return <ImageChangesView filePath={filePath} />;
+  }
+
+  return <DiffChangesView filePath={filePath} staged={staged} isUntracked={isUntracked} />;
+}
+
+function ImageChangesView({ filePath }: { filePath: string }) {
+  const workspace = useActiveWorkspace();
+  if (!workspace?.path) {
+    return <StateView message="No workspace" />;
+  }
+  return <ImageViewer filePath={joinPath(workspace.path, filePath)} />;
+}
+
+function DiffChangesView({
+  filePath,
+  staged,
+  isUntracked,
+}: {
+  filePath: string;
+  staged: boolean;
+  isUntracked: boolean;
+}) {
+  const workspace = useActiveWorkspace();
   const [patch, setPatch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [themeCss, setThemeCss] = useState(buildThemeCss);
