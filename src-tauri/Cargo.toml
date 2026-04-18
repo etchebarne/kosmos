@@ -9,7 +9,7 @@ strip = true
 
 [package]
 name = "kosmos"
-version = "0.2.2"
+version = "0.2.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
