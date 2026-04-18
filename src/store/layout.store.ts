@@ -1,14 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { PaneNode, PaneSplit, Tab } from "../types";
-import {
-  genId,
-  createTab,
-  createLeaf,
-  findLeaf,
-  findAllLeaves,
-  updateNode,
-} from "../lib/paneTree";
+import { genId, createTab, createLeaf, findLeaf, findAllLeaves, updateNode } from "../lib/paneTree";
 import { getTabDefinition } from "../tabs/registry";
 import { useDragStore } from "./drag.store";
 
