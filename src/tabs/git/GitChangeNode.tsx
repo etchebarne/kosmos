@@ -1,11 +1,13 @@
 import { useState, useCallback, useRef } from "react";
-import type { Icon } from "@phosphor-icons/react";
-import { CaretRight, Folder, FolderOpen, File } from "@phosphor-icons/react";
+import { CaretRight, Folder, FolderOpen } from "@phosphor-icons/react";
 import { getNodeFiles } from "../../lib/git-tree";
 import type { TreeNode } from "../../lib/git-tree";
 import { useDragStore } from "../../store/drag.store";
 import { startDragThreshold } from "../../lib/drag-threshold";
 import { gitStatusColor } from "../../lib/git-colors";
+import { getFileExtension } from "../../lib/path-utils";
+import { useIsDarkTheme } from "../../lib/themes";
+import { FileIcon } from "../file-tree/file-icons";
 
 interface GitChangeNodeProps {
   node: TreeNode;
@@ -66,6 +68,7 @@ export function GitChangeNode({
   const checkState = getCheckState(node);
   const setDragState = useDragStore((s) => s.setDragState);
   const dragOccurredRef = useRef(false);
+  const isDark = useIsDarkTheme();
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -92,7 +95,7 @@ export function GitChangeNode({
     [node, isUntracked, setDragState],
   );
 
-  const IconComp: Icon = node.isDir ? (expanded ? FolderOpen : Folder) : File;
+  const DirIcon = expanded ? FolderOpen : Folder;
 
   return (
     <div>
@@ -130,10 +133,17 @@ export function GitChangeNode({
         )}
 
         {/* Icon */}
-        <IconComp
-          size={14}
-          className={`shrink-0 ${node.isDir ? "text-[var(--color-accent-blue)]" : node.change ? gitStatusColor(node.change.status) : "text-[var(--color-text-tertiary)]"}`}
-        />
+        {node.isDir ? (
+          <DirIcon size={14} className="shrink-0 text-[var(--color-accent-blue)]" />
+        ) : (
+          <FileIcon
+            name={node.name}
+            extension={getFileExtension(node.name)}
+            size={14}
+            className={`shrink-0 ${node.change ? gitStatusColor(node.change.status) : "text-[var(--color-text-tertiary)]"}`}
+            isDark={isDark}
+          />
+        )}
 
         {/* Name */}
         <span className="text-[13px] text-[var(--color-text-primary)] truncate pb-[1px] flex-1">
