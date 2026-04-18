@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { ArrowsClockwise, CaretDown, Eraser, Minus, Plus, Folder } from "@phosphor-icons/react";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
-import { TabIcon } from "../../components/shared/TabIcon";
-import { OptionCard } from "../../components/shared/OptionCard";
+import { useClickOutside } from "../../hooks/useClickOutside";
 import { StateView } from "../../components/shared/StateView";
 import { getTheme } from "../../lib/themes";
 import { DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE } from "../../store/editor.store";
@@ -19,57 +19,39 @@ interface ShellInfo {
   args: string[];
 }
 
-function ShellPicker({
-  shells,
-  loading,
-  onSelect,
-}: {
-  shells: ShellInfo[];
-  loading: boolean;
-  onSelect: (shell: ShellInfo) => void;
-}) {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-xs text-[var(--color-text-secondary)]">Detecting shells...</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="@container flex flex-col items-center justify-center h-full gap-6 p-4">
-      <div className="flex flex-col items-center gap-2">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Terminal</h3>
-        <p className="text-xs text-[var(--color-text-secondary)]">Select a shell to start</p>
-      </div>
-      {shells.length === 0 ? (
-        <p className="text-xs text-[var(--color-text-muted)]">No shells found</p>
-      ) : (
-        <div className="grid grid-cols-1 @[360px]:grid-cols-2 gap-2 w-full @[360px]:w-[320px]">
-          {shells.map((shell, i) => (
-            <OptionCard
-              key={`${shell.program}-${i}`}
-              icon={
-                <TabIcon
-                  name="terminal"
-                  size={16}
-                  className="shrink-0 text-[var(--color-text-tertiary)]"
-                />
-              }
-              label={shell.name}
-              onClick={() => onSelect(shell)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+interface TerminalViewHandle {
+  clear: () => void;
 }
 
 let spawnCounter = 0;
 
-function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; cwd: string }) {
+const TerminalView = forwardRef<
+  TerminalViewHandle,
+  {
+    tabId: string;
+    shell: ShellInfo;
+    cwd: string;
+    fontSize: number;
+    onFontSizeChange: (size: number) => void;
+  }
+>(function TerminalView({ tabId, shell, cwd, fontSize, onFontSizeChange }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+  const onFontSizeChangeRef = useRef(onFontSizeChange);
+  onFontSizeChangeRef.current = onFontSizeChange;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clear: () => {
+        terminalRef.current?.clear();
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const el = containerRef.current;
@@ -80,7 +62,7 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
 
     const t = getTheme().terminal;
     const terminal = new Terminal({
-      fontSize: DEFAULT_FONT_SIZE,
+      fontSize: fontSizeRef.current,
       fontFamily: "'Cascadia Code', 'Consolas', 'Courier New', monospace",
       cursorBlink: true,
       theme: {
@@ -107,9 +89,11 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
         brightWhite: t.brightWhite,
       },
     });
+    terminalRef.current = terminal;
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    fitAddonRef.current = fitAddon;
 
     // Intercept shortcuts before they reach the PTY.
     terminal.attachCustomKeyEventHandler((e) => {
@@ -144,22 +128,19 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
       }
       if (e.key === "=" || e.key === "+") {
         e.preventDefault();
-        const next = Math.min(terminal.options.fontSize! + 1, MAX_FONT_SIZE);
-        terminal.options.fontSize = next;
-        fitAddon.fit();
+        const cur = terminal.options.fontSize ?? DEFAULT_FONT_SIZE;
+        onFontSizeChangeRef.current(Math.min(cur + 1, MAX_FONT_SIZE));
         return false;
       }
       if (e.key === "-") {
         e.preventDefault();
-        const next = Math.max(terminal.options.fontSize! - 1, MIN_FONT_SIZE);
-        terminal.options.fontSize = next;
-        fitAddon.fit();
+        const cur = terminal.options.fontSize ?? DEFAULT_FONT_SIZE;
+        onFontSizeChangeRef.current(Math.max(cur - 1, MIN_FONT_SIZE));
         return false;
       }
       if (e.key === "0") {
         e.preventDefault();
-        terminal.options.fontSize = DEFAULT_FONT_SIZE;
-        fitAddon.fit();
+        onFontSizeChangeRef.current(DEFAULT_FONT_SIZE);
         return false;
       }
       return true;
@@ -350,38 +331,239 @@ function TerminalView({ tabId, shell, cwd }: { tabId: string; shell: ShellInfo; 
       cleanups.forEach((fn) => fn());
       terminal.dispose();
       invoke("terminal_close", { id: terminalId });
+      terminalRef.current = null;
+      fitAddonRef.current = null;
     };
   }, [tabId, shell, cwd]);
 
+  useEffect(() => {
+    const term = terminalRef.current;
+    const fit = fitAddonRef.current;
+    if (!term || !fit) return;
+    if (term.options.fontSize === fontSize) return;
+    term.options.fontSize = fontSize;
+    fit.fit();
+  }, [fontSize]);
+
   return <div ref={containerRef} className="w-full h-full overflow-hidden" />;
+});
+
+function BarButton({
+  onClick,
+  title,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={title}
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className="h-full px-1.5 flex items-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      {children}
+    </button>
+  );
+}
+
+function InlineShellPicker({
+  shells,
+  activeIndex,
+  onSelect,
+}: {
+  shells: ShellInfo[];
+  activeIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, () => setOpen(false), open);
+  const active = shells[activeIndex];
+
+  return (
+    <div ref={ref} className="relative h-full flex items-center">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="h-full px-1.5 flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+      >
+        <span className="font-ui">{active?.name ?? "—"}</span>
+        <CaretDown
+          size={9}
+          className={`shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && shells.length > 0 && (
+        <div className="absolute right-0 bottom-full mb-1 min-w-full py-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border-primary)] shadow-[3px_3px_0_rgba(0,0,0,0.25)] rounded-md z-50 animate-fade-in-up origin-bottom">
+          {shells.map((s, i) => (
+            <button
+              key={`${s.program}-${i}`}
+              type="button"
+              onClick={() => {
+                onSelect(i);
+                setOpen(false);
+              }}
+              className={`block w-full text-left px-2.5 py-1 text-[11px] whitespace-nowrap transition-colors font-ui ${
+                i === activeIndex
+                  ? "text-[var(--color-text-primary)] bg-[var(--color-bg-input)]"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)]"
+              }`}
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TerminalStatusBar({
+  shells,
+  activeIndex,
+  onSelectShell,
+  fontSize,
+  onFontSizeChange,
+  onClear,
+  onRestart,
+  cwdLabel,
+}: {
+  shells: ShellInfo[];
+  activeIndex: number;
+  onSelectShell: (index: number) => void;
+  fontSize: number;
+  onFontSizeChange: (size: number) => void;
+  onClear: () => void;
+  onRestart: () => void;
+  cwdLabel: string;
+}) {
+  return (
+    <div className="h-6 flex items-center justify-between gap-2 pl-2 border-t border-[var(--color-border-primary)] bg-[var(--color-bg-surface)] text-[11px] shrink-0">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
+        <span className="text-[var(--color-text-secondary)] truncate font-ui">{cwdLabel}</span>
+      </div>
+
+      <div className="flex items-stretch shrink-0 h-full">
+        <BarButton
+          onClick={() => onFontSizeChange(Math.max(fontSize - 1, MIN_FONT_SIZE))}
+          title="Zoom out"
+          disabled={fontSize <= MIN_FONT_SIZE}
+        >
+          <Minus size={11} />
+        </BarButton>
+        <button
+          type="button"
+          onClick={() => onFontSizeChange(DEFAULT_FONT_SIZE)}
+          title="Reset zoom"
+          className="h-full px-1 flex items-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer font-ui tabular-nums"
+        >
+          {fontSize}
+        </button>
+        <BarButton
+          onClick={() => onFontSizeChange(Math.min(fontSize + 1, MAX_FONT_SIZE))}
+          title="Zoom in"
+          disabled={fontSize >= MAX_FONT_SIZE}
+        >
+          <Plus size={11} />
+        </BarButton>
+
+        <div className="self-center w-px h-3 bg-[var(--color-border-primary)] mx-1" />
+
+        {shells.length > 0 && (
+          <InlineShellPicker shells={shells} activeIndex={activeIndex} onSelect={onSelectShell} />
+        )}
+
+        <div className="self-center w-px h-3 bg-[var(--color-border-primary)] mx-1" />
+
+        <BarButton onClick={onClear} title="Clear">
+          <Eraser size={12} />
+        </BarButton>
+        <BarButton onClick={onRestart} title="Restart">
+          <ArrowsClockwise size={12} />
+        </BarButton>
+      </div>
+    </div>
+  );
 }
 
 export function TerminalTab({ tab }: TabContentProps) {
   const workspace = useActiveWorkspace();
-  const [selectedShell, setSelectedShell] = useState<ShellInfo | null>(null);
   const [shells, setShells] = useState<ShellInfo[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
+  const [restartEpoch, setRestartEpoch] = useState(0);
+  const viewRef = useRef<TerminalViewHandle>(null);
 
   useEffect(() => {
     invoke<ShellInfo[]>("terminal_list_shells", {
       workspacePath: workspace?.path ?? null,
     }).then((s) => {
       setShells(s);
+      setActiveIndex(0);
       setLoading(false);
     });
   }, [workspace?.path]);
 
-  const handleSelect = useCallback((shell: ShellInfo) => {
-    setSelectedShell(shell);
+  const handleSelectShell = useCallback((index: number) => {
+    setActiveIndex(index);
+  }, []);
+
+  const handleClear = useCallback(() => {
+    viewRef.current?.clear();
+  }, []);
+
+  const handleRestart = useCallback(() => {
+    setRestartEpoch((e) => e + 1);
   }, []);
 
   if (!workspace) {
     return <StateView message="No workspace open" />;
   }
 
-  if (!selectedShell) {
-    return <ShellPicker shells={shells} loading={loading} onSelect={handleSelect} />;
-  }
+  const activeShell = shells[activeIndex];
 
-  return <TerminalView tabId={tab.id} shell={selectedShell} cwd={workspace.path} />;
+  return (
+    <div className="flex flex-col h-full bg-[var(--color-bg-page)]">
+      <div className="flex-1 min-h-0 relative">
+        {loading ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-xs text-[var(--color-text-secondary)]">Detecting shells...</p>
+          </div>
+        ) : !activeShell ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-xs text-[var(--color-text-muted)]">No shells found</p>
+          </div>
+        ) : (
+          <TerminalView
+            key={`${restartEpoch}-${activeShell.program}-${activeShell.args.join(" ")}`}
+            ref={viewRef}
+            tabId={tab.id}
+            shell={activeShell}
+            cwd={workspace.path}
+            fontSize={fontSize}
+            onFontSizeChange={setFontSize}
+          />
+        )}
+      </div>
+      <TerminalStatusBar
+        shells={shells}
+        activeIndex={activeIndex}
+        onSelectShell={handleSelectShell}
+        fontSize={fontSize}
+        onFontSizeChange={setFontSize}
+        onClear={handleClear}
+        onRestart={handleRestart}
+        cwdLabel={workspace.name}
+      />
+    </div>
+  );
 }
