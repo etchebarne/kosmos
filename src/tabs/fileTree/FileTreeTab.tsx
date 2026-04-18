@@ -3,11 +3,13 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { ArrowsClockwise, ArrowsInLineVertical, FilePlus, FolderPlus } from "@phosphor-icons/react";
 import { useActiveWorkspace, useIsWorkspaceActive } from "../../contexts/WorkspaceContext";
 import { FileTreeNode } from "./FileTreeNode";
 import { useFileTreeSelection } from "./fileTreeStores";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
+import { Tooltip } from "../../components/shared/Tooltip";
 import { useGitStatus } from "../../hooks/useGitStatus";
 import { GitFileTreeContext, buildGitColorLookup } from "./gitFileTreeContext";
 import { getCached, getOrFetch, invalidate } from "./fileTreeCache";
@@ -171,6 +173,41 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     };
   }, []);
 
+  const handleNewFile = useCallback(() => {
+    if (!workspacePath) return;
+    window.dispatchEvent(
+      new CustomEvent("file-tree-create", {
+        detail: { dir: workspacePath, type: "file" },
+      }),
+    );
+  }, [workspacePath]);
+
+  const handleNewFolder = useCallback(() => {
+    if (!workspacePath) return;
+    window.dispatchEvent(
+      new CustomEvent("file-tree-create", {
+        detail: { dir: workspacePath, type: "dir" },
+      }),
+    );
+  }, [workspacePath]);
+
+  const handleRefresh = useCallback(() => {
+    if (!workspacePath) return;
+    const dirs = new Set<string>([workspacePath]);
+    document.querySelectorAll<HTMLElement>("[data-file-tree] [data-dir-path]").forEach((el) => {
+      const dirPath = el.dataset.dirPath;
+      if (dirPath) dirs.add(dirPath);
+    });
+    for (const dir of dirs) {
+      invalidate(dir);
+      window.dispatchEvent(new CustomEvent("file-tree-refresh", { detail: { dir } }));
+    }
+  }, [workspacePath]);
+
+  const handleCollapseAll = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("file-tree-collapse-all"));
+  }, []);
+
   if (!activeWorkspace) {
     return <StateView message="No workspace open" />;
   }
@@ -190,6 +227,34 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     extension: null,
   };
 
+  const toolbarBtn =
+    "p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated)] transition-colors cursor-pointer rounded";
+
+  const rootActions = (
+    <>
+      <Tooltip content="New File">
+        <button className={toolbarBtn} onClick={handleNewFile}>
+          <FilePlus size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="New Folder">
+        <button className={toolbarBtn} onClick={handleNewFolder}>
+          <FolderPlus size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Refresh Explorer">
+        <button className={toolbarBtn} onClick={handleRefresh}>
+          <ArrowsClockwise size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Collapse Folders">
+        <button className={toolbarBtn} onClick={handleCollapseAll}>
+          <ArrowsInLineVertical size={14} />
+        </button>
+      </Tooltip>
+    </>
+  );
+
   return (
     <GitFileTreeContext.Provider value={getGitColor}>
       <ScrollArea className="h-full font-ui">
@@ -200,6 +265,7 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
             paneId={paneId}
             defaultExpanded
             preloadedChildren={entries}
+            headerActions={rootActions}
           />
         </div>
       </ScrollArea>

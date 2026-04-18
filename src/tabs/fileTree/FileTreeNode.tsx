@@ -20,6 +20,7 @@ interface FileTreeNodeProps {
   paneId: string;
   defaultExpanded?: boolean;
   preloadedChildren?: DirEntry[];
+  headerActions?: React.ReactNode;
 }
 
 const INDENT_SIZE = 16;
@@ -31,6 +32,7 @@ export function FileTreeNode({
   paneId,
   defaultExpanded,
   preloadedChildren,
+  headerActions,
 }: FileTreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded ?? false);
   const [children, setChildren] = useState<DirEntry[]>(preloadedChildren ?? []);
@@ -214,6 +216,13 @@ export function FileTreeNode({
     return () => window.removeEventListener("file-tree-refresh", handler);
   }, [entry.isDir, entry.path]);
 
+  useEffect(() => {
+    if (!entry.isDir || depth === 0) return;
+    const handler = () => setExpanded(false);
+    window.addEventListener("file-tree-collapse-all", handler);
+    return () => window.removeEventListener("file-tree-collapse-all", handler);
+  }, [entry.isDir, depth]);
+
   const handleFileMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0 || e.shiftKey) return;
@@ -314,56 +323,68 @@ export function FileTreeNode({
 
   return (
     <div>
-      <button
-        className={`relative flex items-center w-full h-[28px] gap-1.5 text-left focus:outline-none transition-colors select-none cursor-pointer group ${
-          isSelected ? "bg-[var(--color-accent-blue-muted)]" : "hover:bg-[var(--color-bg-elevated)]"
-        } ${isCut ? "opacity-40" : ""}`}
-        style={{ paddingLeft: LEFT_PAD + depth * INDENT_SIZE }}
-        onClick={handleClick}
-        onMouseDown={handleFileMouseDown}
-        onContextMenu={handleContextMenu}
-        data-entry-path={entry.path}
-        data-dir-path={entry.isDir ? entry.path : getParentDir(entry.path)}
-      >
-        {/* Indent guide lines */}
-        {Array.from({ length: depth }, (_, i) => (
-          <span
-            key={i}
-            className="absolute top-0 bottom-0 w-px bg-[var(--color-border-primary)] opacity-40"
-            style={{ left: LEFT_PAD + i * INDENT_SIZE + 8 }}
-          />
-        ))}
-
-        {/* Chevron for directories */}
-        {entry.isDir ? (
-          <span className="w-4 h-4 flex items-center justify-center shrink-0 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-text-secondary)] transition-colors">
-            {loading ? (
-              <span className="w-3 h-3 border border-[var(--color-text-muted)] border-t-transparent animate-spin rounded-full" />
-            ) : (
-              <span
-                className={`flex items-center justify-center transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
-              >
-                <CaretRight size={14} />
-              </span>
-            )}
-          </span>
-        ) : (
-          <span className="w-4 h-4 shrink-0" />
-        )}
-
-        {/* Icon */}
-        {renderIcon(
-          14,
-          `shrink-0 ${entry.isDir ? "text-[var(--color-accent-blue)]" : "text-[var(--color-text-tertiary)]"}`,
-        )}
-
-        {/* Name */}
-        <span
-          className={`text-[13px] truncate pb-[1px] ${gitColor ?? "text-[var(--color-text-primary)]"}`}
+      <div className="relative group/row">
+        <button
+          className={`relative flex items-center w-full h-[28px] gap-1.5 text-left focus:outline-none transition-colors select-none cursor-pointer group ${
+            isSelected
+              ? "bg-[var(--color-accent-blue-muted)]"
+              : "hover:bg-[var(--color-bg-elevated)] group-hover/row:bg-[var(--color-bg-elevated)]"
+          } ${isCut ? "opacity-40" : ""}`}
+          style={{
+            paddingLeft: LEFT_PAD + depth * INDENT_SIZE,
+            paddingRight: headerActions ? 110 : 0,
+          }}
+          onClick={handleClick}
+          onMouseDown={handleFileMouseDown}
+          onContextMenu={handleContextMenu}
+          data-entry-path={entry.path}
+          data-dir-path={entry.isDir ? entry.path : getParentDir(entry.path)}
         >
-          {entry.name}
-        </span>
-      </button>
+          {/* Indent guide lines */}
+          {Array.from({ length: depth }, (_, i) => (
+            <span
+              key={i}
+              className="absolute top-0 bottom-0 w-px bg-[var(--color-border-primary)] opacity-40"
+              style={{ left: LEFT_PAD + i * INDENT_SIZE + 8 }}
+            />
+          ))}
+
+          {/* Chevron for directories */}
+          {entry.isDir ? (
+            <span className="w-4 h-4 flex items-center justify-center shrink-0 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-text-secondary)] transition-colors">
+              {loading ? (
+                <span className="w-3 h-3 border border-[var(--color-text-muted)] border-t-transparent animate-spin rounded-full" />
+              ) : (
+                <span
+                  className={`flex items-center justify-center transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+                >
+                  <CaretRight size={14} />
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="w-4 h-4 shrink-0" />
+          )}
+
+          {/* Icon */}
+          {renderIcon(
+            14,
+            `shrink-0 ${entry.isDir ? "text-[var(--color-accent-blue)]" : "text-[var(--color-text-tertiary)]"}`,
+          )}
+
+          {/* Name */}
+          <span
+            className={`flex-1 min-w-0 text-[13px] truncate pb-[1px] ${gitColor ?? "text-[var(--color-text-primary)]"}`}
+          >
+            {entry.name}
+          </span>
+        </button>
+        {headerActions && (
+          <div className="absolute right-2 top-0 h-[28px] flex items-center gap-0.5 z-10">
+            {headerActions}
+          </div>
+        )}
+      </div>
 
       {/* Children with guide lines */}
       {expanded && (
