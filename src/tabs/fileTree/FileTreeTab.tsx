@@ -1,6 +1,8 @@
 import { useEffect, useCallback, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useActiveWorkspace, useIsWorkspaceActive } from "../../contexts/WorkspaceContext";
 import { FileTreeNode } from "./FileTreeNode";
 import { useFileTreeSelection } from "./fileTreeStores";
@@ -27,6 +29,7 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   const [entries, setEntries] = useState<DirEntry[]>(initialEntries ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialEntries);
+  const [externalDrop, setExternalDrop] = useState<{ dirPath: string; rect: DOMRect } | null>(null);
   const { status: gitStatus } = useGitStatus(workspacePath, isActive);
 
   const getGitColor = useMemo(() => {
@@ -78,6 +81,69 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
       invoke("unwatch_workspace", { path: activeWorkspace.path });
     };
   }, [activeWorkspace, isActive]);
+
+  useEffect(() => {
+    if (!workspacePath || !isActive) return;
+
+    const findTarget = (physX: number, physY: number) => {
+      const dpr = window.devicePixelRatio || 1;
+      const x = physX / dpr;
+      const y = physY / dpr;
+      const elements = document.elementsFromPoint(x, y);
+      if (!elements.some((el) => (el as HTMLElement).dataset?.fileTree !== undefined)) {
+        return null;
+      }
+      for (const el of elements) {
+        const dirPath = (el as HTMLElement).dataset?.dirPath;
+        if (dirPath) {
+          return { dirPath, rect: (el as HTMLElement).getBoundingClientRect() };
+        }
+      }
+      return null;
+    };
+
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setExternalDrop(findTarget(p.position.x, p.position.y));
+        } else if (p.type === "leave") {
+          setExternalDrop(null);
+        } else if (p.type === "drop") {
+          const target = findTarget(p.position.x, p.position.y);
+          setExternalDrop(null);
+          if (!target) return;
+          for (const sourcePath of p.paths) {
+            invoke("copy_entry", { source: sourcePath, destDir: target.dirPath })
+              .then(() => {
+                window.dispatchEvent(
+                  new CustomEvent("file-tree-move", {
+                    detail: {
+                      sourcePath: `\0__external__/${sourcePath}`,
+                      destDir: target.dirPath,
+                      fileName: "",
+                    },
+                  }),
+                );
+              })
+              .catch((err: unknown) => console.error("Failed to copy dropped file:", err));
+          }
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      setExternalDrop(null);
+    };
+  }, [workspacePath, isActive]);
 
   // One listener fans events out via CustomEvents; per-node listeners caused
   // a read_dir thundering herd that starved the runtime.
@@ -137,6 +203,19 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
           />
         </div>
       </ScrollArea>
+      {externalDrop &&
+        createPortal(
+          <div
+            className="fixed bg-[var(--color-accent-blue-muted)] border border-[var(--color-accent-blue)] pointer-events-none z-50"
+            style={{
+              left: externalDrop.rect.left,
+              top: externalDrop.rect.top,
+              width: externalDrop.rect.width,
+              height: externalDrop.rect.height,
+            }}
+          />,
+          document.body,
+        )}
     </GitFileTreeContext.Provider>
   );
 }
