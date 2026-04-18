@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef } from "react";
 import autoAnimate from "@formkit/auto-animate";
+import { Info, Warning, XCircle, CheckCircle, type Icon } from "@phosphor-icons/react";
 import { useToastStore, type Toast } from "../../store/toast.store";
 
-const TYPE_STYLES: Record<Toast["type"], string> = {
-  info: "border-l-[var(--color-accent-blue)]",
-  warning: "border-l-orange-400",
-  error: "border-l-[var(--color-status-red)]",
-  success: "border-l-[var(--color-status-green)]",
+const TYPE_ICONS: Record<Toast["type"], { Icon: Icon; color: string }> = {
+  info: { Icon: Info, color: "var(--color-accent-blue)" },
+  warning: { Icon: Warning, color: "rgb(251 146 60)" },
+  error: { Icon: XCircle, color: "var(--color-status-red)" },
+  success: { Icon: CheckCircle, color: "var(--color-status-green)" },
 };
 
 function ToastItem({ toast }: { toast: Toast }) {
@@ -31,14 +32,17 @@ function ToastItem({ toast }: { toast: Toast }) {
     setTimeout(() => removeToast(toast.id), 150);
   };
 
+  const { Icon: StatusIcon, color } = TYPE_ICONS[toast.type];
+
   return (
     <div
-      className={`flex items-center gap-3 px-3 py-2.5 bg-[var(--color-bg-surface)] border border-[var(--color-border-primary)] border-l-2 ${TYPE_STYLES[toast.type]} shadow-[3px_3px_0_rgba(0,0,0,0.25)] transition-all duration-150 ${visible ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4"}`}
+      className={`flex items-center gap-3 px-3 py-2.5 bg-[var(--color-bg-surface)] border border-[var(--color-border-primary)] shadow-[3px_3px_0_rgba(0,0,0,0.25)] rounded-xl overflow-hidden transition-all duration-150 ${visible ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4"}`}
     >
+      <StatusIcon size={16} weight="fill" color={color} className="shrink-0" />
       <span className="text-xs text-[var(--color-text-secondary)] flex-1">{toast.message}</span>
       {toast.action && (
         <button
-          className="text-xs text-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue-hover)] transition-colors cursor-pointer whitespace-nowrap"
+          className="px-2 py-1 text-xs text-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue-hover)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer whitespace-nowrap rounded-md"
           onClick={() => {
             toast.action!.onClick();
             dismiss();
@@ -48,7 +52,7 @@ function ToastItem({ toast }: { toast: Toast }) {
         </button>
       )}
       <button
-        className="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+        className="w-5 h-5 flex items-center justify-center text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer rounded-md"
         onClick={dismiss}
       >
         &times;
