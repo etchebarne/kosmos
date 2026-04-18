@@ -335,22 +335,23 @@ pub async fn git_list_branches(path: &str) -> Result<Vec<GitBranchInfo>, CoreErr
             "branch",
             "-a",
             "--sort=-committerdate",
-            "--format=%(HEAD)|%(refname:short)|%(committerdate:relative)",
+            "--format=%(HEAD)|%(refname:short)|%(committerdate:relative)|%(symref)",
         ],
     ).await?;
 
     let mut branches = Vec::new();
     if let Some(output) = output {
         for line in output.lines() {
-            let parts: Vec<&str> = line.splitn(3, '|').collect();
-            if parts.len() < 3 {
+            let parts: Vec<&str> = line.splitn(4, '|').collect();
+            if parts.len() < 4 {
                 continue;
             }
             let is_current = parts[0].trim() == "*";
             let name = parts[1].trim().to_string();
             let date = parts[2].trim().to_string();
+            let symref = parts[3].trim();
 
-            if name.contains("->") || name == "HEAD" {
+            if !symref.is_empty() || name.contains("->") || name == "HEAD" {
                 continue;
             }
 
