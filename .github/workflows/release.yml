@@ -104,10 +104,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # fff-search's build.rs panics in CI without the `zlob` feature. On
           # Windows we can't enable zlob (matrix note), but pretending the
-          # feature flag is set makes build.rs take the "zlob" branch — which
-          # only emits link-lib hints for the dynamic CRT (already linked by
-          # Rust msvc), so nothing extra actually compiles.
+          # feature flag is set makes build.rs take the "zlob" branch, which
+          # just emits dynamic-CRT link hints. Combined with a NODEFAULTLIB
+          # to drop the static vcruntime pulled in by some C dep, this avoids
+          # the LNK2005 on __CxxFrameHandler3.
           CARGO_FEATURE_ZLOB: ${{ matrix.platform == 'windows-latest' && '1' || '' }}
+          RUSTFLAGS: ${{ matrix.platform == 'windows-latest' && '-C link-arg=/NODEFAULTLIB:libvcruntime.lib' || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Kosmos ${{ github.ref_name }}"
