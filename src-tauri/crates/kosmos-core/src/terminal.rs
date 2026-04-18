@@ -200,6 +200,27 @@ impl TerminalManager {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn default_login_shell() -> Option<String> {
+    // /etc/passwd is the source of truth for the login shell. $SHELL is unreliable
+    // because a parent process (terminal emulator, IDE, launcher) may override it.
+    let user = std::env::var("USER").ok()?;
+    let prefix = format!("{user}:");
+    if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix(&prefix) {
+                if let Some(shell) = rest.rsplit(':').next() {
+                    let shell = shell.trim();
+                    if !shell.is_empty() {
+                        return Some(shell.to_string());
+                    }
+                }
+            }
+        }
+    }
+    std::env::var("SHELL").ok()
+}
+
 pub fn list_shells() -> Vec<ShellInfo> {
     let mut shells = Vec::new();
 
@@ -283,6 +304,15 @@ pub fn list_shells() -> Vec<ShellInfo> {
                         program: path.to_string(),
                         args: vec![],
                     });
+                }
+            }
+        }
+
+        if let Some(default_shell) = default_login_shell() {
+            if let Some(pos) = shells.iter().position(|s| s.program == default_shell) {
+                if pos != 0 {
+                    let default = shells.remove(pos);
+                    shells.insert(0, default);
                 }
             }
         }
