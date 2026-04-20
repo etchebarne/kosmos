@@ -50,7 +50,6 @@ export function BlankTab({ tab, paneId }: TabContentProps) {
             {definitions.map((def) => (
               <PillButton
                 key={def.type}
-                size="sm"
                 leadingIcon={
                   <TabIcon
                     name={def.icon}
