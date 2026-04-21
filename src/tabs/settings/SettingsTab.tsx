@@ -5,6 +5,8 @@ import { CaretDown, GearSix } from "@phosphor-icons/react";
 import { ScrollArea } from "../../components/shared/ScrollArea";
 import { Setting } from "../../components/shared/Setting";
 import { Dropdown, type DropdownOption } from "../../components/shared/Dropdown";
+import { Switch } from "../../components/shared/Switch";
+import { NumberInput } from "../../components/shared/NumberInput";
 import { useSettingsStore } from "../../store/settings.store";
 import type { TabContentProps } from "../types";
 
@@ -49,32 +51,15 @@ function SettingControlRenderer({
     case "dropdown":
       return <Dropdown value={String(value)} options={control.options} onChange={onChange} />;
     case "switch":
-      return (
-        <button
-          className={`relative flex items-center w-8 h-[18px] border transition-colors rounded-full ${
-            value
-              ? "bg-[var(--color-accent-blue)] border-[var(--color-accent-blue)]"
-              : "bg-[var(--color-bg-surface)] border-[var(--color-border-primary)] hover:border-[var(--color-border-hover)]"
-          }`}
-          onClick={() => onChange(!value)}
-        >
-          <span
-            className={`absolute top-0.5 w-3.5 h-3.5 bg-white transition-transform rounded-full ${
-              value ? "left-[16px]" : "left-[2px]"
-            }`}
-          />
-        </button>
-      );
+      return <Switch value={Boolean(value)} onChange={onChange} />;
     case "number":
       return (
-        <input
-          type="number"
+        <NumberInput
           value={Number(value)}
           min={control.min}
           max={control.max}
           step={control.step}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="text-xs w-16 bg-[var(--color-bg-surface)] border border-[var(--color-border-secondary)] text-[var(--color-text-primary)] px-2 py-1 outline-none hover:border-[var(--color-border-primary)] focus:border-[var(--color-accent-blue)] transition-colors text-center rounded-md"
+          onChange={onChange}
         />
       );
   }
