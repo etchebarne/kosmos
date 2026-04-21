@@ -77,6 +77,10 @@
     linear-gradient(to top, rgba(0, 0, 0, 0.045), rgba(0, 0, 0, 0) 100%);
 }
 
+[data-solid="true"] .pill-depth {
+  background-image: none;
+}
+
 /* OverlayScrollbars custom theme */
 .os-theme-custom {
   --os-handle-bg: var(--color-scrollbar-track);

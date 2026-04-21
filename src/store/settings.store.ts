@@ -16,6 +16,10 @@ async function persist(values: Record<string, unknown>) {
   await s.set("values", values);
 }
 
+function applySolidMode(enabled: boolean) {
+  document.documentElement.setAttribute("data-solid", enabled ? "true" : "false");
+}
+
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   values: {},
   ready: false,
@@ -29,6 +33,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (colorTheme !== undefined) {
       applyTheme(String(colorTheme));
     }
+    applySolidMode(values["theme.solidMode"] === true);
   },
 
   set: (key: string, value: unknown) => {
@@ -37,6 +42,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     persist(next);
     if (key === "theme.colorTheme") {
       applyTheme(String(value));
+    } else if (key === "theme.solidMode") {
+      applySolidMode(value === true);
     }
   },
 
