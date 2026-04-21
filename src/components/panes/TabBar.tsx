@@ -94,26 +94,40 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
     <div
       ref={tabBarRef}
       role="tablist"
-      className="flex items-center h-9 min-h-9 bg-[var(--color-project-bar-bg)] pill-depth border-b border-[var(--color-border-primary)] overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:h-0"
+      className="flex items-center h-9 min-h-9 gap-px px-1 bg-[var(--color-project-bar-bg)] pill-depth border-b border-[var(--color-border-primary)] overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:h-0"
       data-tabbar-pane={paneId}
       onWheel={handleWheel}
     >
-      {tabs.map((tab) => {
+      {tabs.flatMap((tab, i) => {
         const isActive = tab.id === activeTabId;
+        const prevActive = i > 0 && tabs[i - 1].id === activeTabId;
+        const showDivider = i > 0 && !isActive && !prevActive;
         const editorMeta = getEditorMeta(tab);
         const iconColorClass = isActive
           ? "text-[var(--color-accent-blue)]"
           : "text-[var(--color-text-tertiary)]";
-        return (
+        const nodes: React.ReactNode[] = [];
+        if (i > 0) {
+          nodes.push(
+            <span
+              key={`sep-${tab.id}`}
+              aria-hidden
+              className={`w-px h-4 shrink-0 bg-[var(--color-border-primary)] transition-opacity duration-100 ${
+                showDivider ? "opacity-100" : "opacity-0"
+              }`}
+            />,
+          );
+        }
+        nodes.push(
           <div
             key={tab.id}
             role="tab"
             aria-selected={isActive}
             data-tab
-            className={`group flex items-center gap-2 h-full px-3 cursor-grab select-none whitespace-nowrap pill-depth ${
+            className={`group flex items-center gap-2 h-7 px-3 rounded-md cursor-grab select-none whitespace-nowrap ${
               isActive
-                ? "bg-[var(--color-tab-active-bg)] border-b-2 border-[var(--color-accent-blue)]"
-                : "bg-[var(--color-tab-inactive-bg)] border-b border-[var(--color-border-primary)] hover:bg-[var(--color-bg-surface)]"
+                ? "bg-[var(--color-tab-active-bg)] pill-depth"
+                : "hover:bg-[var(--color-bg-surface)]"
             }`}
             onMouseDown={(e) => handleTabMouseDown(e, tab)}
             onAuxClick={(e) => {
@@ -152,7 +166,7 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
               <DirtyDot tabId={tab.id} />
               <button
                 aria-label={`Close ${tab.title}`}
-                className="flex items-center justify-center p-0.5 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity duration-100 hover:text-[var(--color-text-primary)] hover:bg-[var(--color-border-secondary)]"
+                className="flex items-center justify-center p-0.5 rounded text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity duration-100 hover:text-[var(--color-text-primary)] hover:bg-[var(--color-border-secondary)]"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -162,11 +176,12 @@ export const TabBar = memo(function TabBar({ paneId, tabs, activeTabId }: TabBar
                 <X size={12} />
               </button>
             </div>
-          </div>
+          </div>,
         );
+        return nodes;
       })}
       <button
-        className="flex items-center justify-center w-7 h-7 mx-1 text-[var(--color-text-muted)] shrink-0 hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-border-primary)] rounded-md"
+        className="flex items-center justify-center w-7 h-7 text-[var(--color-text-muted)] shrink-0 hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-border-primary)] rounded-md"
         onClick={() => addTab(paneId)}
       >
         <Plus size={14} />
