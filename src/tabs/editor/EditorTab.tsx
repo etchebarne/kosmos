@@ -29,7 +29,15 @@ import { defineKosmosTheme } from "./monacoTheme";
 import { registerEditorOpener } from "./editorOpener";
 import { editorCache } from "./editorCache";
 import { parseDiffChanges, buildDiffDecorations } from "./diffDecorations";
-import { buildAiGutterDecorations, extractFunctionLines } from "./aiGutter";
+import {
+  AI_GENERATE_GLYPH_LOADING_CLASS,
+  buildAiGutterDecorations,
+  buildGenerationPrompt,
+  buildWindowedContext,
+  extractFunctions,
+  stripCodeFences,
+  type AiFunctionInfo,
+} from "./aiGutter";
 import { ImageViewer } from "./ImageViewer";
 
 function languageIdFromPath(filePath: string): string {
@@ -101,13 +109,28 @@ function EditorTabContent({
   const lspOpenedRef = useRef(false);
   const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
   const aiGutterDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
-  const aiFunctionLinesRef = useRef<Set<number>>(new Set());
+  const aiFunctionsRef = useRef<Map<number, AiFunctionInfo>>(new Map());
+  // Each in-flight generation owns two sticky decorations: a single-line one on the
+  // function's first line for the spinner glyph, and a full-range one used to compute
+  // the replacement target. Two decorations because glyphMarginClassName paints on every
+  // line the range covers, and the replacement needs the full function range.
+  const aiInFlightRef = useRef<
+    Map<
+      number,
+      {
+        glyph: editor.IEditorDecorationsCollection;
+        range: editor.IEditorDecorationsCollection;
+      }
+    >
+  >(new Map());
+  const aiGenerationIdRef = useRef(0);
   const aiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blameWidgetRef = useRef<editor.IContentWidget | null>(null);
   const blameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blameLineRef = useRef<number>(0);
 
   const aiCompletionEnabled = useSettingsStore((s) => s.values["ai.enableCompletion"] === true);
+  const aiAgent = useSettingsStore((s) => (s.values["ai.agent"] as string) ?? "claude-code");
 
   const editorFontSize = useEditorStore((s) => s.editorFontSize);
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
@@ -139,6 +162,8 @@ function EditorTabContent({
   dirtyRef.current = dirty;
   const aiCompletionEnabledRef = useRef(aiCompletionEnabled);
   aiCompletionEnabledRef.current = aiCompletionEnabled;
+  const aiAgentRef = useRef(aiAgent);
+  aiAgentRef.current = aiAgent;
 
   const loadFile = useCallback(async () => {
     if (!filePath) return;
@@ -219,6 +244,20 @@ function EditorTabContent({
     if (editorReady && workspace) refreshDiffDecorations();
   }, [editorReady, workspace, refreshDiffDecorations]);
 
+  const rebuildAiDecorations = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    // Skip rendering a normal glyph on any line already covered by a loading glyph.
+    const inFlightLines = new Set<number>();
+    for (const { glyph } of aiInFlightRef.current.values()) {
+      const r = glyph.getRanges()[0];
+      if (r) inFlightLines.add(r.startLineNumber);
+    }
+    const decorations = buildAiGutterDecorations(aiFunctionsRef.current, inFlightLines);
+    aiGutterDecorationsRef.current?.clear();
+    aiGutterDecorationsRef.current = ed.createDecorationsCollection(decorations);
+  }, []);
+
   const refreshAiGutter = useCallback(async () => {
     const ed = editorRef.current;
     const ws = workspaceRef.current;
@@ -228,7 +267,7 @@ function EditorTabContent({
     if (!aiCompletionEnabledRef.current || !ws || !uri) {
       aiGutterDecorationsRef.current?.clear();
       aiGutterDecorationsRef.current = null;
-      aiFunctionLinesRef.current = new Set();
+      aiFunctionsRef.current = new Map();
       return;
     }
 
@@ -237,16 +276,14 @@ function EditorTabContent({
 
     try {
       const symbols = await client.documentSymbol(uri);
-      aiFunctionLinesRef.current = extractFunctionLines(symbols);
-      const decorations = buildAiGutterDecorations(symbols);
-      aiGutterDecorationsRef.current?.clear();
-      aiGutterDecorationsRef.current = ed.createDecorationsCollection(decorations);
+      aiFunctionsRef.current = extractFunctions(symbols);
+      rebuildAiDecorations();
     } catch {
       aiGutterDecorationsRef.current?.clear();
       aiGutterDecorationsRef.current = null;
-      aiFunctionLinesRef.current = new Set();
+      aiFunctionsRef.current = new Map();
     }
-  }, []);
+  }, [rebuildAiDecorations]);
 
   const scheduleAiGutterRefresh = useCallback(() => {
     if (aiRefreshTimerRef.current != null) clearTimeout(aiRefreshTimerRef.current);
@@ -256,6 +293,117 @@ function EditorTabContent({
     }, 400);
   }, [refreshAiGutter]);
 
+  const generateFunctionAtLine = useCallback(
+    async (startLine: number) => {
+      const ed = editorRef.current;
+      const model = ed?.getModel();
+      const monaco = monacoRef.current;
+      const info = aiFunctionsRef.current.get(startLine);
+      if (!ed || !model || !monaco || !info) return;
+      // One in-flight generation per starting line — re-clicks are no-ops.
+      for (const { glyph } of aiInFlightRef.current.values()) {
+        const r = glyph.getRanges()[0];
+        if (r && r.startLineNumber === startLine) return;
+      }
+
+      // Single-line glyph decoration: spinner sits on the function's first line only.
+      const glyphCollection = ed.createDecorationsCollection([
+        {
+          range: {
+            startLineNumber: info.range.startLineNumber,
+            startColumn: 1,
+            endLineNumber: info.range.startLineNumber,
+            endColumn: 1,
+          },
+          options: {
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+            glyphMarginClassName: AI_GENERATE_GLYPH_LOADING_CLASS,
+            glyphMarginHoverMessage: { value: "Generating…" },
+          },
+        },
+      ]);
+      // Full-range decoration: tracks the function body for the replacement edit.
+      const rangeCollection = ed.createDecorationsCollection([
+        {
+          range: info.range,
+          options: {
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          },
+        },
+      ]);
+
+      const genId = ++aiGenerationIdRef.current;
+      aiInFlightRef.current.set(genId, { glyph: glyphCollection, range: rangeCollection });
+      rebuildAiDecorations();
+
+      try {
+        const functionText = model.getValueInRange(info.range);
+        const language = model.getLanguageId();
+        const fp = filePathRef.current ?? "";
+        const context = buildWindowedContext(model, info.range);
+
+        const prompt = buildGenerationPrompt({
+          filePath: fp,
+          language,
+          context,
+          functionText,
+          functionStartLine: info.range.startLineNumber,
+          functionEndLine: info.range.endLineNumber,
+        });
+
+        const result = await invoke<{
+          text: string;
+          stderr: string;
+          raw: string;
+          tempPath: string;
+        }>("ai_generate", {
+          prompt,
+          agent: aiAgentRef.current,
+          cwd: workspaceRef.current?.path ?? null,
+        });
+
+        console.groupCollapsed(`[ai_generate] line ${startLine}`);
+        console.log("temp file:", result.tempPath);
+        console.log("text (from temp file):", result.text);
+        if (result.stderr.trim()) console.log("stderr:", result.stderr);
+        if (result.raw.trim()) console.log("raw stdout (ignored):", result.raw);
+        console.groupEnd();
+
+        // Keep a defensive strip in case the model writes fences despite the protocol.
+        const cleaned = stripCodeFences(result.text).trimEnd();
+        if (!cleaned) {
+          console.warn(
+            `[ai_generate] line ${startLine}: agent didn't write anything to the temp file, skipping edit`,
+          );
+          return;
+        }
+        if (cleaned === functionText.trimEnd()) {
+          console.warn(
+            `[ai_generate] line ${startLine}: response identical to source, skipping edit`,
+          );
+          return;
+        }
+
+        const currentRanges = rangeCollection.getRanges();
+        const target = currentRanges[0] ?? info.range;
+        ed.executeEdits("ai-generate", [{ range: target, text: cleaned }]);
+      } catch (err) {
+        console.error("AI generation failed:", err);
+      } finally {
+        glyphCollection.clear();
+        rangeCollection.clear();
+        aiInFlightRef.current.delete(genId);
+        rebuildAiDecorations();
+        // Function boundaries likely shifted; refetch symbols.
+        scheduleAiGutterRefresh();
+      }
+    },
+    [rebuildAiDecorations, scheduleAiGutterRefresh],
+  );
+
+  const generateFunctionAtLineRef = useRef(generateFunctionAtLine);
+  generateFunctionAtLineRef.current = generateFunctionAtLine;
+
   useEffect(() => {
     if (!editorReady) return;
     if (aiCompletionEnabled) {
@@ -263,7 +411,7 @@ function EditorTabContent({
     } else {
       aiGutterDecorationsRef.current?.clear();
       aiGutterDecorationsRef.current = null;
-      aiFunctionLinesRef.current = new Set();
+      aiFunctionsRef.current = new Map();
     }
   }, [editorReady, aiCompletionEnabled, workspace, refreshAiGutter]);
 
@@ -713,8 +861,11 @@ function EditorTabContent({
       if (!aiCompletionEnabledRef.current) return;
       if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
       const line = e.target.position?.lineNumber;
-      if (line && aiFunctionLinesRef.current.has(line)) {
-        // Implementation pending — generation hook goes here.
+      if (!line) return;
+      if (aiFunctionsRef.current.has(line)) {
+        e.event.preventDefault();
+        e.event.stopPropagation();
+        generateFunctionAtLineRef.current(line);
       }
     });
   }
