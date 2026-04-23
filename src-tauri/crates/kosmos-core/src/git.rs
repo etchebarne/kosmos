@@ -168,6 +168,12 @@ pub async fn get_git_status(path: &str) -> Result<GitStatusInfo, CoreError> {
 /// when large directories (e.g. node_modules/) appear untracked after a branch
 /// switch with different .gitignore rules.
 const MAX_UNTRACKED_DIR_FILES: usize = 1_000;
+/// Per-file byte cap used when counting lines for untracked files. Files larger
+/// than this are skipped (reported as +0) so huge blobs don't block status.
+const UNTRACKED_FILE_BYTES_CAP: u64 = 1_024 * 1_024;
+/// Total byte budget per enumerated untracked directory. Once spent, remaining
+/// files fall back to +0 — the diff viewer still counts them on demand.
+const UNTRACKED_DIR_BYTES_BUDGET: u64 = 8 * 1_024 * 1_024;
 
 fn build_change_list(
     dir: &Path,
@@ -209,16 +215,33 @@ fn build_change_list(
             let dir_path = dir.join(file_path);
             let mut files = Vec::new();
             collect_untracked_files(dir, &dir_path, &mut files, MAX_UNTRACKED_DIR_FILES);
-            // Skip per-file line counting for directory-enumerated files —
-            // reading hundreds/thousands of files just for "+N" counts is the
-            // main source of slowness. The diff viewer still counts on demand.
+            // Count lines for each enumerated file so the UI shows "+N" just like
+            // it does for loose untracked files, but cap reads so a huge folder
+            // (e.g. node_modules/) doesn't freeze us. Once the total byte budget
+            // is spent, the remaining files fall back to 0 and can still be
+            // counted on demand by the diff viewer.
+            let mut bytes_read: u64 = 0;
             for rel_path in files {
+                let (additions, deletions) = if bytes_read >= UNTRACKED_DIR_BYTES_BUDGET {
+                    (0, 0)
+                } else {
+                    let full_path = dir.join(&rel_path);
+                    std::fs::metadata(&full_path)
+                        .ok()
+                        .filter(|m| m.len() <= UNTRACKED_FILE_BYTES_CAP)
+                        .and_then(|m| {
+                            bytes_read += m.len();
+                            std::fs::read_to_string(&full_path).ok()
+                        })
+                        .map(|s| (s.lines().count() as i32, 0))
+                        .unwrap_or((0, 0))
+                };
                 changes.push(GitFileChange {
                     path: rel_path,
                     status: "untracked".to_string(),
                     staged: false,
-                    additions: 0,
-                    deletions: 0,
+                    additions,
+                    deletions,
                 });
             }
             continue;
@@ -237,10 +260,9 @@ fn build_change_list(
 
         let (additions, deletions) = if x == '?' && y == '?' {
             let full_path = dir.join(file_path);
-            // Cap line-counting to 1 MB to avoid reading huge untracked files
             let count = std::fs::metadata(&full_path)
                 .ok()
-                .filter(|m| m.len() <= 1_024 * 1_024)
+                .filter(|m| m.len() <= UNTRACKED_FILE_BYTES_CAP)
                 .and_then(|_| std::fs::read_to_string(&full_path).ok())
                 .map(|s| s.lines().count() as i32)
                 .unwrap_or(0);
