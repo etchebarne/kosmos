@@ -43,6 +43,25 @@
   background: var(--color-diff-deletion-number-bg) !important;
 }
 
+/* AI completion glyph — sits in the Monaco glyph margin on function definition lines */
+.ai-generate-glyph {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+  background-color: var(--color-accent-blue);
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5L8 1z'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5L8 1z'/></svg>");
+  -webkit-mask-size: 70% 70%;
+  mask-size: 70% 70%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.ai-generate-glyph:hover {
+  opacity: 1;
+}
+
 /* Inline git blame */
 .git-blame-inline {
   color: var(--color-text-muted);

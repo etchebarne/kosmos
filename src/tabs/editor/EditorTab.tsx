@@ -14,6 +14,7 @@ import { useLspStore } from "../../store/lsp.store";
 import { pathToFileUri } from "../../lib/lsp/uri";
 import { useLayoutStore } from "../../store/layout.store";
 import { useEditorStore } from "../../store/editor.store";
+import { useSettingsStore } from "../../store/settings.store";
 import { findLeaf } from "../../lib/paneTree";
 import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monacoLanguages";
 import { useThemeListener } from "../../hooks/useThemeListener";
@@ -28,6 +29,7 @@ import { defineKosmosTheme } from "./monacoTheme";
 import { registerEditorOpener } from "./editorOpener";
 import { editorCache } from "./editorCache";
 import { parseDiffChanges, buildDiffDecorations } from "./diffDecorations";
+import { buildAiGutterDecorations, extractFunctionLines } from "./aiGutter";
 import { ImageViewer } from "./ImageViewer";
 
 function languageIdFromPath(filePath: string): string {
@@ -98,9 +100,14 @@ function EditorTabContent({
   const [editorReady, setEditorReady] = useState(false);
   const lspOpenedRef = useRef(false);
   const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
+  const aiGutterDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
+  const aiFunctionLinesRef = useRef<Set<number>>(new Set());
+  const aiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blameWidgetRef = useRef<editor.IContentWidget | null>(null);
   const blameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blameLineRef = useRef<number>(0);
+
+  const aiCompletionEnabled = useSettingsStore((s) => s.values["ai.enableCompletion"] === true);
 
   const editorFontSize = useEditorStore((s) => s.editorFontSize);
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
@@ -130,6 +137,8 @@ function EditorTabContent({
   filePathRef.current = filePath;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const aiCompletionEnabledRef = useRef(aiCompletionEnabled);
+  aiCompletionEnabledRef.current = aiCompletionEnabled;
 
   const loadFile = useCallback(async () => {
     if (!filePath) return;
@@ -209,6 +218,54 @@ function EditorTabContent({
   useEffect(() => {
     if (editorReady && workspace) refreshDiffDecorations();
   }, [editorReady, workspace, refreshDiffDecorations]);
+
+  const refreshAiGutter = useCallback(async () => {
+    const ed = editorRef.current;
+    const ws = workspaceRef.current;
+    const uri = fileUriRef.current;
+    if (!ed) return;
+
+    if (!aiCompletionEnabledRef.current || !ws || !uri) {
+      aiGutterDecorationsRef.current?.clear();
+      aiGutterDecorationsRef.current = null;
+      aiFunctionLinesRef.current = new Set();
+      return;
+    }
+
+    const client = useLspStore.getState().getClient(ws.path, lspLanguageRef.current);
+    if (!client) return;
+
+    try {
+      const symbols = await client.documentSymbol(uri);
+      aiFunctionLinesRef.current = extractFunctionLines(symbols);
+      const decorations = buildAiGutterDecorations(symbols);
+      aiGutterDecorationsRef.current?.clear();
+      aiGutterDecorationsRef.current = ed.createDecorationsCollection(decorations);
+    } catch {
+      aiGutterDecorationsRef.current?.clear();
+      aiGutterDecorationsRef.current = null;
+      aiFunctionLinesRef.current = new Set();
+    }
+  }, []);
+
+  const scheduleAiGutterRefresh = useCallback(() => {
+    if (aiRefreshTimerRef.current != null) clearTimeout(aiRefreshTimerRef.current);
+    aiRefreshTimerRef.current = setTimeout(() => {
+      aiRefreshTimerRef.current = null;
+      refreshAiGutter();
+    }, 400);
+  }, [refreshAiGutter]);
+
+  useEffect(() => {
+    if (!editorReady) return;
+    if (aiCompletionEnabled) {
+      refreshAiGutter();
+    } else {
+      aiGutterDecorationsRef.current?.clear();
+      aiGutterDecorationsRef.current = null;
+      aiFunctionLinesRef.current = new Set();
+    }
+  }, [editorReady, aiCompletionEnabled, workspace, refreshAiGutter]);
 
   useEffect(() => {
     const unlisten = listen("git-changed", () => {
@@ -318,6 +375,8 @@ function EditorTabContent({
       const text = editorRef.current.getValue();
       client.didOpen(fileUri, lspLang, versionRef.current, text);
 
+      if (aiCompletionEnabledRef.current) scheduleAiGutterRefresh();
+
       // Companions (e.g. tailwindcss) open the same doc alongside the main server.
       startCompanions(workspace.path, lspLang, filePath ?? null, monacoRef.current!).then(() => {
         if (cancelled) return;
@@ -343,6 +402,10 @@ function EditorTabContent({
       if (debounceTimerRef.current != null) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
+      }
+      if (aiRefreshTimerRef.current != null) {
+        clearTimeout(aiRefreshTimerRef.current);
+        aiRefreshTimerRef.current = null;
       }
       if (pendingChangesRef.current.length > 0 && ws && uri) {
         const state = useLspStore.getState();
@@ -642,6 +705,17 @@ function EditorTabContent({
         }
         pendingChangesRef.current = [];
       }, DIDCHANGE_DEBOUNCE_MS);
+
+      if (aiCompletionEnabledRef.current) scheduleAiGutterRefresh();
+    });
+
+    instance.onMouseDown((e) => {
+      if (!aiCompletionEnabledRef.current) return;
+      if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+      const line = e.target.position?.lineNumber;
+      if (line && aiFunctionLinesRef.current.has(line)) {
+        // Implementation pending — generation hook goes here.
+      }
     });
   }
 
@@ -773,6 +847,7 @@ function EditorTabContent({
               bracketPairs: false,
             },
             hover: { above: false },
+            glyphMargin: aiCompletionEnabled,
           }}
         />
       </div>
