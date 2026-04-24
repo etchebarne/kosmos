@@ -1,8 +1,21 @@
+use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::Notify;
+
+/// Maps frontend-supplied cancel IDs to a Notify the running generation listens on.
+/// On cancel, the entry is removed and listeners woken so the subprocess gets killed.
+static CANCEL_REGISTRY: LazyLock<Mutex<HashMap<String, Arc<Notify>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Sentinel error returned by ai_generate when the user cancels — the frontend matches
+/// on this to suppress the usual "generation failed" log.
+const CANCELLED_ERR: &str = "CANCELLED";
 
 /// (agent id exposed to the frontend, CLI binary name on PATH).
 const AGENTS: &[(&str, &str)] = &[("claude-code", "claude"), ("codex", "codex")];
@@ -64,14 +77,36 @@ pub async fn ai_generate(
     agent: String,
     model: Option<String>,
     cwd: Option<String>,
+    cancel_id: Option<String>,
 ) -> Result<AiGenerateResult, String> {
-    match agent.as_str() {
+    let cancel = cancel_id.as_ref().map(|id| {
+        let n = Arc::new(Notify::new());
+        CANCEL_REGISTRY
+            .lock()
+            .unwrap()
+            .insert(id.clone(), n.clone());
+        n
+    });
+
+    let result = match agent.as_str() {
         "claude-code" => {
             let model = model.as_deref().unwrap_or("sonnet");
-            run_claude_code(&prompt, model, cwd.as_deref()).await
+            run_claude_code(&prompt, model, cwd.as_deref(), cancel).await
         }
         "codex" => Err("Codex agent is not yet supported".into()),
         other => Err(format!("Unknown agent: {other}")),
+    };
+
+    if let Some(id) = cancel_id {
+        CANCEL_REGISTRY.lock().unwrap().remove(&id);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn ai_cancel(cancel_id: String) {
+    if let Some(notify) = CANCEL_REGISTRY.lock().unwrap().remove(&cancel_id) {
+        notify.notify_waiters();
     }
 }
 
@@ -110,6 +145,7 @@ async fn run_claude_code(
     user_prompt: &str,
     model: &str,
     cwd: Option<&str>,
+    cancel: Option<Arc<Notify>>,
 ) -> Result<AiGenerateResult, String> {
     let temp_path = make_temp_path();
     // Pre-create the file so we can tell "agent wrote nothing" from "file missing".
@@ -131,25 +167,58 @@ async fn run_claude_code(
     if let Some(path) = cwd {
         cmd.current_dir(path);
     }
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         format!("Failed to spawn `claude`: {e}. Is Claude Code installed and on PATH?")
     })?;
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| format!("Failed to wait for claude: {e}"))?;
+    // Pull pipes out so we can read them concurrently with waiting/cancelling.
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stdout_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stderr_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
 
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
+    let (status, cancelled) = match cancel {
+        Some(notify) => tokio::select! {
+            r = child.wait() => (Some(r.map_err(|e| format!("Failed to wait for claude: {e}"))?), false),
+            _ = notify.notified() => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                (None, true)
+            }
+        },
+        None => {
+            let s = child
+                .wait()
+                .await
+                .map_err(|e| format!("Failed to wait for claude: {e}"))?;
+            (Some(s), false)
+        }
+    };
 
-    if !output.status.success() {
+    let raw = String::from_utf8_lossy(&stdout_task.await.unwrap_or_default()).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
+
+    if cancelled {
         let _ = tokio::fs::remove_file(&temp_path).await;
-        return Err(format!(
-            "claude exited with {}: {}",
-            output.status,
-            stderr.trim()
-        ));
+        return Err(CANCELLED_ERR.into());
+    }
+
+    let status = status.expect("status must be set when not cancelled");
+    if !status.success() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("claude exited with {}: {}", status, stderr.trim()));
     }
 
     let text = tokio::fs::read_to_string(&temp_path)

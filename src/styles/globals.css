@@ -48,7 +48,7 @@
   cursor: pointer;
   opacity: 0.55;
   transition: opacity 120ms ease;
-  background-color: var(--color-accent-blue);
+  background-color: var(--color-text-primary);
   -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5L8 1z'/></svg>");
   mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5L8 1z'/></svg>");
   -webkit-mask-size: 70% 70%;
@@ -64,8 +64,8 @@
 
 /* AI completion glyph — in-flight state while a generation is running */
 .ai-generate-glyph-loading {
-  cursor: progress;
-  background-color: var(--color-accent-blue);
+  cursor: pointer;
+  background-color: var(--color-text-primary);
   -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 2a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4V2z'/></svg>");
   mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='black'><path d='M8 2a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4V2z'/></svg>");
   -webkit-mask-size: 70% 70%;
@@ -75,6 +75,11 @@
   -webkit-mask-position: center;
   mask-position: center;
   animation: ai-generate-spin 900ms linear infinite;
+}
+.ai-generate-glyph-loading:hover {
+  animation: none;
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='2' stroke-linecap='round' fill='none'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='2' stroke-linecap='round' fill='none'/></svg>");
 }
 @keyframes ai-generate-spin {
   from {

@@ -141,10 +141,13 @@ export function useAiGutter(opts: {
       const info = functionsRef.current.get(startLine);
       if (!ed || !model || !monaco || !info) return;
 
-      // One in-flight generation per starting line — re-clicks are no-ops.
-      for (const { glyph } of inFlightRef.current.values()) {
+      // Re-click on an in-flight generation cancels it instead of starting a new one.
+      for (const [existingGenId, { glyph }] of inFlightRef.current.entries()) {
         const r = glyph.getRanges()[0];
-        if (r && r.startLineNumber === startLine) return;
+        if (r && r.startLineNumber === startLine) {
+          invoke("ai_cancel", { cancelId: String(existingGenId) });
+          return;
+        }
       }
 
       const installedAgents = await invoke<string[]>("ai_installed_agents");
@@ -168,7 +171,7 @@ export function useAiGutter(opts: {
           options: {
             stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
             glyphMarginClassName: AI_GENERATE_GLYPH_LOADING_CLASS,
-            glyphMarginHoverMessage: { value: "Generating…" },
+            glyphMarginHoverMessage: { value: "Click to cancel" },
           },
         },
       ]);
@@ -206,6 +209,7 @@ export function useAiGutter(opts: {
           agent: aiAgentRef.current,
           model: aiAgentRef.current === "claude-code" ? claudeCodeModelRef.current : null,
           cwd: workspaceRef.current?.path ?? null,
+          cancelId: String(genId),
         });
 
         console.groupCollapsed(`[ai_generate] line ${startLine}`);
@@ -234,7 +238,9 @@ export function useAiGutter(opts: {
         const target = currentRanges[0] ?? info.range;
         ed.executeEdits("ai-generate", [{ range: target, text: cleaned }]);
       } catch (err) {
-        console.error("AI generation failed:", err);
+        if (String(err) !== "CANCELLED") {
+          console.error("AI generation failed:", err);
+        }
       } finally {
         glyphCollection.clear();
         rangeCollection.clear();
