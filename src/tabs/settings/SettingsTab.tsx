@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { CaretDown, GearSix } from "@phosphor-icons/react";
@@ -15,12 +15,18 @@ type SettingControl =
   | { type: "switch" }
   | { type: "number"; min: number; max: number; step: number };
 
+interface ShowWhen {
+  key: string;
+  equals: unknown;
+}
+
 interface SettingEntry {
   key: string;
   label: string;
   description?: string;
   control: SettingControl;
   defaultValue: unknown;
+  showWhen?: ShowWhen;
 }
 
 interface SettingsGroup {
@@ -69,13 +75,13 @@ function AccordionSection({
   section,
   expanded,
   onToggle,
-  values,
+  getValue,
   onChange,
 }: {
   section: SettingsSection;
   expanded: boolean;
   onToggle: () => void;
-  values: Record<string, unknown>;
+  getValue: (key: string) => unknown;
   onChange: (key: string, value: unknown) => void;
 }) {
   return (
@@ -99,24 +105,34 @@ function AccordionSection({
 
       {expanded && (
         <div className="p-2 bg-[var(--color-bg-page)] rounded-b-md">
-          {section.groups.map((group, groupIdx) => (
-            <div key={group.title} className={`flex flex-col ${groupIdx > 0 ? "mt-4" : ""}`}>
-              <h4 className="text-xs font-bold text-[var(--color-text-secondary)] px-3 pt-3 pb-1">
-                {group.title}
-              </h4>
-              <div className="flex flex-col">
-                {group.settings.map((entry) => (
-                  <Setting key={entry.key} label={entry.label} description={entry.description}>
-                    <SettingControlRenderer
-                      control={entry.control}
-                      value={values[entry.key] ?? entry.defaultValue}
-                      onChange={(v) => onChange(entry.key, v)}
-                    />
-                  </Setting>
-                ))}
+          {section.groups.map((group, groupIdx) => {
+            const visibleSettings = group.settings.filter((entry) => {
+              if (!entry.showWhen) return true;
+              return (
+                JSON.stringify(getValue(entry.showWhen.key)) ===
+                JSON.stringify(entry.showWhen.equals)
+              );
+            });
+            if (visibleSettings.length === 0) return null;
+            return (
+              <div key={group.title} className={`flex flex-col ${groupIdx > 0 ? "mt-4" : ""}`}>
+                <h4 className="text-xs font-bold text-[var(--color-text-secondary)] px-3 pt-3 pb-1">
+                  {group.title}
+                </h4>
+                <div className="flex flex-col">
+                  {visibleSettings.map((entry) => (
+                    <Setting key={entry.key} label={entry.label} description={entry.description}>
+                      <SettingControlRenderer
+                        control={entry.control}
+                        value={getValue(entry.key)}
+                        onChange={(v) => onChange(entry.key, v)}
+                      />
+                    </Setting>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -157,6 +173,21 @@ export function SettingsTab({ tab: _tab, paneId: _paneId }: TabContentProps) {
     [setSetting],
   );
 
+  const defaults = useMemo(() => {
+    const map: Record<string, unknown> = {};
+    if (!schema) return map;
+    for (const section of schema.sections) {
+      for (const group of section.groups) {
+        for (const entry of group.settings) {
+          map[entry.key] = entry.defaultValue;
+        }
+      }
+    }
+    return map;
+  }, [schema]);
+
+  const getValue = useCallback((key: string) => values[key] ?? defaults[key], [values, defaults]);
+
   if (!schema) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -180,7 +211,7 @@ export function SettingsTab({ tab: _tab, paneId: _paneId }: TabContentProps) {
               section={section}
               expanded={expandedSections.has(section.id)}
               onToggle={() => toggleSection(section.id)}
-              values={values}
+              getValue={getValue}
               onChange={handleChange}
             />
           ))}

@@ -30,6 +30,15 @@ pub struct SettingEntry {
     pub description: Option<String>,
     pub control: SettingControl,
     pub default_value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_when: Option<ShowWhen>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowWhen {
+    pub key: String,
+    pub equals: serde_json::Value,
 }
 
 #[derive(Serialize)]

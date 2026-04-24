@@ -16,6 +16,7 @@ pub fn section() -> SettingsSection {
                     ),
                     control: SettingControl::Switch,
                     default_value: serde_json::json!(false),
+                    show_when: None,
                 },
                 SettingEntry {
                     key: "ai.agent".into(),
@@ -36,6 +37,10 @@ pub fn section() -> SettingsSection {
                         ],
                     },
                     default_value: serde_json::json!("claude-code"),
+                    show_when: Some(ShowWhen {
+                        key: "ai.enableCompletion".into(),
+                        equals: serde_json::json!(true),
+                    }),
                 },
             ],
         }],
