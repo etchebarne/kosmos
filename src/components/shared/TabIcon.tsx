@@ -2,7 +2,7 @@ import type { Icon } from "@phosphor-icons/react";
 import {
   File,
   Code,
-  TreeStructure,
+  Folder,
   GitBranch,
   GitDiff,
   Terminal,
@@ -22,7 +22,7 @@ interface TabIconProps {
 const iconMap: Record<string, Icon> = {
   file: File,
   code: Code,
-  "folder-tree": TreeStructure,
+  "folder-tree": Folder,
   "git-branch": GitBranch,
   "git-compare": GitDiff,
   terminal: Terminal,

@@ -52,8 +52,7 @@ export function InlineInput({
           style={{ left: LEFT_PAD + i * INDENT_SIZE + 8 }}
         />
       ))}
-      <span className="w-4 h-4 shrink-0" />
-      {iconNode}
+      <span className="w-4 h-4 flex items-center justify-center shrink-0">{iconNode}</span>
       <input
         ref={inputRef}
         className="flex-1 text-[13px] bg-[var(--color-bg-input)] text-[var(--color-text-primary)] border border-[var(--color-border-focus)] outline-none px-1 min-w-0"

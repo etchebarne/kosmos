@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { CaretRight, Folder, FolderOpen } from "@phosphor-icons/react";
+import { Folder, FolderOpen } from "@phosphor-icons/react";
 import { getNodeFiles } from "../../lib/gitTree";
 import type { TreeNode } from "../../lib/gitTree";
 import { useDragStore } from "../../store/drag.store";
@@ -119,31 +119,20 @@ export function GitChangeNode({
           />
         ))}
 
-        {/* Chevron for directories */}
-        {node.isDir ? (
-          <span className="w-4 h-4 flex items-center justify-center shrink-0 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-text-secondary)] transition-colors">
-            <span
-              className={`flex items-center justify-center transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
-            >
-              <CaretRight size={14} />
-            </span>
-          </span>
-        ) : (
-          <span className="w-4 h-4 shrink-0" />
-        )}
-
         {/* Icon */}
-        {node.isDir ? (
-          <DirIcon size={14} className="shrink-0 text-[var(--color-accent-blue)]" />
-        ) : (
-          <FileIcon
-            name={node.name}
-            extension={getFileExtension(node.name)}
-            size={14}
-            className={`shrink-0 ${node.change ? gitStatusColor(node.change.status) : "text-[var(--color-text-tertiary)]"}`}
-            isDark={isDark}
-          />
-        )}
+        <span className="w-4 h-4 flex items-center justify-center shrink-0">
+          {node.isDir ? (
+            <DirIcon size={14} className="shrink-0 text-[var(--color-accent-blue)]" />
+          ) : (
+            <FileIcon
+              name={node.name}
+              extension={getFileExtension(node.name)}
+              size={14}
+              className={`shrink-0 ${node.change ? gitStatusColor(node.change.status) : "text-[var(--color-text-tertiary)]"}`}
+              isDark={isDark}
+            />
+          )}
+        </span>
 
         {/* Name */}
         <span className="text-[13px] text-[var(--color-text-primary)] truncate pb-[1px] flex-1">

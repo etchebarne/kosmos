@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useContext } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CaretRight, Folder, FolderOpen, File } from "@phosphor-icons/react";
+import { Folder, FolderOpen, File } from "@phosphor-icons/react";
 import { useLayoutStore } from "../../store/layout.store";
 import { useIsDarkTheme } from "../../lib/themes";
 import { useDragStore } from "../../store/drag.store";
@@ -349,28 +349,17 @@ export function FileTreeNode({
             />
           ))}
 
-          {/* Chevron for directories */}
-          {entry.isDir ? (
-            <span className="w-4 h-4 flex items-center justify-center shrink-0 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-text-secondary)] transition-colors">
-              {loading ? (
-                <span className="w-3 h-3 border border-[var(--color-text-muted)] border-t-transparent animate-spin rounded-full" />
-              ) : (
-                <span
-                  className={`flex items-center justify-center transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
-                >
-                  <CaretRight size={14} />
-                </span>
-              )}
-            </span>
-          ) : (
-            <span className="w-4 h-4 shrink-0" />
-          )}
-
-          {/* Icon */}
-          {renderIcon(
-            14,
-            `shrink-0 ${entry.isDir ? "text-[var(--color-accent-blue)]" : "text-[var(--color-text-tertiary)]"}`,
-          )}
+          {/* Icon (or loading spinner for directories) */}
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">
+            {entry.isDir && loading ? (
+              <span className="w-3 h-3 border border-[var(--color-text-muted)] border-t-transparent animate-spin rounded-full" />
+            ) : (
+              renderIcon(
+                14,
+                `shrink-0 ${entry.isDir ? "text-[var(--color-accent-blue)]" : "text-[var(--color-text-tertiary)]"}`,
+              )
+            )}
+          </span>
 
           {/* Name */}
           <span
