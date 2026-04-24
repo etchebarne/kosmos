@@ -4,16 +4,25 @@ use gpui::{
 };
 
 use crate::drag::{SplitResize, TabDrag};
+use crate::header::{HeaderDelegate, HeaderMenu, render_active_menu, render_header};
 use crate::pane_tree::{DropZone, Pane, PaneNode, PaneTree, SplitAxis, Tab};
 
 pub struct IdeApp {
     pane_tree: PaneTree,
+    active_menu: Option<HeaderMenu>,
 }
 
 impl IdeApp {
     pub fn new() -> Self {
         Self {
             pane_tree: PaneTree::new(),
+            active_menu: None,
+        }
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.active_menu.take().is_some() {
+            cx.notify();
         }
     }
 
@@ -391,12 +400,37 @@ impl IdeApp {
     }
 }
 
+impl HeaderDelegate for IdeApp {
+    fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>) {
+        self.active_menu = if self.active_menu == Some(menu) {
+            None
+        } else {
+            Some(menu)
+        };
+        cx.notify();
+    }
+}
+
 impl Render for IdeApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_menu = render_active_menu(self.active_menu);
+
         div()
+            .id("app-root")
+            .relative()
             .size_full()
-            .p_1()
+            .flex()
+            .flex_col()
             .bg(rgb(0x0b1120))
-            .child(self.render_node(self.pane_tree.root(), cx))
+            .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
+            .child(render_header(self.active_menu, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .p_1()
+                    .child(self.render_node(self.pane_tree.root(), cx)),
+            )
+            .children(active_menu)
     }
 }

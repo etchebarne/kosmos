@@ -1,8 +1,11 @@
 mod app;
 mod drag;
+mod header;
 mod pane_tree;
 
-use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, AppContext, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
+};
 
 use crate::app::IdeApp;
 
@@ -12,6 +15,8 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: None,
+                window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
             |_, cx| cx.new(|_| IdeApp::new()),
