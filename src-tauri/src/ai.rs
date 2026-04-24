@@ -4,6 +4,47 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::process::Command;
 
+/// (agent id exposed to the frontend, CLI binary name on PATH).
+const AGENTS: &[(&str, &str)] = &[("claude-code", "claude"), ("codex", "codex")];
+
+pub fn is_agent_installed(agent_id: &str) -> bool {
+    AGENTS
+        .iter()
+        .find(|(id, _)| *id == agent_id)
+        .is_some_and(|(_, bin)| is_on_path(bin))
+}
+
+#[tauri::command]
+pub fn ai_installed_agents() -> Vec<String> {
+    AGENTS
+        .iter()
+        .filter(|(_, bin)| is_on_path(bin))
+        .map(|(id, _)| (*id).to_string())
+        .collect()
+}
+
+/// Returns true if `bin` is findable on PATH. Simple scan — no subprocess spawn.
+/// On macOS, Tauri apps launched from Finder inherit the GUI session's PATH, which
+/// typically excludes user-level install dirs; users in that case can launch Kosmos
+/// from a terminal to pick up their shell PATH.
+fn is_on_path(bin: &str) -> bool {
+    let Some(path_os) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path_os) {
+        if dir.join(bin).is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        for ext in ["exe", "cmd", "bat"] {
+            if dir.join(format!("{bin}.{ext}")).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiGenerateResult {

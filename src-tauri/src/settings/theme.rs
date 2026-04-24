@@ -16,14 +16,17 @@ pub fn section() -> SettingsSection {
                             DropdownOption {
                                 value: "kosmos-dark".into(),
                                 label: "Kosmos Dark".into(),
+                                disabled: false,
                             },
                             DropdownOption {
                                 value: "kosmos-light".into(),
                                 label: "Kosmos Light".into(),
+                                disabled: false,
                             },
                             DropdownOption {
                                 value: "kosmos-ember".into(),
                                 label: "Kosmos Ember".into(),
+                                disabled: false,
                             },
                         ],
                     },

@@ -4,6 +4,7 @@ import type { Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useLspStore } from "../../../store/lsp.store";
 import { useSettingsStore } from "../../../store/settings.store";
+import { useToastStore } from "../../../store/toast.store";
 import type { Workspace } from "../../../store/workspace.store";
 import {
   AI_GENERATE_GLYPH_LOADING_CLASS,
@@ -144,6 +145,15 @@ export function useAiGutter(opts: {
       for (const { glyph } of inFlightRef.current.values()) {
         const r = glyph.getRanges()[0];
         if (r && r.startLineNumber === startLine) return;
+      }
+
+      const installedAgents = await invoke<string[]>("ai_installed_agents");
+      if (installedAgents.length === 0) {
+        useToastStore.getState().addToast({
+          type: "warning",
+          message: "No coding agent was found",
+        });
+        return;
       }
 
       // Single-line glyph decoration: spinner sits on the function's first line only.

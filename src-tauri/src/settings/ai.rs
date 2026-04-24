@@ -1,6 +1,10 @@
 use super::types::*;
+use crate::ai;
 
 pub fn section() -> SettingsSection {
+    let claude_installed = ai::is_agent_installed("claude-code");
+    let codex_installed = ai::is_agent_installed("codex");
+
     SettingsSection {
         id: "ai".into(),
         label: "AI".into(),
@@ -26,14 +30,8 @@ pub fn section() -> SettingsSection {
                     ),
                     control: SettingControl::Dropdown {
                         options: vec![
-                            DropdownOption {
-                                value: "claude-code".into(),
-                                label: "Claude Code".into(),
-                            },
-                            DropdownOption {
-                                value: "codex".into(),
-                                label: "Codex".into(),
-                            },
+                            agent_option("claude-code", "Claude Code", claude_installed),
+                            agent_option("codex", "Codex", codex_installed),
                         ],
                     },
                     default_value: serde_json::json!("claude-code"),
@@ -53,14 +51,17 @@ pub fn section() -> SettingsSection {
                             DropdownOption {
                                 value: "haiku".into(),
                                 label: "Haiku".into(),
+                                disabled: false,
                             },
                             DropdownOption {
                                 value: "sonnet".into(),
                                 label: "Sonnet".into(),
+                                disabled: false,
                             },
                             DropdownOption {
                                 value: "opus".into(),
                                 label: "Opus".into(),
+                                disabled: false,
                             },
                         ],
                     },
@@ -80,3 +81,12 @@ pub fn section() -> SettingsSection {
         }],
     }
 }
+
+fn agent_option(value: &str, label: &str, installed: bool) -> DropdownOption {
+    DropdownOption {
+        value: value.into(),
+        label: label.into(),
+        disabled: !installed,
+    }
+}
+

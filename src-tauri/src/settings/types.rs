@@ -56,4 +56,10 @@ pub enum SettingControl {
 pub struct DropdownOption {
     pub value: String,
     pub label: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub disabled: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
