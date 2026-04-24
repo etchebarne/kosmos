@@ -21,10 +21,14 @@ pub struct AiGenerateResult {
 pub async fn ai_generate(
     prompt: String,
     agent: String,
+    model: Option<String>,
     cwd: Option<String>,
 ) -> Result<AiGenerateResult, String> {
     match agent.as_str() {
-        "claude-code" => run_claude_code(&prompt, cwd.as_deref()).await,
+        "claude-code" => {
+            let model = model.as_deref().unwrap_or("sonnet");
+            run_claude_code(&prompt, model, cwd.as_deref()).await
+        }
         "codex" => Err("Codex agent is not yet supported".into()),
         other => Err(format!("Unknown agent: {other}")),
     }
@@ -61,7 +65,11 @@ fn build_wrapped_prompt(user_prompt: &str, temp_path: &str) -> String {
     )
 }
 
-async fn run_claude_code(user_prompt: &str, cwd: Option<&str>) -> Result<AiGenerateResult, String> {
+async fn run_claude_code(
+    user_prompt: &str,
+    model: &str,
+    cwd: Option<&str>,
+) -> Result<AiGenerateResult, String> {
     let temp_path = make_temp_path();
     // Pre-create the file so we can tell "agent wrote nothing" from "file missing".
     tokio::fs::write(&temp_path, b"")
@@ -75,7 +83,7 @@ async fn run_claude_code(user_prompt: &str, cwd: Option<&str>) -> Result<AiGener
         .arg(&wrapped)
         .arg("--dangerously-skip-permissions")
         .arg("--model")
-        .arg("sonnet")
+        .arg(model)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

@@ -26,7 +26,7 @@ interface SettingEntry {
   description?: string;
   control: SettingControl;
   defaultValue: unknown;
-  showWhen?: ShowWhen;
+  showWhen?: ShowWhen[];
 }
 
 interface SettingsGroup {
@@ -107,10 +107,9 @@ function AccordionSection({
         <div className="p-2 bg-[var(--color-bg-page)] rounded-b-md">
           {section.groups.map((group, groupIdx) => {
             const visibleSettings = group.settings.filter((entry) => {
-              if (!entry.showWhen) return true;
-              return (
-                JSON.stringify(getValue(entry.showWhen.key)) ===
-                JSON.stringify(entry.showWhen.equals)
+              if (!entry.showWhen?.length) return true;
+              return entry.showWhen.every(
+                (cond) => JSON.stringify(getValue(cond.key)) === JSON.stringify(cond.equals),
               );
             });
             if (visibleSettings.length === 0) return null;

@@ -47,6 +47,9 @@ export function useAiGutter(opts: {
 
   const aiCompletionEnabled = useSettingsStore((s) => s.values["ai.enableCompletion"] === true);
   const aiAgent = useSettingsStore((s) => (s.values["ai.agent"] as string) ?? "claude-code");
+  const claudeCodeModel = useSettingsStore(
+    (s) => (s.values["ai.claudeCode.model"] as string) ?? "sonnet",
+  );
 
   // Mirror reactive values into refs for stable callbacks / event handlers.
   const workspaceRef = useRef(workspace);
@@ -59,6 +62,8 @@ export function useAiGutter(opts: {
   aiCompletionEnabledRef.current = aiCompletionEnabled;
   const aiAgentRef = useRef(aiAgent);
   aiAgentRef.current = aiAgent;
+  const claudeCodeModelRef = useRef(claudeCodeModel);
+  claudeCodeModelRef.current = claudeCodeModel;
 
   const gutterDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
   const functionsRef = useRef<Map<number, AiFunctionInfo>>(new Map());
@@ -189,6 +194,7 @@ export function useAiGutter(opts: {
         const result = await invoke<AiGenerateResult>("ai_generate", {
           prompt,
           agent: aiAgentRef.current,
+          model: aiAgentRef.current === "claude-code" ? claudeCodeModelRef.current : null,
           cwd: workspaceRef.current?.path ?? null,
         });
 

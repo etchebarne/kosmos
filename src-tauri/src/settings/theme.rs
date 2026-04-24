@@ -28,7 +28,7 @@ pub fn section() -> SettingsSection {
                         ],
                     },
                     default_value: serde_json::json!("kosmos-dark"),
-                    show_when: None,
+                    show_when: vec![],
                 },
                 SettingEntry {
                     key: "theme.solidMode".into(),
@@ -38,7 +38,7 @@ pub fn section() -> SettingsSection {
                     ),
                     control: SettingControl::Switch,
                     default_value: serde_json::json!(false),
-                    show_when: None,
+                    show_when: vec![],
                 },
             ],
         }],
