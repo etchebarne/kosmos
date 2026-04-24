@@ -1,6 +1,6 @@
 mod app;
 mod drag;
-mod workspace;
+mod pane_tree;
 
 use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
 

@@ -1,6 +1,6 @@
 use gpui::{Context, IntoElement, Pixels, Point, Render, Window, div, prelude::*, px, rgb};
 
-use crate::workspace::SplitAxis;
+use crate::pane_tree::SplitAxis;
 
 #[derive(Clone, Copy)]
 pub struct TabDrag {

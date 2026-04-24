@@ -40,14 +40,14 @@ pub enum PaneNode {
     },
 }
 
-pub struct Workspace {
+pub struct PaneTree {
     root: PaneNode,
     next_tab_id: usize,
     next_pane_id: usize,
     next_split_id: usize,
 }
 
-impl Workspace {
+impl PaneTree {
     pub fn new() -> Self {
         Self {
             root: PaneNode::Leaf(Pane {

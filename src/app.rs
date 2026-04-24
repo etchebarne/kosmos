@@ -4,33 +4,33 @@ use gpui::{
 };
 
 use crate::drag::{SplitResize, TabDrag};
-use crate::workspace::{DropZone, Pane, PaneNode, SplitAxis, Tab, Workspace};
+use crate::pane_tree::{DropZone, Pane, PaneNode, PaneTree, SplitAxis, Tab};
 
 pub struct IdeApp {
-    workspace: Workspace,
+    pane_tree: PaneTree,
 }
 
 impl IdeApp {
     pub fn new() -> Self {
         Self {
-            workspace: Workspace::new(),
+            pane_tree: PaneTree::new(),
         }
     }
 
     fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
-        if self.workspace.add_tab(pane_id) {
+        if self.pane_tree.add_tab(pane_id) {
             cx.notify();
         }
     }
 
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        if self.workspace.select_tab(pane_id, tab_id) {
+        if self.pane_tree.select_tab(pane_id, tab_id) {
             cx.notify();
         }
     }
 
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        if self.workspace.close_tab(pane_id, tab_id) {
+        if self.pane_tree.close_tab(pane_id, tab_id) {
             cx.notify();
         }
     }
@@ -42,7 +42,7 @@ impl IdeApp {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.move_tab_before(
+        if self.pane_tree.move_tab_before(
             drag.source_pane_id,
             drag.id,
             target_pane_id,
@@ -54,7 +54,7 @@ impl IdeApp {
 
     fn move_tab_to_pane(&mut self, drag: TabDrag, target_pane_id: usize, cx: &mut Context<Self>) {
         if self
-            .workspace
+            .pane_tree
             .move_tab_to_pane(drag.source_pane_id, drag.id, target_pane_id)
         {
             cx.notify();
@@ -69,7 +69,7 @@ impl IdeApp {
         cx: &mut Context<Self>,
     ) {
         if self
-            .workspace
+            .pane_tree
             .split_pane(drag.source_pane_id, drag.id, target_pane_id, drop_zone)
         {
             cx.notify();
@@ -77,7 +77,7 @@ impl IdeApp {
     }
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
-        if self.workspace.resize_split(split_id, ratio) {
+        if self.pane_tree.resize_split(split_id, ratio) {
             cx.notify();
         }
     }
@@ -306,7 +306,7 @@ impl IdeApp {
         let pane_id = pane.id;
         let id = tab.id;
         let is_active = pane.active_tab == id;
-        let can_close = self.workspace.total_tabs() > 1;
+        let can_close = self.pane_tree.total_tabs() > 1;
         let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
 
         div()
@@ -397,6 +397,6 @@ impl Render for IdeApp {
             .size_full()
             .p_1()
             .bg(rgb(0x0b1120))
-            .child(self.render_node(self.workspace.root(), cx))
+            .child(self.render_node(self.pane_tree.root(), cx))
     }
 }
