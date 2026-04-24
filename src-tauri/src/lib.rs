@@ -9,12 +9,66 @@ mod settings;
 mod tabs;
 mod terminal;
 
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use kosmos_core::EventSink;
 use kosmos_protocol::events::Event;
-use tauri::{AppHandle, Emitter, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tracing_subscriber::{fmt, EnvFilter};
+
+#[derive(Clone, Serialize)]
+struct OpenPath {
+    path: String,
+    kind: &'static str, // "file" | "dir"
+}
+
+#[derive(Default)]
+struct PendingOpens(Mutex<Vec<OpenPath>>);
+
+/// Filter a raw argv (without the binary path) down to existing paths on disk,
+/// classified as file or directory. Ignores anything starting with `-`.
+fn classify_args<I, S>(args: I, cwd: Option<&Path>) -> Vec<OpenPath>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out = Vec::new();
+    for arg in args {
+        let s = arg.as_ref();
+        if s.is_empty() || s.starts_with('-') {
+            continue;
+        }
+        let mut p = PathBuf::from(s);
+        if p.is_relative() {
+            if let Some(base) = cwd {
+                p = base.join(&p);
+            }
+        }
+        let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+        let Ok(meta) = std::fs::metadata(&canonical) else {
+            continue;
+        };
+        let kind = if meta.is_dir() {
+            "dir"
+        } else if meta.is_file() {
+            "file"
+        } else {
+            continue;
+        };
+        out.push(OpenPath {
+            path: canonical.to_string_lossy().into_owned(),
+            kind,
+        });
+    }
+    out
+}
+
+#[tauri::command]
+fn take_pending_open_files(pending: State<'_, PendingOpens>) -> Vec<OpenPath> {
+    pending.0.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
+}
 
 struct TauriEventSink {
     handle: AppHandle,
@@ -77,7 +131,30 @@ pub fn run() {
     });
     fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
 
-    tauri::Builder::default()
+    let initial_opens = classify_args(
+        std::env::args().skip(1),
+        std::env::current_dir().ok().as_deref(),
+    );
+
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let cwd_path = PathBuf::from(&cwd);
+            let paths = classify_args(args.into_iter().skip(1), Some(&cwd_path));
+            if !paths.is_empty() {
+                let _ = app.emit("open-files", &paths);
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -85,7 +162,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
 
             // Tauri codegen only reads the first ICO entry (often low-res) → set a large PNG.
@@ -96,6 +173,7 @@ pub fn run() {
                 }
             }
 
+            app.manage(PendingOpens(Mutex::new(initial_opens)));
             app.manage(search::FffPickerState::new());
 
             let events: Arc<dyn EventSink> = Arc::new(TauriEventSink {
@@ -128,6 +206,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             is_appimage,
+            take_pending_open_files,
             tabs::file_tree::read_dir,
             tabs::file_tree::move_file,
             tabs::file_tree::create_file,

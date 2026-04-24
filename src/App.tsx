@@ -14,6 +14,7 @@ import { useSettingsStore } from "./store/settings.store";
 import { useLspStore } from "./store/lsp.store";
 import { useUpdateStore } from "./store/update.store";
 import { initPlugins } from "./plugins";
+import { initCliOpen } from "./lib/cliOpen";
 import { applyTheme } from "./lib/themes";
 import { prefetch as prefetchFileTree } from "./tabs/fileTree/fileTreeCache";
 import "overlayscrollbars/overlayscrollbars.css";
@@ -42,7 +43,7 @@ function App() {
   const initSettings = useSettingsStore((s) => s.init);
 
   useEffect(() => {
-    init();
+    init().then(() => initCliOpen());
     initSettings();
     initPlugins().catch((err) => console.warn("Plugin init failed:", err));
     useUpdateStore.getState().checkForUpdate();
