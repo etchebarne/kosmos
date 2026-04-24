@@ -63,7 +63,18 @@ export function registerLspProviders(
                 : (result as CompletionList).items;
 
               const suggestions = items.map((item) => {
-                const insertText = item.insertText ?? item.label;
+                let insertText: string;
+                let range: IRange | undefined;
+
+                if (item.textEdit) {
+                  insertText = item.textEdit.newText;
+                  if ("range" in item.textEdit) {
+                    range = toMonacoRange(item.textEdit.range);
+                  }
+                } else {
+                  insertText = item.insertText ?? item.label;
+                }
+
                 const isSnippet = item.insertTextFormat === InsertTextFormat.Snippet;
 
                 const suggestion: languages.CompletionItem & { _lspItem?: LspCompletionItem } = {
@@ -84,10 +95,7 @@ export function registerLspProviders(
                   sortText: item.sortText,
                   filterText: item.filterText,
                   preselect: item.preselect,
-                  range:
-                    item.textEdit && "range" in item.textEdit
-                      ? toMonacoRange(item.textEdit.range)
-                      : undefined,
+                  range,
                 } as languages.CompletionItem & { _lspItem?: LspCompletionItem };
 
                 if (supportsResolve) {
