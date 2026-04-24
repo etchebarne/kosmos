@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useMemo } from "react";
+import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -11,6 +11,7 @@ import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
 import { Tooltip } from "../../components/shared/Tooltip";
 import { useGitStatus } from "../../hooks/useGitStatus";
+import { useIsTabActive } from "../../hooks/useIsTabActive";
 import { GitFileTreeContext, buildGitColorLookup } from "./gitFileTreeContext";
 import { getCached, getOrFetch, invalidate } from "./fileTreeCache";
 import type { TabContentProps } from "../types";
@@ -22,17 +23,22 @@ export interface DirEntry {
   extension: string | null;
 }
 
-export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
+export function FileTreeTab({ tab, paneId }: TabContentProps) {
   const activeWorkspace = useActiveWorkspace();
   const isActive = useIsWorkspaceActive();
+  const isTabActive = useIsTabActive(paneId, tab.id);
+  const isVisible = isActive && isTabActive;
   const workspacePath = activeWorkspace?.path ?? null;
+  const treeRef = useRef<HTMLDivElement | null>(null);
 
   const initialEntries = workspacePath ? getCached(workspacePath) : null;
   const [entries, setEntries] = useState<DirEntry[]>(initialEntries ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialEntries);
   const [externalDrop, setExternalDrop] = useState<{ dirPath: string; rect: DOMRect } | null>(null);
-  const { status: gitStatus } = useGitStatus(workspacePath, isActive);
+  const pendingRefreshDirsRef = useRef(new Set<string>());
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { status: gitStatus } = useGitStatus(workspacePath, isVisible);
 
   const getGitColor = useMemo(() => {
     if (!activeWorkspace || !gitStatus?.isRepo) return () => null;
@@ -59,8 +65,9 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   }, [workspacePath]);
 
   useEffect(() => {
+    if (!isVisible) return;
     loadRoot();
-  }, [loadRoot]);
+  }, [isVisible, loadRoot]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -73,19 +80,8 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Only the active workspace watches — the watcher is a singleton per process.
   useEffect(() => {
-    if (!activeWorkspace || !isActive) return;
-    invoke("watch_workspace", { path: activeWorkspace.path }).catch((e) =>
-      console.warn("Failed to start file watcher:", e),
-    );
-    return () => {
-      invoke("unwatch_workspace", { path: activeWorkspace.path });
-    };
-  }, [activeWorkspace, isActive]);
-
-  useEffect(() => {
-    if (!workspacePath || !isActive) return;
+    if (!workspacePath || !isVisible) return;
 
     const findTarget = (physX: number, physY: number) => {
       const dpr = window.devicePixelRatio || 1;
@@ -145,33 +141,55 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
       unlisten?.();
       setExternalDrop(null);
     };
-  }, [workspacePath, isActive]);
+  }, [workspacePath, isVisible]);
+
+  const getExpandedDirs = useCallback(() => {
+    const dirs = new Set<string>();
+    if (workspacePath) dirs.add(workspacePath);
+    treeRef.current
+      ?.querySelectorAll<HTMLElement>("[data-tree-dir][data-tree-expanded='true']")
+      .forEach((el) => {
+        const dirPath = el.dataset.treeDir;
+        if (dirPath) dirs.add(dirPath);
+      });
+    return dirs;
+  }, [workspacePath]);
+
+  const flushPendingRefreshes = useCallback(() => {
+    if (!isVisible || pendingRefreshDirsRef.current.size === 0) return;
+    const pending = pendingRefreshDirsRef.current;
+    const expandedDirs = getExpandedDirs();
+    pendingRefreshDirsRef.current = new Set();
+    for (const dir of pending) {
+      if (!expandedDirs.has(dir)) continue;
+      window.dispatchEvent(new CustomEvent("file-tree-refresh", { detail: { dir } }));
+    }
+  }, [getExpandedDirs, isVisible]);
 
   // One listener fans events out via CustomEvents; per-node listeners caused
   // a read_dir thundering herd that starved the runtime.
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let pending = new Set<string>();
-
     const unlisten = listen<string[]>("file-tree-changed", (event) => {
       for (const dir of event.payload) {
         invalidate(dir);
-        pending.add(dir);
+        pendingRefreshDirsRef.current.add(dir);
       }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        for (const dir of pending) {
-          window.dispatchEvent(new CustomEvent("file-tree-refresh", { detail: { dir } }));
-        }
-        pending = new Set();
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        flushPendingRefreshes();
       }, 300);
     });
 
     return () => {
-      if (timer) clearTimeout(timer);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [flushPendingRefreshes]);
+
+  useEffect(() => {
+    flushPendingRefreshes();
+  }, [flushPendingRefreshes]);
 
   const handleNewFile = useCallback(() => {
     if (!workspacePath) return;
@@ -193,16 +211,12 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
 
   const handleRefresh = useCallback(() => {
     if (!workspacePath) return;
-    const dirs = new Set<string>([workspacePath]);
-    document.querySelectorAll<HTMLElement>("[data-file-tree] [data-dir-path]").forEach((el) => {
-      const dirPath = el.dataset.dirPath;
-      if (dirPath) dirs.add(dirPath);
-    });
+    const dirs = getExpandedDirs();
     for (const dir of dirs) {
       invalidate(dir);
       window.dispatchEvent(new CustomEvent("file-tree-refresh", { detail: { dir } }));
     }
-  }, [workspacePath]);
+  }, [getExpandedDirs, workspacePath]);
 
   const handleCollapseAll = useCallback(() => {
     window.dispatchEvent(new CustomEvent("file-tree-collapse-all"));
@@ -258,7 +272,7 @@ export function FileTreeTab({ tab: _tab, paneId }: TabContentProps) {
   return (
     <GitFileTreeContext.Provider value={getGitColor}>
       <ScrollArea className="h-full font-ui">
-        <div className="pt-1 pb-4 min-h-full" data-file-tree>
+        <div ref={treeRef} className="pt-1 pb-4 min-h-full" data-file-tree>
           <FileTreeNode
             entry={rootEntry}
             depth={0}

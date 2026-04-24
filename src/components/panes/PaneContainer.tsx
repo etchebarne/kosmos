@@ -1,19 +1,20 @@
-import { useRef, useState, useCallback } from "react";
+import { memo, useRef, useState, useCallback } from "react";
 import type { PaneNode } from "../../types";
 import { useLayoutStore } from "../../store/layout.store";
 import { usePaneContainer } from "./PanePortalContext";
 import { TabBar } from "./TabBar";
+import { SharedPaneEditor } from "../../tabs/editor/SharedPaneEditor";
 
 interface PaneContainerProps {
   node: PaneNode;
 }
 
-export function PaneContainer({ node }: PaneContainerProps) {
+export const PaneContainer = memo(function PaneContainer({ node }: PaneContainerProps) {
   if (node.type === "split") {
     return <SplitView node={node} />;
   }
   return <LeafPane node={node} />;
-}
+});
 
 function SplitView({ node }: { node: Extract<PaneNode, { type: "split" }> }) {
   const setPaneSizes = useLayoutStore((s) => s.setPaneSizes);
@@ -100,15 +101,24 @@ function LeafPane({ node }: { node: Extract<PaneNode, { type: "leaf" }> }) {
   const contentRef = useRef<HTMLDivElement>(null);
   usePaneContainer(node.id, node.tabs, node.activeTabId, contentRef);
 
+  const activePaneId = useLayoutStore((s) => s.activePaneId);
+  const activeTab = node.tabs.find((t) => t.id === node.activeTabId) ?? null;
+
   return (
     <div className="flex flex-col w-full h-full min-w-0 min-h-0">
       <TabBar paneId={node.id} tabs={node.tabs} activeTabId={node.activeTabId} />
       <div
         role="tabpanel"
-        ref={contentRef}
         data-pane-content={node.id}
         className="flex-1 min-h-0 bg-[var(--color-bg-page)] relative overflow-hidden"
-      />
+      >
+        <div ref={contentRef} className="absolute inset-0" />
+        <SharedPaneEditor
+          paneId={node.id}
+          activeTab={activeTab}
+          isPaneFocused={activePaneId === node.id}
+        />
+      </div>
     </div>
   );
 }

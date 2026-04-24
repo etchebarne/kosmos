@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useContext } from "react";
+import { memo, useState, useCallback, useRef, useEffect, useContext } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Folder, FolderOpen, File } from "@phosphor-icons/react";
 import { useLayoutStore } from "../../store/layout.store";
@@ -26,7 +26,7 @@ interface FileTreeNodeProps {
 const INDENT_SIZE = 16;
 const LEFT_PAD = 12;
 
-export function FileTreeNode({
+export const FileTreeNode = memo(function FileTreeNodeInner({
   entry,
   depth,
   paneId,
@@ -339,6 +339,8 @@ export function FileTreeNode({
           onContextMenu={handleContextMenu}
           data-entry-path={entry.path}
           data-dir-path={entry.isDir ? entry.path : getParentDir(entry.path)}
+          data-tree-dir={entry.isDir ? entry.path : undefined}
+          data-tree-expanded={entry.isDir ? String(expanded) : undefined}
         >
           {/* Indent guide lines */}
           {Array.from({ length: depth }, (_, i) => (
@@ -409,4 +411,4 @@ export function FileTreeNode({
       )}
     </div>
   );
-}
+});

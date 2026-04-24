@@ -1,8 +1,14 @@
 import type { Monaco } from "@monaco-editor/react";
 import { getTheme } from "../../lib/themes";
 
+// `getTheme()` returns a stable reference per active theme; skip redefining
+// until the theme object itself changes (on light/dark toggle or reload).
+let lastDefinedTheme: ReturnType<typeof getTheme> | null = null;
+
 export function defineKosmosTheme(monaco: Monaco) {
   const t = getTheme();
+  if (t === lastDefinedTheme) return;
+  lastDefinedTheme = t;
   monaco.editor.defineTheme("kosmos", {
     base: t.type === "dark" ? "vs-dark" : "vs",
     inherit: true,

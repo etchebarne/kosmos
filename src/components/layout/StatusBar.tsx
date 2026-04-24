@@ -34,8 +34,18 @@ export function StatusBar() {
   const progress = useLspStore((s) => (activePath ? s.indexProgress[activePath] : undefined));
   const servers = useLspStore((s) => (activePath ? s.servers[activePath] : undefined));
   const installServer = useLspStore((s) => s.installServer);
-  const layout = useLayoutStore((s) => s.layout);
-  const activePaneId = useLayoutStore((s) => s.activePaneId);
+  // Derive just the active editor's filePath so unrelated layout changes
+  // (pane resizes, tab reorders, opens in other panes) don't re-render the bar.
+  const activeEditorFilePath = useLayoutStore((s) => {
+    if (!s.activePaneId) return null;
+    const leaf = findLeaf(s.layout, s.activePaneId);
+    if (!leaf?.activeTabId) return null;
+    const activeTab = leaf.tabs.find((t) => t.id === leaf.activeTabId);
+    if (activeTab?.type === "editor" && activeTab.metadata?.filePath) {
+      return activeTab.metadata.filePath as string;
+    }
+    return null;
+  });
 
   const [branch, setBranch] = useState<string | null>(null);
   const [installDialog, setInstallDialog] = useState<{
@@ -73,17 +83,9 @@ export function StatusBar() {
 
   const activeProgress = progress?.length ? progress : null;
 
-  let focusedServerLang: string | null = null;
-  if (activePaneId) {
-    const leaf = findLeaf(layout, activePaneId);
-    if (leaf?.activeTabId) {
-      const activeTab = leaf.tabs.find((t) => t.id === leaf.activeTabId);
-      if (activeTab?.type === "editor" && activeTab.metadata?.filePath) {
-        focusedServerLang = filePathToServerLang(activeTab.metadata.filePath as string);
-      }
-    }
-  }
-
+  const focusedServerLang = activeEditorFilePath
+    ? filePathToServerLang(activeEditorFilePath)
+    : null;
   const focusedServer = focusedServerLang && servers ? servers[focusedServerLang] : null;
   const showLsp = focusedServer && focusedServer.status !== "stopped";
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type MouseEvent } from "react";
+import { useState, useCallback, useMemo, useRef, type MouseEvent } from "react";
 import {
   GitBranch,
   CaretDown,
@@ -15,6 +15,7 @@ import { ScrollArea } from "../../components/shared/ScrollArea";
 import { StateView } from "../../components/shared/StateView";
 import { ContextMenu } from "../../components/shared/ContextMenu";
 import type { ContextMenuItem } from "../../components/shared/ContextMenu";
+import { useIsTabActive } from "../../hooks/useIsTabActive";
 import { BranchPicker } from "./BranchPicker";
 import { StashDialog } from "./StashDialog";
 import { useGitStatus } from "../../hooks/useGitStatus";
@@ -25,12 +26,14 @@ import { useLayoutStore } from "../../store/layout.store";
 import { useGitActions } from "./useGitActions";
 import type { TabContentProps } from "../types";
 
-export function GitTab({ tab: _tab, paneId }: TabContentProps) {
+export function GitTab({ tab, paneId }: TabContentProps) {
   const activeWorkspace = useActiveWorkspace();
   const isActive = useIsWorkspaceActive();
+  const isTabActive = useIsTabActive(paneId, tab.id);
   const workspacePath = activeWorkspace?.path ?? null;
+  const isVisible = isActive && isTabActive;
 
-  const { status, loading, error, setError, refresh } = useGitStatus(workspacePath, isActive);
+  const { status, loading, error, setError, refresh } = useGitStatus(workspacePath, isVisible);
   const { activeAction, actionRunning, actionDone, currentAction, handleRunAction } =
     useGitRemoteActions(workspacePath, refresh, setError);
 
@@ -97,6 +100,23 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
     [handleDiscard, handleTrash, handleStashFiles],
   );
 
+  const { changes, tracked, untracked, trackedTree, untrackedTree, stagedCount, allStaged } =
+    useMemo(() => {
+      const all = status?.changes ?? [];
+      const t = all.filter((c) => c.status !== "untracked");
+      const u = all.filter((c) => c.status === "untracked");
+      const staged = all.reduce((n, c) => n + (c.staged ? 1 : 0), 0);
+      return {
+        changes: all,
+        tracked: t,
+        untracked: u,
+        trackedTree: buildChangeTree(t),
+        untrackedTree: buildChangeTree(u),
+        stagedCount: staged,
+        allStaged: all.length > 0 && staged === all.length,
+      };
+    }, [status?.changes]);
+
   if (!activeWorkspace) {
     return <StateView message="No workspace open" />;
   }
@@ -124,14 +144,6 @@ export function GitTab({ tab: _tab, paneId }: TabContentProps) {
       </div>
     );
   }
-
-  const changes = status?.changes ?? [];
-  const tracked = changes.filter((c) => c.status !== "untracked");
-  const untracked = changes.filter((c) => c.status === "untracked");
-  const trackedTree = buildChangeTree(tracked);
-  const untrackedTree = buildChangeTree(untracked);
-  const stagedCount = changes.filter((c) => c.staged).length;
-  const allStaged = changes.length > 0 && stagedCount === changes.length;
 
   return (
     <div className="flex flex-col h-full font-ui">

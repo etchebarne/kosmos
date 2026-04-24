@@ -67,7 +67,11 @@ export function FilePreview({ filePath, matchLine, query }: FilePreviewProps) {
     invoke<string>("read_file", { path: filePath })
       .then((content) => {
         if (cancelled) return;
-        const uri = monaco.Uri.parse(pathToFileUri(filePath));
+        // Use a preview-only URI so we don't share / overwrite / dispose the registry's
+        // model when this file is also open in an editor tab. Fragment is part of the
+        // URI identity for Monaco's model cache but leaves the path intact so language
+        // detection (by extension) still works.
+        const uri = monaco.Uri.parse(pathToFileUri(filePath) + "#preview");
         let model = monaco.editor.getModel(uri);
         if (model) {
           model.setValue(content);

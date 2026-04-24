@@ -224,14 +224,24 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
     }),
 
   setActiveTab: (paneId, tabId) =>
-    set((state) => ({
-      activePaneId: paneId,
-      layout:
-        updateNode(state.layout, paneId, (leaf) => ({
-          ...leaf,
-          activeTabId: tabId,
-        })) ?? state.layout,
-    })),
+    set((state) => {
+      const leaf = findLeaf(state.layout, paneId);
+      if (!leaf) return state;
+      if (leaf.activeTabId === tabId) {
+        if (state.activePaneId === paneId) {
+          return state;
+        }
+        return { activePaneId: paneId, layout: state.layout };
+      }
+      return {
+        activePaneId: paneId,
+        layout:
+          updateNode(state.layout, paneId, (targetLeaf) => ({
+            ...targetLeaf,
+            activeTabId: tabId,
+          })) ?? state.layout,
+      };
+    }),
 
   reorderTab: (paneId, fromIndex, toIndex) =>
     set((state) => ({
@@ -389,6 +399,7 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
 
   setTabDirty: (tabId, dirty) =>
     set((state) => {
+      if (dirty === state.dirtyTabs.has(tabId)) return state;
       const next = new Set(state.dirtyTabs);
       if (dirty) next.add(tabId);
       else next.delete(tabId);

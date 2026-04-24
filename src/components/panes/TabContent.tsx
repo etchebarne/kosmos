@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { getTabDefinition } from "../../tabs/registry";
 import { ErrorBoundary } from "../shared/ErrorBoundary";
 import type { Tab } from "../../types";
@@ -8,7 +8,7 @@ interface TabContentProps {
   paneId: string;
 }
 
-export function TabContent({ tab, paneId }: TabContentProps) {
+function TabContentInner({ tab, paneId }: TabContentProps) {
   const definition = getTabDefinition(tab.type);
   const [mountKey, setMountKey] = useState(0);
 
@@ -50,3 +50,8 @@ export function TabContent({ tab, paneId }: TabContentProps) {
     </ErrorBoundary>
   );
 }
+
+export const TabContent = memo(
+  TabContentInner,
+  (prev, next) => prev.paneId === next.paneId && prev.tab === next.tab,
+);

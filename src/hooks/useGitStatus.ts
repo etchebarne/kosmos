@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { GitStatusInfo } from "../lib/gitTree";
+import { useWorkspaceWatch } from "./useWorkspaceWatch";
 
 export function useGitStatus(workspacePath: string | null, active = true) {
   const [status, setStatus] = useState<GitStatusInfo | null>(null);
@@ -9,6 +10,8 @@ export function useGitStatus(workspacePath: string | null, active = true) {
   const [error, setError] = useState<string | null>(null);
   const inflightRef = useRef(false);
   const pendingRef = useRef(false);
+
+  useWorkspaceWatch(workspacePath, active);
 
   const refresh = useCallback(
     async (silent = false) => {
@@ -48,15 +51,12 @@ export function useGitStatus(workspacePath: string | null, active = true) {
 
     refresh();
 
-    invoke("watch_workspace", { path: workspacePath });
-
     const unlisten = listen("git-changed", () => {
       refresh(true);
     });
 
     return () => {
       unlisten.then((fn) => fn());
-      invoke("unwatch_workspace", { path: workspacePath });
     };
   }, [workspacePath, refresh, active]);
 
