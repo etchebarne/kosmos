@@ -57,18 +57,24 @@ export function updateNode(
   }
 
   const newChildren: PaneNode[] = [];
+  let changed = false;
   for (const child of node.children) {
     const result = updateNode(child, targetId, updater);
+    if (result !== child) changed = true;
     if (result) newChildren.push(result);
   }
 
+  if (!changed && newChildren.length === node.children.length) {
+    return node;
+  }
   if (newChildren.length === 0) return null;
   if (newChildren.length === 1) return newChildren[0];
 
+  const sizes = normalizeSizes(newChildren.length, node.sizes);
   return {
     ...node,
     children: newChildren,
-    sizes: normalizeSizes(newChildren.length, node.sizes),
+    sizes,
   };
 }
 

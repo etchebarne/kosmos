@@ -7,6 +7,8 @@ import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { getTheme } from "../../lib/themes";
 import { useThemeListener } from "../../hooks/useThemeListener";
+import { useIsTabActive } from "../../hooks/useIsTabActive";
+import { useWorkspaceWatch } from "../../hooks/useWorkspaceWatch";
 import { getChangesMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
 import { isImagePath, joinPath } from "../../lib/pathUtils";
@@ -67,17 +69,28 @@ function buildThemeCss(): string {
 `;
 }
 
-export function ChangesTab({ tab }: TabContentProps) {
+export function ChangesTab({ tab, paneId }: TabContentProps) {
+  const workspace = useActiveWorkspace();
+  const isActiveTab = useIsTabActive(paneId, tab.id);
   const meta = getChangesMeta(tab);
   const filePath = meta?.filePath ?? "";
   const staged = meta?.staged ?? false;
   const isUntracked = meta?.isUntracked ?? false;
 
+  useWorkspaceWatch(workspace?.path ?? null, isActiveTab);
+
   if (filePath && isImagePath(filePath)) {
     return <ImageChangesView filePath={filePath} />;
   }
 
-  return <DiffChangesView filePath={filePath} staged={staged} isUntracked={isUntracked} />;
+  return (
+    <DiffChangesView
+      filePath={filePath}
+      staged={staged}
+      isUntracked={isUntracked}
+      isActiveTab={isActiveTab}
+    />
+  );
 }
 
 function ImageChangesView({ filePath }: { filePath: string }) {
@@ -92,10 +105,12 @@ function DiffChangesView({
   filePath,
   staged,
   isUntracked,
+  isActiveTab,
 }: {
   filePath: string;
   staged: boolean;
   isUntracked: boolean;
+  isActiveTab: boolean;
 }) {
   const workspace = useActiveWorkspace();
   const [patch, setPatch] = useState<string | null>(null);
@@ -127,17 +142,19 @@ function DiffChangesView({
   }, [workspace?.path, filePath, staged, isUntracked]);
 
   useEffect(() => {
+    if (!isActiveTab) return;
     loadDiff();
-  }, [loadDiff]);
+  }, [isActiveTab, loadDiff]);
 
   useEffect(() => {
+    if (!isActiveTab) return;
     const unlisten = listen("git-changed", () => {
       loadDiff();
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [loadDiff]);
+  }, [isActiveTab, loadDiff]);
 
   const handleThemeChanged = useCallback(() => setThemeCss(buildThemeCss()), []);
   useThemeListener(handleThemeChanged);

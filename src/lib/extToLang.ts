@@ -1,6 +1,7 @@
 import type { Monaco } from "@monaco-editor/react";
 
 let extMap: Record<string, string> = {};
+let initialized = false;
 
 /**
  * Build the extension → languageId map from Monaco's registered languages.
@@ -10,6 +11,8 @@ let extMap: Record<string, string> = {};
  * matching resolveModelLanguage's logic.
  */
 export function initExtMap(monaco: Monaco): void {
+  if (initialized) return;
+  initialized = true;
   const langs = monaco.languages.getLanguages();
   const bestCount: Record<string, number> = {};
   extMap = {};

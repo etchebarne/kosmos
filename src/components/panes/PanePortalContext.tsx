@@ -69,10 +69,14 @@ export function usePaneContainer(
   contentRef: React.RefObject<HTMLDivElement | null>,
 ) {
   const registry = useContext(RegistryContext);
+  const host = contentRef.current;
 
-  // Save scrolls during render (before React reparents) while old parents still exist.
+  // Save scrolls only for tabs that are about to move to a different pane.
   for (const tab of tabs) {
-    registry.saveScroll(tab.id);
+    const tabContainer = registry.getTab(tab.id);
+    if (!host || tabContainer.parentElement !== host) {
+      registry.saveScroll(tab.id);
+    }
   }
 
   // appendChild moves containers (not clones), preserving mounted state across panes.
