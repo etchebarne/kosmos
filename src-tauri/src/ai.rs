@@ -93,7 +93,10 @@ pub async fn ai_generate(
             let model = model.as_deref().unwrap_or("sonnet");
             run_claude_code(&prompt, model, cwd.as_deref(), cancel).await
         }
-        "codex" => Err("Codex agent is not yet supported".into()),
+        "codex" => {
+            let model = model.as_deref().unwrap_or("gpt-5.3-codex");
+            run_codex(&prompt, model, cwd.as_deref(), cancel).await
+        }
         other => Err(format!("Unknown agent: {other}")),
     };
 
@@ -219,6 +222,99 @@ async fn run_claude_code(
     if !status.success() {
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(format!("claude exited with {}: {}", status, stderr.trim()));
+    }
+
+    let text = tokio::fs::read_to_string(&temp_path)
+        .await
+        .map_err(|e| format!("Failed to read temp file {}: {e}", temp_path.display()))?;
+
+    let temp_path_str = temp_path.to_string_lossy().into_owned();
+    let _ = tokio::fs::remove_file(&temp_path).await;
+
+    Ok(AiGenerateResult {
+        text,
+        stderr,
+        raw,
+        temp_path: temp_path_str,
+    })
+}
+
+async fn run_codex(
+    user_prompt: &str,
+    model: &str,
+    cwd: Option<&str>,
+    cancel: Option<Arc<Notify>>,
+) -> Result<AiGenerateResult, String> {
+    let temp_path = make_temp_path();
+    tokio::fs::write(&temp_path, b"")
+        .await
+        .map_err(|e| format!("Failed to create temp file {}: {e}", temp_path.display()))?;
+
+    let wrapped = build_wrapped_prompt(user_prompt, &temp_path.to_string_lossy());
+
+    let mut cmd = Command::new("codex");
+    cmd.arg("exec")
+        .arg("--dangerously-bypass-approvals-and-sandbox")
+        .arg("--model")
+        .arg(model)
+        .arg(&wrapped)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = cwd {
+        cmd.current_dir(path);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn `codex`: {e}. Is Codex installed and on PATH?"))?;
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stdout_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stderr_pipe {
+            let _ = p.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+
+    let (status, cancelled) = match cancel {
+        Some(notify) => tokio::select! {
+            r = child.wait() => (Some(r.map_err(|e| format!("Failed to wait for codex: {e}"))?), false),
+            _ = notify.notified() => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                (None, true)
+            }
+        },
+        None => {
+            let s = child
+                .wait()
+                .await
+                .map_err(|e| format!("Failed to wait for codex: {e}"))?;
+            (Some(s), false)
+        }
+    };
+
+    let raw = String::from_utf8_lossy(&stdout_task.await.unwrap_or_default()).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_task.await.unwrap_or_default()).into_owned();
+
+    if cancelled {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(CANCELLED_ERR.into());
+    }
+
+    let status = status.expect("status must be set when not cancelled");
+    if !status.success() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("codex exited with {}: {}", status, stderr.trim()));
     }
 
     let text = tokio::fs::read_to_string(&temp_path)

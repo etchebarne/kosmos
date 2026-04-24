@@ -50,6 +50,9 @@ export function useAiGutter(opts: {
   const claudeCodeModel = useSettingsStore(
     (s) => (s.values["ai.claudeCode.model"] as string) ?? "sonnet",
   );
+  const codexModel = useSettingsStore(
+    (s) => (s.values["ai.codex.model"] as string) ?? "gpt-5.3-codex",
+  );
 
   // Mirror reactive values into refs for stable callbacks / event handlers.
   const workspaceRef = useRef(workspace);
@@ -64,6 +67,8 @@ export function useAiGutter(opts: {
   aiAgentRef.current = aiAgent;
   const claudeCodeModelRef = useRef(claudeCodeModel);
   claudeCodeModelRef.current = claudeCodeModel;
+  const codexModelRef = useRef(codexModel);
+  codexModelRef.current = codexModel;
 
   const gutterDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
   const functionsRef = useRef<Map<number, AiFunctionInfo>>(new Map());
@@ -203,10 +208,17 @@ export function useAiGutter(opts: {
           functionEndLine: info.range.endLineNumber,
         });
 
+        const agent = aiAgentRef.current;
+        const agentModel =
+          agent === "claude-code"
+            ? claudeCodeModelRef.current
+            : agent === "codex"
+              ? codexModelRef.current
+              : null;
         const result = await invoke<AiGenerateResult>("ai_generate", {
           prompt,
-          agent: aiAgentRef.current,
-          model: aiAgentRef.current === "claude-code" ? claudeCodeModelRef.current : null,
+          agent,
+          model: agentModel,
           cwd: workspaceRef.current?.path ?? null,
           cancelId: String(genId),
         });

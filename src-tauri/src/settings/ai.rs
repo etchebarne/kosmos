@@ -77,6 +77,58 @@ pub fn section() -> SettingsSection {
                         },
                     ],
                 },
+                SettingEntry {
+                    key: "ai.codex.model".into(),
+                    label: "Model".into(),
+                    description: Some(
+                        "The Codex model used to generate function bodies.".into(),
+                    ),
+                    control: SettingControl::Dropdown {
+                        options: vec![
+                            DropdownOption {
+                                value: "gpt-5.5".into(),
+                                label: "GPT-5.5".into(),
+                                disabled: false,
+                            },
+                            DropdownOption {
+                                value: "gpt-5.4".into(),
+                                label: "GPT-5.4".into(),
+                                disabled: false,
+                            },
+                            DropdownOption {
+                                value: "gpt-5.4-mini".into(),
+                                label: "GPT-5.4 Mini".into(),
+                                disabled: false,
+                            },
+                            DropdownOption {
+                                value: "gpt-5.3-codex".into(),
+                                label: "GPT-5.3 Codex".into(),
+                                disabled: false,
+                            },
+                            DropdownOption {
+                                value: "gpt-5.3-codex-spark".into(),
+                                label: "GPT-5.3 Codex Spark".into(),
+                                disabled: false,
+                            },
+                            DropdownOption {
+                                value: "gpt-5.2".into(),
+                                label: "GPT-5.2".into(),
+                                disabled: false,
+                            },
+                        ],
+                    },
+                    default_value: serde_json::json!("gpt-5.3-codex"),
+                    show_when: vec![
+                        ShowWhen {
+                            key: "ai.enableCompletion".into(),
+                            equals: serde_json::json!(true),
+                        },
+                        ShowWhen {
+                            key: "ai.agent".into(),
+                            equals: serde_json::json!("codex"),
+                        },
+                    ],
+                },
             ],
         }],
     }
