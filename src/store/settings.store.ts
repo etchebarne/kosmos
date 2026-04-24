@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getTauriStore } from "../lib/tauriStore";
 import { applyTheme } from "../lib/themes";
 
@@ -20,6 +21,14 @@ function applySolidMode(enabled: boolean) {
   document.documentElement.setAttribute("data-solid", enabled ? "true" : "false");
 }
 
+function applyUiZoom(percent: unknown) {
+  const n = Number(percent);
+  const clamped = Number.isFinite(n) ? Math.min(125, Math.max(80, n)) : 100;
+  getCurrentWebview()
+    .setZoom(clamped / 100)
+    .catch((err) => console.warn("Failed to set webview zoom:", err));
+}
+
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   values: {},
   ready: false,
@@ -34,6 +43,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       applyTheme(String(colorTheme));
     }
     applySolidMode(values["theme.solidMode"] === true);
+    applyUiZoom(values["theme.uiZoom"] ?? 100);
   },
 
   set: (key: string, value: unknown) => {
@@ -44,6 +54,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       applyTheme(String(value));
     } else if (key === "theme.solidMode") {
       applySolidMode(value === true);
+    } else if (key === "theme.uiZoom") {
+      applyUiZoom(value);
     }
   },
 
