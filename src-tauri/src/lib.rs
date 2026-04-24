@@ -1,5 +1,6 @@
 #[macro_use]
 mod remote;
+mod ai;
 mod git;
 mod lsp;
 mod plugins;
@@ -190,6 +191,9 @@ pub fn run() {
             terminal::terminal_close,
             terminal::terminal_forward_clipboard_image,
             settings::get_settings_schema,
+            ai::ai_generate,
+            ai::ai_cancel,
+            ai::ai_installed_agents,
             remote::commands::list_wsl_distros,
             remote::commands::deploy_agent_wsl,
             remote::commands::check_agent_version,

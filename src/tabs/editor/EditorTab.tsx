@@ -1,14 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Code, Image as ImageIcon } from "@phosphor-icons/react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import {
-  TextDocumentSyncKind,
-  type TextDocumentContentChangeEvent,
-} from "vscode-languageserver-protocol";
+import type { TextDocumentContentChangeEvent } from "vscode-languageserver-protocol";
 import { useActiveWorkspace } from "../../contexts/WorkspaceContext";
 import { useLspStore } from "../../store/lsp.store";
 import { pathToFileUri } from "../../lib/lsp/uri";
@@ -19,15 +14,22 @@ import { setupMonacoLanguages, resolveModelLanguage } from "../../lib/lsp/monaco
 import { useThemeListener } from "../../hooks/useThemeListener";
 import { getEditorMeta } from "../../types";
 import { StateView } from "../../components/shared/StateView";
-import { ContextMenu, type ContextMenuItem } from "../../components/shared/ContextMenu";
+import { ContextMenu } from "../../components/shared/ContextMenu";
 import { BASE_EDITOR_OPTIONS } from "../../lib/monacoConfig";
 import { initExtMap, languageIdFromExt } from "../../lib/extToLang";
-import { normalizePath, getFileExtension, isImagePath } from "../../lib/pathUtils";
+import { getFileExtension, isImagePath } from "../../lib/pathUtils";
 import type { TabContentProps } from "../types";
 import { defineKosmosTheme } from "./monacoTheme";
 import { registerEditorOpener } from "./editorOpener";
 import { editorCache } from "./editorCache";
-import { parseDiffChanges, buildDiffDecorations } from "./diffDecorations";
+import { attachMiddleClickPasteGuard } from "./middleClickGuard";
+import { attachEditorKeybindings } from "./editorKeybindings";
+import { buildContextMenuItems } from "./buildContextMenuItems";
+import { createModelContentChangeHandler } from "./lspSyncHandler";
+import { useDiffDecorations } from "./hooks/useDiffDecorations";
+import { useGitBlame } from "./hooks/useGitBlame";
+import { useAiGutter } from "./hooks/useAiGutter";
+import { useExternalFileChangeListener } from "./hooks/useExternalFileChangeListener";
 import { ImageViewer } from "./ImageViewer";
 
 function languageIdFromPath(filePath: string): string {
@@ -97,10 +99,6 @@ function EditorTabContent({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editorReady, setEditorReady] = useState(false);
   const lspOpenedRef = useRef(false);
-  const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
-  const blameWidgetRef = useRef<editor.IContentWidget | null>(null);
-  const blameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const blameLineRef = useRef<number>(0);
 
   const editorFontSize = useEditorStore((s) => s.editorFontSize);
   const zoomEditorIn = useEditorStore((s) => s.zoomEditorIn);
@@ -130,6 +128,26 @@ function EditorTabContent({
   filePathRef.current = filePath;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+
+  useDiffDecorations({ editorRef, editorReady, workspace, filePath });
+
+  const { clearBlameWidget, scheduleBlameUpdate } = useGitBlame({
+    editorRef,
+    editorReady,
+    workspace,
+    filePath,
+    editorFontSize,
+  });
+
+  const { scheduleAiGutterRefresh, handleGlyphMarginClick } = useAiGutter({
+    editorRef,
+    monacoRef,
+    editorReady,
+    workspace,
+    fileUri,
+    filePath,
+    lspLanguageRef,
+  });
 
   const loadFile = useCallback(async () => {
     if (!filePath) return;
@@ -182,117 +200,8 @@ function EditorTabContent({
   const saveFileRef = useRef(saveFile);
   saveFileRef.current = saveFile;
 
-  const refreshDiffDecorations = useCallback(async () => {
-    const ed = editorRef.current;
-    const ws = workspaceRef.current;
-    const fp = filePathRef.current;
-    if (!ed || !ws || !fp) return;
-
-    const relative = fp.startsWith(ws.path + "/") ? fp.slice(ws.path.length + 1) : fp;
-
-    try {
-      const patch = await invoke<string>("git_diff", {
-        path: ws.path,
-        file: relative,
-        staged: false,
-      });
-      const changes = parseDiffChanges(patch);
-      const decorations = buildDiffDecorations(changes);
-      diffDecorationsRef.current?.clear();
-      diffDecorationsRef.current = ed.createDecorationsCollection(decorations);
-    } catch {
-      // Untracked file: drop stale decorations.
-      diffDecorationsRef.current?.clear();
-    }
-  }, []);
-
-  useEffect(() => {
-    if (editorReady && workspace) refreshDiffDecorations();
-  }, [editorReady, workspace, refreshDiffDecorations]);
-
-  useEffect(() => {
-    const unlisten = listen("git-changed", () => {
-      refreshDiffDecorations();
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [refreshDiffDecorations]);
-
-  const clearBlameWidget = useCallback(() => {
-    const ed = editorRef.current;
-    if (ed && blameWidgetRef.current) {
-      ed.removeContentWidget(blameWidgetRef.current);
-      blameWidgetRef.current = null;
-    }
-  }, []);
-
-  const updateBlame = useCallback(
-    async (lineNumber: number) => {
-      const ed = editorRef.current;
-      const ws = workspaceRef.current;
-      const fp = filePathRef.current;
-      if (!ed || !ws || !fp) return;
-
-      if (lineNumber === blameLineRef.current) return;
-      blameLineRef.current = lineNumber;
-
-      const relative = fp.startsWith(ws.path + "/") ? fp.slice(ws.path.length + 1) : fp;
-
-      try {
-        const blame = await invoke<string | null>("git_blame_line", {
-          path: ws.path,
-          file: relative,
-          line: lineNumber,
-        });
-
-        // Cursor may have moved during the await; bail if so.
-        if (blameLineRef.current !== lineNumber) return;
-
-        clearBlameWidget();
-        if (blame) {
-          const model = ed.getModel();
-          const endCol = model ? model.getLineMaxColumn(lineNumber) : 1;
-          const domNode = document.createElement("div");
-          domNode.className = "git-blame-inline";
-          // Numeric ids are Monaco EditorOption (fontSize=61, lineHeight=75).
-          domNode.style.fontSize = `${ed.getOption(61) * 0.85}px`;
-          domNode.style.lineHeight = `${ed.getOption(75)}px`;
-          domNode.textContent = blame;
-          const widget: editor.IContentWidget = {
-            getId: () => "git-blame-widget",
-            getDomNode: () => domNode,
-            getPosition: () => ({
-              position: { lineNumber, column: endCol },
-              preference: [0],
-            }),
-          };
-          blameWidgetRef.current = widget;
-          ed.addContentWidget(widget);
-        }
-      } catch {
-        clearBlameWidget();
-      }
-    },
-    [clearBlameWidget],
-  );
-
-  useEffect(() => {
-    if (!editorReady || !workspace) return;
-    const pos = editorRef.current?.getPosition();
-    if (pos) updateBlame(pos.lineNumber);
-  }, [editorReady, workspace, updateBlame]);
-
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: editorFontSize });
-    const widget = blameWidgetRef.current;
-    if (widget) {
-      const ed = editorRef.current;
-      const fs = ed?.getOption(61);
-      const lh = ed?.getOption(75);
-      if (fs) widget.getDomNode().style.fontSize = `${fs * 0.85}px`;
-      if (lh) widget.getDomNode().style.lineHeight = `${lh}px`;
-    }
   }, [editorFontSize]);
 
   const handleThemeChanged = useCallback(() => {
@@ -317,6 +226,8 @@ function EditorTabContent({
       versionRef.current = 1;
       const text = editorRef.current.getValue();
       client.didOpen(fileUri, lspLang, versionRef.current, text);
+
+      scheduleAiGutterRefresh();
 
       // Companions (e.g. tailwindcss) open the same doc alongside the main server.
       startCompanions(workspace.path, lspLang, filePath ?? null, monacoRef.current!).then(() => {
@@ -356,10 +267,6 @@ function EditorTabContent({
         pendingChangesRef.current = [];
       }
 
-      if (blameTimerRef.current != null) {
-        clearTimeout(blameTimerRef.current);
-        blameTimerRef.current = null;
-      }
       clearBlameWidget();
 
       lspOpenedRef.current = false;
@@ -404,55 +311,21 @@ function EditorTabContent({
     return () => cancelAnimationFrame(raf);
   }, [isActiveTab]);
 
-  // Reload from disk on external change, but only while the editor is clean.
-  useEffect(() => {
-    if (!filePath) return;
-
-    const unlisten = listen<string[]>("file-content-changed", async (event) => {
-      const changedFiles = event.payload;
-      const normFilePath = normalizePath(filePath);
-      if (!changedFiles.some((f) => normalizePath(f) === normFilePath)) return;
-
-      if (dirtyRef.current) return;
-
-      try {
-        const newContent = await invoke<string>("read_file", { path: filePath });
-        // Skip self-triggered saves.
-        if (newContent === contentRef.current) return;
-
-        contentRef.current = newContent;
-        const ed = editorRef.current;
-        if (ed) {
-          isExternalUpdateRef.current = true;
-          ed.setValue(newContent);
-          isExternalUpdateRef.current = false;
-          const model = ed.getModel();
-          if (model) savedVersionIdRef.current = model.getAlternativeVersionId();
-          setTabDirty(tab.id, false);
-        } else {
-          setContent(newContent);
-        }
-
-        const ws = workspaceRef.current;
-        const uri = fileUriRef.current;
-        if (ws && uri) {
-          versionRef.current++;
-          const state = useLspStore.getState();
-          const client = state.getClient(ws.path, lspLanguageRef.current);
-          client?.didChange(uri, versionRef.current, [{ text: newContent }]);
-          for (const companion of state.getCompanionClients(ws.path, lspLanguageRef.current)) {
-            companion.didChange(uri, versionRef.current, [{ text: newContent }]);
-          }
-        }
-      } catch {
-        // File may have been deleted.
-      }
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [filePath]);
+  const clearTabDirty = useCallback(() => setTabDirty(tab.id, false), [setTabDirty, tab.id]);
+  useExternalFileChangeListener({
+    filePath,
+    editorRef,
+    contentRef,
+    dirtyRef,
+    isExternalUpdateRef,
+    savedVersionIdRef,
+    versionRef,
+    workspaceRef,
+    fileUriRef,
+    lspLanguageRef,
+    onContentReplaced: setContent,
+    clearDirty: clearTabDirty,
+  });
 
   function handleEditorDidMount(instance: editor.IStandaloneCodeEditor, monaco: Monaco) {
     editorRef.current = instance;
@@ -498,151 +371,40 @@ function EditorTabContent({
       if (filePath) setLastClickedEditor(filePath);
     });
 
-    // Use per-instance onKeyDown (not addCommand) so multiple editors don't
-    // overwrite each other in Monaco's global keybinding registry.
-    instance.onKeyDown((e) => {
-      const ctrl = e.ctrlKey || e.metaKey;
-      if (!ctrl || e.shiftKey || e.altKey) return;
-      if (e.keyCode === monaco.KeyCode.KeyS) {
-        e.preventDefault();
-        e.stopPropagation();
-        saveFileRef.current();
-        return;
-      }
-      if (e.keyCode === monaco.KeyCode.Equal) {
-        e.preventDefault();
-        e.stopPropagation();
-        zoomEditorIn();
-        return;
-      }
-      if (e.keyCode === monaco.KeyCode.Minus) {
-        e.preventDefault();
-        e.stopPropagation();
-        zoomEditorOut();
-        return;
-      }
-      if (e.keyCode === monaco.KeyCode.Digit0) {
-        e.preventDefault();
-        e.stopPropagation();
-        resetEditorZoom();
-        return;
-      }
+    attachEditorKeybindings(instance, monaco, {
+      save: () => saveFileRef.current(),
+      zoomIn: zoomEditorIn,
+      zoomOut: zoomEditorOut,
+      resetZoom: resetEditorZoom,
     });
 
-    // On Linux middle-click pastes PRIMARY; suppress paste when a middle-drag selects
-    // text so the selection isn't overwritten on mouseup. Plain click still pastes.
     const editorDom = instance.getDomNode();
     if (editorDom) {
-      let middleDragged = false;
-      let middleDownX = 0;
-      let middleDownY = 0;
-      const DRAG_THRESHOLD = 3;
-
-      const onMouseDown = (e: MouseEvent) => {
-        if (e.button !== 1) return;
-        middleDragged = false;
-        middleDownX = e.clientX;
-        middleDownY = e.clientY;
-      };
-      const onMouseMove = (e: MouseEvent) => {
-        if (!(e.buttons & 4)) return;
-        if (
-          Math.abs(e.clientX - middleDownX) > DRAG_THRESHOLD ||
-          Math.abs(e.clientY - middleDownY) > DRAG_THRESHOLD
-        ) {
-          middleDragged = true;
-        }
-      };
-      const onMouseUp = (e: MouseEvent) => {
-        if (e.button !== 1 || !middleDragged) return;
-        e.preventDefault();
-        e.stopPropagation();
-      };
-
-      editorDom.addEventListener("mousedown", onMouseDown, true);
-      editorDom.addEventListener("mousemove", onMouseMove, true);
-      editorDom.addEventListener("mouseup", onMouseUp, true);
-      editorDom.addEventListener("auxclick", onMouseUp, true);
-
-      middleDragCleanupRef.current = () => {
-        editorDom.removeEventListener("mousedown", onMouseDown, true);
-        editorDom.removeEventListener("mousemove", onMouseMove, true);
-        editorDom.removeEventListener("mouseup", onMouseUp, true);
-        editorDom.removeEventListener("auxclick", onMouseUp, true);
-      };
+      middleDragCleanupRef.current = attachMiddleClickPasteGuard(editorDom);
     }
 
     instance.onDidChangeCursorPosition((e) => {
-      if (blameTimerRef.current != null) clearTimeout(blameTimerRef.current);
-      clearBlameWidget();
-      blameLineRef.current = 0;
-      blameTimerRef.current = setTimeout(() => {
-        blameTimerRef.current = null;
-        updateBlame(e.position.lineNumber);
-      }, 500);
+      scheduleBlameUpdate(e.position.lineNumber);
     });
 
-    // Debounce LSP didChange so keystrokes don't flood the server.
-    const DIDCHANGE_DEBOUNCE_MS = 200;
+    changeDisposableRef.current = instance.onDidChangeModelContent(
+      createModelContentChangeHandler({
+        instance,
+        tabId: tab.id,
+        workspace,
+        fileUri,
+        contentRef,
+        isExternalUpdateRef,
+        savedVersionIdRef,
+        versionRef,
+        pendingChangesRef,
+        debounceTimerRef,
+        lspLanguageRef,
+        onContentChanged: scheduleAiGutterRefresh,
+      }),
+    );
 
-    changeDisposableRef.current = instance.onDidChangeModelContent((e) => {
-      contentRef.current = instance.getValue();
-      // External reload: don't flip dirty.
-      if (isExternalUpdateRef.current) return;
-
-      const m = instance.getModel();
-      const vid = m?.getAlternativeVersionId() ?? 0;
-      const shouldBeDirty = vid !== savedVersionIdRef.current;
-      const store = useLayoutStore.getState();
-      if (shouldBeDirty !== store.dirtyTabs.has(tab.id)) {
-        store.setTabDirty(tab.id, shouldBeDirty);
-      }
-
-      if (!workspace || !fileUri) return;
-      const client = getClient(workspace.path, lspLanguageRef.current);
-      if (!client) return;
-
-      versionRef.current++;
-
-      const syncKind =
-        typeof client.capabilities?.textDocumentSync === "object"
-          ? client.capabilities.textDocumentSync.change
-          : client.capabilities?.textDocumentSync;
-
-      if (syncKind === TextDocumentSyncKind.Full) {
-        pendingChangesRef.current = [{ text: instance.getValue() }];
-      } else {
-        const changes = e.changes.map((change) => ({
-          range: {
-            start: {
-              line: change.range.startLineNumber - 1,
-              character: change.range.startColumn - 1,
-            },
-            end: {
-              line: change.range.endLineNumber - 1,
-              character: change.range.endColumn - 1,
-            },
-          },
-          rangeLength: change.rangeLength,
-          text: change.text,
-        }));
-        pendingChangesRef.current.push(...changes);
-      }
-
-      if (debounceTimerRef.current != null) {
-        clearTimeout(debounceTimerRef.current);
-      }
-      debounceTimerRef.current = setTimeout(() => {
-        debounceTimerRef.current = null;
-        if (pendingChangesRef.current.length === 0) return;
-        const currentClient = getClient(workspace.path, lspLanguageRef.current);
-        currentClient?.didChange(fileUri, versionRef.current, pendingChangesRef.current);
-        for (const companion of getCompanionClients(workspace.path, lspLanguageRef.current)) {
-          companion.didChange(fileUri, versionRef.current, pendingChangesRef.current);
-        }
-        pendingChangesRef.current = [];
-      }, DIDCHANGE_DEBOUNCE_MS);
-    });
+    instance.onMouseDown(handleGlyphMarginClick);
   }
 
   function handleBeforeMount(monaco: Monaco) {
@@ -676,69 +438,7 @@ function EditorTabContent({
     setContextMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
-  const contextMenuItems: ContextMenuItem[] = (() => {
-    const ed = editorRef.current;
-    const hasSelection = ed ? !ed.getSelection()?.isEmpty() : false;
-    return [
-      {
-        label: "Cut",
-        disabled: !hasSelection,
-        onClick: () => {
-          if (!ed) return;
-          const sel = ed.getSelection();
-          if (!sel || sel.isEmpty()) return;
-          const text = ed.getModel()!.getValueInRange(sel);
-          navigator.clipboard.writeText(text);
-          ed.executeEdits("context-menu", [{ range: sel, text: "" }]);
-          ed.focus();
-        },
-      },
-      {
-        label: "Copy",
-        disabled: !hasSelection,
-        onClick: () => {
-          if (!ed) return;
-          const sel = ed.getSelection();
-          if (!sel || sel.isEmpty()) return;
-          navigator.clipboard.writeText(ed.getModel()!.getValueInRange(sel));
-          ed.focus();
-        },
-      },
-      {
-        label: "Paste",
-        onClick: async () => {
-          if (!ed) return;
-          try {
-            const text = await readText();
-            if (text) {
-              ed.trigger("context-menu", "type", { text });
-            }
-          } catch {
-            /* clipboard empty or inaccessible */
-          }
-          ed.focus();
-        },
-      },
-      { separator: true as const },
-      {
-        label: "Select All",
-        onClick: () => {
-          if (!ed) return;
-          const model = ed.getModel();
-          if (!model) return;
-          const lastLine = model.getLineCount();
-          const lastCol = model.getLineMaxColumn(lastLine);
-          ed.setSelection({
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: lastLine,
-            endColumn: lastCol,
-          });
-          ed.focus();
-        },
-      },
-    ];
-  })();
+  const contextMenuItems = buildContextMenuItems(editorRef.current);
 
   if (!filePath) {
     return <StateView message="No file path" />;
@@ -773,6 +473,7 @@ function EditorTabContent({
               bracketPairs: false,
             },
             hover: { above: false },
+            glyphMargin: true,
           }}
         />
       </div>

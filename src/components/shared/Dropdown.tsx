@@ -5,6 +5,7 @@ import { useClickOutside } from "../../hooks/useClickOutside";
 export interface DropdownOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 interface DropdownProps {
@@ -44,12 +45,16 @@ export function Dropdown({ value, options, onChange }: DropdownProps) {
           {options.map((opt) => (
             <button
               key={opt.value}
+              disabled={opt.disabled}
               className={`w-full text-left px-2.5 py-1.5 text-xs transition-colors ${
-                opt.value === value
-                  ? "text-[var(--color-text-primary)] bg-[var(--color-bg-input)]"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)]"
+                opt.disabled
+                  ? "text-[var(--color-text-muted)] cursor-not-allowed"
+                  : opt.value === value
+                    ? "text-[var(--color-text-primary)] bg-[var(--color-bg-input)]"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-input)] hover:text-[var(--color-text-primary)]"
               }`}
               onClick={() => {
+                if (opt.disabled) return;
                 onChange(opt.value);
                 setOpen(false);
               }}

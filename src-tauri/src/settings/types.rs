@@ -30,6 +30,15 @@ pub struct SettingEntry {
     pub description: Option<String>,
     pub control: SettingControl,
     pub default_value: serde_json::Value,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub show_when: Vec<ShowWhen>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowWhen {
+    pub key: String,
+    pub equals: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -47,4 +56,10 @@ pub enum SettingControl {
 pub struct DropdownOption {
     pub value: String,
     pub label: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub disabled: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }

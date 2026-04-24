@@ -10,6 +10,8 @@ export const BASE_EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = 
   minimap: { enabled: false },
   scrollBeyondLastLine: false,
   padding: { top: 12 },
+  lineNumbersMinChars: 3,
+  lineDecorationsWidth: 4,
   smoothScrolling: true,
   overviewRulerBorder: false,
   hideCursorInOverviewRuler: true,
