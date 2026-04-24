@@ -40,7 +40,6 @@ export function useAiGutter(opts: {
   filePath: string | undefined;
   lspLanguageRef: RefObject<string>;
 }): {
-  aiCompletionEnabled: boolean;
   scheduleAiGutterRefresh: () => void;
   handleGlyphMarginClick: (e: editor.IEditorMouseEvent) => void;
 } {
@@ -293,5 +292,5 @@ export function useAiGutter(opts: {
     };
   }, []);
 
-  return { aiCompletionEnabled, scheduleAiGutterRefresh, handleGlyphMarginClick };
+  return { scheduleAiGutterRefresh, handleGlyphMarginClick };
 }

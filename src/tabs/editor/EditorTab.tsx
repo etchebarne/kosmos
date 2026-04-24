@@ -139,7 +139,7 @@ function EditorTabContent({
     editorFontSize,
   });
 
-  const { aiCompletionEnabled, scheduleAiGutterRefresh, handleGlyphMarginClick } = useAiGutter({
+  const { scheduleAiGutterRefresh, handleGlyphMarginClick } = useAiGutter({
     editorRef,
     monacoRef,
     editorReady,
@@ -473,7 +473,7 @@ function EditorTabContent({
               bracketPairs: false,
             },
             hover: { above: false },
-            glyphMargin: aiCompletionEnabled,
+            glyphMargin: true,
           }}
         />
       </div>
