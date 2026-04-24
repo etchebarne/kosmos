@@ -19,7 +19,7 @@ interface GitChangeNodeProps {
 }
 
 const INDENT_SIZE = 16;
-const LEFT_PAD = 8;
+const LEFT_PAD = 12;
 
 function getCheckState(node: TreeNode): "checked" | "unchecked" | "indeterminate" {
   const files = getNodeFiles(node);

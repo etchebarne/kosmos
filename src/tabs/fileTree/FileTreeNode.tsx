@@ -24,7 +24,7 @@ interface FileTreeNodeProps {
 }
 
 const INDENT_SIZE = 16;
-const LEFT_PAD = 8;
+const LEFT_PAD = 12;
 
 export function FileTreeNode({
   entry,
