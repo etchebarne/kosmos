@@ -208,35 +208,45 @@ impl IdeApp {
                     .h(px(44.0))
                     .w_full()
                     .flex()
-                    .items_end()
+                    .items_center()
                     .gap_1()
-                    .px_3()
-                    .pt_2()
+                    .p(px(6.0))
                     .bg(rgb(0x111827))
                     .rounded_t(px(7.0))
                     .border_b_1()
                     .border_color(rgb(0x2d3748))
                     .overflow_hidden()
-                    .children(tab_elements)
                     .child(
                         div()
-                            .id(("add-tab", pane.id))
-                            .size(px(32.0))
-                            .mb_1()
-                            .flex_none()
+                            .id(("tab-scroll", pane.id))
+                            .flex_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
-                            .justify_center()
-                            .rounded(px(6.0))
-                            .text_color(rgb(0xcbd5e1))
-                            .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
-                            .on_click(cx.listener({
-                                let pane_id = pane.id;
-                                move |this, _, _, cx| {
-                                    this.add_tab(pane_id, cx);
-                                }
-                            }))
-                            .child(Icon::new(IconName::Add).color(rgb(0xcbd5e1))),
+                            .gap_1()
+                            .overflow_x_scroll()
+                            .children(tab_elements)
+                            .child(
+                                div()
+                                    .id(("add-tab", pane.id))
+                                    .size(px(32.0))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .text_color(rgb(0xcbd5e1))
+                                    .hover(|this| {
+                                        this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff))
+                                    })
+                                    .on_click(cx.listener({
+                                        let pane_id = pane.id;
+                                        move |this, _, _, cx| {
+                                            this.add_tab(pane_id, cx);
+                                        }
+                                    }))
+                                    .child(Icon::new(IconName::Add).color(rgb(0xcbd5e1))),
+                            ),
                     ),
             )
             .child(
@@ -332,10 +342,10 @@ impl IdeApp {
             .flex_none()
             .items_center()
             .gap_2()
-            .h(px(36.0))
+            .h(px(32.0))
             .w(px(154.0))
             .px_3()
-            .rounded_t(px(7.0))
+            .rounded(px(6.0))
             .border_1()
             .border_color(if is_active {
                 rgb(0x3b82f6)
