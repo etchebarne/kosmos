@@ -111,20 +111,26 @@ impl IdeApp {
                 .when(*axis == SplitAxis::Column, |this| this.flex_col())
                 .bg(rgb(0x0b1120))
                 .on_drag_move(
-                    cx.listener(|this, event: &DragMoveEvent<SplitResize>, _, cx| {
-                        let drag = *event.drag(cx);
-                        let ratio = match drag.axis {
-                            SplitAxis::Row => {
-                                (event.event.position.x - event.bounds.left())
-                                    / event.bounds.size.width
+                    cx.listener({
+                        let split_id = *id;
+                        move |this, event: &DragMoveEvent<SplitResize>, _, cx| {
+                            let drag = *event.drag(cx);
+                            if drag.split_id != split_id {
+                                return;
                             }
-                            SplitAxis::Column => {
-                                (event.event.position.y - event.bounds.top())
-                                    / event.bounds.size.height
-                            }
-                        };
+                            let ratio = match drag.axis {
+                                SplitAxis::Row => {
+                                    (event.event.position.x - event.bounds.left())
+                                        / event.bounds.size.width
+                                }
+                                SplitAxis::Column => {
+                                    (event.event.position.y - event.bounds.top())
+                                        / event.bounds.size.height
+                                }
+                            };
 
-                        this.resize_split(drag.split_id, ratio, cx);
+                            this.resize_split(drag.split_id, ratio, cx);
+                        }
                     }),
                 )
                 .child(
@@ -192,6 +198,7 @@ impl IdeApp {
             .min_h_0()
             .flex()
             .flex_col()
+            .rounded(px(8.0))
             .bg(rgb(0x0f172a))
             .border_1()
             .border_color(rgb(0x263244))
@@ -206,6 +213,7 @@ impl IdeApp {
                     .px_3()
                     .pt_2()
                     .bg(rgb(0x111827))
+                    .rounded_t(px(7.0))
                     .border_b_1()
                     .border_color(rgb(0x2d3748))
                     .overflow_hidden()
