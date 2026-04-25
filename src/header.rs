@@ -4,8 +4,9 @@ use gpui::{
 };
 
 use crate::icon::{Icon, IconName};
+use crate::workspace::{WorkspaceDelegate, WorkspaceManager, render_workspace_bar};
 
-pub trait HeaderDelegate: Sized + 'static {
+pub trait HeaderDelegate: WorkspaceDelegate {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
 }
 
@@ -28,6 +29,7 @@ impl HeaderMenu {
 
 pub fn render_header<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
+    workspace_manager: &WorkspaceManager,
     cx: &mut Context<T>,
 ) -> AnyElement {
     div()
@@ -74,6 +76,13 @@ pub fn render_header<T: HeaderDelegate>(
                     cx,
                 )),
         )
+        .child(
+            div()
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
+        )
+        .child(render_workspace_bar(workspace_manager, cx))
         .child(
             div()
                 .flex_1()

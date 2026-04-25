@@ -1,24 +1,25 @@
 use gpui::{
-    AnyElement, Context, DragMoveEvent, IntoElement, Render, SharedString, Window, div, prelude::*,
-    px, relative, rgb,
+    AnyElement, Context, DragMoveEvent, IntoElement, PathPromptOptions, Render, SharedString,
+    Window, div, prelude::*, px, relative, rgb,
 };
 
 use crate::bottom_bar::render_bottom_bar;
 use crate::drag::{SplitResize, TabDrag};
 use crate::header::{HeaderDelegate, HeaderMenu, render_header};
 use crate::icon::{Icon, IconName};
-use crate::pane_tree::{DropZone, Pane, PaneNode, PaneTree, SplitAxis, Tab};
+use crate::pane_tree::{DropZone, Pane, PaneNode, SplitAxis, Tab};
+use crate::workspace::{WorkspaceDelegate, WorkspaceManager, render_landing};
 
 pub struct IdeApp {
-    pane_tree: PaneTree,
     active_menu: Option<HeaderMenu>,
+    workspaces: WorkspaceManager,
 }
 
 impl IdeApp {
     pub fn new() -> Self {
         Self {
-            pane_tree: PaneTree::new(),
             active_menu: None,
+            workspaces: WorkspaceManager::new(),
         }
     }
 
@@ -29,19 +30,28 @@ impl IdeApp {
     }
 
     fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
-        if self.pane_tree.add_tab(pane_id) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.add_tab(pane_id) {
             cx.notify();
         }
     }
 
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        if self.pane_tree.select_tab(pane_id, tab_id) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.select_tab(pane_id, tab_id) {
             cx.notify();
         }
     }
 
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        if self.pane_tree.close_tab(pane_id, tab_id) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.close_tab(pane_id, tab_id) {
             cx.notify();
         }
     }
@@ -53,21 +63,19 @@ impl IdeApp {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.pane_tree.move_tab_before(
-            drag.source_pane_id,
-            drag.id,
-            target_pane_id,
-            target_tab_id,
-        ) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.move_tab_before(drag.source_pane_id, drag.id, target_pane_id, target_tab_id) {
             cx.notify();
         }
     }
 
     fn move_tab_to_pane(&mut self, drag: TabDrag, target_pane_id: usize, cx: &mut Context<Self>) {
-        if self
-            .pane_tree
-            .move_tab_to_pane(drag.source_pane_id, drag.id, target_pane_id)
-        {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.move_tab_to_pane(drag.source_pane_id, drag.id, target_pane_id) {
             cx.notify();
         }
     }
@@ -79,16 +87,19 @@ impl IdeApp {
         drop_zone: DropZone,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .pane_tree
-            .split_pane(drag.source_pane_id, drag.id, target_pane_id, drop_zone)
-        {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.split_pane(drag.source_pane_id, drag.id, target_pane_id, drop_zone) {
             cx.notify();
         }
     }
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
-        if self.pane_tree.resize_split(split_id, ratio) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if tree.resize_split(split_id, ratio) {
             cx.notify();
         }
     }
@@ -333,7 +344,11 @@ impl IdeApp {
         let pane_id = pane.id;
         let id = tab.id;
         let is_active = pane.active_tab == id;
-        let can_close = self.pane_tree.total_tabs() > 1;
+        let can_close = self
+            .workspaces
+            .active_pane_tree()
+            .map(|tree| tree.total_tabs() > 1)
+            .unwrap_or(false);
         let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
 
         div()
@@ -428,8 +443,43 @@ impl HeaderDelegate for IdeApp {
     }
 }
 
+impl WorkspaceDelegate for IdeApp {
+    fn open_workspace_picker(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open Workspace".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = receiver.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.workspaces.add(path);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
+        if self.workspaces.select(id) {
+            cx.notify();
+        }
+    }
+}
+
 impl Render for IdeApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let main_content = match self.workspaces.active_pane_tree() {
+            Some(tree) => self.render_node(tree.root(), cx),
+            None => render_landing(cx),
+        };
+
         div()
             .id("app-root")
             .relative()
@@ -440,13 +490,8 @@ impl Render for IdeApp {
             .p_1()
             .bg(rgb(0x0b1120))
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
-            .child(render_header(self.active_menu, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_node(self.pane_tree.root(), cx)),
-            )
+            .child(render_header(self.active_menu, &self.workspaces, cx))
+            .child(div().flex_1().min_h_0().child(main_content))
             .child(render_bottom_bar())
     }
 }

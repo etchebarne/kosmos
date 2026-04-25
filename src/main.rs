@@ -5,6 +5,7 @@ mod drag;
 mod header;
 mod icon;
 mod pane_tree;
+mod workspace;
 
 use gpui::{
     App, AppContext, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
