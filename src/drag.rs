@@ -1,19 +1,24 @@
-use gpui::{Context, IntoElement, Pixels, Point, Render, Window, div, prelude::*, px, rgb};
+use gpui::{
+    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, px, rgb,
+};
 
+use crate::icon::{Icon, IconName};
 use crate::pane_tree::SplitAxis;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TabDrag {
     pub id: usize,
     pub source_pane_id: usize,
+    pub title: SharedString,
     position: Point<Pixels>,
 }
 
 impl TabDrag {
-    pub fn new(id: usize, source_pane_id: usize) -> Self {
+    pub fn new(id: usize, source_pane_id: usize, title: SharedString) -> Self {
         Self {
             id,
             source_pane_id,
+            title,
             position: Point::default(),
         }
     }
@@ -31,19 +36,32 @@ impl Render for TabDrag {
             .pt(self.position.y - px(18.0))
             .child(
                 div()
-                    .h(px(36.0))
+                    .h(px(32.0))
                     .w(px(154.0))
                     .flex()
+                    .flex_none()
                     .items_center()
+                    .gap_2()
                     .px_3()
-                    .rounded_t(px(7.0))
-                    .border_1()
-                    .border_color(rgb(0x60a5fa))
-                    .bg(rgb(0x111827))
+                    .rounded(px(6.0))
+                    .bg(gpui::white().opacity(0.08))
                     .text_sm()
                     .text_color(rgb(0xffffff))
                     .shadow_lg()
-                    .child("Blank"),
+                    .child(
+                        Icon::new(IconName::File)
+                            .size(16.0)
+                            .color(rgb(0xe5e7eb))
+                            .into_any_element(),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(self.title.clone()),
+                    ),
             )
     }
 }

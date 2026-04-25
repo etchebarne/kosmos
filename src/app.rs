@@ -315,9 +315,9 @@ impl IdeApp {
             .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
                 cx.stop_propagation();
                 match drop_zone {
-                    DropZone::Center => this.move_tab_to_pane(*drag, pane_id, cx),
+                    DropZone::Center => this.move_tab_to_pane(drag.clone(), pane_id, cx),
                     DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
-                        this.split_pane(*drag, pane_id, drop_zone, cx)
+                        this.split_pane(drag.clone(), pane_id, drop_zone, cx)
                     }
                 }
             }))
@@ -368,10 +368,10 @@ impl IdeApp {
             })
             .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
                 cx.stop_propagation();
-                this.move_tab_before(*drag, pane_id, id, cx);
+                this.move_tab_before(drag.clone(), pane_id, id, cx);
             }))
-            .on_drag(TabDrag::new(id, pane_id), |drag, position, _, cx| {
-                cx.new(|_| drag.position(position))
+            .on_drag(TabDrag::new(id, pane_id, tab.title.clone()), |drag, position, _, cx| {
+                cx.new(|_| drag.clone().position(position))
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_tab(pane_id, id, cx);
