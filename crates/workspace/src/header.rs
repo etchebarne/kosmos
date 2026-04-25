@@ -37,7 +37,7 @@ pub fn render_header<T: HeaderDelegate>(
     let theme = *cx.theme();
     div()
         .id("app-header")
-        .h(px(36.0))
+        .h(px(40.0))
         .w_full()
         .flex()
         .items_center()
