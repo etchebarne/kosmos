@@ -1,10 +1,11 @@
 use gpui::{
     AnyElement, Context, DragMoveEvent, IntoElement, PathPromptOptions, Render, SharedString,
-    Window, div, prelude::*, px, relative, rgb,
+    Window, div, prelude::*, px, relative,
 };
 
 use icons::{Icon, IconName};
 use tabs::{SplitResize, TabDrag};
+use theme::{ActiveTheme, Theme};
 use workspace::{
     DropZone, HeaderDelegate, HeaderMenu, Pane, PaneNode, SplitAxis, Tab, WorkspaceDelegate,
     WorkspaceManager, render_header, render_landing,
@@ -106,6 +107,7 @@ impl IdeApp {
     }
 
     fn render_node(&self, node: &PaneNode, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
         match node {
             PaneNode::Leaf(pane) => self.render_pane(pane, cx),
             PaneNode::Split {
@@ -122,7 +124,7 @@ impl IdeApp {
                 .flex()
                 .when(*axis == SplitAxis::Row, |this| this.flex_row())
                 .when(*axis == SplitAxis::Column, |this| this.flex_col())
-                .bg(rgb(0x0b1120))
+                .bg(theme.bg_root)
                 .on_drag_move(
                     cx.listener({
                         let split_id = *id;
@@ -159,7 +161,7 @@ impl IdeApp {
                         })
                         .child(self.render_node(first, cx)),
                 )
-                .child(self.render_resize_handle(*id, *axis))
+                .child(self.render_resize_handle(*id, *axis, &theme))
                 .child(
                     div()
                         .flex_1()
@@ -171,12 +173,14 @@ impl IdeApp {
         }
     }
 
-    fn render_resize_handle(&self, split_id: usize, axis: SplitAxis) -> AnyElement {
+    fn render_resize_handle(&self, split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyElement {
+        let bg = theme.bg_hover;
+        let hover_bg = theme.accent;
         div()
             .id(("resize", split_id))
             .flex_none()
-            .bg(rgb(0x1f2937))
-            .hover(|this| this.bg(rgb(0x3b82f6)))
+            .bg(bg)
+            .hover(move |this| this.bg(hover_bg))
             .when(axis == SplitAxis::Row, |this| {
                 this.w(px(6.0)).h_full().cursor_col_resize()
             })
@@ -191,6 +195,7 @@ impl IdeApp {
     }
 
     fn render_pane(&self, pane: &Pane, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
         let active_title = pane
             .tabs
             .iter()
@@ -212,10 +217,10 @@ impl IdeApp {
             .flex()
             .flex_col()
             .rounded(px(8.0))
-            .bg(rgb(0x0f172a))
+            .bg(theme.bg_surface)
             .border_1()
-            .border_color(rgb(0x263244))
-            .text_color(rgb(0xe5e7eb))
+            .border_color(theme.border)
+            .text_color(theme.text)
             .child(
                 div()
                     .h(px(44.0))
@@ -224,10 +229,10 @@ impl IdeApp {
                     .items_center()
                     .gap_1()
                     .p(px(6.0))
-                    .bg(rgb(0x111827))
+                    .bg(theme.bg_elevated)
                     .rounded_t(px(7.0))
                     .border_b_1()
-                    .border_color(rgb(0x2d3748))
+                    .border_color(theme.border_subtle)
                     .overflow_hidden()
                     .child(
                         div()
@@ -248,9 +253,9 @@ impl IdeApp {
                                     .items_center()
                                     .justify_center()
                                     .rounded(px(6.0))
-                                    .text_color(rgb(0xcbd5e1))
-                                    .hover(|this| {
-                                        this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff))
+                                    .text_color(theme.text_muted)
+                                    .hover(move |this| {
+                                        this.bg(theme.bg_hover).text_color(theme.text_emphasis)
                                     })
                                     .on_click(cx.listener({
                                         let pane_id = pane.id;
@@ -258,7 +263,7 @@ impl IdeApp {
                                             this.add_tab(pane_id, cx);
                                         }
                                     }))
-                                    .child(Icon::new(IconName::Add).color(rgb(0xcbd5e1))),
+                                    .child(Icon::new(IconName::Add).color(theme.text_muted)),
                             ),
                     ),
             )
@@ -270,7 +275,7 @@ impl IdeApp {
                     .items_center()
                     .justify_center()
                     .text_xl()
-                    .text_color(rgb(0x94a3b8))
+                    .text_color(theme.text_subtle)
                     .child(active_title),
             )
             .child(self.render_drop_zone(pane.id, DropZone::Center, cx))
@@ -342,6 +347,7 @@ impl IdeApp {
         tab: &Tab,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + 'static {
+        let theme = *cx.theme();
         let pane_id = pane.id;
         let id = tab.id;
         let is_active = pane.active_tab == id;
@@ -365,17 +371,20 @@ impl IdeApp {
             .rounded(px(6.0))
             .when(is_active, |this| this.bg(gpui::white().opacity(0.08)))
             .text_color(if is_active {
-                rgb(0xffffff)
+                theme.text_emphasis
             } else {
-                rgb(0xcbd5e1)
+                theme.text_muted
             })
             .text_sm()
-            .hover(|this| this.bg(rgb(0x1f2937)))
-            .drag_over::<TabDrag>(move |this, drag, _, _| {
-                if drag.id == id {
-                    this
-                } else {
-                    this.bg(rgb(0x1e3a5f))
+            .hover(move |this| this.bg(theme.bg_hover))
+            .drag_over::<TabDrag>({
+                let drag_over_bg = theme.bg_drag_over;
+                move |this, drag, _, _| {
+                    if drag.id == id {
+                        this
+                    } else {
+                        this.bg(drag_over_bg)
+                    }
                 }
             })
             .can_drop(move |drag, _, _| {
@@ -396,9 +405,9 @@ impl IdeApp {
                 Icon::new(IconName::File)
                     .size(16.0)
                     .color(if is_active {
-                        rgb(0xe5e7eb)
+                        theme.text
                     } else {
-                        rgb(0x94a3b8)
+                        theme.text_subtle
                     })
                     .into_any_element(),
             )
@@ -418,17 +427,18 @@ impl IdeApp {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0))
-                    .text_color(rgb(0xe5e7eb))
+                    .text_color(theme.text)
                     .invisible()
                     .when(can_close, |this| {
+                        let close_hover_bg = theme.bg_close_hover;
                         this.group_hover(hover_group, |this| this.visible())
-                            .hover(|this| this.bg(rgb(0x374151)))
+                            .hover(move |this| this.bg(close_hover_bg))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.close_tab(pane_id, id, cx);
                             }))
                     })
-                    .child(Icon::new(IconName::Close).size(14.0).color(rgb(0xe5e7eb))),
+                    .child(Icon::new(IconName::Close).size(14.0).color(theme.text)),
             )
     }
 }
@@ -479,6 +489,7 @@ impl WorkspaceDelegate for IdeApp {
 
 impl Render for IdeApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
         let main_content = match self.workspaces.active_pane_tree() {
             Some(tree) => self.render_node(tree.root(), cx),
             None => render_landing(cx),
@@ -492,10 +503,10 @@ impl Render for IdeApp {
             .flex_col()
             .gap_1()
             .p_1()
-            .bg(rgb(0x0b1120))
+            .bg(theme.bg_root)
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
             .child(render_header(self.active_menu, &self.workspaces, cx))
             .child(div().flex_1().min_h_0().child(main_content))
-            .child(render_bottom_bar())
+            .child(render_bottom_bar(&theme))
     }
 }

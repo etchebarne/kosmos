@@ -2,8 +2,9 @@ mod assets;
 
 pub use assets::*;
 
-use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, px, rgb, svg};
+use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, px, svg};
 use icondata_core::Icon as IconData;
+use theme::ActiveTheme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconName {
@@ -114,7 +115,7 @@ fn push_attr(svg: &mut String, name: &str, value: Option<&str>) {
 pub struct Icon {
     name: IconName,
     size: f32,
-    color: Rgba,
+    color: Option<Rgba>,
 }
 
 impl Icon {
@@ -122,7 +123,7 @@ impl Icon {
         Self {
             name,
             size: 16.0,
-            color: rgb(0xcbd5e1),
+            color: None,
         }
     }
 
@@ -132,17 +133,18 @@ impl Icon {
     }
 
     pub fn color(mut self, color: Rgba) -> Self {
-        self.color = color;
+        self.color = Some(color);
         self
     }
 }
 
 impl RenderOnce for Icon {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = self.color.unwrap_or_else(|| cx.theme().text_muted);
         svg()
             .path(self.name.path())
             .size(px(self.size))
             .flex_none()
-            .text_color(self.color)
+            .text_color(color)
     }
 }

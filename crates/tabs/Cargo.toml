@@ -7,3 +7,4 @@ edition = "2024"
 gpui = { workspace = true }
 icons = { path = "../icons" }
 workspace = { path = "../workspace" }
+theme = { path = "../theme" }

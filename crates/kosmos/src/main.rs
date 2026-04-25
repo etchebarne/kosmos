@@ -12,6 +12,7 @@ fn main() {
     Application::new()
         .with_assets(AppAssets)
         .run(|cx: &mut App| {
+            cx.set_global(theme::Theme::dark());
             let window_bounds = persistence::load_window_bounds().unwrap_or_else(|| {
                 let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
                 WindowBounds::Windowed(bounds)

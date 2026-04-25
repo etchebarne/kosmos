@@ -7,11 +7,12 @@ pub use pane_tree::*;
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, px, rgb,
+    AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 
 use icons::{Icon, IconName};
+use theme::ActiveTheme;
 
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);
@@ -146,6 +147,7 @@ pub fn render_workspace_bar<T: WorkspaceDelegate>(
 }
 
 fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let theme = *cx.theme();
     div()
         .id("workspace-add")
         .size(px(28.0))
@@ -153,14 +155,14 @@ fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
         .items_center()
         .justify_center()
         .rounded(px(5.0))
-        .text_color(rgb(0xcbd5e1))
-        .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
+        .text_color(theme.text_muted)
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _, _, cx| {
             cx.stop_propagation();
             this.open_workspace_picker(cx);
         }))
-        .child(Icon::new(IconName::Add).size(16.0).color(rgb(0xcbd5e1)))
+        .child(Icon::new(IconName::Add).size(16.0).color(theme.text_muted))
         .into_any_element()
 }
 
@@ -169,6 +171,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
     is_active: bool,
     cx: &mut Context<T>,
 ) -> AnyElement {
+    let theme = *cx.theme();
     let id = workspace.id;
     div()
         .id(("workspace", id))
@@ -179,16 +182,16 @@ fn render_workspace_button<T: WorkspaceDelegate>(
         .rounded(px(5.0))
         .text_sm()
         .bg(if is_active {
-            rgb(0x263244)
+            theme.bg_selected
         } else {
-            rgb(0x0f172a)
+            theme.bg_surface
         })
         .text_color(if is_active {
-            rgb(0xffffff)
+            theme.text_emphasis
         } else {
-            rgb(0xcbd5e1)
+            theme.text_muted
         })
-        .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
@@ -199,6 +202,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
 }
 
 pub fn render_landing<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let theme = *cx.theme();
     div()
         .size_full()
         .flex()
@@ -206,15 +210,15 @@ pub fn render_landing<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
         .items_center()
         .justify_center()
         .gap_3()
-        .bg(rgb(0x0f172a))
+        .bg(theme.bg_surface)
         .rounded(px(8.0))
         .border_1()
-        .border_color(rgb(0x263244))
-        .text_color(rgb(0xe5e7eb))
+        .border_color(theme.border)
+        .text_color(theme.text)
         .child(div().text_2xl().child("Welcome to Kosmos!"))
         .child(
             div()
-                .text_color(rgb(0x94a3b8))
+                .text_color(theme.text_subtle)
                 .child("Open your first workspace to get started"),
         )
         .child(
@@ -227,15 +231,17 @@ pub fn render_landing<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
                 .px(px(16.0))
                 .py(px(8.0))
                 .rounded(px(6.0))
-                .bg(rgb(0x263244))
-                .text_color(rgb(0xe5e7eb))
+                .bg(theme.bg_selected)
+                .text_color(theme.text)
                 .text_sm()
-                .hover(|this| this.bg(rgb(0x334155)).text_color(rgb(0xffffff)))
+                .hover(move |this| {
+                    this.bg(theme.bg_hover_strong).text_color(theme.text_emphasis)
+                })
                 .on_click(cx.listener(|this, _, _, cx| {
                     cx.stop_propagation();
                     this.open_workspace_picker(cx);
                 }))
-                .child(Icon::new(IconName::Add).size(16.0).color(rgb(0xe5e7eb)))
+                .child(Icon::new(IconName::Add).size(16.0).color(theme.text))
                 .child("Open Workspace"),
         )
         .into_any_element()

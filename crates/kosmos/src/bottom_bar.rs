@@ -1,6 +1,7 @@
-use gpui::{AnyElement, IntoElement, div, prelude::*, px, rgb};
+use gpui::{AnyElement, IntoElement, div, prelude::*, px};
+use theme::Theme;
 
-pub fn render_bottom_bar() -> AnyElement {
+pub fn render_bottom_bar(theme: &Theme) -> AnyElement {
     div()
         .id("app-bottom-bar")
         .h(px(28.0))
@@ -10,11 +11,11 @@ pub fn render_bottom_bar() -> AnyElement {
         .justify_between()
         .px_3()
         .overflow_hidden()
-        .bg(rgb(0x0f172a))
+        .bg(theme.bg_surface)
         .rounded(px(8.0))
         .border_1()
-        .border_color(rgb(0x263244))
-        .text_color(rgb(0xdbe4ef))
+        .border_color(theme.border)
+        .text_color(theme.text_header)
         .text_sm()
         .child(div().child("Ready"))
         .child(div().child("UTF-8"))

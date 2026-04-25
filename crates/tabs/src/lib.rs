@@ -1,8 +1,9 @@
 use gpui::{
-    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, px, rgb,
+    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, px,
 };
 
 use icons::{Icon, IconName};
+use theme::ActiveTheme;
 use workspace::SplitAxis;
 
 #[derive(Clone)]
@@ -30,7 +31,8 @@ impl TabDrag {
 }
 
 impl Render for TabDrag {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
         div()
             .pl(self.position.x - px(70.0))
             .pt(self.position.y - px(18.0))
@@ -46,12 +48,12 @@ impl Render for TabDrag {
                     .rounded(px(6.0))
                     .bg(gpui::white().opacity(0.08))
                     .text_sm()
-                    .text_color(rgb(0xffffff))
+                    .text_color(theme.text_emphasis)
                     .shadow_lg()
                     .child(
                         Icon::new(IconName::File)
                             .size(16.0)
-                            .color(rgb(0xe5e7eb))
+                            .color(theme.text)
                             .into_any_element(),
                     )
                     .child(

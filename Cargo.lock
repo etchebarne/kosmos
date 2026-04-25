@@ -2533,6 +2533,7 @@ dependencies = [
  "gpui",
  "icondata_core",
  "icondata_vs",
+ "theme",
 ]
 
 [[package]]
@@ -2842,6 +2843,7 @@ dependencies = [
  "icons",
  "persistence",
  "tabs",
+ "theme",
  "workspace",
 ]
 
@@ -5209,6 +5211,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "icons",
+ "theme",
  "workspace",
 ]
 
@@ -5282,6 +5285,9 @@ version = "0.1.0"
 [[package]]
 name = "theme"
 version = "0.1.0"
+dependencies = [
+ "gpui",
+]
 
 [[package]]
 name = "thiserror"
@@ -6784,6 +6790,7 @@ dependencies = [
  "gpui",
  "icons",
  "serde",
+ "theme",
 ]
 
 [[package]]

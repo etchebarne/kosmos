@@ -1,9 +1,10 @@
 use gpui::{
     AnyElement, Context, IntoElement, MouseButton, Window, WindowControlArea, deferred, div,
-    prelude::*, px, rgb,
+    prelude::*, px,
 };
 
 use icons::{Icon, IconName};
+use theme::{ActiveTheme, Theme};
 
 use crate::{WorkspaceDelegate, WorkspaceManager, render_workspace_bar};
 
@@ -33,6 +34,7 @@ pub fn render_header<T: HeaderDelegate>(
     workspace_manager: &WorkspaceManager,
     cx: &mut Context<T>,
 ) -> AnyElement {
+    let theme = *cx.theme();
     div()
         .id("app-header")
         .h(px(36.0))
@@ -40,11 +42,11 @@ pub fn render_header<T: HeaderDelegate>(
         .flex()
         .items_center()
         .justify_between()
-        .bg(rgb(0x0f172a))
+        .bg(theme.bg_surface)
         .rounded(px(8.0))
         .border_1()
-        .border_color(rgb(0x263244))
-        .text_color(rgb(0xdbe4ef))
+        .border_color(theme.border)
+        .text_color(theme.text_header)
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             cx.stop_propagation();
             window.start_window_move();
@@ -98,26 +100,29 @@ pub fn render_header<T: HeaderDelegate>(
                 .child(render_window_button(
                     "window-minimize",
                     IconName::ChromeMinimize,
-                    rgb(0x334155),
+                    theme.bg_hover_strong,
                     WindowControlArea::Min,
                     false,
                     |window| window.minimize_window(),
+                    &theme,
                 ))
                 .child(render_window_button(
                     "window-maximize",
                     IconName::ChromeMaximize,
-                    rgb(0x334155),
+                    theme.bg_hover_strong,
                     WindowControlArea::Max,
                     false,
                     |window| window.zoom_window(),
+                    &theme,
                 ))
                 .child(render_window_button(
                     "window-close",
                     IconName::ChromeClose,
-                    rgb(0xdc2626),
+                    theme.danger,
                     WindowControlArea::Close,
                     true,
                     |window| window.remove_window(),
+                    &theme,
                 )),
         )
         .into_any_element()
@@ -130,8 +135,9 @@ fn render_menu_button<T: HeaderDelegate>(
     items: &'static [&'static str],
     cx: &mut Context<T>,
 ) -> impl IntoElement + 'static {
+    let theme = *cx.theme();
     let is_active = active_menu == Some(menu);
-    let dropdown = is_active.then(|| render_menu_dropdown(menu, items));
+    let dropdown = is_active.then(|| render_menu_dropdown(menu, items, &theme));
 
     div()
         .id(("menu-button", menu.id()))
@@ -143,11 +149,11 @@ fn render_menu_button<T: HeaderDelegate>(
         .rounded(px(5.0))
         .text_sm()
         .bg(if is_active {
-            rgb(0x263244)
+            theme.bg_selected
         } else {
-            rgb(0x0f172a)
+            theme.bg_surface
         })
-        .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
@@ -157,7 +163,15 @@ fn render_menu_button<T: HeaderDelegate>(
         .children(dropdown)
 }
 
-fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement {
+fn render_menu_dropdown(
+    menu: HeaderMenu,
+    items: &[&'static str],
+    theme: &Theme,
+) -> AnyElement {
+    let item_text = theme.text_header;
+    let item_hover_bg = theme.bg_selected;
+    let item_hover_text = theme.text_emphasis;
+
     let mut item_elements = Vec::new();
     for (index, item) in items.iter().enumerate() {
         item_elements.push(
@@ -169,8 +183,8 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
                 .items_center()
                 .rounded(px(4.0))
                 .text_sm()
-                .text_color(rgb(0xdbe4ef))
-                .hover(|this| this.bg(rgb(0x263244)).text_color(rgb(0xffffff)))
+                .text_color(item_text)
+                .hover(move |this| this.bg(item_hover_bg).text_color(item_hover_text))
                 .child(*item),
         );
     }
@@ -188,8 +202,8 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
             .gap_1()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(0x334155))
-            .bg(rgb(0x111827))
+            .border_color(theme.border_strong)
+            .bg(theme.bg_elevated)
             .shadow_lg()
             .block_mouse_except_scroll()
             .children(item_elements),
@@ -204,7 +218,10 @@ fn render_window_button(
     control_area: WindowControlArea,
     round_right: bool,
     action: impl Fn(&mut Window) + 'static,
+    theme: &Theme,
 ) -> impl IntoElement + 'static {
+    let text_color = theme.text_muted;
+    let hover_text = theme.text_emphasis;
     div()
         .id(id)
         .h_full()
@@ -213,14 +230,14 @@ fn render_window_button(
         .items_center()
         .justify_center()
         .text_sm()
-        .text_color(rgb(0xcbd5e1))
+        .text_color(text_color)
         .when(round_right, |this| this.rounded_r(px(7.0)))
         .window_control_area(control_area)
-        .hover(move |this| this.bg(hover_background).text_color(rgb(0xffffff)))
+        .hover(move |this| this.bg(hover_background).text_color(hover_text))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             action(window);
         })
-        .child(Icon::new(icon).size(16.0).color(rgb(0xcbd5e1)))
+        .child(Icon::new(icon).size(16.0).color(text_color))
 }

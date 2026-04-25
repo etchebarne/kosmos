@@ -9,3 +9,4 @@ icons = { path = "../icons" }
 workspace = { path = "../workspace" }
 tabs = { path = "../tabs" }
 persistence = { path = "../persistence" }
+theme = { path = "../theme" }
