@@ -28,6 +28,7 @@ fn main() {
                     window_bounds: Some(window_bounds),
                     titlebar: None,
                     window_decorations: Some(WindowDecorations::Client),
+                    window_min_size: Some(size(px(800.0), px(600.0))),
                     ..Default::default()
                 },
                 |window, cx| {
