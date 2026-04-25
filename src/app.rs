@@ -347,29 +347,19 @@ impl IdeApp {
             .w(px(154.0))
             .px_3()
             .rounded(px(6.0))
-            .border_1()
-            .border_color(if is_active {
-                rgb(0x3b82f6)
-            } else {
-                rgb(0x2d3748)
-            })
-            .bg(if is_active {
-                rgb(0x111827)
-            } else {
-                rgb(0x1f2937)
-            })
+            .when(is_active, |this| this.bg(gpui::white().opacity(0.08)))
             .text_color(if is_active {
                 rgb(0xffffff)
             } else {
                 rgb(0xcbd5e1)
             })
             .text_sm()
-            .hover(|this| this.bg(rgb(0x273449)))
+            .hover(|this| this.bg(rgb(0x1f2937)))
             .drag_over::<TabDrag>(move |this, drag, _, _| {
                 if drag.id == id {
                     this
                 } else {
-                    this.border_color(rgb(0x60a5fa)).bg(rgb(0x1e3a5f))
+                    this.bg(rgb(0x1e3a5f))
                 }
             })
             .can_drop(move |drag, _, _| {
