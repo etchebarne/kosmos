@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+gix = "0.82.0"
 gpui = { version = "*" }
 icondata_core = "0.1"
 icondata_vs = "0.1"
