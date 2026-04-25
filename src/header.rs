@@ -192,6 +192,7 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
         .border_color(rgb(0x334155))
         .bg(rgb(0x111827))
         .shadow_lg()
+        .block_mouse_except_scroll()
         .children(item_elements)
         .into_any_element()
 }
