@@ -229,7 +229,6 @@ impl IdeApp {
                             .justify_center()
                             .rounded(px(6.0))
                             .text_color(rgb(0xcbd5e1))
-                            .cursor_pointer()
                             .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
                             .on_click(cx.listener({
                                 let pane_id = pane.id;
@@ -354,7 +353,6 @@ impl IdeApp {
                 rgb(0xcbd5e1)
             })
             .text_sm()
-            .cursor_move()
             .hover(|this| this.bg(rgb(0x273449)))
             .drag_over::<TabDrag>(move |this, drag, _, _| {
                 if drag.id == id {

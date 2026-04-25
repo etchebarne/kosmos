@@ -41,7 +41,6 @@ pub fn render_header<T: HeaderDelegate>(
         .border_b_1()
         .border_color(rgb(0x253044))
         .text_color(rgb(0xdbe4ef))
-        .cursor_move()
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             cx.stop_propagation();
             window.start_window_move();
@@ -85,7 +84,6 @@ pub fn render_header<T: HeaderDelegate>(
                 .child(render_window_button(
                     "window-minimize",
                     IconName::ChromeMinimize,
-                    rgb(0x1f2937),
                     rgb(0x334155),
                     WindowControlArea::Min,
                     |window| window.minimize_window(),
@@ -93,7 +91,6 @@ pub fn render_header<T: HeaderDelegate>(
                 .child(render_window_button(
                     "window-maximize",
                     IconName::ChromeMaximize,
-                    rgb(0x1f2937),
                     rgb(0x334155),
                     WindowControlArea::Max,
                     |window| window.zoom_window(),
@@ -101,7 +98,6 @@ pub fn render_header<T: HeaderDelegate>(
                 .child(render_window_button(
                     "window-close",
                     IconName::ChromeClose,
-                    rgb(0x1f2937),
                     rgb(0xdc2626),
                     WindowControlArea::Close,
                     |window| window.remove_window(),
@@ -143,7 +139,6 @@ fn render_menu_button<T: HeaderDelegate>(
         .items_center()
         .rounded(px(5.0))
         .text_sm()
-        .cursor_pointer()
         .bg(if is_active {
             rgb(0x263244)
         } else {
@@ -177,7 +172,6 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
                 .rounded(px(4.0))
                 .text_sm()
                 .text_color(rgb(0xdbe4ef))
-                .cursor_pointer()
                 .hover(|this| this.bg(rgb(0x263244)).text_color(rgb(0xffffff)))
                 .child(*item),
         );
@@ -205,7 +199,6 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
 fn render_window_button(
     id: &'static str,
     icon: IconName,
-    background: gpui::Rgba,
     hover_background: gpui::Rgba,
     control_area: WindowControlArea,
     action: impl Fn(&mut Window) + 'static,
@@ -219,8 +212,6 @@ fn render_window_button(
         .justify_center()
         .text_sm()
         .text_color(rgb(0xcbd5e1))
-        .bg(background)
-        .cursor_pointer()
         .window_control_area(control_area)
         .hover(move |this| this.bg(hover_background).text_color(rgb(0xffffff)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
