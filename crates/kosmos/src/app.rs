@@ -219,10 +219,23 @@ impl IdeApp {
             .find(|tab| tab.id == pane.active_tab)
             .map(|tab| tab.title.clone())
             .unwrap_or_else(|| "Blank".into());
-        let mut tab_elements = Vec::new();
+        let mut tab_elements: Vec<AnyElement> = Vec::new();
 
-        for tab in &pane.tabs {
-            tab_elements.push(self.render_tab(pane, tab, cx));
+        for (i, tab) in pane.tabs.iter().enumerate() {
+            if i > 0 {
+                let prev_tab = &pane.tabs[i - 1];
+                let show_divider =
+                    prev_tab.id != pane.active_tab && tab.id != pane.active_tab;
+                tab_elements.push(
+                    div()
+                        .w(px(1.0))
+                        .h(px(16.0))
+                        .flex_none()
+                        .when(show_divider, |this| this.bg(theme.border_strong))
+                        .into_any_element(),
+                );
+            }
+            tab_elements.push(self.render_tab(pane, tab, cx).into_any_element());
         }
 
         div()
@@ -254,7 +267,7 @@ impl IdeApp {
                             .min_w_0()
                             .flex()
                             .items_center()
-                            .gap_1()
+                            .gap(px(2.0))
                             .overflow_x_scroll()
                             .children(tab_elements)
                             .child(
@@ -380,7 +393,7 @@ impl IdeApp {
             .gap_2()
             .h(px(32.0))
             .w(px(154.0))
-            .px_3()
+            .px_2()
             .rounded(px(6.0))
             .when(is_active, |this| this.bg(gpui::white().opacity(0.08)))
             .text_color(if is_active {
