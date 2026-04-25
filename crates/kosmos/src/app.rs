@@ -304,12 +304,31 @@ impl IdeApp {
                     .text_color(theme.text_subtle)
                     .child(active_title),
             )
-            .child(self.render_drop_zone(pane.id, DropZone::Center, cx))
-            .child(self.render_drop_zone(pane.id, DropZone::Left, cx))
-            .child(self.render_drop_zone(pane.id, DropZone::Right, cx))
-            .child(self.render_drop_zone(pane.id, DropZone::Top, cx))
-            .child(self.render_drop_zone(pane.id, DropZone::Bottom, cx))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(44.0))
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .child(self.render_drop_zone(pane.id, DropZone::Center, cx))
+                    .child(self.render_drop_zone(pane.id, DropZone::Left, cx))
+                    .child(self.render_drop_zone(pane.id, DropZone::Right, cx))
+                    .child(self.render_drop_zone(pane.id, DropZone::Top, cx))
+                    .child(self.render_drop_zone(pane.id, DropZone::Bottom, cx)),
+            )
             .into_any_element()
+    }
+
+    fn drop_zone_group_name(pane_id: usize, drop_zone: DropZone) -> String {
+        let suffix = match drop_zone {
+            DropZone::Center => "center",
+            DropZone::Left => "left",
+            DropZone::Right => "right",
+            DropZone::Top => "top",
+            DropZone::Bottom => "bottom",
+        };
+        format!("drop-zone-{pane_id}-{suffix}")
     }
 
     fn render_drop_zone(
@@ -318,6 +337,7 @@ impl IdeApp {
         drop_zone: DropZone,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let theme = *cx.theme();
         let id = match drop_zone {
             DropZone::Center => 0,
             DropZone::Left => 1,
@@ -328,32 +348,64 @@ impl IdeApp {
 
         div()
             .id(("drop-zone", pane_id * 10 + id))
+            .group(Self::drop_zone_group_name(pane_id, drop_zone))
             .absolute()
             .when(drop_zone == DropZone::Center, |this| {
-                this.top(px(108.0))
-                    .bottom(px(64.0))
-                    .left(px(64.0))
-                    .right(px(64.0))
+                this.top(relative(0.25))
+                    .bottom(relative(0.25))
+                    .left(relative(0.25))
+                    .right(relative(0.25))
             })
             .when(drop_zone == DropZone::Left, |this| {
-                this.top(px(44.0)).bottom_0().left_0().w(px(64.0))
+                this.top(relative(0.25))
+                    .bottom(relative(0.25))
+                    .left_0()
+                    .w(relative(0.25))
             })
             .when(drop_zone == DropZone::Right, |this| {
-                this.top(px(44.0)).bottom_0().right_0().w(px(64.0))
+                this.top(relative(0.25))
+                    .bottom(relative(0.25))
+                    .right_0()
+                    .w(relative(0.25))
             })
             .when(drop_zone == DropZone::Top, |this| {
-                this.top(px(44.0)).left_0().right_0().h(px(64.0))
+                this.top_0().left_0().right_0().h(relative(0.25))
             })
             .when(drop_zone == DropZone::Bottom, |this| {
-                this.bottom_0().left_0().right_0().h(px(64.0))
+                this.bottom_0().left_0().right_0().h(relative(0.25))
             })
-            .drag_over::<TabDrag>(move |this, _, _, _| {
-                this.bg(gpui::blue().opacity(if drop_zone == DropZone::Center {
-                    0.08
-                } else {
-                    0.18
-                }))
-            })
+            .when(
+                !matches!(drop_zone, DropZone::Left | DropZone::Right),
+                |this| {
+                    this.drag_over::<TabDrag>(move |s, _, _, _| {
+                        let alpha = if drop_zone == DropZone::Center {
+                            0.08
+                        } else {
+                            0.18
+                        };
+                        s.bg(gpui::Hsla::from(theme.accent).opacity(alpha))
+                    })
+                },
+            )
+            .when(
+                matches!(drop_zone, DropZone::Left | DropZone::Right),
+                |this| {
+                    let group_name = Self::drop_zone_group_name(pane_id, drop_zone);
+                    let highlight_bg = gpui::Hsla::from(theme.accent).opacity(0.18);
+                    this.child(
+                        div()
+                            .absolute()
+                            .top(relative(-0.5))
+                            .bottom(relative(-0.5))
+                            .left_0()
+                            .right_0()
+                            // No-op hover forces GPUI to insert a hitbox; without it,
+                            // group_drag_over styles are skipped and the highlight never paints.
+                            .hover(|s| s)
+                            .group_drag_over::<TabDrag>(group_name, move |s| s.bg(highlight_bg)),
+                    )
+                },
+            )
             .can_drop(|drag, _, _| drag.downcast_ref::<TabDrag>().is_some())
             .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
                 cx.stop_propagation();
