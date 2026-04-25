@@ -3,8 +3,9 @@ use gpui::{
     px, relative, rgb,
 };
 
+use crate::bottom_bar::render_bottom_bar;
 use crate::drag::{SplitResize, TabDrag};
-use crate::header::{HeaderDelegate, HeaderMenu, render_active_menu, render_header};
+use crate::header::{HeaderDelegate, HeaderMenu, render_header};
 use crate::icon::{Icon, IconName};
 use crate::pane_tree::{DropZone, Pane, PaneNode, PaneTree, SplitAxis, Tab};
 
@@ -439,14 +440,14 @@ impl HeaderDelegate for IdeApp {
 
 impl Render for IdeApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_menu = render_active_menu(self.active_menu);
-
         div()
             .id("app-root")
             .relative()
             .size_full()
             .flex()
             .flex_col()
+            .gap_1()
+            .p_1()
             .bg(rgb(0x0b1120))
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
             .child(render_header(self.active_menu, cx))
@@ -454,9 +455,8 @@ impl Render for IdeApp {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .p_1()
                     .child(self.render_node(self.pane_tree.root(), cx)),
             )
-            .children(active_menu)
+            .child(render_bottom_bar())
     }
 }

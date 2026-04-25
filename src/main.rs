@@ -1,5 +1,6 @@
 mod app;
 mod assets;
+mod bottom_bar;
 mod drag;
 mod header;
 mod icon;

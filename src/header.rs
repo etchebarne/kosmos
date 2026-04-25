@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, Window, WindowControlArea, div, prelude::*, px,
-    rgb,
+    AnyElement, Context, IntoElement, MouseButton, Window, WindowControlArea, deferred, div,
+    prelude::*, px, rgb,
 };
 
 use crate::icon::{Icon, IconName};
@@ -38,8 +38,9 @@ pub fn render_header<T: HeaderDelegate>(
         .items_center()
         .justify_between()
         .bg(rgb(0x0f172a))
-        .border_b_1()
-        .border_color(rgb(0x253044))
+        .rounded(px(8.0))
+        .border_1()
+        .border_color(rgb(0x263244))
         .text_color(rgb(0xdbe4ef))
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             cx.stop_propagation();
@@ -50,23 +51,26 @@ pub fn render_header<T: HeaderDelegate>(
                 .flex()
                 .items_center()
                 .gap_1()
-                .px_2()
+                .px_1()
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::File,
                     "File",
+                    &["New File", "Open...", "Save", "Save As..."],
                     cx,
                 ))
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::Edit,
                     "Edit",
+                    &["Undo", "Redo", "Cut", "Copy", "Paste"],
                     cx,
                 ))
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::Selection,
                     "Selection",
+                    &["Select All", "Expand Selection", "Shrink Selection"],
                     cx,
                 )),
         )
@@ -86,6 +90,7 @@ pub fn render_header<T: HeaderDelegate>(
                     IconName::ChromeMinimize,
                     rgb(0x334155),
                     WindowControlArea::Min,
+                    false,
                     |window| window.minimize_window(),
                 ))
                 .child(render_window_button(
@@ -93,6 +98,7 @@ pub fn render_header<T: HeaderDelegate>(
                     IconName::ChromeMaximize,
                     rgb(0x334155),
                     WindowControlArea::Max,
+                    false,
                     |window| window.zoom_window(),
                 ))
                 .child(render_window_button(
@@ -100,39 +106,26 @@ pub fn render_header<T: HeaderDelegate>(
                     IconName::ChromeClose,
                     rgb(0xdc2626),
                     WindowControlArea::Close,
+                    true,
                     |window| window.remove_window(),
                 )),
         )
         .into_any_element()
 }
 
-pub fn render_active_menu(active_menu: Option<HeaderMenu>) -> Option<AnyElement> {
-    match active_menu? {
-        HeaderMenu::File => Some(render_menu_dropdown(
-            HeaderMenu::File,
-            &["New File", "Open...", "Save", "Save As..."],
-        )),
-        HeaderMenu::Edit => Some(render_menu_dropdown(
-            HeaderMenu::Edit,
-            &["Undo", "Redo", "Cut", "Copy", "Paste"],
-        )),
-        HeaderMenu::Selection => Some(render_menu_dropdown(
-            HeaderMenu::Selection,
-            &["Select All", "Expand Selection", "Shrink Selection"],
-        )),
-    }
-}
-
 fn render_menu_button<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
     menu: HeaderMenu,
     label: &'static str,
+    items: &'static [&'static str],
     cx: &mut Context<T>,
 ) -> impl IntoElement + 'static {
     let is_active = active_menu == Some(menu);
+    let dropdown = is_active.then(|| render_menu_dropdown(menu, items));
 
     div()
         .id(("menu-button", menu.id()))
+        .relative()
         .h(px(28.0))
         .px_3()
         .flex()
@@ -151,15 +144,10 @@ fn render_menu_button<T: HeaderDelegate>(
             this.toggle_header_menu(menu, cx);
         }))
         .child(label)
+        .children(dropdown)
 }
 
 fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement {
-    let left = match menu {
-        HeaderMenu::File => px(8.0),
-        HeaderMenu::Edit => px(56.0),
-        HeaderMenu::Selection => px(104.0),
-    };
-
     let mut item_elements = Vec::new();
     for (index, item) in items.iter().enumerate() {
         item_elements.push(
@@ -177,24 +165,26 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
         );
     }
 
-    div()
-        .id(("menu-dropdown", menu.id()))
-        .absolute()
-        .top(px(40.0))
-        .left(left)
-        .w(px(184.0))
-        .p_1()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .rounded(px(6.0))
-        .border_1()
-        .border_color(rgb(0x334155))
-        .bg(rgb(0x111827))
-        .shadow_lg()
-        .block_mouse_except_scroll()
-        .children(item_elements)
-        .into_any_element()
+    deferred(
+        div()
+            .id(("menu-dropdown", menu.id()))
+            .absolute()
+            .top(px(32.0))
+            .left(px(0.0))
+            .w(px(184.0))
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(0x334155))
+            .bg(rgb(0x111827))
+            .shadow_lg()
+            .block_mouse_except_scroll()
+            .children(item_elements),
+    )
+    .into_any_element()
 }
 
 fn render_window_button(
@@ -202,6 +192,7 @@ fn render_window_button(
     icon: IconName,
     hover_background: gpui::Rgba,
     control_area: WindowControlArea,
+    round_right: bool,
     action: impl Fn(&mut Window) + 'static,
 ) -> impl IntoElement + 'static {
     div()
@@ -213,6 +204,7 @@ fn render_window_button(
         .justify_center()
         .text_sm()
         .text_color(rgb(0xcbd5e1))
+        .when(round_right, |this| this.rounded_r(px(7.0)))
         .window_control_area(control_area)
         .hover(move |this| this.bg(hover_background).text_color(rgb(0xffffff)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
