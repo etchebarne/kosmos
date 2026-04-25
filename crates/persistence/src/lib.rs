@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use gpui::{Bounds, Point, Size, WindowBounds, px};
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::{Workspace, WorkspaceManager};
+use workspace::{Workspace, WorkspaceManager};
 
 const SESSION_VERSION: u32 = 1;
 const WORKSPACE_VERSION: u32 = 1;

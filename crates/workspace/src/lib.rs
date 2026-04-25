@@ -1,3 +1,9 @@
+mod header;
+mod pane_tree;
+
+pub use header::*;
+pub use pane_tree::*;
+
 use std::path::PathBuf;
 
 use gpui::{
@@ -5,8 +11,7 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::icon::{Icon, IconName};
-use crate::pane_tree::PaneTree;
+use icons::{Icon, IconName};
 
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);

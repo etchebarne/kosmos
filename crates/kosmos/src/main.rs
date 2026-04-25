@@ -1,19 +1,12 @@
 mod app;
-mod assets;
 mod bottom_bar;
-mod drag;
-mod header;
-mod icon;
-mod pane_tree;
-mod persistence;
-mod workspace;
 
 use gpui::{
     App, AppContext, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
 };
+use icons::AppAssets;
 
 use crate::app::IdeApp;
-use crate::assets::AppAssets;
 
 fn main() {
     Application::new()

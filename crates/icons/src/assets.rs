@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use gpui::{AssetSource, Result, SharedString};
 
-use crate::icon::IconName;
+use crate::IconName;
 
 pub struct AppAssets;
 

@@ -3,13 +3,14 @@ use gpui::{
     Window, div, prelude::*, px, relative, rgb,
 };
 
+use icons::{Icon, IconName};
+use tabs::{SplitResize, TabDrag};
+use workspace::{
+    DropZone, HeaderDelegate, HeaderMenu, Pane, PaneNode, SplitAxis, Tab, WorkspaceDelegate,
+    WorkspaceManager, render_header, render_landing,
+};
+
 use crate::bottom_bar::render_bottom_bar;
-use crate::drag::{SplitResize, TabDrag};
-use crate::header::{HeaderDelegate, HeaderMenu, render_header};
-use crate::icon::{Icon, IconName};
-use crate::pane_tree::{DropZone, Pane, PaneNode, SplitAxis, Tab};
-use crate::persistence;
-use crate::workspace::{WorkspaceDelegate, WorkspaceManager, render_landing};
 
 pub struct IdeApp {
     active_menu: Option<HeaderMenu>,
@@ -46,7 +47,7 @@ impl IdeApp {
     fn mutate_active_tree(
         &mut self,
         cx: &mut Context<Self>,
-        f: impl FnOnce(&mut crate::pane_tree::PaneTree) -> bool,
+        f: impl FnOnce(&mut workspace::PaneTree) -> bool,
     ) {
         let Some(tree) = self.workspaces.active_pane_tree_mut() else {
             return;

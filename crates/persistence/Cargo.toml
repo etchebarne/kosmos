@@ -1,0 +1,10 @@
+[package]
+name = "persistence"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+workspace = { path = "../workspace" }

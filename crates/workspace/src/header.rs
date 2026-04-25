@@ -3,8 +3,9 @@ use gpui::{
     prelude::*, px, rgb,
 };
 
-use crate::icon::{Icon, IconName};
-use crate::workspace::{WorkspaceDelegate, WorkspaceManager, render_workspace_bar};
+use icons::{Icon, IconName};
+
+use crate::{WorkspaceDelegate, WorkspaceManager, render_workspace_bar};
 
 pub trait HeaderDelegate: WorkspaceDelegate {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);

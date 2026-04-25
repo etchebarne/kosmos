@@ -2,8 +2,8 @@ use gpui::{
     Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, px, rgb,
 };
 
-use crate::icon::{Icon, IconName};
-use crate::pane_tree::SplitAxis;
+use icons::{Icon, IconName};
+use workspace::SplitAxis;
 
 #[derive(Clone)]
 pub struct TabDrag {

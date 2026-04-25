@@ -1,3 +1,7 @@
+mod assets;
+
+pub use assets::*;
+
 use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, px, rgb, svg};
 use icondata_core::Icon as IconData;
 
