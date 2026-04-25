@@ -5,6 +5,7 @@ use gpui::{
 
 use crate::drag::{SplitResize, TabDrag};
 use crate::header::{HeaderDelegate, HeaderMenu, render_active_menu, render_header};
+use crate::icon::{Icon, IconName};
 use crate::pane_tree::{DropZone, Pane, PaneNode, PaneTree, SplitAxis, Tab};
 
 pub struct IdeApp {
@@ -219,7 +220,6 @@ impl IdeApp {
                             .items_center()
                             .justify_center()
                             .rounded(px(6.0))
-                            .text_lg()
                             .text_color(rgb(0xcbd5e1))
                             .cursor_pointer()
                             .hover(|this| this.bg(rgb(0x1f2937)).text_color(rgb(0xffffff)))
@@ -229,7 +229,7 @@ impl IdeApp {
                                     this.add_tab(pane_id, cx);
                                 }
                             }))
-                            .child("+"),
+                            .child(Icon::new(IconName::Add).color(rgb(0xcbd5e1))),
                     ),
             )
             .child(
@@ -370,6 +370,16 @@ impl IdeApp {
                 this.select_tab(pane_id, id, cx);
             }))
             .child(
+                Icon::new(IconName::File)
+                    .size(16.0)
+                    .color(if is_active {
+                        rgb(0xe5e7eb)
+                    } else {
+                        rgb(0x94a3b8)
+                    })
+                    .into_any_element(),
+            )
+            .child(
                 div()
                     .flex_1()
                     .overflow_hidden()
@@ -395,7 +405,7 @@ impl IdeApp {
                                 this.close_tab(pane_id, id, cx);
                             }))
                     })
-                    .child("x"),
+                    .child(Icon::new(IconName::Close).size(14.0).color(rgb(0xe5e7eb))),
             )
     }
 }

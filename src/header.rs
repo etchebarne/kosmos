@@ -3,6 +3,8 @@ use gpui::{
     rgb,
 };
 
+use crate::icon::{Icon, IconName};
+
 pub trait HeaderDelegate: Sized + 'static {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
 }
@@ -82,7 +84,7 @@ pub fn render_header<T: HeaderDelegate>(
                 .h_full()
                 .child(render_window_button(
                     "window-minimize",
-                    "-",
+                    IconName::ChromeMinimize,
                     rgb(0x1f2937),
                     rgb(0x334155),
                     WindowControlArea::Min,
@@ -90,7 +92,7 @@ pub fn render_header<T: HeaderDelegate>(
                 ))
                 .child(render_window_button(
                     "window-maximize",
-                    "[]",
+                    IconName::ChromeMaximize,
                     rgb(0x1f2937),
                     rgb(0x334155),
                     WindowControlArea::Max,
@@ -98,7 +100,7 @@ pub fn render_header<T: HeaderDelegate>(
                 ))
                 .child(render_window_button(
                     "window-close",
-                    "x",
+                    IconName::ChromeClose,
                     rgb(0x1f2937),
                     rgb(0xdc2626),
                     WindowControlArea::Close,
@@ -202,7 +204,7 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str]) -> AnyElement 
 
 fn render_window_button(
     id: &'static str,
-    label: &'static str,
+    icon: IconName,
     background: gpui::Rgba,
     hover_background: gpui::Rgba,
     control_area: WindowControlArea,
@@ -226,5 +228,5 @@ fn render_window_button(
             cx.stop_propagation();
             action(window);
         })
-        .child(label)
+        .child(Icon::new(icon).size(16.0).color(rgb(0xcbd5e1)))
 }

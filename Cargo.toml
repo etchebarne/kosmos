@@ -2,6 +2,9 @@
 name = "kosmos-gpui"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 gpui = { version = "*" }
+icondata_core = "0.1"
+icondata_vs = "0.1"

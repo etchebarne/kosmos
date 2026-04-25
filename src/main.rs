@@ -1,6 +1,8 @@
 mod app;
+mod assets;
 mod drag;
 mod header;
+mod icon;
 mod pane_tree;
 
 use gpui::{
@@ -8,21 +10,24 @@ use gpui::{
 };
 
 use crate::app::IdeApp;
+use crate::assets::AppAssets;
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: None,
-                window_decorations: Some(WindowDecorations::Client),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| IdeApp::new()),
-        )
-        .unwrap();
+    Application::new()
+        .with_assets(AppAssets)
+        .run(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: None,
+                    window_decorations: Some(WindowDecorations::Client),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| IdeApp::new()),
+            )
+            .unwrap();
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }
