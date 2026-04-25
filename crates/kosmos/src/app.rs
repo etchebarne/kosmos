@@ -216,10 +216,7 @@ impl IdeApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded(px(8.0))
             .bg(theme.bg_surface)
-            .border_1()
-            .border_color(theme.border)
             .text_color(theme.text)
             .child(
                 div()
@@ -230,7 +227,6 @@ impl IdeApp {
                     .gap_1()
                     .p(px(6.0))
                     .bg(theme.bg_elevated)
-                    .rounded_t(px(7.0))
                     .border_b_1()
                     .border_color(theme.border_subtle)
                     .overflow_hidden()
@@ -491,7 +487,14 @@ impl Render for IdeApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let main_content = match self.workspaces.active_pane_tree() {
-            Some(tree) => self.render_node(tree.root(), cx),
+            Some(tree) => div()
+                .size_full()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(theme.border)
+                .overflow_hidden()
+                .child(self.render_node(tree.root(), cx))
+                .into_any_element(),
             None => render_landing(cx),
         };
 
