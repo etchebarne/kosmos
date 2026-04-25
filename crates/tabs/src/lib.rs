@@ -72,34 +72,16 @@ impl Render for TabDrag {
 pub struct SplitResize {
     pub split_id: usize,
     pub axis: SplitAxis,
-    position: Point<Pixels>,
 }
 
 impl SplitResize {
     pub fn new(split_id: usize, axis: SplitAxis) -> Self {
-        Self {
-            split_id,
-            axis,
-            position: Point::default(),
-        }
-    }
-
-    pub fn position(mut self, position: Point<Pixels>) -> Self {
-        self.position = position;
-        self
+        Self { split_id, axis }
     }
 }
 
 impl Render for SplitResize {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .pl(self.position.x - px(16.0))
-            .pt(self.position.y - px(16.0))
-            .child(
-                div()
-                    .size(px(32.0))
-                    .rounded(px(6.0))
-                    .bg(gpui::blue().opacity(0.18)),
-            )
     }
 }

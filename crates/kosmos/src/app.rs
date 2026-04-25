@@ -174,22 +174,39 @@ impl IdeApp {
     }
 
     fn render_resize_handle(&self, split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyElement {
-        let bg = theme.bg_hover;
         let hover_bg = theme.accent;
+        let group_name = SharedString::from(format!("resize-{split_id}"));
         div()
             .id(("resize", split_id))
+            .group(group_name.clone())
+            .relative()
             .flex_none()
-            .bg(bg)
-            .hover(move |this| this.bg(hover_bg))
-            .when(axis == SplitAxis::Row, |this| {
-                this.w(px(6.0)).h_full().cursor_col_resize()
-            })
-            .when(axis == SplitAxis::Column, |this| {
-                this.h(px(6.0)).w_full().cursor_row_resize()
-            })
-            .on_drag(
-                SplitResize::new(split_id, axis),
-                |resize, position, _, cx| cx.new(|_| resize.position(position)),
+            .bg(theme.bg_hover)
+            .group_hover(group_name, move |this| this.bg(hover_bg))
+            .when(axis == SplitAxis::Row, |this| this.w(px(3.0)).h_full())
+            .when(axis == SplitAxis::Column, |this| this.h(px(3.0)).w_full())
+            .child(
+                div()
+                    .id(("resize-hit", split_id))
+                    .absolute()
+                    .when(axis == SplitAxis::Row, |this| {
+                        this.top_0()
+                            .bottom_0()
+                            .left(px(-3.0))
+                            .right(px(-3.0))
+                            .cursor_col_resize()
+                    })
+                    .when(axis == SplitAxis::Column, |this| {
+                        this.left_0()
+                            .right_0()
+                            .top(px(-3.0))
+                            .bottom(px(-3.0))
+                            .cursor_row_resize()
+                    })
+                    .on_drag(
+                        SplitResize::new(split_id, axis),
+                        |resize, _, _, cx| cx.new(|_| *resize),
+                    ),
             )
             .into_any_element()
     }
