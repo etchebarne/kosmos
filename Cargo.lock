@@ -2812,6 +2812,8 @@ dependencies = [
  "gpui",
  "icondata_core",
  "icondata_vs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

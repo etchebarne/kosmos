@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use gpui::{
     AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, px, rgb,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::icon::{Icon, IconName};
 use crate::pane_tree::PaneTree;
@@ -12,9 +13,9 @@ pub trait WorkspaceDelegate: Sized + 'static {
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>);
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Workspace {
     pub id: usize,
-    #[allow(dead_code)]
     pub path: PathBuf,
     pub name: SharedString,
     pub pane_tree: PaneTree,
@@ -46,12 +47,29 @@ impl WorkspaceManager {
         }
     }
 
+    pub fn from_parts(workspaces: Vec<Workspace>, active: Option<usize>, next_id: usize) -> Self {
+        Self {
+            workspaces,
+            active,
+            next_id,
+        }
+    }
+
     pub fn workspaces(&self) -> &[Workspace] {
         &self.workspaces
     }
 
     pub fn active_id(&self) -> Option<usize> {
         self.active
+    }
+
+    pub fn next_id(&self) -> usize {
+        self.next_id
+    }
+
+    pub fn active_workspace(&self) -> Option<&Workspace> {
+        let id = self.active?;
+        self.workspaces.iter().find(|w| w.id == id)
     }
 
     pub fn add(&mut self, path: PathBuf) -> usize {

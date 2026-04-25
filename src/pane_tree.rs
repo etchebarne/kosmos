@@ -1,19 +1,20 @@
 use gpui::SharedString;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Tab {
     pub id: usize,
     pub title: SharedString,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Pane {
     pub id: usize,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplitAxis {
     Row,
     Column,
@@ -28,7 +29,7 @@ pub enum DropZone {
     Bottom,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum PaneNode {
     Leaf(Pane),
     Split {
@@ -40,6 +41,7 @@ pub enum PaneNode {
     },
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PaneTree {
     root: PaneNode,
     next_tab_id: usize,

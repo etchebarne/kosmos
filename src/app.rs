@@ -8,6 +8,7 @@ use crate::drag::{SplitResize, TabDrag};
 use crate::header::{HeaderDelegate, HeaderMenu, render_header};
 use crate::icon::{Icon, IconName};
 use crate::pane_tree::{DropZone, Pane, PaneNode, SplitAxis, Tab};
+use crate::persistence;
 use crate::workspace::{WorkspaceDelegate, WorkspaceManager, render_landing};
 
 pub struct IdeApp {
@@ -19,7 +20,20 @@ impl IdeApp {
     pub fn new() -> Self {
         Self {
             active_menu: None,
-            workspaces: WorkspaceManager::new(),
+            workspaces: persistence::load(),
+        }
+    }
+
+    pub fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.observe_window_bounds(window, |_, window, _| {
+            persistence::save_window_bounds(window.window_bounds());
+        })
+        .detach();
+    }
+
+    fn persist_active_workspace(&self) {
+        if let Some(workspace) = self.workspaces.active_workspace() {
+            persistence::save_workspace(workspace);
         }
     }
 
@@ -29,31 +43,31 @@ impl IdeApp {
         }
     }
 
-    fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+    fn mutate_active_tree(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut crate::pane_tree::PaneTree) -> bool,
+    ) {
         let Some(tree) = self.workspaces.active_pane_tree_mut() else {
             return;
         };
-        if tree.add_tab(pane_id) {
-            cx.notify();
+        if !f(tree) {
+            return;
         }
+        cx.notify();
+        self.persist_active_workspace();
+    }
+
+    fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        self.mutate_active_tree(cx, |tree| tree.add_tab(pane_id));
     }
 
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.select_tab(pane_id, tab_id) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| tree.select_tab(pane_id, tab_id));
     }
 
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.close_tab(pane_id, tab_id) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| tree.close_tab(pane_id, tab_id));
     }
 
     fn move_tab_before(
@@ -63,21 +77,15 @@ impl IdeApp {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.move_tab_before(drag.source_pane_id, drag.id, target_pane_id, target_tab_id) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| {
+            tree.move_tab_before(drag.source_pane_id, drag.id, target_pane_id, target_tab_id)
+        });
     }
 
     fn move_tab_to_pane(&mut self, drag: TabDrag, target_pane_id: usize, cx: &mut Context<Self>) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.move_tab_to_pane(drag.source_pane_id, drag.id, target_pane_id) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| {
+            tree.move_tab_to_pane(drag.source_pane_id, drag.id, target_pane_id)
+        });
     }
 
     fn split_pane(
@@ -87,21 +95,13 @@ impl IdeApp {
         drop_zone: DropZone,
         cx: &mut Context<Self>,
     ) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.split_pane(drag.source_pane_id, drag.id, target_pane_id, drop_zone) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| {
+            tree.split_pane(drag.source_pane_id, drag.id, target_pane_id, drop_zone)
+        });
     }
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
-        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
-            return;
-        };
-        if tree.resize_split(split_id, ratio) {
-            cx.notify();
-        }
+        self.mutate_active_tree(cx, |tree| tree.resize_split(split_id, ratio));
     }
 
     fn render_node(&self, node: &PaneNode, cx: &mut Context<Self>) -> AnyElement {
@@ -461,6 +461,8 @@ impl WorkspaceDelegate for IdeApp {
             let _ = this.update(cx, |this, cx| {
                 this.workspaces.add(path);
                 cx.notify();
+                this.persist_active_workspace();
+                persistence::save_session(&this.workspaces);
             });
         })
         .detach();
@@ -469,6 +471,7 @@ impl WorkspaceDelegate for IdeApp {
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
         if self.workspaces.select(id) {
             cx.notify();
+            persistence::save_session(&self.workspaces);
         }
     }
 }
