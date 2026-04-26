@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, Context, IntoElement, MouseButton, Window, WindowControlArea, deferred, div,
-    prelude::*, rems,
+    prelude::*, rems, svg,
 };
 
 use icons::{Icon, IconName};
@@ -41,6 +41,22 @@ pub fn render<T: HeaderDelegate>(
                 .items_center()
                 .gap_1()
                 .px_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(rems(1.75))
+                        .px(rems(0.5))
+                        .child(
+                            svg()
+                                .path("brand/kosmos-icon.svg")
+                                .h(rems(1.125))
+                                .w(rems(1.35))
+                                .flex_none()
+                                .text_color(theme.text_emphasis),
+                        ),
+                )
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::File,
