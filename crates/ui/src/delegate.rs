@@ -13,6 +13,7 @@ pub trait HeaderDelegate: WorkspaceDelegate {
 }
 
 pub trait PaneDelegate: Sized + 'static {
+    fn focus_pane(&mut self, pane_id: usize, cx: &mut Context<Self>);
     fn add_tab(&mut self, pane_id: usize, kind_id: &'static str, cx: &mut Context<Self>);
     fn replace_tab_kind(
         &mut self,

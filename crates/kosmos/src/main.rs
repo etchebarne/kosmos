@@ -13,6 +13,7 @@ fn main() {
         .with_assets(AppAssets)
         .run(|cx: &mut App| {
             cx.set_global(theme::Theme::dark());
+            shortcuts::install_defaults(cx);
             let window_bounds = persistence::load_window_bounds().unwrap_or_else(|| {
                 let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
                 WindowBounds::Windowed(bounds)
@@ -26,7 +27,7 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let entity = cx.new(|_| KosmosApp::new());
+                    let entity = cx.new(KosmosApp::new);
                     entity.update(cx, |app, cx| app.start_observing_window(window, cx));
                     entity
                 },

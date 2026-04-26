@@ -1,6 +1,6 @@
-use gpui::{Context, IntoElement, Render, Window, div, prelude::*};
+use gpui::{Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
 
-use pane_tree::PaneTree;
+use pane_tree::{PaneTree, WirePaneTreeActions};
 use theme::ActiveTheme;
 use ui::delegate::HeaderMenu;
 use ui::layout;
@@ -9,17 +9,20 @@ use workspace::WorkspaceManager;
 pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspaces: WorkspaceManager,
+    focus_handle: FocusHandle,
 }
 
 impl KosmosApp {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             active_menu: None,
             workspaces: persistence::load(),
+            focus_handle: cx.focus_handle(),
         }
     }
 
     pub fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_handle.focus(window);
         cx.observe_window_bounds(window, |_, window, _| {
             persistence::save_window_bounds(window.window_bounds());
         })
@@ -59,6 +62,9 @@ impl Render for KosmosApp {
         let theme = *cx.theme();
         div()
             .id("app-root")
+            .track_focus(&self.focus_handle)
+            .key_context(shortcuts::CONTEXT)
+            .wire_pane_tree_actions(cx)
             .relative()
             .size_full()
             .flex()

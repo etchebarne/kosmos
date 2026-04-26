@@ -1,6 +1,6 @@
 use gpui::{Context, PathPromptOptions};
 
-use pane_tree::DropZone;
+use pane_tree::{DropZone, PaneTree, PaneTreeContext};
 use ui::delegate::{HeaderDelegate, HeaderMenu, PaneDelegate, WorkspaceDelegate};
 use ui::drag::TabDrag;
 
@@ -51,6 +51,12 @@ impl WorkspaceDelegate for KosmosApp {
 }
 
 impl PaneDelegate for KosmosApp {
+    fn focus_pane(&mut self, pane_id: usize, _cx: &mut Context<Self>) {
+        if let Some(tree) = self.workspaces.active_pane_tree_mut() {
+            tree.focus_pane(pane_id);
+        }
+    }
+
     fn add_tab(&mut self, pane_id: usize, kind_id: &'static str, cx: &mut Context<Self>) {
         let Some(kind) = tabs::registry::get(kind_id) else {
             return;
@@ -111,5 +117,15 @@ impl PaneDelegate for KosmosApp {
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
         self.mutate_active_tree(cx, |tree| tree.resize_split(split_id, ratio));
+    }
+}
+
+impl PaneTreeContext for KosmosApp {
+    fn with_active_tree(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut PaneTree) -> bool,
+    ) {
+        self.mutate_active_tree(cx, f);
     }
 }

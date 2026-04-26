@@ -1,8 +1,41 @@
+pub mod actions;
+
 #[cfg(test)]
 mod tests;
 
+use gpui::{Context, InteractiveElement};
 use panes::Pane;
 use tabs::{Tab, TabKind, registry};
+
+pub use actions::{CloseTab, NewTab};
+
+/// Implemented by the entity that owns a [`PaneTree`] so action handlers can
+/// reach it. Lives next to the actions so a feature crate is fully responsible
+/// for its own keyboard surface — the binary just provides a tree.
+pub trait PaneTreeContext: Sized + 'static {
+    fn with_active_tree(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut PaneTree) -> bool,
+    );
+}
+
+/// Extension trait: chain `.wire_pane_tree_actions(cx)` onto a focusable element
+/// to register the pane-tree action handlers in one line.
+pub trait WirePaneTreeActions: Sized {
+    fn wire_pane_tree_actions<T: PaneTreeContext>(self, cx: &mut Context<T>) -> Self;
+}
+
+impl<E: InteractiveElement + 'static> WirePaneTreeActions for E {
+    fn wire_pane_tree_actions<T: PaneTreeContext>(self, cx: &mut Context<T>) -> Self {
+        self.on_action(cx.listener(|this, _: &CloseTab, _, cx| {
+            this.with_active_tree(cx, |tree| tree.close_active_tab());
+        }))
+        .on_action(cx.listener(|this, _: &NewTab, _, cx| {
+            this.with_active_tree(cx, |tree| tree.add_tab_to_active(&registry::BLANK));
+        }))
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SplitAxis {
@@ -36,6 +69,7 @@ pub struct PaneTree {
     next_tab_id: usize,
     next_pane_id: usize,
     next_split_id: usize,
+    active_pane_id: usize,
 }
 
 impl Default for PaneTree {
@@ -51,6 +85,7 @@ impl PaneTree {
             next_tab_id: 1,
             next_pane_id: 1,
             next_split_id: 1,
+            active_pane_id: 0,
         }
     }
 
@@ -60,11 +95,13 @@ impl PaneTree {
         next_pane_id: usize,
         next_split_id: usize,
     ) -> Self {
+        let active_pane_id = Self::first_pane_id(&root).unwrap_or(0);
         Self {
             root,
             next_tab_id,
             next_pane_id,
             next_split_id,
+            active_pane_id,
         }
     }
 
@@ -84,6 +121,14 @@ impl PaneTree {
         self.next_split_id
     }
 
+    pub fn active_pane_id(&self) -> usize {
+        self.active_pane_id
+    }
+
+    pub fn active_pane(&self) -> Option<&Pane> {
+        Self::find_pane(&self.root, self.active_pane_id)
+    }
+
     pub fn total_tabs(&self) -> usize {
         Self::total_tabs_in(&self.root)
     }
@@ -95,7 +140,31 @@ impl PaneTree {
         };
         pane.add_tab(Tab::new(id, kind));
         self.next_tab_id += 1;
+        self.active_pane_id = pane_id;
         true
+    }
+
+    pub fn add_tab_to_active(&mut self, kind: &'static TabKind) -> bool {
+        self.add_tab(self.active_pane_id, kind)
+    }
+
+    pub fn focus_pane(&mut self, pane_id: usize) -> bool {
+        if Self::find_pane(&self.root, pane_id).is_none() {
+            return false;
+        }
+        if self.active_pane_id == pane_id {
+            return false;
+        }
+        self.active_pane_id = pane_id;
+        true
+    }
+
+    pub fn close_active_tab(&mut self) -> bool {
+        let Some(pane) = self.active_pane() else {
+            return false;
+        };
+        let tab_id = pane.active_tab();
+        self.close_tab(self.active_pane_id, tab_id)
     }
 
     pub fn replace_tab_kind(
@@ -107,14 +176,22 @@ impl PaneTree {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-        pane.replace_tab(tab_id, Tab::new(tab_id, kind))
+        if !pane.replace_tab(tab_id, Tab::new(tab_id, kind)) {
+            return false;
+        }
+        self.active_pane_id = pane_id;
+        true
     }
 
     pub fn select_tab(&mut self, pane_id: usize, tab_id: usize) -> bool {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-        pane.select_tab(tab_id)
+        if !pane.select_tab(tab_id) {
+            return false;
+        }
+        self.active_pane_id = pane_id;
+        true
     }
 
     pub fn close_tab(&mut self, pane_id: usize, tab_id: usize) -> bool {
@@ -130,6 +207,7 @@ impl PaneTree {
         }
 
         Self::collapse_empty_panes(&mut self.root);
+        self.refresh_active_pane(pane_id);
         true
     }
 
@@ -155,6 +233,8 @@ impl PaneTree {
         let target = Self::find_pane_mut(&mut self.root, target_pane_id).unwrap();
         target.insert_tab_before(tab, target_tab_id);
         Self::collapse_empty_panes(&mut self.root);
+        self.active_pane_id = target_pane_id;
+        self.refresh_active_pane(target_pane_id);
         true
     }
 
@@ -179,6 +259,8 @@ impl PaneTree {
         let target = Self::find_pane_mut(&mut self.root, target_pane_id).unwrap();
         target.add_tab(tab);
         Self::collapse_empty_panes(&mut self.root);
+        self.active_pane_id = target_pane_id;
+        self.refresh_active_pane(target_pane_id);
         true
     }
 
@@ -222,6 +304,8 @@ impl PaneTree {
         self.next_pane_id += 1;
         self.next_split_id += 1;
         Self::collapse_empty_panes(&mut self.root);
+        self.active_pane_id = new_pane_id;
+        self.refresh_active_pane(new_pane_id);
         true
     }
 
@@ -231,6 +315,28 @@ impl PaneTree {
         };
         *split_ratio = ratio.clamp(0.15, 0.85);
         true
+    }
+
+    fn refresh_active_pane(&mut self, preferred: usize) {
+        if Self::find_pane(&self.root, preferred).is_some() {
+            self.active_pane_id = preferred;
+            return;
+        }
+        if Self::find_pane(&self.root, self.active_pane_id).is_some() {
+            return;
+        }
+        if let Some(fallback) = Self::first_pane_id(&self.root) {
+            self.active_pane_id = fallback;
+        }
+    }
+
+    fn first_pane_id(node: &PaneNode) -> Option<usize> {
+        match node {
+            PaneNode::Leaf(pane) => Some(pane.id()),
+            PaneNode::Split { first, second, .. } => {
+                Self::first_pane_id(first).or_else(|| Self::first_pane_id(second))
+            }
+        }
     }
 
     fn pane_has_tab(node: &PaneNode, pane_id: usize, tab_id: usize) -> bool {

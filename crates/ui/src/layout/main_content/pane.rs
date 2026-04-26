@@ -51,6 +51,9 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
         .flex_col()
         .bg(theme.bg_surface)
         .text_color(theme.text)
+        .capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+            this.focus_pane(pane_id, cx);
+        }))
         .child(
             div()
                 .h(PANE_HEADER_HEIGHT)
