@@ -23,12 +23,7 @@ pub trait PaneDelegate: Sized + 'static {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     );
-    fn move_tab_to_pane(
-        &mut self,
-        drag: TabDrag,
-        target_pane_id: usize,
-        cx: &mut Context<Self>,
-    );
+    fn move_tab_to_pane(&mut self, drag: TabDrag, target_pane_id: usize, cx: &mut Context<Self>);
     fn split_pane(
         &mut self,
         drag: TabDrag,

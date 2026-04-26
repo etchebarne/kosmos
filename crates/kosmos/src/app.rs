@@ -67,7 +67,11 @@ impl Render for KosmosApp {
             .p_1()
             .bg(theme.bg_root)
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
-            .child(layout::header::render(self.active_menu, &self.workspaces, cx))
+            .child(layout::header::render(
+                self.active_menu,
+                &self.workspaces,
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()

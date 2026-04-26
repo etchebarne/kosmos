@@ -112,10 +112,9 @@ fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyE
                         .bottom(px(-3.0))
                         .cursor_row_resize()
                 })
-                .on_drag(
-                    SplitResize::new(split_id, axis),
-                    |resize, _, _, cx| cx.new(|_| *resize),
-                ),
+                .on_drag(SplitResize::new(split_id, axis), |resize, _, _, cx| {
+                    cx.new(|_| *resize)
+                }),
         )
         .into_any_element()
 }

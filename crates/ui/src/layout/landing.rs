@@ -39,7 +39,8 @@ pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
                 .text_color(theme.text)
                 .text_sm()
                 .hover(move |this| {
-                    this.bg(theme.bg_hover_strong).text_color(theme.text_emphasis)
+                    this.bg(theme.bg_hover_strong)
+                        .text_color(theme.text_emphasis)
                 })
                 .on_click(cx.listener(|this, _, _, cx| {
                     cx.stop_propagation();

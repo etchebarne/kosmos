@@ -9,7 +9,6 @@ use workspace::WorkspaceManager;
 use crate::delegate::{PaneDelegate, WorkspaceDelegate};
 use crate::layout::landing;
 
-
 pub fn render<T: PaneDelegate + WorkspaceDelegate>(
     workspaces: &WorkspaceManager,
     cx: &mut Context<T>,

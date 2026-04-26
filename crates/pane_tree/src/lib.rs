@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use panes::Pane;
 use serde::{Deserialize, Serialize};
 use tabs::Tab;
@@ -37,6 +40,12 @@ pub struct PaneTree {
     next_split_id: usize,
 }
 
+impl Default for PaneTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PaneTree {
     pub fn new() -> Self {
         Self {
@@ -63,8 +72,6 @@ impl PaneTree {
 
     pub fn add_tab(&mut self, pane_id: usize) -> bool {
         let id = self.next_tab_id;
-        self.next_tab_id += 1;
-
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
@@ -72,6 +79,7 @@ impl PaneTree {
             id,
             title: "Blank".into(),
         });
+        self.next_tab_id += 1;
         true
     }
 
@@ -108,24 +116,16 @@ impl PaneTree {
         if source_pane_id == target_pane_id && tab_id == target_tab_id {
             return false;
         }
-
-        let tab = {
-            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
-                return false;
-            };
-            let Some(tab) = source.take_tab(tab_id) else {
-                return false;
-            };
-            tab
-        };
-
-        let Some(target) = Self::find_pane_mut(&mut self.root, target_pane_id) else {
-            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
-                source.add_tab(tab);
-            }
+        if !Self::pane_has_tab(&self.root, source_pane_id, tab_id) {
             return false;
-        };
+        }
+        if !Self::pane_has_tab(&self.root, target_pane_id, target_tab_id) {
+            return false;
+        }
 
+        let source = Self::find_pane_mut(&mut self.root, source_pane_id).unwrap();
+        let tab = source.take_tab(tab_id).unwrap();
+        let target = Self::find_pane_mut(&mut self.root, target_pane_id).unwrap();
         target.insert_tab_before(tab, target_tab_id);
         Self::collapse_empty_panes(&mut self.root);
         true
@@ -140,24 +140,16 @@ impl PaneTree {
         if source_pane_id == target_pane_id {
             return false;
         }
-
-        let tab = {
-            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
-                return false;
-            };
-            let Some(tab) = source.take_tab(tab_id) else {
-                return false;
-            };
-            tab
-        };
-
-        let Some(target) = Self::find_pane_mut(&mut self.root, target_pane_id) else {
-            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
-                source.add_tab(tab);
-            }
+        if !Self::pane_has_tab(&self.root, source_pane_id, tab_id) {
             return false;
-        };
+        }
+        if Self::find_pane(&self.root, target_pane_id).is_none() {
+            return false;
+        }
 
+        let source = Self::find_pane_mut(&mut self.root, source_pane_id).unwrap();
+        let tab = source.take_tab(tab_id).unwrap();
+        let target = Self::find_pane_mut(&mut self.root, target_pane_id).unwrap();
         target.add_tab(tab);
         Self::collapse_empty_panes(&mut self.root);
         true
@@ -173,45 +165,35 @@ impl PaneTree {
         if drop_zone == DropZone::Center || Self::total_tabs_in(&self.root) == 1 {
             return false;
         }
-
+        if !Self::pane_has_tab(&self.root, source_pane_id, tab_id) {
+            return false;
+        }
+        if Self::find_pane(&self.root, target_pane_id).is_none() {
+            return false;
+        }
         if source_pane_id == target_pane_id {
-            let Some(source_pane) = Self::find_pane(&self.root, source_pane_id) else {
-                return false;
-            };
+            let source_pane = Self::find_pane(&self.root, source_pane_id).unwrap();
             if source_pane.tabs().len() == 1 {
                 return false;
             }
         }
 
-        let tab = {
-            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
-                return false;
-            };
-            let Some(tab) = source.take_tab(tab_id) else {
-                return false;
-            };
-            tab
-        };
-
         let new_pane_id = self.next_pane_id;
-        self.next_pane_id += 1;
         let new_split_id = self.next_split_id;
-        self.next_split_id += 1;
 
-        if !Self::split_leaf_with_tab(
+        let source = Self::find_pane_mut(&mut self.root, source_pane_id).unwrap();
+        let tab = source.take_tab(tab_id).unwrap();
+        Self::split_leaf_with_tab(
             &mut self.root,
             target_pane_id,
-            tab.clone(),
+            tab,
             new_pane_id,
             new_split_id,
             drop_zone,
-        ) {
-            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
-                source.add_tab(tab);
-            }
-            return false;
-        }
+        );
 
+        self.next_pane_id += 1;
+        self.next_split_id += 1;
         Self::collapse_empty_panes(&mut self.root);
         true
     }
@@ -222,6 +204,10 @@ impl PaneTree {
         };
         *split_ratio = ratio.clamp(0.15, 0.85);
         true
+    }
+
+    fn pane_has_tab(node: &PaneNode, pane_id: usize, tab_id: usize) -> bool {
+        Self::find_pane(node, pane_id).is_some_and(|p| p.has_tab(tab_id))
     }
 
     fn find_pane(node: &PaneNode, pane_id: usize) -> Option<&Pane> {
@@ -238,8 +224,9 @@ impl PaneTree {
         match node {
             PaneNode::Leaf(pane) if pane.id() == pane_id => Some(pane),
             PaneNode::Leaf(_) => None,
-            PaneNode::Split { first, second, .. } => Self::find_pane_mut(first, pane_id)
-                .or_else(|| Self::find_pane_mut(second, pane_id)),
+            PaneNode::Split { first, second, .. } => {
+                Self::find_pane_mut(first, pane_id).or_else(|| Self::find_pane_mut(second, pane_id))
+            }
         }
     }
 

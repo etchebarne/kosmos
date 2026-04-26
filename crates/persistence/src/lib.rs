@@ -105,7 +105,10 @@ fn try_load() -> Option<WorkspaceManager> {
             continue;
         };
         let Some(persisted) = read_json::<PersistedWorkspace>(&path) else {
-            eprintln!("kosmos: skipping workspace {id}: failed to read {}", path.display());
+            eprintln!(
+                "kosmos: skipping workspace {id}: failed to read {}",
+                path.display()
+            );
             continue;
         };
         if persisted.version != WORKSPACE_VERSION {
@@ -169,10 +172,7 @@ pub fn save_workspace(workspace: &Workspace) {
         workspace,
     };
     if let Err(err) = write_json(&path, &persisted) {
-        eprintln!(
-            "kosmos: failed to write workspace {}: {err}",
-            workspace.id
-        );
+        eprintln!("kosmos: failed to write workspace {}: {err}", workspace.id);
     }
 }
 
@@ -185,8 +185,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     write_atomic(path, &bytes)
 }
 

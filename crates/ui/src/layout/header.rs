@@ -219,11 +219,7 @@ fn render_menu_button<T: HeaderDelegate>(
         .children(dropdown)
 }
 
-fn render_menu_dropdown(
-    menu: HeaderMenu,
-    items: &[&'static str],
-    theme: &Theme,
-) -> AnyElement {
+fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str], theme: &Theme) -> AnyElement {
     let item_text = theme.text_header;
     let item_hover_bg = theme.bg_selected;
     let item_hover_text = theme.text_emphasis;
