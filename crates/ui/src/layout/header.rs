@@ -27,9 +27,13 @@ pub fn render<T: HeaderDelegate>(
         .border_1()
         .border_color(theme.border)
         .text_color(theme.text_header)
-        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+        .on_mouse_down(MouseButton::Left, |event, window, cx| {
             cx.stop_propagation();
-            window.start_window_move();
+            if event.click_count >= 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
         })
         .child(
             div()
