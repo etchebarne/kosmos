@@ -7,6 +7,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::PaneDelegate;
 use crate::drag::TabDrag;
+use crate::metrics::{TAB_HEIGHT, TAB_RADIUS, TAB_WIDTH};
 
 pub fn render<T: PaneDelegate>(
     pane: &Pane,
@@ -27,10 +28,10 @@ pub fn render<T: PaneDelegate>(
         .flex_none()
         .items_center()
         .gap_2()
-        .h(px(32.0))
-        .w(px(154.0))
+        .h(TAB_HEIGHT)
+        .w(TAB_WIDTH)
         .px_2()
-        .rounded(px(6.0))
+        .rounded(TAB_RADIUS)
         .when(is_active, |this| this.bg(gpui::white().opacity(0.08)))
         .text_color(if is_active {
             theme.text_emphasis

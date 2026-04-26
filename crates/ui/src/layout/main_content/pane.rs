@@ -7,6 +7,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::PaneDelegate;
 use crate::drag::TabDrag;
+use crate::metrics::PANE_HEADER_HEIGHT;
 
 use super::tab;
 
@@ -53,7 +54,7 @@ pub fn render<T: PaneDelegate>(
         .text_color(theme.text)
         .child(
             div()
-                .h(px(44.0))
+                .h(PANE_HEADER_HEIGHT)
                 .w_full()
                 .flex()
                 .items_center()
@@ -90,7 +91,7 @@ pub fn render<T: PaneDelegate>(
         .child(
             div()
                 .absolute()
-                .top(px(44.0))
+                .top(PANE_HEADER_HEIGHT)
                 .bottom_0()
                 .left_0()
                 .right_0()
