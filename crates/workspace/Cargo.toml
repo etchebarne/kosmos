@@ -6,5 +6,4 @@ edition = "2024"
 [dependencies]
 gpui = { workspace = true }
 serde = { workspace = true }
-icons = { path = "../icons" }
-theme = { path = "../theme" }
+pane_tree = { path = "../pane_tree" }

@@ -1,7 +1,7 @@
 use gpui::{AnyElement, IntoElement, div, prelude::*, px};
 use theme::Theme;
 
-pub fn render_bottom_bar(theme: &Theme) -> AnyElement {
+pub fn render(theme: &Theme) -> AnyElement {
     div()
         .id("app-bottom-bar")
         .h(px(28.0))

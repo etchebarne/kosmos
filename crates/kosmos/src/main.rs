@@ -1,5 +1,5 @@
 mod app;
-mod bottom_bar;
+mod delegates;
 
 use gpui::{
     App, AppContext, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,

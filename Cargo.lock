@@ -3929,9 +3929,10 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "icons",
+ "pane_tree",
  "persistence",
- "tabs",
  "theme",
+ "ui",
  "workspace",
 ]
 
@@ -4729,6 +4730,23 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "pane_tree"
+version = "0.1.0"
+dependencies = [
+ "panes",
+ "serde",
+ "tabs",
+]
+
+[[package]]
+name = "panes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tabs",
 ]
 
 [[package]]
@@ -6387,9 +6405,7 @@ name = "tabs"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "icons",
- "theme",
- "workspace",
+ "serde",
 ]
 
 [[package]]
@@ -6832,6 +6848,15 @@ dependencies = [
 [[package]]
 name = "ui"
 version = "0.1.0"
+dependencies = [
+ "gpui",
+ "icons",
+ "pane_tree",
+ "panes",
+ "tabs",
+ "theme",
+ "workspace",
+]
 
 [[package]]
 name = "uluru"
@@ -7989,9 +8014,8 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "icons",
+ "pane_tree",
  "serde",
- "theme",
 ]
 
 [[package]]

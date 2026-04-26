@@ -1,18 +1,6 @@
-use gpui::SharedString;
+use panes::Pane;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Tab {
-    pub id: usize,
-    pub title: SharedString,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Pane {
-    pub id: usize,
-    pub tabs: Vec<Tab>,
-    pub active_tab: usize,
-}
+use tabs::Tab;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplitAxis {
@@ -52,14 +40,13 @@ pub struct PaneTree {
 impl PaneTree {
     pub fn new() -> Self {
         Self {
-            root: PaneNode::Leaf(Pane {
-                id: 0,
-                tabs: vec![Tab {
+            root: PaneNode::Leaf(Pane::new(
+                0,
+                Tab {
                     id: 0,
                     title: "Blank".into(),
-                }],
-                active_tab: 0,
-            }),
+                },
+            )),
             next_tab_id: 1,
             next_pane_id: 1,
             next_split_id: 1,
@@ -81,12 +68,10 @@ impl PaneTree {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-
-        pane.tabs.push(Tab {
+        pane.add_tab(Tab {
             id,
             title: "Blank".into(),
         });
-        pane.active_tab = id;
         true
     }
 
@@ -94,8 +79,7 @@ impl PaneTree {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-
-        pane.active_tab = tab_id;
+        pane.select_tab(tab_id);
         true
     }
 
@@ -104,7 +88,10 @@ impl PaneTree {
             return false;
         }
 
-        if Self::take_tab_from_pane(&mut self.root, pane_id, tab_id).is_none() {
+        let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
+            return false;
+        };
+        if pane.take_tab(tab_id).is_none() {
             return false;
         }
 
@@ -123,23 +110,24 @@ impl PaneTree {
             return false;
         }
 
-        let Some(tab) = Self::take_tab_from_pane(&mut self.root, source_pane_id, tab_id) else {
+        let tab = {
+            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
+                return false;
+            };
+            let Some(tab) = source.take_tab(tab_id) else {
+                return false;
+            };
+            tab
+        };
+
+        let Some(target) = Self::find_pane_mut(&mut self.root, target_pane_id) else {
+            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
+                source.add_tab(tab);
+            }
             return false;
         };
 
-        let Some(target_pane) = Self::find_pane_mut(&mut self.root, target_pane_id) else {
-            Self::insert_tab_at_end(&mut self.root, source_pane_id, tab);
-            return false;
-        };
-
-        let insertion_index = target_pane
-            .tabs
-            .iter()
-            .position(|tab| tab.id == target_tab_id)
-            .unwrap_or(target_pane.tabs.len());
-
-        target_pane.active_tab = tab.id;
-        target_pane.tabs.insert(insertion_index, tab);
+        target.insert_tab_before(tab, target_tab_id);
         Self::collapse_empty_panes(&mut self.root);
         true
     }
@@ -154,15 +142,24 @@ impl PaneTree {
             return false;
         }
 
-        let Some(tab) = Self::take_tab_from_pane(&mut self.root, source_pane_id, tab_id) else {
+        let tab = {
+            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
+                return false;
+            };
+            let Some(tab) = source.take_tab(tab_id) else {
+                return false;
+            };
+            tab
+        };
+
+        let Some(target) = Self::find_pane_mut(&mut self.root, target_pane_id) else {
+            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
+                source.add_tab(tab);
+            }
             return false;
         };
 
-        if !Self::insert_tab_at_end(&mut self.root, target_pane_id, tab.clone()) {
-            Self::insert_tab_at_end(&mut self.root, source_pane_id, tab);
-            return false;
-        }
-
+        target.add_tab(tab);
         Self::collapse_empty_panes(&mut self.root);
         true
     }
@@ -182,14 +179,19 @@ impl PaneTree {
             let Some(source_pane) = Self::find_pane(&self.root, source_pane_id) else {
                 return false;
             };
-
             if source_pane.tabs.len() == 1 {
                 return false;
             }
         }
 
-        let Some(tab) = Self::take_tab_from_pane(&mut self.root, source_pane_id, tab_id) else {
-            return false;
+        let tab = {
+            let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) else {
+                return false;
+            };
+            let Some(tab) = source.take_tab(tab_id) else {
+                return false;
+            };
+            tab
         };
 
         let new_pane_id = self.next_pane_id;
@@ -205,7 +207,9 @@ impl PaneTree {
             new_split_id,
             drop_zone,
         ) {
-            Self::insert_tab_at_end(&mut self.root, source_pane_id, tab);
+            if let Some(source) = Self::find_pane_mut(&mut self.root, source_pane_id) {
+                source.add_tab(tab);
+            }
             return false;
         }
 
@@ -217,7 +221,6 @@ impl PaneTree {
         let Some(split_ratio) = Self::find_split_ratio_mut(&mut self.root, split_id) else {
             return false;
         };
-
         *split_ratio = ratio.clamp(0.15, 0.85);
         true
     }
@@ -236,9 +239,8 @@ impl PaneTree {
         match node {
             PaneNode::Leaf(pane) if pane.id == pane_id => Some(pane),
             PaneNode::Leaf(_) => None,
-            PaneNode::Split { first, second, .. } => {
-                Self::find_pane_mut(first, pane_id).or_else(|| Self::find_pane_mut(second, pane_id))
-            }
+            PaneNode::Split { first, second, .. } => Self::find_pane_mut(first, pane_id)
+                .or_else(|| Self::find_pane_mut(second, pane_id)),
         }
     }
 
@@ -271,29 +273,6 @@ impl PaneTree {
         }
     }
 
-    fn take_tab_from_pane(node: &mut PaneNode, pane_id: usize, tab_id: usize) -> Option<Tab> {
-        let pane = Self::find_pane_mut(node, pane_id)?;
-        let tab_index = pane.tabs.iter().position(|tab| tab.id == tab_id)?;
-        let tab = pane.tabs.remove(tab_index);
-
-        if pane.active_tab == tab_id && !pane.tabs.is_empty() {
-            let next_active_index = tab_index.saturating_sub(1).min(pane.tabs.len() - 1);
-            pane.active_tab = pane.tabs[next_active_index].id;
-        }
-
-        Some(tab)
-    }
-
-    fn insert_tab_at_end(node: &mut PaneNode, pane_id: usize, tab: Tab) -> bool {
-        let Some(pane) = Self::find_pane_mut(node, pane_id) else {
-            return false;
-        };
-
-        pane.active_tab = tab.id;
-        pane.tabs.push(tab);
-        true
-    }
-
     fn split_leaf_with_tab(
         node: &mut PaneNode,
         pane_id: usize,
@@ -309,11 +288,7 @@ impl PaneTree {
                     DropZone::Top | DropZone::Bottom => SplitAxis::Column,
                     DropZone::Center => return false,
                 };
-                let new_pane = PaneNode::Leaf(Pane {
-                    id: new_pane_id,
-                    active_tab: tab.id,
-                    tabs: vec![tab],
-                });
+                let new_pane = PaneNode::Leaf(Pane::new(new_pane_id, tab));
                 let existing_pane = PaneNode::Leaf(pane.clone());
 
                 let (first, second) = match drop_zone {
@@ -354,7 +329,7 @@ impl PaneTree {
 
     fn collapse_empty_panes(node: &mut PaneNode) -> bool {
         let replacement = match node {
-            PaneNode::Leaf(pane) => return pane.tabs.is_empty(),
+            PaneNode::Leaf(pane) => return pane.is_empty(),
             PaneNode::Split { first, second, .. } => {
                 let first_empty = Self::collapse_empty_panes(first);
                 let second_empty = Self::collapse_empty_panes(second);

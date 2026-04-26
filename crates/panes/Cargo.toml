@@ -1,8 +1,8 @@
 [package]
-name = "tabs"
+name = "panes"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = { workspace = true }
 serde = { workspace = true }
+tabs = { path = "../tabs" }

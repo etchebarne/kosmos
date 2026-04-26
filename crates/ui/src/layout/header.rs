@@ -5,31 +5,11 @@ use gpui::{
 
 use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
+use workspace::{Workspace, WorkspaceManager};
 
-use crate::{WorkspaceDelegate, WorkspaceManager, render_workspace_bar};
+use crate::delegate::{HeaderDelegate, HeaderMenu, WorkspaceDelegate};
 
-pub trait HeaderDelegate: WorkspaceDelegate {
-    fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HeaderMenu {
-    File,
-    Edit,
-    Selection,
-}
-
-impl HeaderMenu {
-    fn id(self) -> usize {
-        match self {
-            Self::File => 0,
-            Self::Edit => 1,
-            Self::Selection => 2,
-        }
-    }
-}
-
-pub fn render_header<T: HeaderDelegate>(
+pub fn render<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
     workspace_manager: &WorkspaceManager,
     cx: &mut Context<T>,
@@ -125,6 +105,82 @@ pub fn render_header<T: HeaderDelegate>(
                     &theme,
                 )),
         )
+        .into_any_element()
+}
+
+fn render_workspace_bar<T: WorkspaceDelegate>(
+    manager: &WorkspaceManager,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let mut elements: Vec<AnyElement> = Vec::new();
+    for workspace in manager.workspaces() {
+        let is_active = manager.active_id() == Some(workspace.id);
+        elements.push(render_workspace_button(workspace, is_active, cx));
+    }
+    elements.push(render_add_button(cx));
+
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_1()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(elements)
+        .into_any_element()
+}
+
+fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .id("workspace-add")
+        .size(px(28.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .text_color(theme.text_muted)
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|this, _, _, cx| {
+            cx.stop_propagation();
+            this.open_workspace_picker(cx);
+        }))
+        .child(Icon::new(IconName::Add).size(16.0).color(theme.text_muted))
+        .into_any_element()
+}
+
+fn render_workspace_button<T: WorkspaceDelegate>(
+    workspace: &Workspace,
+    is_active: bool,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let id = workspace.id;
+    div()
+        .id(("workspace", id))
+        .size(px(28.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .text_sm()
+        .bg(if is_active {
+            theme.bg_selected
+        } else {
+            theme.bg_surface
+        })
+        .text_color(if is_active {
+            theme.text_emphasis
+        } else {
+            theme.text_muted
+        })
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.select_workspace(id, cx);
+        }))
+        .child(workspace.initial())
         .into_any_element()
 }
 

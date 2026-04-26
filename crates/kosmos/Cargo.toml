@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 gpui = { workspace = true }
 icons = { path = "../icons" }
+ui = { path = "../ui" }
 workspace = { path = "../workspace" }
-tabs = { path = "../tabs" }
+pane_tree = { path = "../pane_tree" }
 persistence = { path = "../persistence" }
 theme = { path = "../theme" }
