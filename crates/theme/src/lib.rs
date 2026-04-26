@@ -9,7 +9,6 @@ pub struct Theme {
     pub bg_selected: Rgba,
     pub bg_hover_strong: Rgba,
     pub bg_close_hover: Rgba,
-    pub bg_drag_over: Rgba,
 
     pub border: Rgba,
     pub border_subtle: Rgba,
@@ -35,7 +34,6 @@ impl Theme {
             bg_selected: rgb(0x2e2e2e),
             bg_hover_strong: rgb(0x383838),
             bg_close_hover: rgb(0x404040),
-            bg_drag_over: rgb(0x2a2a2a),
 
             border: rgb(0x262626),
             border_subtle: rgb(0x1f1f1f),

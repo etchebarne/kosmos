@@ -279,6 +279,35 @@ impl PaneTree {
         true
     }
 
+    pub fn move_tab_to_end(
+        &mut self,
+        source_pane_id: usize,
+        tab_id: usize,
+        target_pane_id: usize,
+    ) -> bool {
+        if !Self::pane_has_tab(&self.root, source_pane_id, tab_id) {
+            return false;
+        }
+        if Self::find_pane(&self.root, target_pane_id).is_none() {
+            return false;
+        }
+        if source_pane_id == target_pane_id {
+            let target_pane = Self::find_pane(&self.root, target_pane_id).unwrap();
+            if target_pane.tabs().last().map(|t| t.id) == Some(tab_id) {
+                return false;
+            }
+        }
+
+        let source = Self::find_pane_mut(&mut self.root, source_pane_id).unwrap();
+        let tab = source.take_tab(tab_id).unwrap();
+        let target = Self::find_pane_mut(&mut self.root, target_pane_id).unwrap();
+        target.add_tab(tab);
+        Self::collapse_empty_panes(&mut self.root);
+        self.active_pane_id = target_pane_id;
+        self.refresh_active_pane(target_pane_id);
+        true
+    }
+
     pub fn split_pane(
         &mut self,
         source_pane_id: usize,

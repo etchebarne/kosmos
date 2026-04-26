@@ -123,6 +123,12 @@ impl PaneDelegate for KosmosApp {
         });
     }
 
+    fn move_tab_to_end(&mut self, drag: TabDrag, target_pane_id: usize, cx: &mut Context<Self>) {
+        self.mutate_active_tree(cx, |tree| {
+            tree.move_tab_to_end(drag.source_pane_id, drag.id, target_pane_id)
+        });
+    }
+
     fn split_pane(
         &mut self,
         drag: TabDrag,

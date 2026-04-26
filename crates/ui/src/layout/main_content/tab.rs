@@ -22,10 +22,12 @@ pub fn render<T: PaneDelegate>(
     let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
     let title = tab.title();
     let icon_name = tab.icon();
+    let accent = theme.accent;
 
     div()
         .id(("tab", id))
         .group(hover_group.clone())
+        .relative()
         .flex()
         .flex_none()
         .items_center()
@@ -42,16 +44,6 @@ pub fn render<T: PaneDelegate>(
         })
         .text_sm()
         .hover(move |this| this.bg(theme.bg_hover))
-        .drag_over::<TabDrag>({
-            let drag_over_bg = theme.bg_drag_over;
-            move |this, drag, _, _| {
-                if drag.id == id {
-                    this
-                } else {
-                    this.bg(drag_over_bg)
-                }
-            }
-        })
         .can_drop(move |drag, _, _| {
             drag.downcast_ref::<TabDrag>()
                 .is_some_and(|drag| drag.id != id)
@@ -67,6 +59,19 @@ pub fn render<T: PaneDelegate>(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.select_tab(pane_id, id, cx);
         }))
+        .child(
+            div()
+                .absolute()
+                .left(px(0.0))
+                .top(px(4.0))
+                .bottom(px(4.0))
+                .w(px(2.0))
+                .rounded_full()
+                // No-op hover forces GPUI to insert a hitbox; without it,
+                // group_drag_over styles are skipped and the line never paints.
+                .hover(|s| s)
+                .group_drag_over::<TabDrag>(hover_group.clone(), move |s| s.bg(accent)),
+        )
         .child(
             Icon::new(icon_name)
                 .size(16.0)

@@ -7,7 +7,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::{PaneDelegate, TabScrollHandles};
 use crate::drag::TabDrag;
-use crate::metrics::PANE_HEADER_HEIGHT;
+use crate::metrics::{PANE_HEADER_HEIGHT, TAB_HEIGHT};
 use crate::tabs as tab_views;
 
 use super::tab;
@@ -83,7 +83,8 @@ pub fn render<T: PaneDelegate>(
                         .overflow_x_scroll()
                         .track_scroll(&scroll_handle)
                         .children(tab_elements)
-                        .child(render_add_tab_button(pane_id, cx)),
+                        .child(render_add_tab_button(pane_id, cx))
+                        .child(render_tab_end_drop_zone(pane_id, cx)),
                 ),
         )
         .child(body)
@@ -99,6 +100,42 @@ pub fn render<T: PaneDelegate>(
                 .child(render_drop_zone(pane_id, DropZone::Right, cx))
                 .child(render_drop_zone(pane_id, DropZone::Top, cx))
                 .child(render_drop_zone(pane_id, DropZone::Bottom, cx)),
+        )
+        .into_any_element()
+}
+
+fn render_tab_end_drop_zone<T: PaneDelegate>(
+    pane_id: usize,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let group_name = format!("tab-end-drop-{pane_id}");
+    let accent = theme.accent;
+
+    div()
+        .id(("tab-end-drop", pane_id))
+        .group(group_name.clone())
+        .relative()
+        .flex_1()
+        .min_w(px(20.0))
+        .h(TAB_HEIGHT)
+        .can_drop(|drag, _, _| drag.downcast_ref::<TabDrag>().is_some())
+        .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
+            cx.stop_propagation();
+            this.move_tab_to_end(drag.clone(), pane_id, cx);
+        }))
+        .child(
+            // Indicator sits in the gap between the last tab and the add button:
+            // -(gap + add-button width + gap) = -(2 + 32 + 2) = -36.
+            div()
+                .absolute()
+                .left(px(-36.0))
+                .top(px(4.0))
+                .bottom(px(4.0))
+                .w(px(2.0))
+                .rounded_full()
+                .hover(|s| s)
+                .group_drag_over::<TabDrag>(group_name, move |s| s.bg(accent)),
         )
         .into_any_element()
 }
