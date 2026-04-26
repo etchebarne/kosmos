@@ -51,8 +51,11 @@ impl WorkspaceDelegate for KosmosApp {
 }
 
 impl PaneDelegate for KosmosApp {
-    fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
-        self.mutate_active_tree(cx, |tree| tree.add_tab(pane_id));
+    fn add_tab(&mut self, pane_id: usize, kind_id: &'static str, cx: &mut Context<Self>) {
+        let Some(kind) = tabs::registry::get(kind_id) else {
+            return;
+        };
+        self.mutate_active_tree(cx, |tree| tree.add_tab(pane_id, kind));
     }
 
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {

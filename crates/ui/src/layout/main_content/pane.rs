@@ -8,6 +8,7 @@ use theme::ActiveTheme;
 use crate::delegate::PaneDelegate;
 use crate::drag::TabDrag;
 use crate::metrics::PANE_HEADER_HEIGHT;
+use crate::tabs as tab_views;
 
 use super::tab;
 
@@ -15,11 +16,7 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
     let theme = *cx.theme();
     let active_tab_id = pane.active_tab();
     let tabs = pane.tabs();
-    let active_title = tabs
-        .iter()
-        .find(|t| t.id == active_tab_id)
-        .map(|t| t.title.clone())
-        .unwrap_or_else(|| "Blank".into());
+    let active_tab = tabs.iter().find(|t| t.id == active_tab_id).cloned();
     let can_close = tree.total_tabs() > 1;
     let mut tab_elements: Vec<AnyElement> = Vec::new();
 
@@ -40,6 +37,10 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
     }
 
     let pane_id = pane.id();
+    let body = match active_tab {
+        Some(tab) => tab_views::render(pane_id, &tab, cx),
+        None => div().flex_1().min_h_0().into_any_element(),
+    };
     div()
         .id(("pane", pane_id))
         .relative()
@@ -75,17 +76,7 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
                         .child(render_add_tab_button(pane_id, cx)),
                 ),
         )
-        .child(
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_xl()
-                .text_color(theme.text_subtle)
-                .child(active_title),
-        )
+        .child(body)
         .child(
             div()
                 .absolute()
@@ -115,7 +106,7 @@ fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -
         .text_color(theme.text_muted)
         .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.add_tab(pane_id, cx);
+            this.add_tab(pane_id, tabs::registry::BLANK.id, cx);
         }))
         .child(Icon::new(IconName::Add).color(theme.text_muted))
         .into_any_element()

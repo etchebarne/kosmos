@@ -20,6 +20,8 @@ pub fn render<T: PaneDelegate>(
     let id = tab.id;
     let is_active = pane.active_tab() == id;
     let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
+    let title = tab.title();
+    let icon_name = tab.icon();
 
     div()
         .id(("tab", id))
@@ -59,14 +61,14 @@ pub fn render<T: PaneDelegate>(
             this.move_tab_before(drag.clone(), pane_id, id, cx);
         }))
         .on_drag(
-            TabDrag::new(id, pane_id, tab.title.clone()),
+            TabDrag::new(id, pane_id, title.clone(), icon_name),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.select_tab(pane_id, id, cx);
         }))
         .child(
-            Icon::new(IconName::File)
+            Icon::new(icon_name)
                 .size(16.0)
                 .color(if is_active {
                     theme.text
@@ -81,7 +83,7 @@ pub fn render<T: PaneDelegate>(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .child(tab.title.clone()),
+                .child(title),
         )
         .child(
             div()

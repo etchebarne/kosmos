@@ -1,4 +1,5 @@
 use super::*;
+use tabs::registry;
 
 fn leaf(node: &PaneNode) -> &Pane {
     match node {
@@ -31,7 +32,7 @@ fn new_tree_has_single_pane_with_one_tab() {
 #[test]
 fn add_tab_to_known_pane_appends_and_activates() {
     let mut tree = PaneTree::new();
-    assert!(tree.add_tab(0));
+    assert!(tree.add_tab(0, &registry::BLANK));
     let pane = leaf(tree.root());
     assert_eq!(tab_ids(pane), vec![0, 1]);
     assert_eq!(pane.active_tab(), 1);
@@ -40,8 +41,8 @@ fn add_tab_to_known_pane_appends_and_activates() {
 #[test]
 fn add_tab_unknown_pane_does_not_consume_id() {
     let mut tree = PaneTree::new();
-    assert!(!tree.add_tab(99));
-    assert!(tree.add_tab(0));
+    assert!(!tree.add_tab(99, &registry::BLANK));
+    assert!(tree.add_tab(0, &registry::BLANK));
     let pane = leaf(tree.root());
     assert_eq!(pane.tabs().last().unwrap().id, 1);
 }
@@ -49,7 +50,7 @@ fn add_tab_unknown_pane_does_not_consume_id() {
 #[test]
 fn select_tab_validates_membership() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.select_tab(0, 0));
     assert_eq!(leaf(tree.root()).active_tab(), 0);
     assert!(!tree.select_tab(0, 999));
@@ -67,7 +68,7 @@ fn close_last_tab_is_rejected() {
 #[test]
 fn close_tab_keeps_remaining_tabs() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.close_tab(0, 1));
     assert_eq!(tab_ids(leaf(tree.root())), vec![0]);
 }
@@ -75,7 +76,7 @@ fn close_tab_keeps_remaining_tabs() {
 #[test]
 fn close_tab_collapses_empty_split_pane() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.split_pane(0, 1, 0, DropZone::Right));
     assert!(matches!(tree.root(), PaneNode::Split { .. }));
     assert!(tree.close_tab(1, 1));
@@ -86,8 +87,8 @@ fn close_tab_collapses_empty_split_pane() {
 #[test]
 fn move_tab_before_reorders_within_pane() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.move_tab_before(0, 2, 0, 0));
     assert_eq!(tab_ids(leaf(tree.root())), vec![2, 0, 1]);
 }
@@ -95,14 +96,14 @@ fn move_tab_before_reorders_within_pane() {
 #[test]
 fn move_tab_before_self_is_rejected() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(!tree.move_tab_before(0, 0, 0, 0));
 }
 
 #[test]
 fn move_tab_before_unknown_target_leaves_state_unchanged() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     let before = tab_ids(leaf(tree.root()));
     let active_before = leaf(tree.root()).active_tab();
     assert!(!tree.move_tab_before(0, 1, 0, 999));
@@ -113,9 +114,9 @@ fn move_tab_before_unknown_target_leaves_state_unchanged() {
 #[test]
 fn move_tab_to_pane_moves_across_split() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.split_pane(0, 1, 0, DropZone::Right));
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.move_tab_to_pane(0, 2, 1));
 
     let (first, second) = split_children(tree.root());
@@ -126,7 +127,7 @@ fn move_tab_to_pane_moves_across_split() {
 #[test]
 fn move_tab_to_pane_same_pane_is_rejected() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(!tree.move_tab_to_pane(0, 1, 0));
 }
 
@@ -140,7 +141,7 @@ fn split_pane_with_only_tab_is_rejected() {
 #[test]
 fn split_pane_to_self_with_one_tab_is_rejected() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.split_pane(0, 1, 0, DropZone::Right));
     assert!(!tree.split_pane(1, 1, 1, DropZone::Right));
 }
@@ -148,7 +149,7 @@ fn split_pane_to_self_with_one_tab_is_rejected() {
 #[test]
 fn split_pane_assigns_axis_from_drop_zone() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     assert!(tree.split_pane(0, 1, 0, DropZone::Bottom));
     assert!(matches!(
         tree.root(),
@@ -162,7 +163,7 @@ fn split_pane_assigns_axis_from_drop_zone() {
 #[test]
 fn split_pane_unknown_target_preserves_ids_and_tabs() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     let next_pane = tree.next_pane_id;
     let next_split = tree.next_split_id;
     assert!(!tree.split_pane(0, 1, 99, DropZone::Right));
@@ -175,7 +176,7 @@ fn split_pane_unknown_target_preserves_ids_and_tabs() {
 #[test]
 fn resize_split_clamps_to_range() {
     let mut tree = PaneTree::new();
-    tree.add_tab(0);
+    tree.add_tab(0, &registry::BLANK);
     tree.split_pane(0, 1, 0, DropZone::Right);
     let split_id = match tree.root() {
         PaneNode::Split { id, .. } => *id,

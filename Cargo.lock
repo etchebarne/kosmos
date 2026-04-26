@@ -3931,6 +3931,7 @@ dependencies = [
  "icons",
  "pane_tree",
  "persistence",
+ "tabs",
  "theme",
  "ui",
  "workspace",
@@ -6405,6 +6406,7 @@ name = "tabs"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "icons",
  "serde",
 ]
 

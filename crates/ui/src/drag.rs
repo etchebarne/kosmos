@@ -13,15 +13,17 @@ pub struct TabDrag {
     pub id: usize,
     pub source_pane_id: usize,
     pub title: SharedString,
+    pub icon: IconName,
     position: Point<Pixels>,
 }
 
 impl TabDrag {
-    pub fn new(id: usize, source_pane_id: usize, title: SharedString) -> Self {
+    pub fn new(id: usize, source_pane_id: usize, title: SharedString, icon: IconName) -> Self {
         Self {
             id,
             source_pane_id,
             title,
+            icon,
             position: Point::default(),
         }
     }
@@ -53,7 +55,7 @@ impl Render for TabDrag {
                     .text_color(theme.text_emphasis)
                     .shadow_lg()
                     .child(
-                        Icon::new(IconName::File)
+                        Icon::new(self.icon)
                             .size(16.0)
                             .color(theme.text)
                             .into_any_element(),

@@ -13,7 +13,7 @@ pub trait HeaderDelegate: WorkspaceDelegate {
 }
 
 pub trait PaneDelegate: Sized + 'static {
-    fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>);
+    fn add_tab(&mut self, pane_id: usize, kind_id: &'static str, cx: &mut Context<Self>);
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>);
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>);
     fn move_tab_before(

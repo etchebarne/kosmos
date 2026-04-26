@@ -3,7 +3,7 @@ mod tests;
 
 use panes::Pane;
 use serde::{Deserialize, Serialize};
-use tabs::Tab;
+use tabs::{Tab, TabKind, registry};
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplitAxis {
@@ -49,13 +49,7 @@ impl Default for PaneTree {
 impl PaneTree {
     pub fn new() -> Self {
         Self {
-            root: PaneNode::Leaf(Pane::new(
-                0,
-                Tab {
-                    id: 0,
-                    title: "Blank".into(),
-                },
-            )),
+            root: PaneNode::Leaf(Pane::new(0, Tab::new(0, &registry::BLANK))),
             next_tab_id: 1,
             next_pane_id: 1,
             next_split_id: 1,
@@ -70,15 +64,12 @@ impl PaneTree {
         Self::total_tabs_in(&self.root)
     }
 
-    pub fn add_tab(&mut self, pane_id: usize) -> bool {
+    pub fn add_tab(&mut self, pane_id: usize, kind: &'static TabKind) -> bool {
         let id = self.next_tab_id;
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-        pane.add_tab(Tab {
-            id,
-            title: "Blank".into(),
-        });
+        pane.add_tab(Tab::new(id, kind));
         self.next_tab_id += 1;
         true
     }
