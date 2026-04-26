@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, IntoElement, MouseButton, RenderOnce, SharedString,
-    Window, deferred, div, prelude::*, px,
+    Window, deferred, div, prelude::*, rems,
 };
 
 use theme::ActiveTheme;
@@ -96,14 +96,14 @@ impl RenderOnce for Dropdown {
         div()
             .id(ElementId::Name(format!("{}-trigger", self.id).into()))
             .relative()
-            .h(px(28.0))
-            .min_w(px(180.0))
+            .h(rems(1.75))
+            .min_w(rems(11.25))
             .px_2()
             .flex()
             .items_center()
             .justify_between()
             .gap_2()
-            .rounded(px(5.0))
+            .rounded(rems(0.3125))
             .bg(theme.bg_elevated)
             .border_1()
             .border_color(if self.is_open {
@@ -162,11 +162,11 @@ impl RenderOnce for DropdownMenu {
             items.push(
                 div()
                     .id(item_id)
-                    .h(px(28.0))
+                    .h(rems(1.75))
                     .px_2()
                     .flex()
                     .items_center()
-                    .rounded(px(4.0))
+                    .rounded(rems(0.25))
                     .text_sm()
                     .text_color(theme.text)
                     .hover(move |this| {
@@ -191,14 +191,14 @@ impl RenderOnce for DropdownMenu {
             div()
                 .id(ElementId::Name(format!("{}-menu", self.id).into()))
                 .absolute()
-                .top(px(32.0))
-                .left(px(0.0))
+                .top(rems(2.0))
+                .left(rems(0.0))
                 .min_w_full()
                 .p_1()
                 .flex()
                 .flex_col()
                 .gap_1()
-                .rounded(px(6.0))
+                .rounded(rems(0.375))
                 .border_1()
                 .border_color(theme.border_strong)
                 .bg(theme.bg_elevated)

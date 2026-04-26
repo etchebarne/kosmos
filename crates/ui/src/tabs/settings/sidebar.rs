@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, rems};
 
 use icons::Icon;
 use settings::{Category, Settings};
@@ -14,7 +14,7 @@ pub fn render<T: SettingsDelegate>(active_id: &str, cx: &mut Context<T>) -> AnyE
     }
 
     div()
-        .w(px(200.0))
+        .w(rems(12.5))
         .h_full()
         .flex_none()
         .flex()
@@ -48,12 +48,12 @@ fn render_item<T: SettingsDelegate>(
 
     div()
         .id(SharedString::from(format!("settings-category:{id}")))
-        .h(px(30.0))
+        .h(rems(1.875))
         .px_2()
         .flex()
         .items_center()
         .gap_2()
-        .rounded(px(5.0))
+        .rounded(rems(0.3125))
         .bg(bg)
         .text_sm()
         .text_color(text_color)

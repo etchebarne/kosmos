@@ -2,7 +2,7 @@ mod assets;
 
 pub use assets::*;
 
-use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, px, svg};
+use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, rems, svg};
 use icondata_core::Icon as IconData;
 use theme::ActiveTheme;
 
@@ -163,7 +163,7 @@ impl RenderOnce for Icon {
         let color = self.color.unwrap_or_else(|| cx.theme().text_muted);
         svg()
             .path(self.name.path())
-            .size(px(self.size))
+            .size(rems(self.size / 16.0))
             .flex_none()
             .text_color(color)
     }

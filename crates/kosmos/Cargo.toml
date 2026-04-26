@@ -14,3 +14,4 @@ persistence = { path = "../persistence" }
 shortcuts = { path = "../shortcuts" }
 tabs = { path = "../tabs" }
 theme = { path = "../theme" }
+zoom = { path = "../zoom" }

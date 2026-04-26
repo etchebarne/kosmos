@@ -5,7 +5,7 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, Focusable, FocusHandle, GlobalElementId,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     Pixels, Point, Render, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
-    UnderlineStyle, Window, actions, div, fill, hsla, point, prelude::*, px, relative, size,
+    UnderlineStyle, Window, actions, div, fill, hsla, point, prelude::*, relative, rems, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -514,7 +514,7 @@ impl Element for TextElement {
                     len: marked_range.end - marked_range.start,
                     underline: Some(UnderlineStyle {
                         color: Some(run.color),
-                        thickness: px(1.0),
+                        thickness: rems(0.0625).to_pixels(window.rem_size()),
                         wavy: false,
                     }),
                     ..run.clone()
@@ -543,7 +543,10 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::new(
                         point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(1.5), bounds.bottom() - bounds.top()),
+                        size(
+                            rems(0.09375).to_pixels(window.rem_size()),
+                            bounds.bottom() - bounds.top(),
+                        ),
                     ),
                     theme.text,
                 )),
@@ -630,12 +633,12 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .min_w(px(220.0))
-            .h(px(28.0))
+            .min_w(rems(13.75))
+            .h(rems(1.75))
             .px_2()
             .flex()
             .items_center()
-            .rounded(px(5.0))
+            .rounded(rems(0.3125))
             .bg(theme.bg_elevated)
             .border_1()
             .border_color(if self.focus_handle.is_focused(_window) {

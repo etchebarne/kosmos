@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
 
 use icons::Icon;
 use tabs::{TabKind, registry};
@@ -41,7 +41,7 @@ pub fn render<T: PaneDelegate>(
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .max_w(px(640.0))
+                .max_w(rems(40.0))
                 .children(buttons),
         )
         .into_any_element()
@@ -60,9 +60,9 @@ fn render_button<T: PaneDelegate>(
         .flex()
         .items_center()
         .gap_2()
-        .h(px(36.0))
+        .h(rems(2.25))
         .px_3()
-        .rounded(px(6.0))
+        .rounded(rems(0.375))
         .border_1()
         .border_color(theme.border_subtle)
         .bg(theme.bg_surface)

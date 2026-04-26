@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use theme::ActiveTheme;
@@ -15,7 +15,7 @@ pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
         .justify_center()
         .gap_3()
         .bg(theme.bg_surface)
-        .rounded(px(8.0))
+        .rounded(rems(0.5))
         .border_1()
         .border_color(theme.border)
         .text_color(theme.text)
@@ -32,9 +32,9 @@ pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
                 .flex()
                 .items_center()
                 .gap_2()
-                .px(px(16.0))
-                .py(px(8.0))
-                .rounded(px(6.0))
+                .px(rems(1.0))
+                .py(rems(0.5))
+                .rounded(rems(0.375))
                 .bg(theme.bg_selected)
                 .text_color(theme.text)
                 .text_sm()

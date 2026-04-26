@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, ElementId, IntoElement, MouseButton, RenderOnce, Window, div, prelude::*, px,
+    App, ElementId, IntoElement, MouseButton, RenderOnce, Window, div, prelude::*, rems,
 };
 
 use theme::ActiveTheme;
@@ -41,16 +41,16 @@ impl RenderOnce for Switch {
         } else {
             theme.bg_hover
         };
-        let knob_offset = if self.value { 18.0 } else { 2.0 };
+        let knob_offset = if self.value { 1.125 } else { 0.125 };
         let new_value = !self.value;
         let on_change = self.on_change;
 
         div()
             .id(self.id)
             .relative()
-            .w(px(36.0))
-            .h(px(20.0))
-            .rounded(px(10.0))
+            .w(rems(2.25))
+            .h(rems(1.25))
+            .rounded(rems(0.625))
             .bg(track_bg)
             .border_1()
             .border_color(theme.border)
@@ -64,9 +64,9 @@ impl RenderOnce for Switch {
             .child(
                 div()
                     .absolute()
-                    .top(px(2.0))
-                    .left(px(knob_offset))
-                    .size(px(14.0))
+                    .top(rems(0.125))
+                    .left(rems(knob_offset))
+                    .size(rems(0.875))
                     .rounded_full()
                     .bg(theme.text_emphasis),
             )

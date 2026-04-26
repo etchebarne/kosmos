@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 
 use settings::{ActiveSettings, Category, Setting};
 use theme::ActiveTheme;
@@ -23,7 +23,7 @@ pub fn render<T: SettingsDelegate>(
         .min_w_0()
         .h_full()
         .overflow_y_scroll()
-        .p(px(24.0))
+        .p(rems(1.5))
         .flex()
         .flex_col()
         .gap_4()

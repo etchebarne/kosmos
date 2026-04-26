@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, Context, DragMoveEvent, IntoElement, SharedString, div, prelude::*, px, relative,
+    AnyElement, Context, DragMoveEvent, IntoElement, SharedString, div, prelude::*, relative, rems,
 };
 
 use pane_tree::{PaneNode, PaneTree, SplitAxis};
@@ -93,8 +93,8 @@ fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyE
         .flex_none()
         .bg(theme.bg_hover)
         .group_hover(group_name, move |this| this.bg(hover_bg))
-        .when(axis == SplitAxis::Row, |this| this.w(px(3.0)).h_full())
-        .when(axis == SplitAxis::Column, |this| this.h(px(3.0)).w_full())
+        .when(axis == SplitAxis::Row, |this| this.w(rems(0.1875)).h_full())
+        .when(axis == SplitAxis::Column, |this| this.h(rems(0.1875)).w_full())
         .child(
             div()
                 .id(("resize-hit", split_id))
@@ -102,15 +102,15 @@ fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyE
                 .when(axis == SplitAxis::Row, |this| {
                     this.top_0()
                         .bottom_0()
-                        .left(px(-3.0))
-                        .right(px(-3.0))
+                        .left(rems(-0.1875))
+                        .right(rems(-0.1875))
                         .cursor_col_resize()
                 })
                 .when(axis == SplitAxis::Column, |this| {
                     this.left_0()
                         .right_0()
-                        .top(px(-3.0))
-                        .bottom(px(-3.0))
+                        .top(rems(-0.1875))
+                        .bottom(rems(-0.1875))
                         .cursor_row_resize()
                 })
                 .on_drag(SplitResize::new(split_id, axis), |resize, _, _, cx| {

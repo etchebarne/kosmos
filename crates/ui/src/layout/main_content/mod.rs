@@ -2,7 +2,7 @@ mod pane;
 mod pane_tree;
 mod tab;
 
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 use theme::ActiveTheme;
 use workspace::WorkspaceManager;
 
@@ -18,7 +18,7 @@ pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
     match workspaces.active_pane_tree() {
         Some(tree) => div()
             .size_full()
-            .rounded(px(8.0))
+            .rounded(rems(0.5))
             .border_1()
             .border_color(theme.border)
             .overflow_hidden()

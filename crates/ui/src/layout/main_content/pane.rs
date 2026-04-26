@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use pane_tree::{DropZone, PaneTree};
@@ -31,8 +31,8 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
             let show_divider = prev_tab.id != active_tab_id && t.id != active_tab_id;
             tab_elements.push(
                 div()
-                    .w(px(1.0))
-                    .h(px(16.0))
+                    .w(rems(0.0625))
+                    .h(rems(1.0))
                     .flex_none()
                     .when(show_divider, |this| this.bg(theme.border_strong))
                     .into_any_element(),
@@ -67,7 +67,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .flex()
                 .items_center()
                 .gap_1()
-                .p(px(6.0))
+                .p(rems(0.375))
                 .bg(theme.bg_elevated)
                 .border_b_1()
                 .border_color(theme.border_subtle)
@@ -79,7 +79,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         .min_w_0()
                         .flex()
                         .items_center()
-                        .gap(px(2.0))
+                        .gap(rems(0.125))
                         .overflow_x_scroll()
                         .track_scroll(&scroll_handle)
                         .children(tab_elements)
@@ -117,7 +117,7 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(
         .group(group_name.clone())
         .relative()
         .flex_1()
-        .min_w(px(20.0))
+        .min_w(rems(1.25))
         .h(TAB_HEIGHT)
         .can_drop(|drag, _, _| drag.downcast_ref::<TabDrag>().is_some())
         .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
@@ -129,10 +129,10 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(
             // -(gap + add-button width + gap) = -(2 + 32 + 2) = -36.
             div()
                 .absolute()
-                .left(px(-36.0))
-                .top(px(4.0))
-                .bottom(px(4.0))
-                .w(px(2.0))
+                .left(rems(-2.25))
+                .top(rems(0.25))
+                .bottom(rems(0.25))
+                .w(rems(0.125))
                 .rounded_full()
                 .hover(|s| s)
                 .group_drag_over::<TabDrag>(group_name, move |s| s.bg(accent)),
@@ -144,12 +144,12 @@ fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -
     let theme = *cx.theme();
     div()
         .id(("add-tab", pane_id))
-        .size(px(32.0))
+        .size(rems(2.0))
         .flex_none()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(6.0))
+        .rounded(rems(0.375))
         .text_color(theme.text_muted)
         .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_click(cx.listener(move |this, _, _, cx| {

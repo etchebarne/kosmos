@@ -1,6 +1,6 @@
-use gpui::{Pixels, px};
+use gpui::Rems;
 
-pub const TAB_HEIGHT: Pixels = px(32.0);
-pub const TAB_WIDTH: Pixels = px(154.0);
-pub const TAB_RADIUS: Pixels = px(6.0);
-pub const PANE_HEADER_HEIGHT: Pixels = px(44.0);
+pub const TAB_HEIGHT: Rems = Rems(2.0);
+pub const TAB_WIDTH: Rems = Rems(9.625);
+pub const TAB_RADIUS: Rems = Rems(0.375);
+pub const PANE_HEADER_HEIGHT: Rems = Rems(2.75);

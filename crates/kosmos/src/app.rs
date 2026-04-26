@@ -7,6 +7,7 @@ use ui::delegate::{HeaderMenu, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
+use zoom::WireZoomActions;
 
 pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
@@ -69,13 +70,15 @@ impl KosmosApp {
 }
 
 impl Render for KosmosApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
+        zoom::apply(window, cx);
         div()
             .id("app-root")
             .track_focus(&self.focus_handle)
             .key_context(shortcuts::CONTEXT)
             .wire_pane_tree_actions(cx)
+            .wire_zoom_actions(cx)
             .relative()
             .size_full()
             .flex()

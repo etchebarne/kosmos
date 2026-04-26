@@ -1,4 +1,4 @@
-use gpui::{AnyElement, App, IntoElement, div, prelude::*, px};
+use gpui::{AnyElement, App, IntoElement, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use theme::ActiveTheme;
@@ -22,6 +22,6 @@ pub fn render(icon: IconName, name: &'static str, cx: &mut App) -> AnyElement {
                 .text_color(theme.text_muted)
                 .child("Coming soon"),
         )
-        .child(div().h(px(4.0)))
+        .child(div().h(rems(0.25)))
         .into_any_element()
 }

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, ElementId, IntoElement, MouseButton, RenderOnce, SharedString, Window, div, prelude::*,
-    px,
+    rems,
 };
 
 use theme::ActiveTheme;
@@ -84,13 +84,13 @@ impl RenderOnce for NumericInput {
             ))
             .child(
                 div()
-                    .h(px(28.0))
-                    .min_w(px(56.0))
+                    .h(rems(1.75))
+                    .min_w(rems(3.5))
                     .px_2()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(5.0))
+                    .rounded(rems(0.3125))
                     .bg(theme.bg_elevated)
                     .border_1()
                     .border_color(theme.border)
@@ -147,11 +147,11 @@ impl RenderOnce for StepperButton {
 
         div()
             .id(self.id)
-            .size(px(28.0))
+            .size(rems(1.75))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(5.0))
+            .rounded(rems(0.3125))
             .bg(theme.bg_elevated)
             .border_1()
             .border_color(theme.border)

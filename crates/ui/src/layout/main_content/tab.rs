@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use panes::Pane;
@@ -62,10 +62,10 @@ pub fn render<T: PaneDelegate>(
         .child(
             div()
                 .absolute()
-                .left(px(0.0))
-                .top(px(4.0))
-                .bottom(px(4.0))
-                .w(px(2.0))
+                .left(rems(0.0))
+                .top(rems(0.25))
+                .bottom(rems(0.25))
+                .w(rems(0.125))
                 .rounded_full()
                 // No-op hover forces GPUI to insert a hitbox; without it,
                 // group_drag_over styles are skipped and the line never paints.
@@ -93,11 +93,11 @@ pub fn render<T: PaneDelegate>(
         .child(
             div()
                 .id(("close-tab", id))
-                .size(px(20.0))
+                .size(rems(1.25))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(4.0))
+                .rounded(rems(0.25))
                 .text_color(theme.text)
                 .invisible()
                 .when(can_close, |this| {

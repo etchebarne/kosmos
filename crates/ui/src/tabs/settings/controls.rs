@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
 
 use settings::{Setting, SettingControl, SettingValue};
 use theme::ActiveTheme;
@@ -67,16 +67,16 @@ pub fn render<T: SettingsDelegate>(
             let theme = *cx.theme();
             match cx.settings_inputs().get(setting_id) {
                 Some(entity) => div()
-                    .min_w(px(220.0))
+                    .min_w(rems(13.75))
                     .child(entity)
                     .into_any_element(),
                 None => div()
-                    .h(px(28.0))
-                    .min_w(px(220.0))
+                    .h(rems(1.75))
+                    .min_w(rems(13.75))
                     .px_2()
                     .flex()
                     .items_center()
-                    .rounded(px(5.0))
+                    .rounded(rems(0.3125))
                     .bg(theme.bg_elevated)
                     .border_1()
                     .border_color(theme.border)

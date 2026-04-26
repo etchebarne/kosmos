@@ -1,5 +1,5 @@
 use gpui::{
-    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, px,
+    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, rems,
 };
 
 use icons::{Icon, IconName};
@@ -35,11 +35,12 @@ impl TabDrag {
 }
 
 impl Render for TabDrag {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
+        let rem = window.rem_size();
         div()
-            .pl(self.position.x - px(70.0))
-            .pt(self.position.y - px(18.0))
+            .pl(self.position.x - rems(4.375).to_pixels(rem))
+            .pt(self.position.y - rems(1.125).to_pixels(rem))
             .child(
                 div()
                     .h(TAB_HEIGHT)
