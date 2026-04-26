@@ -2,13 +2,14 @@ use gpui::{Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
 
 use pane_tree::{PaneTree, WirePaneTreeActions};
 use theme::ActiveTheme;
-use ui::delegate::HeaderMenu;
+use ui::delegate::{HeaderMenu, TabScrollHandles};
 use ui::layout;
 use workspace::WorkspaceManager;
 
 pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspaces: WorkspaceManager,
+    pub(crate) tab_scrolls: TabScrollHandles,
     focus_handle: FocusHandle,
 }
 
@@ -17,6 +18,7 @@ impl KosmosApp {
         Self {
             active_menu: None,
             workspaces: persistence::load(),
+            tab_scrolls: TabScrollHandles::new(),
             focus_handle: cx.focus_handle(),
         }
     }
@@ -82,7 +84,11 @@ impl Render for KosmosApp {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .child(layout::main_content::render(&self.workspaces, cx)),
+                    .child(layout::main_content::render(
+                        &self.workspaces,
+                        &self.tab_scrolls,
+                        cx,
+                    )),
             )
             .child(layout::bottom_bar::render(&theme))
     }

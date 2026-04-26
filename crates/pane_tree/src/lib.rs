@@ -18,6 +18,9 @@ pub trait PaneTreeContext: Sized + 'static {
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut PaneTree) -> bool,
     );
+
+    fn on_tab_appended(&mut self, _pane_id: usize, _new_tab_count: usize, _cx: &mut Context<Self>) {
+    }
 }
 
 /// Extension trait: chain `.wire_pane_tree_actions(cx)` onto a focusable element
@@ -32,7 +35,19 @@ impl<E: InteractiveElement + 'static> WirePaneTreeActions for E {
             this.with_active_tree(cx, |tree| tree.close_active_tab());
         }))
         .on_action(cx.listener(|this, _: &NewTab, _, cx| {
-            this.with_active_tree(cx, |tree| tree.add_tab_to_active(&registry::BLANK));
+            let mut appended: Option<(usize, usize)> = None;
+            this.with_active_tree(cx, |tree| {
+                if !tree.add_tab_to_active(&registry::BLANK) {
+                    return false;
+                }
+                let pane_id = tree.active_pane_id();
+                let count = tree.active_pane().map(|p| p.tabs().len()).unwrap_or(0);
+                appended = Some((pane_id, count));
+                true
+            });
+            if let Some((pane_id, count)) = appended {
+                this.on_tab_appended(pane_id, count, cx);
+            }
         }))
     }
 }

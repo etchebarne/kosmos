@@ -5,7 +5,7 @@ use gpui::{
 use pane_tree::{PaneNode, PaneTree, SplitAxis};
 use theme::{ActiveTheme, Theme};
 
-use crate::delegate::PaneDelegate;
+use crate::delegate::{PaneDelegate, TabScrollHandles};
 use crate::drag::SplitResize;
 
 use super::pane;
@@ -13,11 +13,12 @@ use super::pane;
 pub fn render<T: PaneDelegate>(
     tree: &PaneTree,
     node: &PaneNode,
+    tab_scrolls: &TabScrollHandles,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     match node {
-        PaneNode::Leaf(p) => pane::render(tree, p, cx),
+        PaneNode::Leaf(p) => pane::render(tree, p, tab_scrolls, cx),
         PaneNode::Split {
             id,
             axis,
@@ -67,7 +68,7 @@ pub fn render<T: PaneDelegate>(
                         .when(axis == SplitAxis::Column, |this| {
                             this.h(relative(ratio)).w_full()
                         })
-                        .child(render(tree, first, cx)),
+                        .child(render(tree, first, tab_scrolls, cx)),
                 )
                 .child(render_resize_handle(split_id, axis, &theme))
                 .child(
@@ -75,7 +76,7 @@ pub fn render<T: PaneDelegate>(
                         .flex_1()
                         .min_w_0()
                         .min_h_0()
-                        .child(render(tree, second, cx)),
+                        .child(render(tree, second, tab_scrolls, cx)),
                 )
                 .into_any_element()
         }

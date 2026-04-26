@@ -5,14 +5,19 @@ use pane_tree::{DropZone, PaneTree};
 use panes::Pane;
 use theme::ActiveTheme;
 
-use crate::delegate::PaneDelegate;
+use crate::delegate::{PaneDelegate, TabScrollHandles};
 use crate::drag::TabDrag;
 use crate::metrics::PANE_HEADER_HEIGHT;
 use crate::tabs as tab_views;
 
 use super::tab;
 
-pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>) -> AnyElement {
+pub fn render<T: PaneDelegate>(
+    tree: &PaneTree,
+    pane: &Pane,
+    tab_scrolls: &TabScrollHandles,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let theme = *cx.theme();
     let active_tab_id = pane.active_tab();
     let tabs = pane.tabs();
@@ -37,6 +42,7 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
     }
 
     let pane_id = pane.id();
+    let scroll_handle = tab_scrolls.handle(pane_id);
     let body = match active_tab {
         Some(tab) => tab_views::render(pane_id, &tab, cx),
         None => div().flex_1().min_h_0().into_any_element(),
@@ -75,6 +81,7 @@ pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>
                         .items_center()
                         .gap(px(2.0))
                         .overflow_x_scroll()
+                        .track_scroll(&scroll_handle)
                         .children(tab_elements)
                         .child(render_add_tab_button(pane_id, cx)),
                 ),

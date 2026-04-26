@@ -1,10 +1,20 @@
 use gpui::{Context, PathPromptOptions};
 
 use pane_tree::{DropZone, PaneTree, PaneTreeContext};
-use ui::delegate::{HeaderDelegate, HeaderMenu, PaneDelegate, WorkspaceDelegate};
+use ui::delegate::{HeaderDelegate, HeaderMenu, PaneDelegate, TabScrollHandles, WorkspaceDelegate};
 use ui::drag::TabDrag;
 
 use crate::app::KosmosApp;
+
+fn scroll_tabs_to_end(tab_scrolls: &TabScrollHandles, pane_id: usize, tab_count: usize) {
+    if tab_count == 0 {
+        return;
+    }
+    // The scrollable strip is: tab, divider, tab, ..., tab, plus-button —
+    // `n` tabs + `n - 1` dividers + 1 plus button = `2 * n` children.
+    // Scroll to the plus button so the new active tab is visible too.
+    tab_scrolls.scroll_to_index(pane_id, 2 * tab_count - 1);
+}
 
 impl HeaderDelegate for KosmosApp {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>) {
@@ -61,7 +71,17 @@ impl PaneDelegate for KosmosApp {
         let Some(kind) = tabs::registry::get(kind_id) else {
             return;
         };
-        self.mutate_active_tree(cx, |tree| tree.add_tab(pane_id, kind));
+        let mut new_count: Option<usize> = None;
+        self.mutate_active_tree(cx, |tree| {
+            if !tree.add_tab(pane_id, kind) {
+                return false;
+            }
+            new_count = tree.active_pane().map(|p| p.tabs().len());
+            true
+        });
+        if let Some(count) = new_count {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
     }
 
     fn replace_tab_kind(
@@ -127,5 +147,9 @@ impl PaneTreeContext for KosmosApp {
         f: impl FnOnce(&mut PaneTree) -> bool,
     ) {
         self.mutate_active_tree(cx, f);
+    }
+
+    fn on_tab_appended(&mut self, pane_id: usize, new_tab_count: usize, _cx: &mut Context<Self>) {
+        scroll_tabs_to_end(&self.tab_scrolls, pane_id, new_tab_count);
     }
 }

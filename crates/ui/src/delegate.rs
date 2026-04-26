@@ -1,4 +1,8 @@
-use gpui::Context;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use gpui::{Context, ScrollHandle};
 use pane_tree::DropZone;
 
 use crate::drag::TabDrag;
@@ -40,6 +44,25 @@ pub trait PaneDelegate: Sized + 'static {
         cx: &mut Context<Self>,
     );
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>);
+}
+
+#[derive(Clone, Default)]
+pub struct TabScrollHandles(Rc<RefCell<HashMap<usize, ScrollHandle>>>);
+
+impl TabScrollHandles {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn handle(&self, pane_id: usize) -> ScrollHandle {
+        self.0.borrow_mut().entry(pane_id).or_default().clone()
+    }
+
+    pub fn scroll_to_index(&self, pane_id: usize, index: usize) {
+        if let Some(handle) = self.0.borrow().get(&pane_id) {
+            handle.scroll_to_item(index);
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
