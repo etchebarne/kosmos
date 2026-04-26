@@ -4,9 +4,9 @@ use pane_tree::DropZone;
 use ui::delegate::{HeaderDelegate, HeaderMenu, PaneDelegate, WorkspaceDelegate};
 use ui::drag::TabDrag;
 
-use crate::app::IdeApp;
+use crate::app::KosmosApp;
 
-impl HeaderDelegate for IdeApp {
+impl HeaderDelegate for KosmosApp {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>) {
         self.active_menu = if self.active_menu == Some(menu) {
             None
@@ -17,7 +17,7 @@ impl HeaderDelegate for IdeApp {
     }
 }
 
-impl WorkspaceDelegate for IdeApp {
+impl WorkspaceDelegate for KosmosApp {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>) {
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -50,7 +50,7 @@ impl WorkspaceDelegate for IdeApp {
     }
 }
 
-impl PaneDelegate for IdeApp {
+impl PaneDelegate for KosmosApp {
     fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
         self.mutate_active_tree(cx, |tree| tree.add_tab(pane_id));
     }

@@ -6,12 +6,12 @@ use ui::delegate::HeaderMenu;
 use ui::layout;
 use workspace::WorkspaceManager;
 
-pub struct IdeApp {
+pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspaces: WorkspaceManager,
 }
 
-impl IdeApp {
+impl KosmosApp {
     pub fn new() -> Self {
         Self {
             active_menu: None,
@@ -54,7 +54,7 @@ impl IdeApp {
     }
 }
 
-impl Render for IdeApp {
+impl Render for KosmosApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         div()

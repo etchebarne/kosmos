@@ -6,7 +6,7 @@ use gpui::{
 };
 use icons::AppAssets;
 
-use crate::app::IdeApp;
+use crate::app::KosmosApp;
 
 fn main() {
     Application::new()
@@ -26,7 +26,7 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let entity = cx.new(|_| IdeApp::new());
+                    let entity = cx.new(|_| KosmosApp::new());
                     entity.update(cx, |app, cx| app.start_observing_window(window, cx));
                     entity
                 },
