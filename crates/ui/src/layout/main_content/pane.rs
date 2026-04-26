@@ -11,25 +11,22 @@ use crate::metrics::PANE_HEADER_HEIGHT;
 
 use super::tab;
 
-pub fn render<T: PaneDelegate>(
-    tree: &PaneTree,
-    pane: &Pane,
-    cx: &mut Context<T>,
-) -> AnyElement {
+pub fn render<T: PaneDelegate>(tree: &PaneTree, pane: &Pane, cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
-    let active_title = pane
-        .tabs
+    let active_tab_id = pane.active_tab();
+    let tabs = pane.tabs();
+    let active_title = tabs
         .iter()
-        .find(|t| t.id == pane.active_tab)
+        .find(|t| t.id == active_tab_id)
         .map(|t| t.title.clone())
         .unwrap_or_else(|| "Blank".into());
     let can_close = tree.total_tabs() > 1;
     let mut tab_elements: Vec<AnyElement> = Vec::new();
 
-    for (i, t) in pane.tabs.iter().enumerate() {
+    for (i, t) in tabs.iter().enumerate() {
         if i > 0 {
-            let prev_tab = &pane.tabs[i - 1];
-            let show_divider = prev_tab.id != pane.active_tab && t.id != pane.active_tab;
+            let prev_tab = &tabs[i - 1];
+            let show_divider = prev_tab.id != active_tab_id && t.id != active_tab_id;
             tab_elements.push(
                 div()
                     .w(px(1.0))
@@ -42,8 +39,9 @@ pub fn render<T: PaneDelegate>(
         tab_elements.push(tab::render(pane, t, can_close, cx));
     }
 
+    let pane_id = pane.id();
     div()
-        .id(("pane", pane.id))
+        .id(("pane", pane_id))
         .relative()
         .size_full()
         .min_w_0()
@@ -66,7 +64,7 @@ pub fn render<T: PaneDelegate>(
                 .overflow_hidden()
                 .child(
                     div()
-                        .id(("tab-scroll", pane.id))
+                        .id(("tab-scroll", pane_id))
                         .flex_1()
                         .min_w_0()
                         .flex()
@@ -74,7 +72,7 @@ pub fn render<T: PaneDelegate>(
                         .gap(px(2.0))
                         .overflow_x_scroll()
                         .children(tab_elements)
-                        .child(render_add_tab_button(pane.id, cx)),
+                        .child(render_add_tab_button(pane_id, cx)),
                 ),
         )
         .child(
@@ -95,11 +93,11 @@ pub fn render<T: PaneDelegate>(
                 .bottom_0()
                 .left_0()
                 .right_0()
-                .child(render_drop_zone(pane.id, DropZone::Center, cx))
-                .child(render_drop_zone(pane.id, DropZone::Left, cx))
-                .child(render_drop_zone(pane.id, DropZone::Right, cx))
-                .child(render_drop_zone(pane.id, DropZone::Top, cx))
-                .child(render_drop_zone(pane.id, DropZone::Bottom, cx)),
+                .child(render_drop_zone(pane_id, DropZone::Center, cx))
+                .child(render_drop_zone(pane_id, DropZone::Left, cx))
+                .child(render_drop_zone(pane_id, DropZone::Right, cx))
+                .child(render_drop_zone(pane_id, DropZone::Top, cx))
+                .child(render_drop_zone(pane_id, DropZone::Bottom, cx)),
         )
         .into_any_element()
 }

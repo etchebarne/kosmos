@@ -3,9 +3,9 @@ use tabs::Tab;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pane {
-    pub id: usize,
-    pub tabs: Vec<Tab>,
-    pub active_tab: usize,
+    id: usize,
+    tabs: Vec<Tab>,
+    active_tab: usize,
 }
 
 impl Pane {
@@ -17,23 +17,42 @@ impl Pane {
         }
     }
 
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn tabs(&self) -> &[Tab] {
+        &self.tabs
+    }
+
+    pub fn active_tab(&self) -> usize {
+        self.active_tab
+    }
+
+    pub fn has_tab(&self, tab_id: usize) -> bool {
+        self.tabs.iter().any(|t| t.id == tab_id)
+    }
+
     pub fn add_tab(&mut self, tab: Tab) {
         self.active_tab = tab.id;
         self.tabs.push(tab);
     }
 
-    pub fn insert_tab_before(&mut self, tab: Tab, before_tab_id: usize) {
-        let index = self
-            .tabs
-            .iter()
-            .position(|t| t.id == before_tab_id)
-            .unwrap_or(self.tabs.len());
+    pub fn insert_tab_before(&mut self, tab: Tab, before_tab_id: usize) -> bool {
+        let Some(index) = self.tabs.iter().position(|t| t.id == before_tab_id) else {
+            return false;
+        };
         self.active_tab = tab.id;
         self.tabs.insert(index, tab);
+        true
     }
 
-    pub fn select_tab(&mut self, tab_id: usize) {
+    pub fn select_tab(&mut self, tab_id: usize) -> bool {
+        if !self.has_tab(tab_id) {
+            return false;
+        }
         self.active_tab = tab_id;
+        true
     }
 
     pub fn take_tab(&mut self, tab_id: usize) -> Option<Tab> {

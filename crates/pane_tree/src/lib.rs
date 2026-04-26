@@ -79,8 +79,7 @@ impl PaneTree {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
         };
-        pane.select_tab(tab_id);
-        true
+        pane.select_tab(tab_id)
     }
 
     pub fn close_tab(&mut self, pane_id: usize, tab_id: usize) -> bool {
@@ -179,7 +178,7 @@ impl PaneTree {
             let Some(source_pane) = Self::find_pane(&self.root, source_pane_id) else {
                 return false;
             };
-            if source_pane.tabs.len() == 1 {
+            if source_pane.tabs().len() == 1 {
                 return false;
             }
         }
@@ -227,7 +226,7 @@ impl PaneTree {
 
     fn find_pane(node: &PaneNode, pane_id: usize) -> Option<&Pane> {
         match node {
-            PaneNode::Leaf(pane) if pane.id == pane_id => Some(pane),
+            PaneNode::Leaf(pane) if pane.id() == pane_id => Some(pane),
             PaneNode::Leaf(_) => None,
             PaneNode::Split { first, second, .. } => {
                 Self::find_pane(first, pane_id).or_else(|| Self::find_pane(second, pane_id))
@@ -237,7 +236,7 @@ impl PaneTree {
 
     fn find_pane_mut(node: &mut PaneNode, pane_id: usize) -> Option<&mut Pane> {
         match node {
-            PaneNode::Leaf(pane) if pane.id == pane_id => Some(pane),
+            PaneNode::Leaf(pane) if pane.id() == pane_id => Some(pane),
             PaneNode::Leaf(_) => None,
             PaneNode::Split { first, second, .. } => Self::find_pane_mut(first, pane_id)
                 .or_else(|| Self::find_pane_mut(second, pane_id)),
@@ -246,7 +245,7 @@ impl PaneTree {
 
     fn total_tabs_in(node: &PaneNode) -> usize {
         match node {
-            PaneNode::Leaf(pane) => pane.tabs.len(),
+            PaneNode::Leaf(pane) => pane.tabs().len(),
             PaneNode::Split { first, second, .. } => {
                 Self::total_tabs_in(first) + Self::total_tabs_in(second)
             }
@@ -282,7 +281,7 @@ impl PaneTree {
         drop_zone: DropZone,
     ) -> bool {
         match node {
-            PaneNode::Leaf(pane) if pane.id == pane_id => {
+            PaneNode::Leaf(pane) if pane.id() == pane_id => {
                 let axis = match drop_zone {
                     DropZone::Left | DropZone::Right => SplitAxis::Row,
                     DropZone::Top | DropZone::Bottom => SplitAxis::Column,

@@ -16,9 +16,9 @@ pub fn render<T: PaneDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let pane_id = pane.id;
+    let pane_id = pane.id();
     let id = tab.id;
-    let is_active = pane.active_tab == id;
+    let is_active = pane.active_tab() == id;
     let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
 
     div()
