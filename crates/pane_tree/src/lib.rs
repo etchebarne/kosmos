@@ -2,10 +2,9 @@
 mod tests;
 
 use panes::Pane;
-use serde::{Deserialize, Serialize};
 use tabs::{Tab, TabKind, registry};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SplitAxis {
     Row,
     Column,
@@ -20,7 +19,7 @@ pub enum DropZone {
     Bottom,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub enum PaneNode {
     Leaf(Pane),
     Split {
@@ -32,7 +31,6 @@ pub enum PaneNode {
     },
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct PaneTree {
     root: PaneNode,
     next_tab_id: usize,
@@ -56,8 +54,34 @@ impl PaneTree {
         }
     }
 
+    pub fn from_parts(
+        root: PaneNode,
+        next_tab_id: usize,
+        next_pane_id: usize,
+        next_split_id: usize,
+    ) -> Self {
+        Self {
+            root,
+            next_tab_id,
+            next_pane_id,
+            next_split_id,
+        }
+    }
+
     pub fn root(&self) -> &PaneNode {
         &self.root
+    }
+
+    pub fn next_tab_id(&self) -> usize {
+        self.next_tab_id
+    }
+
+    pub fn next_pane_id(&self) -> usize {
+        self.next_pane_id
+    }
+
+    pub fn next_split_id(&self) -> usize {
+        self.next_split_id
     }
 
     pub fn total_tabs(&self) -> usize {

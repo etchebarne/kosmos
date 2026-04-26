@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
 use tabs::Tab;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct Pane {
     id: usize,
     tabs: Vec<Tab>,
@@ -14,6 +13,14 @@ impl Pane {
             id,
             active_tab: initial_tab.id,
             tabs: vec![initial_tab],
+        }
+    }
+
+    pub fn from_parts(id: usize, tabs: Vec<Tab>, active_tab: usize) -> Self {
+        Self {
+            id,
+            tabs,
+            active_tab,
         }
     }
 

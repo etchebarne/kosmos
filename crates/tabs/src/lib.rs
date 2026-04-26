@@ -2,15 +2,13 @@ pub mod registry;
 
 use gpui::SharedString;
 use icons::IconName;
-use serde::{Deserialize, Serialize};
 
 pub use registry::TabKind;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct Tab {
     pub id: usize,
     pub kind: SharedString,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<SharedString>,
 }
 

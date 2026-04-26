@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use gpui::SharedString;
 use pane_tree::PaneTree;
-use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
 pub struct Workspace {
     pub id: usize,
     pub path: PathBuf,
