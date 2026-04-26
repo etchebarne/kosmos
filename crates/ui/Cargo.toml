@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 gpui = { workspace = true }
 icons = { path = "../icons" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }
+unicode-segmentation = "1.12"
 workspace = { path = "../workspace" }
 pane_tree = { path = "../pane_tree" }
 panes = { path = "../panes" }

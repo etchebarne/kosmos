@@ -5,14 +5,14 @@ use pane_tree::{DropZone, PaneTree};
 use panes::Pane;
 use theme::ActiveTheme;
 
-use crate::delegate::{PaneDelegate, TabScrollHandles};
+use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles};
 use crate::drag::TabDrag;
 use crate::metrics::{PANE_HEADER_HEIGHT, TAB_HEIGHT};
 use crate::tabs as tab_views;
 
 use super::tab;
 
-pub fn render<T: PaneDelegate>(
+pub fn render<T: PaneDelegate + SettingsDelegate>(
     tree: &PaneTree,
     pane: &Pane,
     tab_scrolls: &TabScrollHandles,

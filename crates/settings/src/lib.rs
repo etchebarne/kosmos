@@ -1,14 +1,55 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+pub mod registry;
+mod store;
+mod value;
+
+use std::collections::HashMap;
+
+use gpui::{App, Global, SharedString};
+
+pub use registry::{ALL, Category, DropdownOption, Setting, SettingControl};
+pub use value::SettingValue;
+
+pub struct Settings {
+    values: HashMap<SharedString, SettingValue>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Settings {
+    pub fn load() -> Self {
+        Self {
+            values: store::load_all(),
+        }
+    }
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    pub fn categories() -> &'static [&'static Category] {
+        registry::ALL
+    }
+
+    pub fn value(&self, setting: &Setting) -> SettingValue {
+        self.values
+            .get(setting.id)
+            .cloned()
+            .unwrap_or_else(|| setting.default_value())
+    }
+
+    pub fn get(&self, key: &str) -> Option<&SettingValue> {
+        self.values.get(key)
+    }
+
+    pub fn set(&mut self, key: impl Into<SharedString>, value: SettingValue) {
+        let key: SharedString = key.into();
+        store::save(key.as_ref(), &value);
+        self.values.insert(key, value);
+    }
+}
+
+impl Global for Settings {}
+
+pub trait ActiveSettings {
+    fn settings(&self) -> &Settings;
+}
+
+impl ActiveSettings for App {
+    fn settings(&self) -> &Settings {
+        self.global::<Settings>()
     }
 }

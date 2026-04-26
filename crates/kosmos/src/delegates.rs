@@ -1,7 +1,11 @@
-use gpui::{Context, PathPromptOptions};
+use gpui::{BorrowAppContext, Context, PathPromptOptions};
 
 use pane_tree::{DropZone, PaneTree, PaneTreeContext};
-use ui::delegate::{HeaderDelegate, HeaderMenu, PaneDelegate, TabScrollHandles, WorkspaceDelegate};
+use settings::{Settings, SettingValue};
+use ui::delegate::{
+    HeaderDelegate, HeaderMenu, PaneDelegate, SettingsDelegate, SettingsUiState, TabScrollHandles,
+    WorkspaceDelegate,
+};
 use ui::drag::TabDrag;
 
 use crate::app::KosmosApp;
@@ -143,6 +147,49 @@ impl PaneDelegate for KosmosApp {
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
         self.mutate_active_tree(cx, |tree| tree.resize_split(split_id, ratio));
+    }
+}
+
+impl SettingsDelegate for KosmosApp {
+    fn select_settings_category(
+        &mut self,
+        category_id: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        cx.update_global::<SettingsUiState, _>(|state, _| {
+            if state.active_category != category_id {
+                state.active_category = category_id;
+                state.open_dropdown = None;
+                changed = true;
+            }
+        });
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn toggle_settings_dropdown(&mut self, setting_id: &'static str, cx: &mut Context<Self>) {
+        cx.update_global::<SettingsUiState, _>(|state, _| {
+            state.open_dropdown = if state.open_dropdown == Some(setting_id) {
+                None
+            } else {
+                Some(setting_id)
+            };
+        });
+        cx.notify();
+    }
+
+    fn set_setting_value(
+        &mut self,
+        key: &'static str,
+        value: SettingValue,
+        cx: &mut Context<Self>,
+    ) {
+        cx.update_global::<Settings, _>(|settings, _| {
+            settings.set(key, value);
+        });
+        cx.notify();
     }
 }
 

@@ -3955,6 +3955,7 @@ dependencies = [
  "icons",
  "pane_tree",
  "persistence",
+ "settings",
  "shortcuts",
  "tabs",
  "theme",
@@ -5974,6 +5975,11 @@ dependencies = [
 [[package]]
 name = "settings"
 version = "0.1.0"
+dependencies = [
+ "gpui",
+ "icons",
+ "rusqlite",
+]
 
 [[package]]
 name = "sha1"
@@ -6912,8 +6918,10 @@ dependencies = [
  "icons",
  "pane_tree",
  "panes",
+ "settings",
  "tabs",
  "theme",
+ "unicode-segmentation",
  "workspace",
 ]
 

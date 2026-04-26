@@ -4,16 +4,20 @@ mod file_search;
 mod file_tree;
 mod git;
 mod placeholder;
-mod settings;
+pub mod settings;
 mod terminal;
 
 use gpui::{AnyElement, Context, IntoElement, div};
 
 use tabs::Tab;
 
-use crate::delegate::PaneDelegate;
+use crate::delegate::{PaneDelegate, SettingsDelegate};
 
-pub fn render<T: PaneDelegate>(pane_id: usize, tab: &Tab, cx: &mut Context<T>) -> AnyElement {
+pub fn render<T: PaneDelegate + SettingsDelegate>(
+    pane_id: usize,
+    tab: &Tab,
+    cx: &mut Context<T>,
+) -> AnyElement {
     match tab.kind.as_ref() {
         "blank" => blank::render(pane_id, tab.id, cx),
         "terminal" => terminal::render(cx),

@@ -1,0 +1,131 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+use gpui::SharedString;
+use rusqlite::{Connection, Result, params};
+
+use crate::value::SettingValue;
+
+const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
+
+static CONN: OnceLock<Option<Mutex<Connection>>> = OnceLock::new();
+
+pub fn load_all() -> HashMap<SharedString, SettingValue> {
+    with(load_inner).unwrap_or_default()
+}
+
+pub fn save(key: &str, value: &SettingValue) {
+    with(|conn| save_inner(conn, key, value));
+}
+
+fn load_inner(conn: &mut Connection) -> Result<HashMap<SharedString, SettingValue>> {
+    let mut stmt = conn.prepare("SELECT key, value_type, value FROM settings")?;
+    let rows = stmt.query_map([], |row| {
+        let key: String = row.get(0)?;
+        let kind: String = row.get(1)?;
+        let raw: String = row.get(2)?;
+        Ok((key, kind, raw))
+    })?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (key, kind, raw) = row?;
+        let Some(value) = decode(&kind, &raw) else {
+            continue;
+        };
+        map.insert(SharedString::from(key), value);
+    }
+    Ok(map)
+}
+
+fn save_inner(conn: &mut Connection, key: &str, value: &SettingValue) -> Result<()> {
+    let (kind, raw) = encode(value);
+    conn.execute(
+        "INSERT INTO settings (key, value_type, value) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET
+           value_type = excluded.value_type,
+           value = excluded.value",
+        params![key, kind, raw],
+    )?;
+    Ok(())
+}
+
+fn encode(value: &SettingValue) -> (&'static str, String) {
+    match value {
+        SettingValue::Bool(b) => ("bool", if *b { "1" } else { "0" }.to_string()),
+        SettingValue::String(s) => ("string", s.to_string()),
+        SettingValue::Int(i) => ("int", i.to_string()),
+    }
+}
+
+fn decode(kind: &str, raw: &str) -> Option<SettingValue> {
+    match kind {
+        "bool" => Some(SettingValue::Bool(raw == "1" || raw == "true")),
+        "string" => Some(SettingValue::String(SharedString::from(raw.to_string()))),
+        "int" => raw.parse::<i64>().ok().map(SettingValue::Int),
+        _ => None,
+    }
+}
+
+fn with<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut Connection) -> Result<R>,
+{
+    let mu = CONN.get_or_init(open).as_ref()?;
+    let mut conn = mu.lock().unwrap();
+    match f(&mut conn) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            eprintln!("kosmos: settings db error: {err}");
+            None
+        }
+    }
+}
+
+fn open() -> Option<Mutex<Connection>> {
+    let path = data_path()?;
+    if let Some(parent) = path.parent()
+        && let Err(err) = fs::create_dir_all(parent)
+    {
+        eprintln!("kosmos: failed to create {}: {err}", parent.display());
+        return None;
+    }
+    let mut conn = match Connection::open(&path) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!(
+                "kosmos: failed to open settings db at {}: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    if let Err(err) = init(&mut conn) {
+        eprintln!("kosmos: settings db init failed: {err}");
+        return None;
+    }
+    Some(Mutex::new(conn))
+}
+
+fn init(conn: &mut Connection) -> Result<()> {
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    let current: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    for (i, sql) in MIGRATIONS.iter().enumerate() {
+        let version = (i + 1) as u32;
+        if version <= current {
+            continue;
+        }
+        let tx = conn.transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", version)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+fn data_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".kosmos").join("settings.db"))
+}

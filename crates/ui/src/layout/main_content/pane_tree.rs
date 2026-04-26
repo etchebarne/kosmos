@@ -5,12 +5,12 @@ use gpui::{
 use pane_tree::{PaneNode, PaneTree, SplitAxis};
 use theme::{ActiveTheme, Theme};
 
-use crate::delegate::{PaneDelegate, TabScrollHandles};
+use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles};
 use crate::drag::SplitResize;
 
 use super::pane;
 
-pub fn render<T: PaneDelegate>(
+pub fn render<T: PaneDelegate + SettingsDelegate>(
     tree: &PaneTree,
     node: &PaneNode,
     tab_scrolls: &TabScrollHandles,

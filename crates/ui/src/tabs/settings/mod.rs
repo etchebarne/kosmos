@@ -1,9 +1,28 @@
-use gpui::{AnyElement, App};
+mod content;
+mod controls;
+mod sidebar;
+pub mod state;
 
-use tabs::registry;
+pub use state::SettingsInputs;
 
-use super::placeholder;
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*};
 
-pub fn render(cx: &mut App) -> AnyElement {
-    placeholder::render(registry::SETTINGS.icon, registry::SETTINGS.name, cx)
+use settings::{Settings, registry};
+
+use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
+
+pub fn render<T: SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let state = *cx.settings_ui();
+    let active = registry::category(state.active_category)
+        .or_else(|| Settings::categories().first().copied())
+        .expect("settings registry has at least one category");
+
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_row()
+        .child(sidebar::render(active.id, cx))
+        .child(content::render(active, state.open_dropdown, cx))
+        .into_any_element()
 }

@@ -1,9 +1,11 @@
 use gpui::{Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
 
+use gpui::BorrowAppContext;
 use pane_tree::{PaneTree, WirePaneTreeActions};
 use theme::ActiveTheme;
-use ui::delegate::{HeaderMenu, TabScrollHandles};
+use ui::delegate::{HeaderMenu, SettingsUiState, TabScrollHandles};
 use ui::layout;
+use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
 
 pub struct KosmosApp {
@@ -15,6 +17,7 @@ pub struct KosmosApp {
 
 impl KosmosApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        SettingsInputs::install(cx);
         Self {
             active_menu: None,
             workspaces: persistence::load(),
@@ -38,7 +41,13 @@ impl KosmosApp {
     }
 
     pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
-        if self.active_menu.take().is_some() {
+        let mut changed = self.active_menu.take().is_some();
+        cx.update_global::<SettingsUiState, _>(|state, _| {
+            if state.open_dropdown.take().is_some() {
+                changed = true;
+            }
+        });
+        if changed {
             cx.notify();
         }
     }

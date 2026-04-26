@@ -6,10 +6,10 @@ use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px};
 use theme::ActiveTheme;
 use workspace::WorkspaceManager;
 
-use crate::delegate::{PaneDelegate, TabScrollHandles, WorkspaceDelegate};
+use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles, WorkspaceDelegate};
 use crate::layout::landing;
 
-pub fn render<T: PaneDelegate + WorkspaceDelegate>(
+pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
     workspaces: &WorkspaceManager,
     tab_scrolls: &TabScrollHandles,
     cx: &mut Context<T>,

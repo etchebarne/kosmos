@@ -2,8 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{Context, ScrollHandle};
+use gpui::{App, Context, Global, ScrollHandle};
 use pane_tree::DropZone;
+use settings::SettingValue;
 
 use crate::drag::TabDrag;
 
@@ -45,6 +46,54 @@ pub trait PaneDelegate: Sized + 'static {
         cx: &mut Context<Self>,
     );
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>);
+}
+
+pub trait SettingsDelegate: Sized + 'static {
+    fn select_settings_category(&mut self, category_id: &'static str, cx: &mut Context<Self>);
+    fn toggle_settings_dropdown(&mut self, setting_id: &'static str, cx: &mut Context<Self>);
+    fn set_setting_value(
+        &mut self,
+        key: &'static str,
+        value: SettingValue,
+        cx: &mut Context<Self>,
+    );
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsUiState {
+    pub active_category: &'static str,
+    pub open_dropdown: Option<&'static str>,
+}
+
+impl SettingsUiState {
+    pub fn new() -> Self {
+        let active_category = settings::Settings::categories()
+            .first()
+            .map(|c| c.id)
+            .unwrap_or("");
+        Self {
+            active_category,
+            open_dropdown: None,
+        }
+    }
+}
+
+impl Default for SettingsUiState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Global for SettingsUiState {}
+
+pub trait ActiveSettingsUi {
+    fn settings_ui(&self) -> &SettingsUiState;
+}
+
+impl ActiveSettingsUi for App {
+    fn settings_ui(&self) -> &SettingsUiState {
+        self.global::<SettingsUiState>()
+    }
 }
 
 #[derive(Clone, Default)]
