@@ -48,6 +48,25 @@ fn add_tab_unknown_pane_does_not_consume_id() {
 }
 
 #[test]
+fn replace_tab_kind_swaps_in_place_keeping_id_and_position() {
+    let mut tree = PaneTree::new();
+    tree.add_tab(0, &registry::BLANK);
+    tree.add_tab(0, &registry::BLANK);
+    assert!(tree.replace_tab_kind(0, 1, &registry::TERMINAL));
+    let pane = leaf(tree.root());
+    assert_eq!(tab_ids(pane), vec![0, 1, 2]);
+    assert_eq!(pane.tabs()[1].kind.as_ref(), "terminal");
+    assert_eq!(pane.tabs()[0].kind.as_ref(), "blank");
+}
+
+#[test]
+fn replace_tab_kind_unknown_pane_or_tab_returns_false() {
+    let mut tree = PaneTree::new();
+    assert!(!tree.replace_tab_kind(99, 0, &registry::TERMINAL));
+    assert!(!tree.replace_tab_kind(0, 99, &registry::TERMINAL));
+}
+
+#[test]
 fn select_tab_validates_membership() {
     let mut tree = PaneTree::new();
     tree.add_tab(0, &registry::BLANK);

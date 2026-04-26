@@ -15,7 +15,7 @@ use crate::delegate::PaneDelegate;
 
 pub fn render<T: PaneDelegate>(pane_id: usize, tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     match tab.kind.as_ref() {
-        "blank" => blank::render(pane_id, cx),
+        "blank" => blank::render(pane_id, tab.id, cx),
         "terminal" => terminal::render(cx),
         "file_tree" => file_tree::render(cx),
         "file_search" => file_search::render(cx),

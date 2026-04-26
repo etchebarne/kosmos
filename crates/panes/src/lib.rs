@@ -47,6 +47,14 @@ impl Pane {
         true
     }
 
+    pub fn replace_tab(&mut self, tab_id: usize, replacement: Tab) -> bool {
+        let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return false;
+        };
+        self.tabs[index] = replacement;
+        true
+    }
+
     pub fn select_tab(&mut self, tab_id: usize) -> bool {
         if !self.has_tab(tab_id) {
             return false;

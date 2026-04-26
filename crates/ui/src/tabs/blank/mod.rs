@@ -6,13 +6,17 @@ use theme::ActiveTheme;
 
 use crate::delegate::PaneDelegate;
 
-pub fn render<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
+pub fn render<T: PaneDelegate>(
+    pane_id: usize,
+    tab_id: usize,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let theme = *cx.theme();
     let buttons: Vec<AnyElement> = registry::ALL
         .iter()
         .copied()
         .filter(|kind| !kind.is_hidden)
-        .map(|kind| render_button(pane_id, kind, cx))
+        .map(|kind| render_button(pane_id, tab_id, kind, cx))
         .collect();
 
     div()
@@ -45,6 +49,7 @@ pub fn render<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElemen
 
 fn render_button<T: PaneDelegate>(
     pane_id: usize,
+    tab_id: usize,
     kind: &'static TabKind,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -69,7 +74,7 @@ fn render_button<T: PaneDelegate>(
                 .text_color(theme.text_emphasis)
         })
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.add_tab(pane_id, kind_id, cx);
+            this.replace_tab_kind(pane_id, tab_id, kind_id, cx);
         }))
         .child(Icon::new(kind.icon).size(16.0).color(theme.text_muted))
         .child(div().child(kind.name))

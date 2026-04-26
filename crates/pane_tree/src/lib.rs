@@ -74,6 +74,18 @@ impl PaneTree {
         true
     }
 
+    pub fn replace_tab_kind(
+        &mut self,
+        pane_id: usize,
+        tab_id: usize,
+        kind: &'static TabKind,
+    ) -> bool {
+        let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
+            return false;
+        };
+        pane.replace_tab(tab_id, Tab::new(tab_id, kind))
+    }
+
     pub fn select_tab(&mut self, pane_id: usize, tab_id: usize) -> bool {
         let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
             return false;
