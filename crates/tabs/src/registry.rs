@@ -30,7 +30,7 @@ pub const FILE_SEARCH: TabKind = TabKind {
 
 pub const GIT: TabKind = TabKind {
     id: "git",
-    name: "Source Control",
+    name: "Git",
     icon: IconName::SourceControl,
     is_hidden: false,
 };
