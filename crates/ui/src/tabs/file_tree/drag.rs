@@ -9,17 +9,17 @@ use theme::ActiveTheme;
 
 #[derive(Clone)]
 pub struct FileNodeDrag {
-    pub path: PathBuf,
-    pub name: SharedString,
+    pub paths: Vec<PathBuf>,
+    pub label: SharedString,
     pub icon: IconName,
     position: Point<Pixels>,
 }
 
 impl FileNodeDrag {
-    pub fn new(path: PathBuf, name: SharedString, icon: IconName) -> Self {
+    pub fn new(paths: Vec<PathBuf>, label: SharedString, icon: IconName) -> Self {
         Self {
-            path,
-            name,
+            paths,
+            label,
             icon,
             position: Point::default(),
         }
@@ -29,12 +29,24 @@ impl FileNodeDrag {
         self.position = position;
         self
     }
+
+    pub fn count(&self) -> usize {
+        self.paths.len()
+    }
 }
 
 impl Render for FileNodeDrag {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let rem = window.rem_size();
+        let count = self.count();
+        let is_multi = count > 1;
+        let display_label: SharedString = if is_multi {
+            format!("{count} items").into()
+        } else {
+            self.label.clone()
+        };
+
         div()
             .pl(self.position.x - rems(0.5).to_pixels(rem))
             .pt(self.position.y - rems(0.75).to_pixels(rem))
@@ -56,7 +68,7 @@ impl Render for FileNodeDrag {
                             .color(theme.text)
                             .into_any_element(),
                     )
-                    .child(self.name.clone()),
+                    .child(display_label),
             )
     }
 }

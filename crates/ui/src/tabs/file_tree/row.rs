@@ -76,27 +76,34 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
                 let position = event.position;
                 let target = secondary_path.clone();
                 entity_secondary.update(cx, |t, cx| {
-                    t.select(target.clone(), cx);
+                    if !t.is_selected(&target) {
+                        t.select(target.clone(), cx);
+                    }
                     t.open_context_menu(Some(target), position, cx);
                 });
             }),
         )
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
+            let shift = event.modifiers().shift;
             entity_click.update(cx, |t, cx| {
-                t.select(target.clone(), cx);
-                t.toggle_expand(&target, cx);
+                if shift {
+                    t.extend_selection_to(target, cx);
+                } else {
+                    t.select(target.clone(), cx);
+                    t.toggle_expand(&target, cx);
+                }
             });
         }))
         .can_drop(move |drag, _, _| {
             drag.downcast_ref::<FileNodeDrag>()
-                .is_some_and(|d| !drop_filter_path.starts_with(&d.path))
+                .is_some_and(|d| can_drop_into_dir(d, &drop_filter_path))
         })
         .on_drop(cx.listener(move |_, drag: &FileNodeDrag, _, cx| {
             cx.stop_propagation();
             let dest = drop_path.clone();
-            let src = drag.path.clone();
-            entity_drop.update(cx, |t, cx| t.move_into(src, dest, cx));
+            let srcs = drag.paths.clone();
+            entity_drop.update(cx, |t, cx| t.move_into(srcs, dest, cx));
         }))
         .child(div().flex_1().min_w_0().child(label))
         .child(actions_cluster)
@@ -161,43 +168,41 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
                 let position = event.position;
                 let target = secondary_path.clone();
                 entity_secondary.update(cx, |t, cx| {
-                    t.select(target.clone(), cx);
+                    if !t.is_selected(&target) {
+                        t.select(target.clone(), cx);
+                    }
                     t.open_context_menu(Some(target), position, cx);
                 });
             }),
         )
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
+            let shift = event.modifiers().shift;
             entity_click.update(cx, |t, cx| {
-                t.select(target.clone(), cx);
-                t.toggle_expand(&target, cx);
+                if shift {
+                    t.extend_selection_to(target, cx);
+                } else {
+                    t.select(target.clone(), cx);
+                    t.toggle_expand(&target, cx);
+                }
             });
         }))
         .can_drop(move |drag, _, _| {
-            let Some(d) = drag.downcast_ref::<FileNodeDrag>() else {
-                return false;
-            };
-            // Rejected: target is the source itself or a descendant of source.
-            if drop_filter_path.starts_with(&d.path) {
-                return false;
-            }
-            // Rejected: source is already a direct child of this directory.
-            if d.path.parent() == Some(drop_filter_path.as_path()) {
-                return false;
-            }
-            true
+            drag.downcast_ref::<FileNodeDrag>()
+                .is_some_and(|d| can_drop_into_dir(d, &drop_filter_path))
         })
         .on_drop(cx.listener(move |_, drag: &FileNodeDrag, _, cx| {
             cx.stop_propagation();
             let dest = drop_path.clone();
-            let src = drag.path.clone();
-            entity_drop.update(cx, |t, cx| t.move_into(src, dest, cx));
+            let srcs = drag.paths.clone();
+            entity_drop.update(cx, |t, cx| t.move_into(srcs, dest, cx));
         }))
         .child(body);
 
     if !state.is_renaming {
+        let paths = drag_paths_for(entity, &drag_path, cx);
         row = row.on_drag(
-            FileNodeDrag::new(drag_path, drag_name, icon_name),
+            FileNodeDrag::new(paths, drag_name, icon_name),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         );
     }
@@ -259,14 +264,23 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
                 let position = event.position;
                 let target = secondary_path.clone();
                 entity_secondary.update(cx, |t, cx| {
-                    t.select(target.clone(), cx);
+                    if !t.is_selected(&target) {
+                        t.select(target.clone(), cx);
+                    }
                     t.open_context_menu(Some(target), position, cx);
                 });
             }),
         )
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
-            entity_click.update(cx, |t, cx| t.select(target, cx));
+            let shift = event.modifiers().shift;
+            entity_click.update(cx, |t, cx| {
+                if shift {
+                    t.extend_selection_to(target, cx);
+                } else {
+                    t.select(target, cx);
+                }
+            });
         }))
         .can_drop({
             let parent = drop_target_dir.clone();
@@ -275,15 +289,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
                 else {
                     return false;
                 };
-                // Already a direct child of this destination.
-                if d.path.parent() == Some(parent.as_path()) {
-                    return false;
-                }
-                // Destination is the source itself or a descendant of source.
-                if parent.starts_with(&d.path) {
-                    return false;
-                }
-                true
+                can_drop_into_dir(d, parent)
             }
         })
         .on_drop(cx.listener(move |_, drag: &FileNodeDrag, _, cx| {
@@ -291,22 +297,17 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
             let Some(dest) = drop_target_dir.clone() else {
                 return;
             };
-            if drag.path.parent() == Some(dest.as_path()) {
-                return;
-            }
-            if dest.starts_with(&drag.path) {
-                return;
-            }
-            let src = drag.path.clone();
-            entity_drop.update(cx, |t, cx| t.move_into(src, dest, cx));
+            let srcs = drag.paths.clone();
+            entity_drop.update(cx, |t, cx| t.move_into(srcs, dest, cx));
         }))
         .child(body);
 
     let _ = drop_filter_path;
 
     if !state.is_renaming {
+        let paths = drag_paths_for(entity, &drag_path, cx);
         row = row.on_drag(
-            FileNodeDrag::new(drag_path, drag_name, icon_name),
+            FileNodeDrag::new(paths, drag_name, icon_name),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         );
     }
@@ -506,6 +507,37 @@ pub fn indent_guides(depth: usize, theme: Theme) -> AnyElement {
         );
     }
     row.into_any_element()
+}
+
+/// Build the path list for a drag started on `row_path`. If the row belongs to
+/// the active multi-selection, the drag carries every selected path; otherwise
+/// it carries just the row's own path.
+fn drag_paths_for<T: PaneDelegate + SettingsDelegate>(
+    entity: &Entity<FileTree>,
+    row_path: &Path,
+    cx: &Context<T>,
+) -> Vec<PathBuf> {
+    let tree = entity.read(cx);
+    if tree.is_selected(row_path) && tree.selected_count() > 1 {
+        tree.selected_paths().iter().cloned().collect()
+    } else {
+        vec![row_path.to_path_buf()]
+    }
+}
+
+/// Drop predicate shared by directory and file rows: allow the drop if at
+/// least one source can land in `dest_dir` (i.e. dest is not inside any
+/// source, and at least one source is not already a direct child).
+fn can_drop_into_dir(drag: &FileNodeDrag, dest_dir: &Path) -> bool {
+    if drag.paths.is_empty() {
+        return false;
+    }
+    if drag.paths.iter().any(|p| dest_dir.starts_with(p)) {
+        return false;
+    }
+    drag.paths
+        .iter()
+        .any(|p| p.parent() != Some(dest_dir))
 }
 
 pub fn path_id(prefix: &'static str, path: &Path) -> gpui::ElementId {

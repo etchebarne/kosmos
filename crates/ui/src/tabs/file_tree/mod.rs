@@ -39,7 +39,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
             tree.error().cloned(),
             tree.new_entry_draft().cloned(),
             tree.context_menu().cloned(),
-            tree.clipboard().map(|(op, p)| (op, p.to_path_buf())),
+            tree.clipboard().map(|(op, _)| op),
             tree.is_expanded(&root),
         )
     };
@@ -74,7 +74,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
 
     let menu_overlay = context_menu.as_ref().map(|state| {
         let has_clipboard = clipboard.is_some();
-        let cut_active = matches!(clipboard.as_ref(), Some((file_tree::ClipboardOp::Cut, _)));
+        let cut_active = matches!(clipboard, Some(file_tree::ClipboardOp::Cut));
         menu::render::<T>(
             &entity,
             state.target.clone(),
@@ -207,7 +207,7 @@ fn compute_row_state<T: PaneDelegate + SettingsDelegate>(
     let tree = entity.read(cx);
     row::RowState {
         is_expanded: tree.is_expanded(path),
-        is_selected: tree.selected().is_some_and(|s| s == path),
+        is_selected: tree.is_selected(path),
         is_renaming: tree
             .rename_target()
             .is_some_and(|r| r.path.as_path() == path),

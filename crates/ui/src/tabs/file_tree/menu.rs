@@ -24,6 +24,21 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     let target_is_some = target.is_some();
     let target_for_paste = target.clone();
 
+    // Operations apply to the full multi-selection if the right-clicked target
+    // belongs to it; otherwise they apply only to the target.
+    let op_paths: Vec<PathBuf> = {
+        let tree = entity.read(cx);
+        match &target {
+            Some(t) if tree.is_selected(t) && tree.selected_count() > 1 => {
+                tree.selected_paths().iter().cloned().collect()
+            }
+            Some(t) => vec![t.clone()],
+            None => Vec::new(),
+        }
+    };
+    let multi = op_paths.len() > 1;
+    let any_target = !op_paths.is_empty();
+
     let mut items: Vec<AnyElement> = Vec::new();
 
     items.push(menu_item::<T>(
@@ -73,18 +88,21 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     items.push(menu_item::<T>(
         "ft-menu-cut",
         IconName::Edit,
-        "Cut",
-        target_is_some,
+        if multi { "Cut Selection" } else { "Cut" },
+        any_target,
         {
             let entity = entity.clone();
-            let target = target.clone();
+            let paths = op_paths.clone();
             cx.listener(move |_, _, _, cx| {
                 cx.stop_propagation();
                 let entity = entity.clone();
-                let Some(path) = target.clone() else { return };
+                if paths.is_empty() {
+                    return;
+                }
+                let paths = paths.clone();
                 entity.update(cx, |tree, cx| {
                     tree.close_context_menu(cx);
-                    tree.cut(path, cx);
+                    tree.cut(paths, cx);
                 });
             })
         },
@@ -94,18 +112,21 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     items.push(menu_item::<T>(
         "ft-menu-copy",
         IconName::Copy,
-        "Copy",
-        target_is_some,
+        if multi { "Copy Selection" } else { "Copy" },
+        any_target,
         {
             let entity = entity.clone();
-            let target = target.clone();
+            let paths = op_paths.clone();
             cx.listener(move |_, _, _, cx| {
                 cx.stop_propagation();
                 let entity = entity.clone();
-                let Some(path) = target.clone() else { return };
+                if paths.is_empty() {
+                    return;
+                }
+                let paths = paths.clone();
                 entity.update(cx, |tree, cx| {
                     tree.close_context_menu(cx);
-                    tree.copy(path, cx);
+                    tree.copy(paths, cx);
                 });
             })
         },
@@ -144,7 +165,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "ft-menu-rename",
         IconName::Edit,
         "Rename",
-        target_is_some,
+        target_is_some && !multi,
         {
             let entity = entity.clone();
             let target = target.clone();
@@ -185,17 +206,20 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "ft-menu-trash",
         IconName::Trash,
         "Move to Trash",
-        target_is_some,
+        any_target,
         {
             let entity = entity.clone();
-            let target = target.clone();
+            let paths = op_paths.clone();
             cx.listener(move |_, _, _, cx| {
                 cx.stop_propagation();
                 let entity = entity.clone();
-                let Some(path) = target.clone() else { return };
+                if paths.is_empty() {
+                    return;
+                }
+                let paths = paths.clone();
                 entity.update(cx, |tree, cx| {
                     tree.close_context_menu(cx);
-                    tree.trash(path, cx);
+                    tree.trash(paths, cx);
                 });
             })
         },
@@ -206,17 +230,20 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "ft-menu-delete",
         IconName::Close,
         "Delete Permanently",
-        target_is_some,
+        any_target,
         {
             let entity = entity.clone();
-            let target = target.clone();
+            let paths = op_paths.clone();
             cx.listener(move |_, _, _, cx| {
                 cx.stop_propagation();
                 let entity = entity.clone();
-                let Some(path) = target.clone() else { return };
+                if paths.is_empty() {
+                    return;
+                }
+                let paths = paths.clone();
                 entity.update(cx, |tree, cx| {
                     tree.close_context_menu(cx);
-                    tree.delete(path, cx);
+                    tree.delete(paths, cx);
                 });
             })
         },

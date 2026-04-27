@@ -43,8 +43,9 @@ pub struct FileTree {
     root: Option<PathBuf>,
     children: HashMap<PathBuf, Vec<Node>>,
     expanded: HashSet<PathBuf>,
-    selected: Option<PathBuf>,
-    clipboard: Option<(ClipboardOp, PathBuf)>,
+    selected: HashSet<PathBuf>,
+    selection_anchor: Option<PathBuf>,
+    clipboard: Option<(ClipboardOp, Vec<PathBuf>)>,
     error: Option<SharedString>,
     rename: Option<RenameTarget>,
     new_entry: Option<NewEntryDraft>,
@@ -63,7 +64,8 @@ impl FileTree {
             root: None,
             children: HashMap::new(),
             expanded: HashSet::new(),
-            selected: None,
+            selected: HashSet::new(),
+            selection_anchor: None,
             clipboard: None,
             error: None,
             rename: None,
@@ -79,8 +81,23 @@ impl FileTree {
         self.root.as_deref()
     }
 
+    /// Returns the anchor of the current selection — the last item clicked
+    /// without a shift modifier. Useful for callers that need a single
+    /// reference point (e.g. "new file" anchored on the active item).
     pub fn selected(&self) -> Option<&Path> {
-        self.selected.as_deref()
+        self.selection_anchor.as_deref()
+    }
+
+    pub fn is_selected(&self, path: &Path) -> bool {
+        self.selected.contains(path)
+    }
+
+    pub fn selected_paths(&self) -> &HashSet<PathBuf> {
+        &self.selected
+    }
+
+    pub fn selected_count(&self) -> usize {
+        self.selected.len()
     }
 
     pub fn error(&self) -> Option<&SharedString> {
@@ -91,8 +108,10 @@ impl FileTree {
         self.error = None;
     }
 
-    pub fn clipboard(&self) -> Option<(ClipboardOp, &Path)> {
-        self.clipboard.as_ref().map(|(op, p)| (*op, p.as_path()))
+    pub fn clipboard(&self) -> Option<(ClipboardOp, &[PathBuf])> {
+        self.clipboard
+            .as_ref()
+            .map(|(op, paths)| (*op, paths.as_slice()))
     }
 
     pub fn rename_target(&self) -> Option<&RenameTarget> {
@@ -123,7 +142,8 @@ impl FileTree {
         }
         self.children.clear();
         self.expanded.clear();
-        self.selected = None;
+        self.selected.clear();
+        self.selection_anchor = None;
         self.error = None;
         self.rename = None;
         self.new_entry = None;
@@ -209,6 +229,12 @@ impl FileTree {
             Ok(nodes) => {
                 self.children.insert(path.to_path_buf(), nodes);
             }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // The directory was removed (by us or externally). Drop it
+                // from the cache so we don't keep trying to read it.
+                self.children.remove(path);
+                self.expanded.remove(path);
+            }
             Err(err) => {
                 self.error = Some(format!("Failed to read {}: {err}", path.display()).into());
                 self.children.insert(path.to_path_buf(), Vec::new());
@@ -247,8 +273,67 @@ impl FileTree {
     }
 
     pub fn select(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.selected = Some(path);
+        self.selected.clear();
+        self.selected.insert(path.clone());
+        self.selection_anchor = Some(path);
         cx.notify();
+    }
+
+    /// Extend the selection to cover the visible range from the anchor to
+    /// `target`. If there's no anchor yet, behaves like a plain select.
+    pub fn extend_selection_to(&mut self, target: PathBuf, cx: &mut Context<Self>) {
+        let anchor = match self.selection_anchor.clone() {
+            Some(a) => a,
+            None => {
+                self.select(target, cx);
+                return;
+            }
+        };
+        let visible = self.visible_paths();
+        let i_anchor = visible.iter().position(|p| p == &anchor);
+        let i_target = visible.iter().position(|p| p == &target);
+        match (i_anchor, i_target) {
+            (Some(a), Some(b)) => {
+                let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+                self.selected.clear();
+                for p in &visible[lo..=hi] {
+                    self.selected.insert(p.clone());
+                }
+                cx.notify();
+            }
+            _ => self.select(target, cx),
+        }
+    }
+
+    /// Flatten the visible tree into a top-to-bottom path list, matching the
+    /// rendering order in the UI (root → expanded children, dirs before files).
+    pub fn visible_paths(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if let Some(root) = &self.root {
+            out.push(root.clone());
+            if self.expanded.contains(root) {
+                self.append_visible_children(root, &mut out);
+            }
+        }
+        out
+    }
+
+    fn append_visible_children(&self, dir: &Path, out: &mut Vec<PathBuf>) {
+        let Some(children) = self.children.get(dir) else {
+            return;
+        };
+        for node in children
+            .iter()
+            .filter(|n| matches!(n.kind, NodeKind::Directory))
+        {
+            out.push(node.path.clone());
+            if self.expanded.contains(&node.path) {
+                self.append_visible_children(&node.path, out);
+            }
+        }
+        for node in children.iter().filter(|n| matches!(n.kind, NodeKind::File)) {
+            out.push(node.path.clone());
+        }
     }
 
     pub fn open_context_menu(
@@ -267,18 +352,24 @@ impl FileTree {
         }
     }
 
-    pub fn cut(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.clipboard = Some((ClipboardOp::Cut, path));
+    pub fn cut(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.clipboard = Some((ClipboardOp::Cut, paths));
         cx.notify();
     }
 
-    pub fn copy(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.clipboard = Some((ClipboardOp::Copy, path));
+    pub fn copy(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.clipboard = Some((ClipboardOp::Copy, paths));
         cx.notify();
     }
 
     pub fn paste_into(&mut self, dest_dir: PathBuf, cx: &mut Context<Self>) {
-        let Some((op, src)) = self.clipboard.clone() else {
+        let Some((op, srcs)) = self.clipboard.clone() else {
             return;
         };
         let target_dir = if dest_dir.is_dir() {
@@ -288,24 +379,33 @@ impl FileTree {
         } else {
             return;
         };
-        match ops::paste(&src, &target_dir, op) {
-            Ok(_) => {
-                if op == ClipboardOp::Cut {
-                    self.clipboard = None;
-                }
-                self.reload_dir(&target_dir);
-                if let Some(src_parent) = src.parent()
-                    && self.children.contains_key(src_parent)
-                {
-                    self.reload_dir(src_parent);
-                }
-                cx.notify();
+        let mut errors: Vec<String> = Vec::new();
+        let mut src_parents: HashSet<PathBuf> = HashSet::new();
+        for src in &srcs {
+            if let Err(err) = ops::paste(src, &target_dir, op) {
+                errors.push(format!("{}: {err}", src.display()));
             }
-            Err(err) => self.set_error(format!("Paste failed: {err}"), cx),
+            if let Some(parent) = src.parent() {
+                src_parents.insert(parent.to_path_buf());
+            }
+        }
+        if op == ClipboardOp::Cut {
+            self.clipboard = None;
+        }
+        self.reload_dir(&target_dir);
+        for parent in src_parents {
+            if self.children.contains_key(&parent) {
+                self.reload_dir(&parent);
+            }
+        }
+        if !errors.is_empty() {
+            self.set_error(format!("Paste failed: {}", errors.join("; ")), cx);
+        } else {
+            cx.notify();
         }
     }
 
-    pub fn move_into(&mut self, src: PathBuf, dest_dir: PathBuf, cx: &mut Context<Self>) {
+    pub fn move_into(&mut self, srcs: Vec<PathBuf>, dest_dir: PathBuf, cx: &mut Context<Self>) {
         let target_dir = if dest_dir.is_dir() {
             dest_dir
         } else if let Some(parent) = dest_dir.parent() {
@@ -313,59 +413,93 @@ impl FileTree {
         } else {
             return;
         };
-        if src == target_dir
-            || target_dir
-                .ancestors()
-                .any(|a| a == src.as_path())
-        {
-            return;
-        }
-        let src_parent = src.parent().map(Path::to_path_buf);
-        match ops::move_into(&src, &target_dir) {
-            Ok(_) => {
-                self.reload_dir(&target_dir);
-                if let Some(parent) = src_parent
-                    && self.children.contains_key(&parent)
-                {
-                    self.reload_dir(&parent);
-                }
-                cx.notify();
+        let mut errors: Vec<String> = Vec::new();
+        let mut parents: HashSet<PathBuf> = HashSet::new();
+        for src in &srcs {
+            // Skip no-ops and pathological cases instead of erroring.
+            if *src == target_dir
+                || target_dir.ancestors().any(|a| a == src.as_path())
+                || src.parent() == Some(target_dir.as_path())
+            {
+                continue;
             }
-            Err(err) => self.set_error(format!("Move failed: {err}"), cx),
-        }
-    }
-
-    pub fn trash(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match ops::trash(&path) {
-            Ok(_) => {
-                if let Some(parent) = path.parent()
-                    && self.children.contains_key(parent)
-                {
-                    self.reload_dir(parent);
-                }
-                if self.selected.as_deref() == Some(path.as_path()) {
-                    self.selected = None;
-                }
-                cx.notify();
+            if let Err(err) = ops::move_into(src, &target_dir) {
+                errors.push(format!("{}: {err}", src.display()));
+                continue;
             }
-            Err(err) => self.set_error(format!("Trash failed: {err}"), cx),
+            if let Some(parent) = src.parent() {
+                parents.insert(parent.to_path_buf());
+            }
+        }
+        self.reload_dir(&target_dir);
+        for parent in parents {
+            if self.children.contains_key(&parent) {
+                self.reload_dir(&parent);
+            }
+        }
+        if !errors.is_empty() {
+            self.set_error(format!("Move failed: {}", errors.join("; ")), cx);
+        } else {
+            cx.notify();
         }
     }
 
-    pub fn delete(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match ops::delete(&path) {
-            Ok(_) => {
-                if let Some(parent) = path.parent()
-                    && self.children.contains_key(parent)
-                {
-                    self.reload_dir(parent);
+    pub fn trash(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let mut errors: Vec<String> = Vec::new();
+        let mut parents: HashSet<PathBuf> = HashSet::new();
+        for path in &paths {
+            match ops::trash(path) {
+                Ok(_) => {
+                    if let Some(parent) = path.parent() {
+                        parents.insert(parent.to_path_buf());
+                    }
+                    self.deselect_path(path);
                 }
-                if self.selected.as_deref() == Some(path.as_path()) {
-                    self.selected = None;
-                }
-                cx.notify();
+                Err(err) => errors.push(format!("{}: {err}", path.display())),
             }
-            Err(err) => self.set_error(format!("Delete failed: {err}"), cx),
+        }
+        for parent in parents {
+            if self.children.contains_key(&parent) {
+                self.reload_dir(&parent);
+            }
+        }
+        if !errors.is_empty() {
+            self.set_error(format!("Trash failed: {}", errors.join("; ")), cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub fn delete(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let mut errors: Vec<String> = Vec::new();
+        let mut parents: HashSet<PathBuf> = HashSet::new();
+        for path in &paths {
+            match ops::delete(path) {
+                Ok(_) => {
+                    if let Some(parent) = path.parent() {
+                        parents.insert(parent.to_path_buf());
+                    }
+                    self.deselect_path(path);
+                }
+                Err(err) => errors.push(format!("{}: {err}", path.display())),
+            }
+        }
+        for parent in parents {
+            if self.children.contains_key(&parent) {
+                self.reload_dir(&parent);
+            }
+        }
+        if !errors.is_empty() {
+            self.set_error(format!("Delete failed: {}", errors.join("; ")), cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn deselect_path(&mut self, path: &Path) {
+        self.selected.remove(path);
+        if self.selection_anchor.as_deref() == Some(path) {
+            self.selection_anchor = None;
         }
     }
 
@@ -375,6 +509,11 @@ impl FileTree {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
+        // Renames operate on a single target — narrow the selection to it so
+        // the active row matches what's being renamed.
+        self.selected.clear();
+        self.selected.insert(path.clone());
+        self.selection_anchor = Some(path.clone());
         self.rename = Some(RenameTarget {
             path,
             original_name: original.into(),
@@ -406,8 +545,11 @@ impl FileTree {
                 if self.children.contains_key(parent) {
                     self.reload_dir(parent);
                 }
-                if self.selected.as_deref() == Some(target.path.as_path()) {
-                    self.selected = Some(new_path);
+                if self.selected.remove(&target.path) {
+                    self.selected.insert(new_path.clone());
+                }
+                if self.selection_anchor.as_deref() == Some(target.path.as_path()) {
+                    self.selection_anchor = Some(new_path);
                 }
                 cx.notify();
             }
@@ -457,7 +599,9 @@ impl FileTree {
         match result {
             Ok(_) => {
                 self.reload_dir(&draft.parent);
-                self.selected = Some(path);
+                self.selected.clear();
+                self.selected.insert(path.clone());
+                self.selection_anchor = Some(path);
                 cx.notify();
             }
             Err(err) => self.set_error(format!("Create failed: {err}"), cx),
