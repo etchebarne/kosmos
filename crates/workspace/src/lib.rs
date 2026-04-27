@@ -112,4 +112,40 @@ impl WorkspaceManager {
         self.active = Some(id);
         true
     }
+
+    pub fn reorder_before(&mut self, drag_id: usize, target_id: usize) -> bool {
+        if drag_id == target_id {
+            return false;
+        }
+        let Some(from) = self.workspaces.iter().position(|w| w.id == drag_id) else {
+            return false;
+        };
+        let Some(target) = self.workspaces.iter().position(|w| w.id == target_id) else {
+            return false;
+        };
+        let workspace = self.workspaces.remove(from);
+        let insert_at = self
+            .workspaces
+            .iter()
+            .position(|w| w.id == target_id)
+            .unwrap_or(target);
+        if insert_at == from {
+            self.workspaces.insert(from, workspace);
+            return false;
+        }
+        self.workspaces.insert(insert_at, workspace);
+        true
+    }
+
+    pub fn move_to_end(&mut self, drag_id: usize) -> bool {
+        let Some(from) = self.workspaces.iter().position(|w| w.id == drag_id) else {
+            return false;
+        };
+        if from + 1 == self.workspaces.len() {
+            return false;
+        }
+        let workspace = self.workspaces.remove(from);
+        self.workspaces.push(workspace);
+        true
+    }
 }

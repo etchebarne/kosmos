@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, Window, WindowControlArea, deferred, div,
-    prelude::*, rems, svg,
+    AnyElement, Context, IntoElement, MouseButton, SharedString, Window, WindowControlArea,
+    deferred, div, prelude::*, rems, svg,
 };
 
 use icons::{Icon, IconName};
@@ -8,6 +8,7 @@ use theme::{ActiveTheme, Theme};
 use workspace::{Workspace, WorkspaceManager};
 
 use crate::delegate::{HeaderDelegate, HeaderMenu, WorkspaceDelegate};
+use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
@@ -151,8 +152,12 @@ fn render_workspace_bar<T: WorkspaceDelegate>(
 
 fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
+    let hover_group = SharedString::from("workspace-add");
+    let accent = theme.accent;
     div()
         .id("workspace-add")
+        .group(hover_group.clone())
+        .relative()
         .size(rems(1.75))
         .flex()
         .items_center()
@@ -160,11 +165,27 @@ fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
         .rounded(rems(0.3125))
         .text_color(theme.text_muted)
         .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .can_drop(|drag, _, _| drag.downcast_ref::<WorkspaceDrag>().is_some())
+        .on_drop(cx.listener(|this, drag: &WorkspaceDrag, _, cx| {
+            cx.stop_propagation();
+            this.move_workspace_to_end(drag.id, cx);
+        }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _, _, cx| {
             cx.stop_propagation();
             this.open_workspace_picker(cx);
         }))
+        .child(
+            div()
+                .absolute()
+                .left(rems(-0.1875))
+                .top(rems(0.25))
+                .bottom(rems(0.25))
+                .w(rems(0.125))
+                .rounded_full()
+                .hover(|s| s)
+                .group_drag_over::<WorkspaceDrag>(hover_group.clone(), move |s| s.bg(accent)),
+        )
         .child(Icon::new(IconName::Add).size(16.0).color(theme.text_muted))
         .into_any_element()
 }
@@ -176,8 +197,13 @@ fn render_workspace_button<T: WorkspaceDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let id = workspace.id;
+    let initial = workspace.initial();
+    let hover_group = SharedString::from(format!("workspace-{id}"));
+    let accent = theme.accent;
     div()
         .id(("workspace", id))
+        .group(hover_group.clone())
+        .relative()
         .size(rems(1.75))
         .flex()
         .items_center()
@@ -195,12 +221,35 @@ fn render_workspace_button<T: WorkspaceDelegate>(
             theme.text_muted
         })
         .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .can_drop(move |drag, _, _| {
+            drag.downcast_ref::<WorkspaceDrag>()
+                .is_some_and(|drag| drag.id != id)
+        })
+        .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _, cx| {
+            cx.stop_propagation();
+            this.move_workspace_before(drag.id, id, cx);
+        }))
+        .on_drag(
+            WorkspaceDrag::new(id, initial.clone()),
+            |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
+        )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             this.select_workspace(id, cx);
         }))
-        .child(workspace.initial())
+        .child(
+            div()
+                .absolute()
+                .left(rems(-0.1875))
+                .top(rems(0.25))
+                .bottom(rems(0.25))
+                .w(rems(0.125))
+                .rounded_full()
+                .hover(|s| s)
+                .group_drag_over::<WorkspaceDrag>(hover_group.clone(), move |s| s.bg(accent)),
+        )
+        .child(initial)
         .into_any_element()
 }
 

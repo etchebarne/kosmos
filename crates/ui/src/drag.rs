@@ -73,6 +73,52 @@ impl Render for TabDrag {
     }
 }
 
+#[derive(Clone)]
+pub struct WorkspaceDrag {
+    pub id: usize,
+    pub initial: SharedString,
+    position: Point<Pixels>,
+}
+
+impl WorkspaceDrag {
+    pub fn new(id: usize, initial: SharedString) -> Self {
+        Self {
+            id,
+            initial,
+            position: Point::default(),
+        }
+    }
+
+    pub fn position(mut self, position: Point<Pixels>) -> Self {
+        self.position = position;
+        self
+    }
+}
+
+impl Render for WorkspaceDrag {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let rem = window.rem_size();
+        div()
+            .pl(self.position.x - rems(0.875).to_pixels(rem))
+            .pt(self.position.y - rems(0.875).to_pixels(rem))
+            .child(
+                div()
+                    .size(rems(1.75))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .rounded(rems(0.3125))
+                    .text_sm()
+                    .bg(theme.bg_selected)
+                    .text_color(theme.text_emphasis)
+                    .shadow_lg()
+                    .child(self.initial.clone()),
+            )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct SplitResize {
     pub split_id: usize,

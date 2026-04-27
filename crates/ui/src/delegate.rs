@@ -11,6 +11,13 @@ use crate::drag::TabDrag;
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>);
+    fn move_workspace_before(
+        &mut self,
+        drag_id: usize,
+        target_id: usize,
+        cx: &mut Context<Self>,
+    );
+    fn move_workspace_to_end(&mut self, drag_id: usize, cx: &mut Context<Self>);
 }
 
 pub trait HeaderDelegate: WorkspaceDelegate {

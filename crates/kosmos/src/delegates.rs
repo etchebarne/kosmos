@@ -62,6 +62,25 @@ impl WorkspaceDelegate for KosmosApp {
             persistence::save_session(&self.workspaces);
         }
     }
+
+    fn move_workspace_before(
+        &mut self,
+        drag_id: usize,
+        target_id: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspaces.reorder_before(drag_id, target_id) {
+            cx.notify();
+            persistence::save_session(&self.workspaces);
+        }
+    }
+
+    fn move_workspace_to_end(&mut self, drag_id: usize, cx: &mut Context<Self>) {
+        if self.workspaces.move_to_end(drag_id) {
+            cx.notify();
+            persistence::save_session(&self.workspaces);
+        }
+    }
 }
 
 impl PaneDelegate for KosmosApp {
