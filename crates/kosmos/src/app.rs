@@ -1,5 +1,8 @@
-use gpui::{App, Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
+use std::path::PathBuf;
 
+use gpui::{App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Window, div, prelude::*};
+
+use file_tree::{FileTree, FileTreeState};
 use gpui::BorrowAppContext;
 use pane_tree::{PaneTree, WirePaneTreeActions};
 use settings::{ActiveSettings, SettingValue};
@@ -29,17 +32,40 @@ pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspaces: WorkspaceManager,
     pub(crate) tab_scrolls: TabScrollHandles,
+    pub(crate) file_tree: Entity<FileTree>,
     focus_handle: FocusHandle,
 }
 
 impl KosmosApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
         SettingsInputs::install(cx);
-        Self {
+        let workspaces = persistence::load();
+        let file_tree = cx.new(FileTree::new);
+        cx.observe(&file_tree, |_, _, cx| cx.notify()).detach();
+        cx.set_global(FileTreeState::new());
+        cx.update_global::<FileTreeState, _>(|state, _| {
+            state.set_active(Some(file_tree.clone()));
+        });
+        let mut app = Self {
             active_menu: None,
-            workspaces: persistence::load(),
+            workspaces,
             tab_scrolls: TabScrollHandles::new(),
+            file_tree,
             focus_handle: cx.focus_handle(),
+        };
+        app.sync_file_tree_root(cx);
+        app
+    }
+
+    pub(crate) fn sync_file_tree_root(&mut self, cx: &mut Context<Self>) {
+        let path: Option<PathBuf> = self
+            .workspaces
+            .active_workspace()
+            .map(|w| w.path.clone());
+        if let Some(path) = path {
+            self.file_tree.update(cx, |tree, cx| {
+                tree.set_root(path, cx);
+            });
         }
     }
 

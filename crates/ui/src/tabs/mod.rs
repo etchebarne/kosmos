@@ -1,7 +1,7 @@
 mod blank;
 mod file_editor;
 mod file_search;
-mod file_tree;
+pub mod file_tree;
 mod git;
 mod placeholder;
 pub mod settings;

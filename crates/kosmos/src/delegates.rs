@@ -48,6 +48,7 @@ impl WorkspaceDelegate for KosmosApp {
             };
             let _ = this.update(cx, |this, cx| {
                 this.workspaces.add(path);
+                this.sync_file_tree_root(cx);
                 cx.notify();
                 this.persist_active_workspace();
                 persistence::save_session(&this.workspaces);
@@ -58,6 +59,7 @@ impl WorkspaceDelegate for KosmosApp {
 
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
         if self.workspaces.select(id) {
+            self.sync_file_tree_root(cx);
             cx.notify();
             persistence::save_session(&self.workspaces);
         }

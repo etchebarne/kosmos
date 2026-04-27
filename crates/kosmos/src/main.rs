@@ -15,6 +15,7 @@ fn main() {
             cx.set_global(theme::Theme::dark());
             cx.set_global(settings::Settings::load());
             cx.set_global(ui::delegate::SettingsUiState::new());
+            ui::tabs::file_tree::FileTreeUi::install(cx);
             ui::components::install_default_keybindings(cx);
             shortcuts::install_defaults(cx);
             let window_bounds = persistence::load_window_bounds().unwrap_or_else(|| {
