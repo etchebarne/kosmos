@@ -68,6 +68,11 @@ impl WorkspaceManager {
     }
 
     pub fn add(&mut self, path: PathBuf) -> usize {
+        if let Some(existing) = self.workspaces.iter().find(|w| w.path == path) {
+            let id = existing.id;
+            self.active = Some(id);
+            return id;
+        }
         let id = self.next_id;
         self.next_id += 1;
         let name: SharedString = path
