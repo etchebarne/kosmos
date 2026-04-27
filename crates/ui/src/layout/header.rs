@@ -1,18 +1,19 @@
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, SharedString, Window, WindowControlArea,
-    deferred, div, prelude::*, rems, svg,
+    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, SharedString, Window,
+    WindowControlArea, anchored, deferred, div, prelude::*, rems, svg,
 };
 
 use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
 use workspace::{Workspace, WorkspaceManager};
 
-use crate::delegate::{HeaderDelegate, HeaderMenu, WorkspaceDelegate};
+use crate::delegate::{HeaderDelegate, HeaderMenu, WorkspaceDelegate, WorkspaceMenuState};
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
     workspace_manager: &WorkspaceManager,
+    workspace_menu: Option<WorkspaceMenuState>,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -86,7 +87,11 @@ pub fn render<T: HeaderDelegate>(
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
-        .child(render_workspace_bar(workspace_manager, cx))
+        .child(render_workspace_bar(
+            workspace_manager,
+            workspace_menu,
+            cx,
+        ))
         .child(
             div()
                 .flex_1()
@@ -131,6 +136,7 @@ pub fn render<T: HeaderDelegate>(
 
 fn render_workspace_bar<T: WorkspaceDelegate>(
     manager: &WorkspaceManager,
+    workspace_menu: Option<WorkspaceMenuState>,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let mut elements: Vec<AnyElement> = Vec::new();
@@ -139,6 +145,10 @@ fn render_workspace_bar<T: WorkspaceDelegate>(
         elements.push(render_workspace_button(workspace, is_active, cx));
     }
     elements.push(render_add_button(cx));
+    if let Some(state) = workspace_menu {
+        elements.push(render_workspace_menu(state, cx));
+        elements.push(render_workspace_menu_dismiss(cx));
+    }
 
     div()
         .flex()
@@ -234,6 +244,13 @@ fn render_workspace_button<T: WorkspaceDelegate>(
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_workspace_menu(id, event.position, cx);
+            }),
+        )
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             this.select_workspace(id, cx);
@@ -251,6 +268,96 @@ fn render_workspace_button<T: WorkspaceDelegate>(
         )
         .child(initial)
         .into_any_element()
+}
+
+fn render_workspace_menu<T: WorkspaceDelegate>(
+    state: WorkspaceMenuState,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let id = state.id;
+    let hover_bg = theme.bg_selected;
+    let hover_text = theme.text_emphasis;
+
+    let item = div()
+        .id("workspace-menu-close")
+        .flex()
+        .items_center()
+        .gap_2()
+        .h(rems(1.625))
+        .px_2()
+        .rounded(rems(0.25))
+        .text_color(theme.text)
+        .hover(move |this| this.bg(hover_bg).text_color(hover_text))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.close_workspace(id, cx);
+            this.close_workspace_menu(cx);
+        }))
+        .child(
+            div()
+                .w(rems(1.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(IconName::Close).size(14.0).color(theme.text_muted)),
+        )
+        .child("Close");
+
+    deferred(
+        anchored().position(state.position).snap_to_window().child(
+            div()
+                .id("workspace-context-menu")
+                .min_w(rems(10.0))
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .rounded(rems(0.375))
+                .border_1()
+                .border_color(theme.border_strong)
+                .bg(theme.bg_elevated)
+                .shadow_lg()
+                .text_sm()
+                .text_color(theme.text)
+                .block_mouse_except_scroll()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                .child(item),
+        ),
+    )
+    .with_priority(2)
+    .into_any_element()
+}
+
+fn render_workspace_menu_dismiss<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
+    deferred(
+        div()
+            .id("workspace-menu-dismiss")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.close_workspace_menu(cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.close_workspace_menu(cx);
+                }),
+            ),
+    )
+    .with_priority(1)
+    .into_any_element()
 }
 
 fn render_menu_button<T: HeaderDelegate>(

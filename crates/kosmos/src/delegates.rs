@@ -1,10 +1,10 @@
-use gpui::{BorrowAppContext, Context, PathPromptOptions};
+use gpui::{BorrowAppContext, Context, PathPromptOptions, Pixels, Point};
 
 use pane_tree::{DropZone, PaneTree, PaneTreeContext};
 use settings::{Settings, SettingValue};
 use ui::delegate::{
     HeaderDelegate, HeaderMenu, PaneDelegate, SettingsDelegate, SettingsUiState, TabScrollHandles,
-    WorkspaceDelegate,
+    WorkspaceDelegate, WorkspaceMenuState,
 };
 use ui::drag::TabDrag;
 
@@ -82,6 +82,31 @@ impl WorkspaceDelegate for KosmosApp {
             cx.notify();
             persistence::save_session(&self.workspaces);
         }
+    }
+
+    fn open_workspace_menu(
+        &mut self,
+        id: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_menu = Some(WorkspaceMenuState { id, position });
+        cx.notify();
+    }
+
+    fn close_workspace_menu(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn close_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
+        if !self.workspaces.close(id) {
+            return;
+        }
+        self.sync_file_tree_root(cx);
+        cx.notify();
+        persistence::save_session(&self.workspaces);
     }
 }
 

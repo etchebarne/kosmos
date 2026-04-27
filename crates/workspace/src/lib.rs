@@ -107,6 +107,21 @@ impl WorkspaceManager {
             .map(|w| &mut w.pane_tree)
     }
 
+    pub fn close(&mut self, id: usize) -> bool {
+        let Some(pos) = self.workspaces.iter().position(|w| w.id == id) else {
+            return false;
+        };
+        self.workspaces.remove(pos);
+        if self.active == Some(id) {
+            self.active = self
+                .workspaces
+                .get(pos)
+                .or_else(|| pos.checked_sub(1).and_then(|p| self.workspaces.get(p)))
+                .map(|w| w.id);
+        }
+        true
+    }
+
     pub fn select(&mut self, id: usize) -> bool {
         if self.active == Some(id) {
             return false;

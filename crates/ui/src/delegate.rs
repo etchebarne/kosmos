@@ -2,11 +2,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui::{App, Context, Global, ScrollHandle};
+use gpui::{App, Context, Global, Pixels, Point, ScrollHandle};
 use pane_tree::DropZone;
 use settings::SettingValue;
 
 use crate::drag::TabDrag;
+
+#[derive(Clone, Copy, Debug)]
+pub struct WorkspaceMenuState {
+    pub id: usize,
+    pub position: Point<Pixels>,
+}
 
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);
@@ -18,6 +24,14 @@ pub trait WorkspaceDelegate: Sized + 'static {
         cx: &mut Context<Self>,
     );
     fn move_workspace_to_end(&mut self, drag_id: usize, cx: &mut Context<Self>);
+    fn open_workspace_menu(
+        &mut self,
+        id: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    );
+    fn close_workspace_menu(&mut self, cx: &mut Context<Self>);
+    fn close_workspace(&mut self, id: usize, cx: &mut Context<Self>);
 }
 
 pub trait HeaderDelegate: WorkspaceDelegate {
