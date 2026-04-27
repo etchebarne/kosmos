@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use gpui::{App, Context, Entity, Global, Pixels, Point, SharedString, Task};
@@ -148,7 +148,13 @@ impl FileTree {
         self.rename = None;
         self.new_entry = None;
         self.context_menu = None;
-        self.watcher = None;
+        // Drop the previous watcher off the main thread — releasing inotify
+        // watches for a large tree can take seconds.
+        if let Some(old) = self.watcher.take() {
+            cx.background_executor()
+                .spawn(async move { drop(old) })
+                .detach();
+        }
         self.watcher_rx = None;
         self.watcher_task = None;
 
@@ -156,20 +162,37 @@ impl FileTree {
         self.expanded.insert(root.clone());
         self.reload_dir(&root);
 
-        // Install a watcher and a polling task to drain its events.
+        // Set up the events channel and start polling synchronously, but
+        // install the watcher itself off the main thread — walking a big tree
+        // and adding an inotify watch per directory can take several seconds.
         let (events_tx, events_rx) = channel::<FsEvents>();
-        match watcher::start(&root, events_tx) {
-            Ok(w) => {
-                self.watcher = Some(w);
-                self.watcher_rx = Some(events_rx);
-                self.spawn_poll_task(cx);
-            }
-            Err(err) => {
-                self.error = Some(format!("Watcher failed: {err}").into());
-            }
-        }
+        self.watcher_rx = Some(events_rx);
+        self.spawn_poll_task(cx);
+        self.spawn_watcher_install(root, events_tx, cx);
 
         cx.notify();
+    }
+
+    fn spawn_watcher_install(
+        &mut self,
+        root: PathBuf,
+        events_tx: Sender<FsEvents>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { watcher::start(&root, events_tx) })
+                .await;
+            let _ = this.update(cx, |tree, cx| match result {
+                Ok(w) => tree.watcher = Some(w),
+                Err(err) => {
+                    tree.error = Some(format!("Watcher failed: {err}").into());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn spawn_poll_task(&mut self, cx: &mut Context<Self>) {
