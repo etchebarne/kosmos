@@ -1,6 +1,10 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
-use gpui::{App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Window, div, prelude::*};
+use gpui::{
+    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
+    prelude::*,
+};
 
 use file_tree::{FileTree, FileTreeState};
 use gpui::BorrowAppContext;
@@ -35,6 +39,7 @@ pub struct KosmosApp {
     pub(crate) tab_scrolls: TabScrollHandles,
     pub(crate) file_tree: Entity<FileTree>,
     focus_handle: FocusHandle,
+    workspace_watch_task: Option<Task<()>>,
 }
 
 impl KosmosApp {
@@ -54,9 +59,73 @@ impl KosmosApp {
             tab_scrolls: TabScrollHandles::new(),
             file_tree,
             focus_handle: cx.focus_handle(),
+            workspace_watch_task: None,
         };
         app.sync_file_tree_root(cx);
+        app.start_workspace_watch_task(cx);
         app
+    }
+
+    /// Periodically verify that every open workspace's backing directory
+    /// still exists. If a directory is removed externally, auto-close the
+    /// workspace so it doesn't dangle in the UI.
+    fn start_workspace_watch_task(&mut self, cx: &mut Context<Self>) {
+        let task = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(1))
+                    .await;
+
+                let Ok(paths) = this.update(cx, |this, _| {
+                    this.workspaces
+                        .workspaces()
+                        .iter()
+                        .map(|w| (w.id, w.path.clone()))
+                        .collect::<Vec<_>>()
+                }) else {
+                    break;
+                };
+
+                if paths.is_empty() {
+                    continue;
+                }
+
+                let missing = cx
+                    .background_executor()
+                    .spawn(async move {
+                        paths
+                            .into_iter()
+                            .filter(|(_, path)| matches!(path.try_exists(), Ok(false)))
+                            .map(|(id, _)| id)
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
+
+                if missing.is_empty() {
+                    continue;
+                }
+
+                if this
+                    .update(cx, |this, cx| {
+                        let mut closed = false;
+                        for id in missing {
+                            if this.workspaces.close(id) {
+                                closed = true;
+                            }
+                        }
+                        if closed {
+                            this.sync_file_tree_root(cx);
+                            cx.notify();
+                            persistence::save_session(&this.workspaces);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        self.workspace_watch_task = Some(task);
     }
 
     pub(crate) fn sync_file_tree_root(&mut self, cx: &mut Context<Self>) {
