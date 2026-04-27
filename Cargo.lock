@@ -3594,7 +3594,6 @@ dependencies = [
  "gpui",
  "icondata_core",
  "icondata_vs",
- "theme",
 ]
 
 [[package]]
@@ -5980,6 +5979,7 @@ dependencies = [
  "gpui",
  "icons",
  "rusqlite",
+ "theme",
 ]
 
 [[package]]

@@ -4,7 +4,6 @@ pub use assets::*;
 
 use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, rems, svg};
 use icondata_core::Icon as IconData;
-use theme::ActiveTheme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconName {
@@ -159,12 +158,14 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = self.color.unwrap_or_else(|| cx.theme().text_muted);
-        svg()
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let mut element = svg()
             .path(self.name.path())
             .size(rems(self.size / 16.0))
-            .flex_none()
-            .text_color(color)
+            .flex_none();
+        if let Some(color) = self.color {
+            element = element.text_color(color);
+        }
+        element
     }
 }

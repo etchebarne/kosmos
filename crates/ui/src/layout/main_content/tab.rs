@@ -36,7 +36,7 @@ pub fn render<T: PaneDelegate>(
         .w(TAB_WIDTH)
         .px_2()
         .rounded(TAB_RADIUS)
-        .when(is_active, |this| this.bg(gpui::white().opacity(0.08)))
+        .when(is_active, |this| this.bg(theme.bg_selected))
         .text_color(if is_active {
             theme.text_emphasis
         } else {

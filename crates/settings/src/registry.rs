@@ -1,4 +1,5 @@
 use icons::IconName;
+pub use theme::DropdownOption;
 
 use crate::value::SettingValue;
 
@@ -47,26 +48,32 @@ pub enum SettingControl {
     },
 }
 
-pub struct DropdownOption {
-    pub id: &'static str,
-    pub label: &'static str,
-}
-
 pub const APPEARANCE: Category = Category {
     id: "appearance",
     name: "Appearance",
     icon: IconName::SettingsGear,
-    settings: &[Setting {
-        id: "appearance.zoom",
-        name: "Zoom",
-        description: Some("Interface zoom level, in percent."),
-        control: SettingControl::Number {
-            default: 100,
-            min: Some(75),
-            max: Some(125),
-            step: 5,
+    settings: &[
+        Setting {
+            id: "appearance.theme",
+            name: "Theme",
+            description: Some("Color theme used across the interface."),
+            control: SettingControl::Dropdown {
+                default: "dark",
+                options: theme::REGISTRY,
+            },
         },
-    }],
+        Setting {
+            id: "appearance.zoom",
+            name: "Zoom",
+            description: Some("Interface zoom level, in percent."),
+            control: SettingControl::Number {
+                default: 100,
+                min: Some(75),
+                max: Some(125),
+                step: 5,
+            },
+        },
+    ],
 };
 
 pub const ALL: &[&Category] = &[&APPEARANCE];

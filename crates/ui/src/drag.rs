@@ -51,7 +51,7 @@ impl Render for TabDrag {
                     .gap_2()
                     .px_3()
                     .rounded(TAB_RADIUS)
-                    .bg(gpui::white().opacity(0.08))
+                    .bg(theme.bg_selected)
                     .text_sm()
                     .text_color(theme.text_emphasis)
                     .shadow_lg()

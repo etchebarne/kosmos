@@ -1,13 +1,29 @@
-use gpui::{Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
+use gpui::{App, Context, FocusHandle, IntoElement, Render, Window, div, prelude::*};
 
 use gpui::BorrowAppContext;
 use pane_tree::{PaneTree, WirePaneTreeActions};
-use theme::ActiveTheme;
+use settings::{ActiveSettings, SettingValue};
+use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
 use ui::delegate::{HeaderMenu, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
 use zoom::WireZoomActions;
+
+/// Sync the global `Theme` with the user's chosen theme setting.
+fn apply_theme(cx: &mut App) {
+    let raw = cx
+        .settings()
+        .get(THEME_SETTING_ID)
+        .and_then(SettingValue::as_str)
+        .unwrap_or(theme::DEFAULT_ID);
+    let id = THEME_REGISTRY
+        .iter()
+        .find(|c| c.id == raw)
+        .map(|c| c.id)
+        .unwrap_or(theme::DEFAULT_ID);
+    cx.set_global(Theme::by_id(id));
+}
 
 pub struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
@@ -71,6 +87,7 @@ impl KosmosApp {
 
 impl Render for KosmosApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        apply_theme(cx);
         let theme = *cx.theme();
         zoom::apply(window, cx);
         div()
