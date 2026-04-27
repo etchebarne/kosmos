@@ -230,7 +230,6 @@ fn actions_row<T: PaneDelegate + SettingsDelegate>(
         .flex_none()
         .items_center()
         .gap_1()
-        .pr_1()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(action_button::<T>(
             "ft-action-new-file",

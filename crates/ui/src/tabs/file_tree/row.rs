@@ -58,6 +58,7 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
         .flex_shrink_0()
         .items_center()
         .h(ROW_HEIGHT)
+        .px(rems(0.375))
         .text_sm()
         .text_color(if state.is_selected {
             theme.text_emphasis
@@ -140,6 +141,7 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
         .flex_shrink_0()
         .items_center()
         .h(ROW_HEIGHT)
+        .px(rems(0.375))
         .text_sm()
         .text_color(if state.is_selected {
             theme.text_emphasis
@@ -237,6 +239,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
         .flex_shrink_0()
         .items_center()
         .h(ROW_HEIGHT)
+        .px(rems(0.375))
         .text_sm()
         .text_color(if state.is_selected {
             theme.text_emphasis
@@ -335,6 +338,7 @@ pub fn render_new_entry<T: PaneDelegate + SettingsDelegate>(
         .flex_shrink_0()
         .items_center()
         .h(ROW_HEIGHT)
+        .px(rems(0.375))
         .text_sm()
         .bg(theme.bg_hover)
         .child(indent_guides(depth, theme))
