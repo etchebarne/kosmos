@@ -1,0 +1,105 @@
+name: Publish to AUR
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  aur-publish-bin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Get version from tag
+        id: version
+        run: echo "pkgver=${GITHUB_EVENT_RELEASE_TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_EVENT_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+
+      - name: Get tarball checksum
+        id: checksum
+        run: |
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/kosmos-linux-x86_64.tar.gz" -o kosmos.tar.gz
+          echo "sha256=$(sha256sum kosmos.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Update PKGBUILD
+        run: |
+          cd aur/kosmos-bin
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksum.outputs.sha256 }}')/" PKGBUILD
+
+      - name: Publish to AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'SSH'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          SSH
+
+          git clone ssh://aur@aur.archlinux.org/kosmos-bin.git aur-repo
+          cp aur/kosmos-bin/PKGBUILD aur-repo/PKGBUILD
+
+          cd aur-repo
+          docker run --rm -v "$PWD:/pkg" -e HOST_UID="$(id -u)" archlinux:base bash -c \
+            'pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && runuser -u builder -- bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO" && chown -R $HOST_UID /pkg'
+
+          git config user.name "Martin Etchebarne"
+          git config user.email "martin@etchebarne.net"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Update to ${{ steps.version.outputs.pkgver }}"
+          git push
+
+  aur-publish-src:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Get version from tag
+        id: version
+        run: echo "pkgver=${GITHUB_EVENT_RELEASE_TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_EVENT_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+
+      - name: Update PKGBUILD
+        run: |
+          cd aur/kosmos
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
+      - name: Publish to AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'SSH'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          SSH
+
+          git clone ssh://aur@aur.archlinux.org/kosmos.git aur-repo
+          cp aur/kosmos/PKGBUILD aur-repo/PKGBUILD
+
+          cd aur-repo
+          docker run --rm -v "$PWD:/pkg" -e HOST_UID="$(id -u)" archlinux:base bash -c \
+            'pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && runuser -u builder -- bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO" && chown -R $HOST_UID /pkg'
+
+          git config user.name "Martin Etchebarne"
+          git config user.email "martin@etchebarne.net"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Update to ${{ steps.version.outputs.pkgver }}"
+          git push

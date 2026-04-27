@@ -28,6 +28,7 @@ fn main() {
                     titlebar: None,
                     window_decorations: Some(WindowDecorations::Client),
                     window_min_size: Some(size(px(800.0), px(600.0))),
+                    app_id: Some("net.etchebarne.Kosmos".into()),
                     ..Default::default()
                 },
                 |window, cx| {

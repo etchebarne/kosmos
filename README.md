@@ -25,12 +25,23 @@ Most editors dictate where things go. Kosmos lets you treat every view as a tab 
 
 ## Installation
 
-**Debian / Ubuntu**
+Kosmos currently ships for Linux x86_64.
 
-Download the latest [`kosmos_amd64.deb`](https://github.com/etchebarne/kosmos/releases/latest) and install it:
+**Quick install (any Linux distro)**
 
 ```bash
-sudo dpkg -i kosmos_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh | sh
+```
+
+This downloads the latest release tarball, installs it under `~/.local/Kosmos.app/`, symlinks `kosmos` into `~/.local/bin`, and registers a desktop entry so the app shows up in your launcher.
+
+**Manual download**
+
+Grab `kosmos-linux-x86_64.tar.gz` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+
+```bash
+KOSMOS_BUNDLE_PATH=./kosmos-linux-x86_64.tar.gz \
+    sh <(curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh)
 ```
 
 **Arch Linux (AUR)**
@@ -38,6 +49,20 @@ sudo dpkg -i kosmos_amd64.deb
 ```bash
 yay -S kosmos-bin       # pre-built binary
 yay -S kosmos           # build from source
+```
+
+## Uninstall
+
+If you installed via the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/uninstall.sh | sh
+```
+
+If you installed via the AUR:
+
+```bash
+sudo pacman -R kosmos-bin   # or: sudo pacman -R kosmos
 ```
 
 ## Building from source

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=$APP_NAME
+GenericName=Code Editor
+Comment=A highly customizable and versatile tab-based code editor.
+TryExec=$APP_CLI
+Exec=$APP_CLI $APP_ARGS
+Icon=$APP_ICON
+Terminal=false
+Categories=Development;TextEditor;IDE;
+Keywords=kosmos;editor;code;
+StartupNotify=$DO_STARTUP_NOTIFY
+StartupWMClass=$APP_ID
