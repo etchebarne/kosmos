@@ -14,6 +14,7 @@ pub struct Setting {
     pub id: &'static str,
     pub name: &'static str,
     pub description: Option<&'static str>,
+    pub group: Option<&'static str>,
     pub control: SettingControl,
 }
 
@@ -24,6 +25,12 @@ impl Setting {
             SettingControl::Input { default, .. } => SettingValue::String((*default).into()),
             SettingControl::Number { default, .. } => SettingValue::Int(*default),
             SettingControl::Dropdown { default, .. } => SettingValue::String((*default).into()),
+            SettingControl::MultiSelect { default, .. } => SettingValue::List(
+                default
+                    .iter()
+                    .map(|s| SettingValue::String((*s).into()))
+                    .collect(),
+            ),
         }
     }
 }
@@ -46,6 +53,11 @@ pub enum SettingControl {
         default: &'static str,
         options: &'static [DropdownOption],
     },
+    MultiSelect {
+        default: &'static [&'static str],
+        options: fn() -> &'static [DropdownOption],
+        ordered: bool,
+    },
 }
 
 pub const APPEARANCE: Category = Category {
@@ -57,6 +69,7 @@ pub const APPEARANCE: Category = Category {
             id: "appearance.theme",
             name: "Theme",
             description: Some("Color theme used across the interface."),
+            group: None,
             control: SettingControl::Dropdown {
                 default: "dark",
                 options: theme::REGISTRY,
@@ -66,6 +79,7 @@ pub const APPEARANCE: Category = Category {
             id: "appearance.zoom",
             name: "Zoom",
             description: Some("Interface zoom level, in percent."),
+            group: None,
             control: SettingControl::Number {
                 default: 100,
                 min: Some(75),
@@ -76,7 +90,46 @@ pub const APPEARANCE: Category = Category {
     ],
 };
 
-pub const ALL: &[&Category] = &[&APPEARANCE];
+// Categories below have no row-based settings — their content is rendered
+// by custom card UIs (dispatched by category id in the settings renderer).
+// State (formatter/linter selection per language, install presence) is read
+// and written via the raw `Settings::get/set` API and the filesystem.
+
+pub const LANGUAGES: Category = Category {
+    id: "languages",
+    name: "Languages",
+    icon: IconName::File,
+    settings: &[],
+};
+
+pub const LANGUAGE_SERVERS: Category = Category {
+    id: "language_servers",
+    name: "Language Servers",
+    icon: IconName::Terminal,
+    settings: &[],
+};
+
+pub const FORMATTERS: Category = Category {
+    id: "formatters",
+    name: "Formatters",
+    icon: IconName::Edit,
+    settings: &[],
+};
+
+pub const LINTERS: Category = Category {
+    id: "linters",
+    name: "Linters",
+    icon: IconName::Clippy,
+    settings: &[],
+};
+
+pub const ALL: &[&Category] = &[
+    &APPEARANCE,
+    &LANGUAGES,
+    &LANGUAGE_SERVERS,
+    &FORMATTERS,
+    &LINTERS,
+];
 
 pub fn category(id: &str) -> Option<&'static Category> {
     ALL.iter().copied().find(|c| c.id == id)

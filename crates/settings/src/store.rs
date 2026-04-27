@@ -8,7 +8,10 @@ use rusqlite::{Connection, Result, params};
 
 use crate::value::SettingValue;
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/001_initial.sql"),
+    include_str!("migrations/002_allow_list_type.sql"),
+];
 
 static CONN: OnceLock<Option<Mutex<Connection>>> = OnceLock::new();
 
@@ -56,6 +59,10 @@ fn encode(value: &SettingValue) -> (&'static str, String) {
         SettingValue::Bool(b) => ("bool", if *b { "1" } else { "0" }.to_string()),
         SettingValue::String(s) => ("string", s.to_string()),
         SettingValue::Int(i) => ("int", i.to_string()),
+        SettingValue::List(items) => {
+            let arr: Vec<serde_json::Value> = items.iter().map(value_to_json).collect();
+            ("list", serde_json::Value::Array(arr).to_string())
+        }
     }
 }
 
@@ -64,6 +71,42 @@ fn decode(kind: &str, raw: &str) -> Option<SettingValue> {
         "bool" => Some(SettingValue::Bool(raw == "1" || raw == "true")),
         "string" => Some(SettingValue::String(SharedString::from(raw.to_string()))),
         "int" => raw.parse::<i64>().ok().map(SettingValue::Int),
+        "list" => {
+            let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+            let arr = v.as_array()?;
+            let items: Option<Vec<_>> = arr.iter().map(value_from_json).collect();
+            Some(SettingValue::List(items?))
+        }
+        _ => None,
+    }
+}
+
+fn value_to_json(v: &SettingValue) -> serde_json::Value {
+    match v {
+        SettingValue::Bool(b) => serde_json::json!({ "type": "bool", "value": *b }),
+        SettingValue::String(s) => serde_json::json!({ "type": "string", "value": s.as_ref() }),
+        SettingValue::Int(i) => serde_json::json!({ "type": "int", "value": *i }),
+        SettingValue::List(items) => {
+            let arr: Vec<serde_json::Value> = items.iter().map(value_to_json).collect();
+            serde_json::json!({ "type": "list", "value": arr })
+        }
+    }
+}
+
+fn value_from_json(v: &serde_json::Value) -> Option<SettingValue> {
+    let kind = v.get("type")?.as_str()?;
+    let inner = v.get("value")?;
+    match kind {
+        "bool" => Some(SettingValue::Bool(inner.as_bool()?)),
+        "string" => Some(SettingValue::String(SharedString::from(
+            inner.as_str()?.to_string(),
+        ))),
+        "int" => Some(SettingValue::Int(inner.as_i64()?)),
+        "list" => {
+            let arr = inner.as_array()?;
+            let items: Option<Vec<_>> = arr.iter().map(value_from_json).collect();
+            Some(SettingValue::List(items?))
+        }
         _ => None,
     }
 }

@@ -237,6 +237,63 @@ impl SettingsDelegate for KosmosApp {
         });
         cx.notify();
     }
+
+    fn install_tool(
+        &mut self,
+        entry: &'static registry::RegistryEntry,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_id = entry.id;
+        let already = cx.global::<SettingsUiState>().installing.contains(tool_id);
+        if already {
+            return;
+        }
+        cx.update_global::<SettingsUiState, _>(|state, _| {
+            state.installing.insert(tool_id);
+            state.install_errors.remove(tool_id);
+        });
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { installer::ensure(entry) })
+                .await;
+            let _ = this.update(cx, |_, cx| {
+                cx.update_global::<SettingsUiState, _>(|state, _| {
+                    state.installing.remove(tool_id);
+                    if let Err(err) = &result {
+                        state
+                            .install_errors
+                            .insert(tool_id, format!("{err}").into());
+                    }
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn uninstall_tool(
+        &mut self,
+        entry: &'static registry::RegistryEntry,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = installer::tool_dir(entry);
+        let tool_id = entry.id;
+        let result = std::fs::remove_dir_all(&dir);
+        cx.update_global::<SettingsUiState, _>(|state, _| {
+            state.install_errors.remove(tool_id);
+            if let Err(err) = result
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                state
+                    .install_errors
+                    .insert(tool_id, format!("uninstall failed: {err}").into());
+            }
+        });
+        cx.notify();
+    }
 }
 
 impl PaneTreeContext for KosmosApp {

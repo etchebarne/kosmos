@@ -78,12 +78,16 @@ pub trait SettingsDelegate: Sized + 'static {
         value: SettingValue,
         cx: &mut Context<Self>,
     );
+    fn install_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>);
+    fn uninstall_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>);
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SettingsUiState {
     pub active_category: &'static str,
     pub open_dropdown: Option<&'static str>,
+    pub installing: std::collections::HashSet<&'static str>,
+    pub install_errors: std::collections::HashMap<&'static str, gpui::SharedString>,
 }
 
 impl SettingsUiState {
@@ -95,6 +99,8 @@ impl SettingsUiState {
         Self {
             active_category,
             open_dropdown: None,
+            installing: Default::default(),
+            install_errors: Default::default(),
         }
     }
 }

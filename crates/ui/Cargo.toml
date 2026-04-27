@@ -7,6 +7,9 @@ edition = "2024"
 file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
 icons = { path = "../icons" }
+installer = { path = "../installer" }
+language = { path = "../language" }
+registry = { path = "../registry" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 unicode-segmentation = "1.12"

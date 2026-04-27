@@ -7,4 +7,5 @@ edition = "2024"
 gpui = { workspace = true }
 icons = { path = "../icons" }
 rusqlite = { workspace = true }
+serde_json = "1"
 theme = { path = "../theme" }

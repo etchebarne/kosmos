@@ -1,10 +1,11 @@
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 
+use registry::ToolKind;
 use settings::{ActiveSettings, Category, Setting};
 use theme::ActiveTheme;
 
 use crate::delegate::SettingsDelegate;
-use crate::tabs::settings::controls;
+use crate::tabs::settings::{cards, controls};
 
 pub fn render<T: SettingsDelegate>(
     category: &'static Category,
@@ -12,10 +13,13 @@ pub fn render<T: SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let mut rows: Vec<AnyElement> = Vec::new();
-    for setting in category.settings {
-        rows.push(render_row(setting, open_dropdown, cx));
-    }
+    let body: AnyElement = match category.id {
+        "languages" => cards::render_languages(cx),
+        "language_servers" => cards::render_marketplace(ToolKind::Lsp, cx),
+        "formatters" => cards::render_marketplace(ToolKind::Formatter, cx),
+        "linters" => cards::render_marketplace(ToolKind::Linter, cx),
+        _ => render_rows(category, open_dropdown, cx),
+    };
 
     div()
         .id("settings-content")
@@ -33,7 +37,38 @@ pub fn render<T: SettingsDelegate>(
                 .text_color(theme.text_emphasis)
                 .child(category.name),
         )
-        .children(rows)
+        .child(body)
+        .into_any_element()
+}
+
+fn render_rows<T: SettingsDelegate>(
+    category: &'static Category,
+    open_dropdown: Option<&'static str>,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let mut rows: Vec<AnyElement> = Vec::new();
+    let mut current_group: Option<&'static str> = None;
+    for setting in category.settings {
+        if setting.group != current_group {
+            current_group = setting.group;
+            if let Some(group) = setting.group {
+                rows.push(render_group_header(group, theme));
+            }
+        }
+        rows.push(render_row(setting, open_dropdown, cx));
+    }
+    div().flex().flex_col().gap_4().children(rows).into_any_element()
+}
+
+
+fn render_group_header(name: &'static str, theme: theme::Theme) -> AnyElement {
+    div()
+        .pt_4()
+        .pb_1()
+        .text_lg()
+        .text_color(theme.text_emphasis)
+        .child(name)
         .into_any_element()
 }
 

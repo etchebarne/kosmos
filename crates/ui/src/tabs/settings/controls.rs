@@ -3,7 +3,7 @@ use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems
 use settings::{Setting, SettingControl, SettingValue};
 use theme::ActiveTheme;
 
-use crate::components::{Dropdown, DropdownOption, NumericInput, Switch};
+use crate::components::{Dropdown, DropdownOption, MultiSelect, NumericInput, Switch};
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
 
@@ -85,6 +85,40 @@ pub fn render<T: SettingsDelegate>(
                     .child(placeholder.unwrap_or(""))
                     .into_any_element(),
             }
+        }
+
+        SettingControl::MultiSelect {
+            options, ordered, ..
+        } => {
+            let opts: Vec<DropdownOption> = options()
+                .iter()
+                .map(|o| DropdownOption::new(o.id, o.label))
+                .collect();
+            let current: Vec<SharedString> = value
+                .as_list()
+                .map(|l| {
+                    l.iter()
+                        .filter_map(|v| match v {
+                            SettingValue::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            MultiSelect::new(format!("setting-multi:{setting_id}"), current, opts)
+                .ordered(*ordered)
+                .open(open_dropdown == Some(setting_id))
+                .on_toggle(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                    this.toggle_settings_dropdown(setting_id, cx);
+                }))
+                .on_change(cx.listener(move |this, new_value: &Vec<SharedString>, _, cx| {
+                    let list = new_value
+                        .iter()
+                        .map(|s| SettingValue::String(s.clone()))
+                        .collect();
+                    this.set_setting_value(setting_id, SettingValue::List(list), cx);
+                }))
+                .into_any_element()
         }
     }
 }

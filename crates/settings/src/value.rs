@@ -5,6 +5,7 @@ pub enum SettingValue {
     Bool(bool),
     String(SharedString),
     Int(i64),
+    List(Vec<SettingValue>),
 }
 
 impl SettingValue {
@@ -25,6 +26,13 @@ impl SettingValue {
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[SettingValue]> {
+        match self {
+            Self::List(v) => Some(v),
             _ => None,
         }
     }
