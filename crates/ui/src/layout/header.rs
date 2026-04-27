@@ -208,18 +208,25 @@ fn render_workspace_button<T: WorkspaceDelegate>(
     let theme = *cx.theme();
     let id = workspace.id;
     let initial = workspace.initial();
+    let name = workspace.name.clone();
     let hover_group = SharedString::from(format!("workspace-{id}"));
     let accent = theme.accent;
-    div()
+    let mut button = div()
         .id(("workspace", id))
         .group(hover_group.clone())
         .relative()
-        .size(rems(1.75))
+        .h(rems(1.75))
         .flex()
         .items_center()
         .justify_center()
         .rounded(rems(0.3125))
-        .text_sm()
+        .text_sm();
+    if is_active {
+        button = button.px(rems(0.625));
+    } else {
+        button = button.w(rems(1.75));
+    }
+    button
         .bg(if is_active {
             theme.bg_selected
         } else {
@@ -266,7 +273,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                 .hover(|s| s)
                 .group_drag_over::<WorkspaceDrag>(hover_group.clone(), move |s| s.bg(accent)),
         )
-        .child(initial)
+        .child(if is_active { name } else { initial })
         .into_any_element()
 }
 
