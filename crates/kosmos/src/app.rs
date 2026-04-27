@@ -139,6 +139,7 @@ impl Render for KosmosApp {
                 self.active_menu,
                 &self.workspaces,
                 self.workspace_menu,
+                window,
                 cx,
             ))
             .child(

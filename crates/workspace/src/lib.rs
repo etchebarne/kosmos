@@ -24,6 +24,7 @@ impl Workspace {
 pub struct WorkspaceManager {
     workspaces: Vec<Workspace>,
     active: Option<usize>,
+    previous_active: Option<usize>,
     next_id: usize,
 }
 
@@ -38,6 +39,7 @@ impl WorkspaceManager {
         Self {
             workspaces: Vec::new(),
             active: None,
+            previous_active: None,
             next_id: 0,
         }
     }
@@ -46,6 +48,7 @@ impl WorkspaceManager {
         Self {
             workspaces,
             active,
+            previous_active: active,
             next_id,
         }
     }
@@ -56,6 +59,10 @@ impl WorkspaceManager {
 
     pub fn active_id(&self) -> Option<usize> {
         self.active
+    }
+
+    pub fn previous_active_id(&self) -> Option<usize> {
+        self.previous_active
     }
 
     pub fn next_id(&self) -> usize {
@@ -70,7 +77,7 @@ impl WorkspaceManager {
     pub fn add(&mut self, path: PathBuf) -> usize {
         if let Some(existing) = self.workspaces.iter().find(|w| w.path == path) {
             let id = existing.id;
-            self.active = Some(id);
+            self.set_active(Some(id));
             return id;
         }
         let id = self.next_id;
@@ -87,8 +94,15 @@ impl WorkspaceManager {
             name,
             pane_tree: PaneTree::new(),
         });
-        self.active = Some(id);
+        self.set_active(Some(id));
         id
+    }
+
+    fn set_active(&mut self, id: Option<usize>) {
+        if self.active != id {
+            self.previous_active = self.active;
+            self.active = id;
+        }
     }
 
     pub fn active_pane_tree(&self) -> Option<&PaneTree> {
@@ -113,11 +127,15 @@ impl WorkspaceManager {
         };
         self.workspaces.remove(pos);
         if self.active == Some(id) {
-            self.active = self
+            let next = self
                 .workspaces
                 .get(pos)
                 .or_else(|| pos.checked_sub(1).and_then(|p| self.workspaces.get(p)))
                 .map(|w| w.id);
+            self.set_active(next);
+        }
+        if self.previous_active == Some(id) {
+            self.previous_active = self.active;
         }
         true
     }
@@ -129,7 +147,7 @@ impl WorkspaceManager {
         if !self.workspaces.iter().any(|w| w.id == id) {
             return false;
         }
-        self.active = Some(id);
+        self.set_active(Some(id));
         true
     }
 
