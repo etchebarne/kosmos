@@ -1,9 +1,217 @@
-use gpui::{AnyElement, App};
+use gpui::{
+    AnyElement, App, Context, DragMoveEvent, Entity, IntoElement, ListHorizontalSizingBehavior,
+    Pixels, Point, SharedString, div, list, prelude::*, px, rems, uniform_list,
+};
 
+use file_editor::{Buffer, BufferStore, soft_wrap_enabled};
+use icons::Icon;
 use tabs::{Tab, registry};
+use theme::{ActiveTheme, Theme};
 
-use super::placeholder;
+use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
-pub fn render(_tab: &Tab, cx: &mut App) -> AnyElement {
-    placeholder::render(registry::FILE_EDITOR.icon, registry::FILE_EDITOR.name, cx)
+const GUTTER_WIDTH_REM: f32 = 3.5;
+const GUTTER_PADDING_REM: f32 = 0.5;
+const BODY_PADDING_LEFT_REM: f32 = 0.75;
+const FONT_FAMILY: &str = "DejaVu Sans Mono";
+/// Fixed row height. Pinning this lets `uniform_list::measure_item` return a
+/// stable row height regardless of how it lays out our flex_row at
+/// MinContent — otherwise the reported content size jitters between renders.
+const ROW_HEIGHT_REM: f32 = 1.4;
+
+pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
+    let Some(path) = tab.path.clone() else {
+        return missing_path(cx);
+    };
+    let theme = *cx.theme();
+    let buffer = BufferStore::open(path, cx);
+    let soft_wrap = soft_wrap_enabled(cx);
+    let (line_count, row_count, longest_idx) = {
+        let buf = buffer.read(cx);
+        (buf.line_count(), buf.row_count(), buf.longest_line_index())
+    };
+
+    let body: AnyElement = if soft_wrap {
+        let list_state = buffer.update(cx, |b, _| b.list_state_for(true));
+        let buffer_for_render = buffer.clone();
+        list(list_state, move |index, _window, cx| {
+            if index >= line_count {
+                return render_spacer_row().into_any_element();
+            }
+            let theme = *cx.theme();
+            let line: SharedString = buffer_for_render
+                .read(cx)
+                .line(index)
+                .unwrap_or("")
+                .to_string()
+                .into();
+            render_row(index + 1, line, soft_wrap, theme).into_any_element()
+        })
+        .size_full()
+        .into_any_element()
+    } else {
+        let scroll = buffer.read(cx).uniform_scroll();
+        let buffer_for_render = buffer.clone();
+        uniform_list(
+            "file-editor-lines",
+            row_count,
+            move |range, _window, cx| {
+                let theme = *cx.theme();
+                let buffer = buffer_for_render.read(cx);
+                range
+                    .map(|i| {
+                        if i >= line_count {
+                            return render_spacer_row().into_any_element();
+                        }
+                        let line: SharedString =
+                            buffer.line(i).unwrap_or("").to_string().into();
+                        render_row(i + 1, line, soft_wrap, theme).into_any_element()
+                    })
+                    .collect()
+            },
+        )
+        .size_full()
+        .track_scroll(scroll)
+        // Let the longest line drive the horizontal extent so shift+wheel
+        // scrolls past the widest content, not just past line 0's width.
+        .with_width_from_item(Some(longest_idx))
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .into_any_element()
+    };
+
+    // Sibling overlay (not a uniform_list decoration): decorations are
+    // positioned at the scrolled origin, so their visible area shrinks as
+    // the user scrolls down. A sibling absolute child of the editor's
+    // outer wrapper stays fixed to the viewport.
+    let scrollbar_overlay = scrollbar::render(current_metrics(&buffer, soft_wrap, cx), cx);
+
+    let buffer_for_drag = buffer.clone();
+    div()
+        .relative()
+        .size_full()
+        .min_h_0()
+        .min_w_0()
+        .bg(theme.bg_surface)
+        .text_color(theme.text)
+        .text_sm()
+        .font_family(FONT_FAMILY)
+        .child(body)
+        .child(scrollbar_overlay)
+        .on_drag_move(cx.listener(
+            move |_, event: &DragMoveEvent<ScrollbarDrag>, _window, cx| {
+                let drag = *event.drag(cx);
+                let metrics = current_metrics(&buffer_for_drag, soft_wrap, cx);
+                match drag {
+                    ScrollbarDrag::Vertical => {
+                        let Some(axis) = metrics.vertical else { return };
+                        let mouse_y = event.event.position.y - event.bounds.top();
+                        let new_scroll = axis.scroll_for_mouse_position(mouse_y);
+                        set_scroll_y(&buffer_for_drag, soft_wrap, new_scroll, cx);
+                    }
+                    ScrollbarDrag::Horizontal => {
+                        let Some(axis) = metrics.horizontal else { return };
+                        let mouse_x = event.event.position.x - event.bounds.left();
+                        let new_scroll = axis.scroll_for_mouse_position(mouse_x);
+                        set_scroll_x(&buffer_for_drag, new_scroll, cx);
+                    }
+                }
+                cx.notify();
+            },
+        ))
+        .into_any_element()
+}
+
+fn current_metrics(buffer: &Entity<Buffer>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
+    let buf = buffer.read(cx);
+    if soft_wrap {
+        EditorScrollMetrics::from_list(&buf.list_state_snapshot())
+    } else {
+        EditorScrollMetrics::from_uniform(&buf.uniform_scroll())
+    }
+}
+
+fn set_scroll_y(buffer: &Entity<Buffer>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
+    let buf = buffer.read(cx);
+    if soft_wrap {
+        buf.list_state_snapshot()
+            .set_offset_from_scrollbar(Point::new(px(0.0), -scrolled));
+    } else {
+        let handle = buf.uniform_scroll();
+        let state = handle.0.borrow();
+        let current = state.base_handle.offset();
+        state
+            .base_handle
+            .set_offset(Point::new(current.x, -scrolled));
+    }
+}
+
+fn set_scroll_x(buffer: &Entity<Buffer>, scrolled: Pixels, cx: &App) {
+    let buf = buffer.read(cx);
+    let handle = buf.uniform_scroll();
+    let state = handle.0.borrow();
+    let current = state.base_handle.offset();
+    state
+        .base_handle
+        .set_offset(Point::new(-scrolled, current.y));
+}
+
+fn render_spacer_row() -> AnyElement {
+    div()
+        .w_full()
+        .h(rems(ROW_HEIGHT_REM))
+        .into_any_element()
+}
+
+fn render_row(
+    line_number: usize,
+    line: SharedString,
+    soft_wrap: bool,
+    theme: Theme,
+) -> impl IntoElement {
+    div()
+        .w_full()
+        // Soft-wrap mode lets rows grow vertically to fit wrapped lines, so
+        // we only fix the row height for the non-wrap path.
+        .when(!soft_wrap, |this| this.h(rems(ROW_HEIGHT_REM)))
+        .line_height(rems(ROW_HEIGHT_REM))
+        .flex()
+        .flex_row()
+        .items_start()
+        .child(
+            div()
+                .flex_none()
+                .w(rems(GUTTER_WIDTH_REM))
+                .pr(rems(GUTTER_PADDING_REM))
+                .text_right()
+                .text_color(theme.text_subtle)
+                .child(format!("{line_number}")),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .pl(rems(BODY_PADDING_LEFT_REM))
+                .when(!soft_wrap, |this| this.whitespace_nowrap())
+                .child(line),
+        )
+}
+
+fn missing_path<T: 'static>(cx: &mut Context<T>) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .text_color(theme.text_subtle)
+        .child(
+            Icon::new(registry::FILE_EDITOR.icon)
+                .size(32.0)
+                .color(theme.text_muted),
+        )
+        .child(div().text_sm().child("No file"))
+        .into_any_element()
 }

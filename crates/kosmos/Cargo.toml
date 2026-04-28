@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
+file_editor = { path = "../file_editor" }
 file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
 icons = { path = "../icons" }

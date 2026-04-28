@@ -2,6 +2,7 @@ pub mod dropdown;
 pub mod input;
 pub mod multi_select;
 pub mod numeric_input;
+pub mod scrollbar;
 pub mod switch;
 
 pub use dropdown::{Dropdown, DropdownOption};

@@ -1685,6 +1685,10 @@ dependencies = [
 [[package]]
 name = "file_editor"
 version = "1.0.0"
+dependencies = [
+ "gpui",
+ "settings",
+]
 
 [[package]]
 name = "file_search"
@@ -4066,6 +4070,7 @@ dependencies = [
 name = "kosmos"
 version = "1.0.0"
 dependencies = [
+ "file_editor",
  "file_tree",
  "gpui",
  "icons",
@@ -7113,6 +7118,7 @@ dependencies = [
 name = "ui"
 version = "1.0.0"
 dependencies = [
+ "file_editor",
  "file_tree",
  "gpui",
  "icons",

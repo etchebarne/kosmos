@@ -1,14 +1,221 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use std::collections::HashMap;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+use gpui::{
+    App, AppContext, BorrowAppContext, Context, Entity, FocusHandle, Focusable, Global,
+    ListAlignment, ListState, Pixels, UniformListScrollHandle, px,
+};
+use settings::{ActiveSettings, SettingValue};
+
+pub const SOFT_WRAP_SETTING_ID: &str = "editor.soft_wrap";
+
+/// Extra empty rows appended to the end of the editor's row list so the user
+/// can scroll past the last real line — same idea as VS Code's
+/// `scrollBeyondLastLine`. The renderer is responsible for drawing rows
+/// `>= line_count` as blank spacers.
+pub const BOTTOM_SPACER_LINES: usize = 20;
+
+const LIST_OVERDRAW_PX: f32 = 200.0;
+
+/// Resolve `editor.soft_wrap` from the global settings, falling back to the
+/// default declared in `settings::registry::EDITOR`.
+pub fn soft_wrap_enabled(cx: &App) -> bool {
+    cx.settings()
+        .get(SOFT_WRAP_SETTING_ID)
+        .and_then(SettingValue::as_bool)
+        .unwrap_or(false)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// In-memory view of a file open in an editor tab. Holds the loaded text plus
+/// a cached `line_starts` index so the renderer (and, later, LSP-driven
+/// analysis) can resolve any line in O(1) without rescanning the content.
+pub struct Buffer {
+    path: PathBuf,
+    content: String,
+    line_starts: Vec<usize>,
+    /// Index of the line with the most characters. Used by `uniform_list` as
+    /// the row to measure when sizing the horizontal extent of the editor.
+    longest_line_index: usize,
+    focus_handle: FocusHandle,
+    uniform_scroll: UniformListScrollHandle,
+    /// Backing state for the variable-height `list` element used in soft-wrap
+    /// mode. Created up front; reset whenever the wrap mode toggles so cached
+    /// row heights don't go stale.
+    list_state: ListState,
+    list_state_soft_wrap: bool,
+    /// Last viewport width we saw the list rendered at. gpui's `list` element
+    /// invalidates cached item heights when its width changes but does NOT
+    /// re-trigger `measure_all`, so we have to detect the change ourselves
+    /// and force a fresh full pre-measurement.
+    list_state_known_width: Option<Pixels>,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Buffer {
+    pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        let (line_starts, longest_line_index) = analyze_content(&content);
+        // measure_all = list pre-measures every row up front so the scrollbar
+        // size doesn't shift as more rows scroll into view.
+        let row_count = line_starts.len() + BOTTOM_SPACER_LINES;
+        let list_state =
+            ListState::new(row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all();
+        Self {
+            path,
+            content,
+            line_starts,
+            longest_line_index,
+            focus_handle: cx.focus_handle(),
+            uniform_scroll: UniformListScrollHandle::new(),
+            list_state,
+            list_state_soft_wrap: false,
+            list_state_known_width: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
+    /// `line_count` plus the trailing empty spacer rows used to allow
+    /// scrolling past the last real line. The renderer feeds this to
+    /// `uniform_list` / `list` so they reserve scrollable space for it.
+    pub fn row_count(&self) -> usize {
+        self.line_starts.len() + BOTTOM_SPACER_LINES
+    }
+
+    pub fn longest_line_index(&self) -> usize {
+        self.longest_line_index
+    }
+
+    /// Byte range of `line_index` within `content`, excluding the trailing
+    /// newline. `None` if the index is out of range.
+    pub fn line_range(&self, line_index: usize) -> Option<Range<usize>> {
+        let start = *self.line_starts.get(line_index)?;
+        let end = match self.line_starts.get(line_index + 1) {
+            // Subtract one to drop the '\n' that begins the next line's start.
+            Some(&next) => next - 1,
+            None => self.content.len(),
+        };
+        Some(start..end)
+    }
+
+    pub fn line(&self, line_index: usize) -> Option<&str> {
+        let range = self.line_range(line_index)?;
+        Some(&self.content[range])
+    }
+
+    pub fn uniform_scroll(&self) -> UniformListScrollHandle {
+        self.uniform_scroll.clone()
+    }
+
+    /// Hand out the `ListState` for soft-wrap rendering. Triggers a full
+    /// re-measurement when either the wrap mode toggles or the rendered
+    /// width changes — both invalidate cached row heights, but gpui's
+    /// `list` only re-runs `measure_all` if `has_measured` is back to false.
+    pub fn list_state_for(&mut self, soft_wrap: bool) -> ListState {
+        if self.list_state_soft_wrap != soft_wrap {
+            self.force_remeasure();
+            self.list_state_soft_wrap = soft_wrap;
+            self.list_state_known_width = None;
+        }
+        let current_width = self.list_state.viewport_bounds().size.width;
+        if current_width > px(0.0) && Some(current_width) != self.list_state_known_width {
+            self.force_remeasure();
+            self.list_state_known_width = Some(current_width);
+        }
+        self.list_state.clone()
+    }
+
+    /// Reset the list state so the next layout pre-measures every row, while
+    /// preserving the user's logical scroll position (item index + offset
+    /// within that item) — `ListState::reset` clears it otherwise.
+    fn force_remeasure(&mut self) {
+        let saved = self.list_state.logical_scroll_top();
+        self.list_state.reset(self.line_starts.len() + BOTTOM_SPACER_LINES);
+        self.list_state.scroll_to(saved);
+    }
+
+    /// Read-only snapshot of the current `ListState`. Used by overlays
+    /// (e.g. the scrollbar) that want to inspect or drive scroll position
+    /// without disturbing the cached row heights.
+    pub fn list_state_snapshot(&self) -> ListState {
+        self.list_state.clone()
     }
 }
+
+impl Focusable for Buffer {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+/// Single pass over `content` that produces both the line-start byte offsets
+/// and the index of the line with the most characters.
+fn analyze_content(content: &str) -> (Vec<usize>, usize) {
+    let mut starts = Vec::with_capacity(content.bytes().filter(|b| *b == b'\n').count() + 1);
+    starts.push(0);
+    let mut longest_index = 0usize;
+    let mut longest_chars = 0usize;
+    let mut current_line_index = 0usize;
+    let mut current_chars = 0usize;
+    for (byte_idx, ch) in content.char_indices() {
+        if ch == '\n' {
+            if current_chars > longest_chars {
+                longest_chars = current_chars;
+                longest_index = current_line_index;
+            }
+            starts.push(byte_idx + 1);
+            current_line_index += 1;
+            current_chars = 0;
+        } else {
+            current_chars += 1;
+        }
+    }
+    if current_chars > longest_chars {
+        longest_index = current_line_index;
+    }
+    (starts, longest_index)
+}
+
+/// Global cache that hands out (or creates) the `Buffer` entity for a given
+/// path so all editor tabs viewing the same file share state.
+#[derive(Default)]
+pub struct BufferStore {
+    buffers: HashMap<PathBuf, Entity<Buffer>>,
+}
+
+impl BufferStore {
+    pub fn install(cx: &mut App) {
+        cx.set_global(Self::default());
+    }
+
+    /// Return the existing buffer for `path`, opening (and caching) one if
+    /// none exists yet.
+    pub fn open(path: PathBuf, cx: &mut App) -> Entity<Buffer> {
+        if let Some(existing) = cx
+            .try_global::<Self>()
+            .and_then(|s| s.buffers.get(&path).cloned())
+        {
+            return existing;
+        }
+        let path_for_buffer = path.clone();
+        let entity = cx.new(move |cx| Buffer::new(path_for_buffer, cx));
+        cx.update_global::<Self, _>(|store, _| {
+            store.buffers.insert(path, entity.clone());
+        });
+        entity
+    }
+}
+
+impl Global for BufferStore {}

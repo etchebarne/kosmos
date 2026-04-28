@@ -60,6 +60,19 @@ pub enum SettingControl {
     },
 }
 
+pub const EDITOR: Category = Category {
+    id: "editor",
+    name: "Editor",
+    icon: IconName::Edit,
+    settings: &[Setting {
+        id: "editor.soft_wrap",
+        name: "Soft Wrap",
+        description: Some("Wrap long lines to the editor's width instead of scrolling horizontally."),
+        group: None,
+        control: SettingControl::Switch { default: false },
+    }],
+};
+
 pub const APPEARANCE: Category = Category {
     id: "appearance",
     name: "Appearance",
@@ -118,6 +131,7 @@ pub const LINTERS: Category = Category {
 
 pub const ALL: &[&Category] = &[
     &APPEARANCE,
+    &EDITOR,
     &LANGUAGE_SERVERS,
     &FORMATTERS,
     &LINTERS,
