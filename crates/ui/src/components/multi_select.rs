@@ -181,6 +181,7 @@ impl RenderOnce for MultiSelectMenu {
             let mut row = div()
                 .id(item_id)
                 .h(rems(1.75))
+                .min_w_full()
                 .px_2()
                 .flex()
                 .items_center()
@@ -206,13 +207,6 @@ impl RenderOnce for MultiSelectMenu {
                         handler(&next, window, cx);
                     }
                 });
-
-            row = row.child(
-                div()
-                    .w(rems(0.875))
-                    .text_color(theme.accent)
-                    .child(if is_selected { "✓" } else { "" }),
-            );
 
             row = row.child(div().flex_1().child(option_label));
 
@@ -274,6 +268,10 @@ impl RenderOnce for MultiSelectMenu {
                 }
             }
 
+            if is_selected {
+                row = row.child(div().text_color(theme.accent).child("✓"));
+            }
+
             items.push(row.into_any_element());
         }
 
@@ -287,7 +285,7 @@ impl RenderOnce for MultiSelectMenu {
                 .p_1()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_0p5()
                 .rounded(rems(0.375))
                 .border_1()
                 .border_color(theme.border_strong)
