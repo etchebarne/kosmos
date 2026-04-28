@@ -63,6 +63,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         .child(
             div()
                 .h(PANE_HEADER_HEIGHT)
+                .flex_none()
                 .w_full()
                 .flex()
                 .items_center()
