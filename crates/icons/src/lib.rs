@@ -1,8 +1,10 @@
 mod assets;
+mod language;
+mod raster;
 
 pub use assets::*;
 
-use gpui::{App, IntoElement, RenderOnce, Rgba, Window, prelude::*, rems, svg};
+use gpui::{App, IntoElement, RenderOnce, Rgba, SharedString, Window, canvas, prelude::*, rems, svg};
 use icondata_core::Icon as IconData;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +37,45 @@ pub enum IconName {
     SplitVertical,
     Terminal,
     Trash,
+    LangAstro,
+    LangBash,
+    LangBun,
+    LangC,
+    LangCpp,
+    LangCsharp,
+    LangCss,
+    LangDart,
+    LangDocker,
+    LangDotenv,
+    LangGit,
+    LangGo,
+    LangGraphql,
+    LangHaskell,
+    LangHtml,
+    LangJava,
+    LangJavascript,
+    LangJson,
+    LangJulia,
+    LangKotlin,
+    LangLua,
+    LangMarkdown,
+    LangPhp,
+    LangPowershell,
+    LangPython,
+    LangR,
+    LangReact,
+    LangRuby,
+    LangRust,
+    LangSass,
+    LangScala,
+    LangSolidity,
+    LangSql,
+    LangSvelte,
+    LangSwift,
+    LangTerraform,
+    LangTypescript,
+    LangVue,
+    LangZig,
 }
 
 impl IconName {
@@ -67,6 +108,45 @@ impl IconName {
         Self::SplitVertical,
         Self::Terminal,
         Self::Trash,
+        Self::LangAstro,
+        Self::LangBash,
+        Self::LangBun,
+        Self::LangC,
+        Self::LangCpp,
+        Self::LangCsharp,
+        Self::LangCss,
+        Self::LangDart,
+        Self::LangDocker,
+        Self::LangDotenv,
+        Self::LangGit,
+        Self::LangGo,
+        Self::LangGraphql,
+        Self::LangHaskell,
+        Self::LangHtml,
+        Self::LangJava,
+        Self::LangJavascript,
+        Self::LangJson,
+        Self::LangJulia,
+        Self::LangKotlin,
+        Self::LangLua,
+        Self::LangMarkdown,
+        Self::LangPhp,
+        Self::LangPowershell,
+        Self::LangPython,
+        Self::LangR,
+        Self::LangReact,
+        Self::LangRuby,
+        Self::LangRust,
+        Self::LangSass,
+        Self::LangScala,
+        Self::LangSolidity,
+        Self::LangSql,
+        Self::LangSvelte,
+        Self::LangSwift,
+        Self::LangTerraform,
+        Self::LangTypescript,
+        Self::LangVue,
+        Self::LangZig,
     ];
 
     pub fn path(self) -> &'static str {
@@ -99,19 +179,64 @@ impl IconName {
             Self::SplitVertical => "icons/split-vertical.svg",
             Self::Terminal => "icons/terminal.svg",
             Self::Trash => "icons/trash.svg",
+            Self::LangAstro => "langs/astro.svg",
+            Self::LangBash => "langs/bash.svg",
+            Self::LangBun => "langs/bun.svg",
+            Self::LangC => "langs/c.svg",
+            Self::LangCpp => "langs/cpp.svg",
+            Self::LangCsharp => "langs/csharp.svg",
+            Self::LangCss => "langs/css.svg",
+            Self::LangDart => "langs/dart.svg",
+            Self::LangDocker => "langs/docker.svg",
+            Self::LangDotenv => "langs/dotenv.svg",
+            Self::LangGit => "langs/git.svg",
+            Self::LangGo => "langs/go.svg",
+            Self::LangGraphql => "langs/graphql.svg",
+            Self::LangHaskell => "langs/haskell.svg",
+            Self::LangHtml => "langs/html.svg",
+            Self::LangJava => "langs/java.svg",
+            Self::LangJavascript => "langs/javascript.svg",
+            Self::LangJson => "langs/json.svg",
+            Self::LangJulia => "langs/julia.svg",
+            Self::LangKotlin => "langs/kotlin.svg",
+            Self::LangLua => "langs/lua.svg",
+            Self::LangMarkdown => "langs/markdown.svg",
+            Self::LangPhp => "langs/php.svg",
+            Self::LangPowershell => "langs/powershell.svg",
+            Self::LangPython => "langs/python.svg",
+            Self::LangR => "langs/r.svg",
+            Self::LangReact => "langs/react.svg",
+            Self::LangRuby => "langs/ruby.svg",
+            Self::LangRust => "langs/rust.svg",
+            Self::LangSass => "langs/sass.svg",
+            Self::LangScala => "langs/scala.svg",
+            Self::LangSolidity => "langs/solidity.svg",
+            Self::LangSql => "langs/sql.svg",
+            Self::LangSvelte => "langs/svelte.svg",
+            Self::LangSwift => "langs/swift.svg",
+            Self::LangTerraform => "langs/terraform.svg",
+            Self::LangTypescript => "langs/typescript.svg",
+            Self::LangVue => "langs/vue.svg",
+            Self::LangZig => "langs/zig.svg",
         }
-    }
-
-    pub fn file_name(self) -> &'static str {
-        self.path().strip_prefix("icons/").unwrap_or(self.path())
     }
 
     pub fn from_path(path: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|icon| icon.path() == path)
     }
 
-    fn data(self) -> IconData {
-        match self {
+    pub fn for_language(language_id: &str) -> Option<Self> {
+        language::icon_for_language(language_id)
+    }
+
+    /// Match well-known file names that should override extension-based icons
+    /// (e.g. `Cargo.toml` → Rust, `bun.lock` → Bun).
+    pub fn for_file_name(file_name: &str) -> Option<Self> {
+        language::icon_for_file_name(file_name)
+    }
+
+    fn data(self) -> Option<IconData> {
+        let data = match self {
             Self::Add => icondata_vs::VsAdd,
             Self::Blank => icondata_vs::VsBlank,
             Self::ChevronDown => icondata_vs::VsChevronDown,
@@ -140,11 +265,51 @@ impl IconName {
             Self::SplitVertical => icondata_vs::VsSplitVertical,
             Self::Terminal => icondata_vs::VsTerminal,
             Self::Trash => icondata_vs::VsTrash,
-        }
+            Self::LangAstro
+            | Self::LangBash
+            | Self::LangBun
+            | Self::LangC
+            | Self::LangCpp
+            | Self::LangCsharp
+            | Self::LangCss
+            | Self::LangDart
+            | Self::LangDocker
+            | Self::LangDotenv
+            | Self::LangGit
+            | Self::LangGo
+            | Self::LangGraphql
+            | Self::LangHaskell
+            | Self::LangHtml
+            | Self::LangJava
+            | Self::LangJavascript
+            | Self::LangJson
+            | Self::LangJulia
+            | Self::LangKotlin
+            | Self::LangLua
+            | Self::LangMarkdown
+            | Self::LangPhp
+            | Self::LangPowershell
+            | Self::LangPython
+            | Self::LangR
+            | Self::LangReact
+            | Self::LangRuby
+            | Self::LangRust
+            | Self::LangSass
+            | Self::LangScala
+            | Self::LangSolidity
+            | Self::LangSql
+            | Self::LangSvelte
+            | Self::LangSwift
+            | Self::LangTerraform
+            | Self::LangTypescript
+            | Self::LangVue
+            | Self::LangZig => return None,
+        };
+        Some(data)
     }
 
-    pub fn to_svg(self) -> String {
-        let data = self.data();
+    pub fn to_svg(self) -> Option<String> {
+        let data = self.data()?;
         let mut svg = String::from(r#"<svg xmlns="http://www.w3.org/2000/svg""#);
 
         push_attr(&mut svg, "x", data.x);
@@ -162,7 +327,7 @@ impl IconName {
         svg.push('>');
         svg.push_str(data.data);
         svg.push_str("</svg>");
-        svg
+        Some(svg)
     }
 }
 
@@ -207,13 +372,30 @@ impl Icon {
 
 impl RenderOnce for Icon {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut element = svg()
-            .path(self.name.path())
-            .size(rems(self.size / 16.0))
-            .flex_none();
-        if let Some(color) = self.color {
-            element = element.text_color(color);
+        let path = self.name.path();
+        let size = rems(self.size / 16.0);
+        // Multi-color SVGs (language icons) need per-paint rasterization at the
+        // element's device-pixel bounds — gpui's `img()` caches a single bitmap
+        // and stretches it, which produces visible aliasing/blur on zoom.
+        // `svg()` already does per-paint rasterization but forces a single
+        // tint color, so we can only use it for the monochrome icondata icons.
+        if path.starts_with("langs/") {
+            let asset_path = SharedString::from(path);
+            canvas(
+                |_bounds, _window, _cx| (),
+                move |bounds, _, window, cx| {
+                    raster::paint(asset_path, bounds, window, cx);
+                },
+            )
+            .size(size)
+            .flex_none()
+            .into_any_element()
+        } else {
+            let mut element = svg().path(path).size(size).flex_none();
+            if let Some(color) = self.color {
+                element = element.text_color(color);
+            }
+            element.into_any_element()
         }
-        element
     }
 }

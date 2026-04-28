@@ -5,6 +5,7 @@ pub const DEFAULT_ID: &str = "dark";
 
 #[derive(Clone, Copy)]
 pub struct Theme {
+    pub is_dark: bool,
     pub bg_root: Rgba,
     pub bg_surface: Rgba,
     pub bg_elevated: Rgba,
@@ -30,6 +31,7 @@ pub struct Theme {
 impl Theme {
     pub fn dark() -> Self {
         Self {
+            is_dark: true,
             bg_root: rgb(0x0d0d0d),
             bg_surface: rgb(0x161616),
             bg_elevated: rgb(0x1c1c1c),
@@ -55,6 +57,7 @@ impl Theme {
 
     pub fn light() -> Self {
         Self {
+            is_dark: false,
             bg_root: rgb(0xf5f5f5),
             bg_surface: rgb(0xffffff),
             bg_elevated: rgb(0xfafafa),

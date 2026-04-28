@@ -7,3 +7,7 @@ edition = "2024"
 gpui = { workspace = true }
 icondata_core = { workspace = true }
 icondata_vs = { workspace = true }
+image = "0.25"
+resvg = "0.45"
+smallvec = "1.6"
+theme = { path = "../theme" }

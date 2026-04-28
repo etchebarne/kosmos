@@ -219,7 +219,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let icon_name = IconName::File;
+    let icon_name = icon_for_file(&path);
 
     let body = if state.is_renaming {
         rename_input_body::<T>(entity, depth, icon_name, cx)
@@ -477,6 +477,17 @@ fn node_label(
                 .child(name),
         )
         .into_any_element()
+}
+
+fn icon_for_file(path: &Path) -> IconName {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str())
+        && let Some(icon) = IconName::for_file_name(name)
+    {
+        return icon;
+    }
+    language::from_path(path)
+        .and_then(|id| IconName::for_language(id.as_str()))
+        .unwrap_or(IconName::File)
 }
 
 fn drop_highlight_color(theme: Theme) -> gpui::Hsla {
