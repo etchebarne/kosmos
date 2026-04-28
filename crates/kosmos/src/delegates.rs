@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui::{BorrowAppContext, Context, PathPromptOptions, Pixels, Point};
 
 use pane_tree::{DropZone, PaneTree, PaneTreeContext};
@@ -193,6 +195,20 @@ impl PaneDelegate for KosmosApp {
 
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>) {
         self.mutate_active_tree(cx, |tree| tree.resize_split(split_id, ratio));
+    }
+
+    fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let mut opened: Option<(usize, usize)> = None;
+        self.mutate_active_tree(cx, |tree| match tree.open_file_editor(path) {
+            Some(result) => {
+                opened = Some(result);
+                true
+            }
+            None => false,
+        });
+        if let Some((pane_id, count)) = opened {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
     }
 }
 

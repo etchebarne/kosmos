@@ -4,7 +4,10 @@ use std::sync::{Mutex, OnceLock};
 
 use rusqlite::{Connection, Result};
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/001_initial.sql"),
+    include_str!("migrations/002_tab_path.sql"),
+];
 
 static CONN: OnceLock<Option<Mutex<Connection>>> = OnceLock::new();
 

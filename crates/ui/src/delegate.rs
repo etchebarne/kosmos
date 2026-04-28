@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{App, Context, Global, Pixels, Point, ScrollHandle};
@@ -67,6 +68,7 @@ pub trait PaneDelegate: Sized + 'static {
         cx: &mut Context<Self>,
     );
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>);
+    fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>);
 }
 
 pub trait SettingsDelegate: Sized + 'static {

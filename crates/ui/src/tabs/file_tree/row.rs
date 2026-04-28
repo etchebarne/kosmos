@@ -271,16 +271,19 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
                 });
             }),
         )
-        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
+        .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
             let shift = event.modifiers().shift;
             entity_click.update(cx, |t, cx| {
                 if shift {
-                    t.extend_selection_to(target, cx);
+                    t.extend_selection_to(target.clone(), cx);
                 } else {
-                    t.select(target, cx);
+                    t.select(target.clone(), cx);
                 }
             });
+            if !shift {
+                this.open_file(target, cx);
+            }
         }))
         .can_drop({
             let parent = drop_target_dir.clone();

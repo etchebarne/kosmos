@@ -3,6 +3,8 @@ pub mod actions;
 #[cfg(test)]
 mod tests;
 
+use std::path::{Path, PathBuf};
+
 use gpui::{Context, InteractiveElement};
 use panes::Pane;
 use tabs::{Tab, TabKind, registry};
@@ -157,6 +159,46 @@ impl PaneTree {
         self.next_tab_id += 1;
         self.active_pane_id = pane_id;
         true
+    }
+
+    /// Pane id with the largest rendered area, weighted by accumulated split
+    /// ratios. Ties go to the first pane encountered in DFS order.
+    pub fn biggest_pane_id(&self) -> usize {
+        Self::biggest_pane_in(&self.root, 1.0)
+            .map(|(id, _)| id)
+            .unwrap_or(self.active_pane_id)
+    }
+
+    /// Open `path` in a file_editor tab. If a file_editor tab already exists
+    /// for this path anywhere in the tree, focus it; otherwise add a new tab
+    /// to the biggest pane. Returns `(pane_id, tab_count)` so the caller can
+    /// scroll the tab strip into view.
+    pub fn open_file_editor(&mut self, path: PathBuf) -> Option<(usize, usize)> {
+        if let Some((pane_id, tab_id)) = Self::find_file_editor_tab(&self.root, &path) {
+            self.select_tab(pane_id, tab_id);
+            let count = Self::find_pane(&self.root, pane_id)
+                .map(|p| p.tabs().len())
+                .unwrap_or(0);
+            return Some((pane_id, count));
+        }
+
+        let pane_id = self.biggest_pane_id();
+        let tab_id = self.next_tab_id;
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
+            .with_title(title)
+            .with_path(path);
+
+        let pane = Self::find_pane_mut(&mut self.root, pane_id)?;
+        pane.add_tab(tab);
+        self.next_tab_id += 1;
+        self.active_pane_id = pane_id;
+        let count = pane.tabs().len();
+        Some((pane_id, count))
     }
 
     pub fn add_tab_to_active(&mut self, kind: &'static TabKind) -> bool {
@@ -385,6 +427,40 @@ impl PaneTree {
 
     fn pane_has_tab(node: &PaneNode, pane_id: usize, tab_id: usize) -> bool {
         Self::find_pane(node, pane_id).is_some_and(|p| p.has_tab(tab_id))
+    }
+
+    fn biggest_pane_in(node: &PaneNode, weight: f32) -> Option<(usize, f32)> {
+        match node {
+            PaneNode::Leaf(pane) => Some((pane.id(), weight)),
+            PaneNode::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let a = Self::biggest_pane_in(first, weight * ratio);
+                let b = Self::biggest_pane_in(second, weight * (1.0 - ratio));
+                match (a, b) {
+                    (Some(a), Some(b)) => Some(if a.1 >= b.1 { a } else { b }),
+                    (a, b) => a.or(b),
+                }
+            }
+        }
+    }
+
+    fn find_file_editor_tab(node: &PaneNode, path: &Path) -> Option<(usize, usize)> {
+        match node {
+            PaneNode::Leaf(pane) => pane
+                .tabs()
+                .iter()
+                .find(|t| {
+                    t.kind.as_ref() == registry::FILE_EDITOR.id
+                        && t.path.as_deref() == Some(path)
+                })
+                .map(|t| (pane.id(), t.id)),
+            PaneNode::Split { first, second, .. } => Self::find_file_editor_tab(first, path)
+                .or_else(|| Self::find_file_editor_tab(second, path)),
+        }
     }
 
     fn find_pane(node: &PaneNode, pane_id: usize) -> Option<&Pane> {

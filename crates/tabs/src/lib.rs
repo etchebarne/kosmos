@@ -1,5 +1,7 @@
 pub mod registry;
 
+use std::path::PathBuf;
+
 use gpui::SharedString;
 use icons::IconName;
 
@@ -10,6 +12,7 @@ pub struct Tab {
     pub id: usize,
     pub kind: SharedString,
     pub title: Option<SharedString>,
+    pub path: Option<PathBuf>,
 }
 
 impl Tab {
@@ -18,11 +21,17 @@ impl Tab {
             id,
             kind: SharedString::new_static(kind.id),
             title: None,
+            path: None,
         }
     }
 
     pub fn with_title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = Some(title.into());
+        self
+    }
+
+    pub fn with_path(mut self, path: PathBuf) -> Self {
+        self.path = Some(path);
         self
     }
 

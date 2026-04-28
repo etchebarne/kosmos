@@ -192,16 +192,18 @@ fn build_node(conn: &Connection, nodes: &[NodeRow], node: &NodeRow) -> Result<Pa
 
 fn load_tabs(conn: &Connection, pane_node_id: i64) -> Result<Vec<Tab>> {
     let mut stmt = conn.prepare(
-        "SELECT tab_id, kind, title FROM tabs WHERE pane_node_id = ? ORDER BY position ASC",
+        "SELECT tab_id, kind, title, path FROM tabs WHERE pane_node_id = ? ORDER BY position ASC",
     )?;
     let rows = stmt.query_map([pane_node_id], |row| {
         let id: i64 = row.get(0)?;
         let kind: String = row.get(1)?;
         let title: Option<String> = row.get(2)?;
+        let path: Option<String> = row.get(3)?;
         Ok(Tab {
             id: id as usize,
             kind: kind.into(),
             title: title.map(Into::into),
+            path: path.map(PathBuf::from),
         })
     })?;
     rows.collect()
@@ -292,14 +294,15 @@ fn write_node(
             let pane_node_id = tx.last_insert_rowid();
             for (i, tab) in pane.tabs().iter().enumerate() {
                 tx.execute(
-                    "INSERT INTO tabs (pane_node_id, position, tab_id, kind, title)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO tabs (pane_node_id, position, tab_id, kind, title, path)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         pane_node_id,
                         i as i64,
                         tab.id as i64,
                         tab.kind.as_ref(),
                         tab.title.as_ref().map(|s| s.as_ref()),
+                        tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                     ],
                 )?;
             }
