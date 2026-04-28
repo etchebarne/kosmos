@@ -14,7 +14,6 @@ pub fn render<T: SettingsDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let body: AnyElement = match category.id {
-        "languages" => cards::render_languages(cx),
         "language_servers" => cards::render_marketplace(ToolKind::Lsp, cx),
         "formatters" => cards::render_marketplace(ToolKind::Formatter, cx),
         "linters" => cards::render_marketplace(ToolKind::Linter, cx),

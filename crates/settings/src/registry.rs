@@ -92,15 +92,8 @@ pub const APPEARANCE: Category = Category {
 
 // Categories below have no row-based settings — their content is rendered
 // by custom card UIs (dispatched by category id in the settings renderer).
-// State (formatter/linter selection per language, install presence) is read
-// and written via the raw `Settings::get/set` API and the filesystem.
-
-pub const LANGUAGES: Category = Category {
-    id: "languages",
-    name: "Languages",
-    icon: IconName::File,
-    settings: &[],
-};
+// Install presence is read from the filesystem; formatters/linters are
+// auto-picked per file from the registry, so no per-language config exists.
 
 pub const LANGUAGE_SERVERS: Category = Category {
     id: "language_servers",
@@ -125,7 +118,6 @@ pub const LINTERS: Category = Category {
 
 pub const ALL: &[&Category] = &[
     &APPEARANCE,
-    &LANGUAGES,
     &LANGUAGE_SERVERS,
     &FORMATTERS,
     &LINTERS,

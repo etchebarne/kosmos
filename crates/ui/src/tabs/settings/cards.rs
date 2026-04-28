@@ -3,27 +3,9 @@ use gpui::{
 };
 
 use registry::{RegistryEntry, ToolKind};
-use settings::{ActiveSettings, SettingValue};
 use theme::ActiveTheme;
 
-use crate::components::{DropdownOption, MultiSelect};
 use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
-
-pub fn render_languages<T: SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let cards: Vec<AnyElement> = language::ALL
-        .iter()
-        .filter(|info| has_any_tool(info.id))
-        .map(|info| render_language_card(info, cx))
-        .collect();
-    div().flex().flex_col().gap_3().children(cards).into_any_element()
-}
-
-fn has_any_tool(language_id: &'static str) -> bool {
-    registry::all().iter().any(|e| {
-        (e.kinds.contains(&ToolKind::Formatter) || e.kinds.contains(&ToolKind::Linter))
-            && e.languages.iter().any(|l| *l == language_id)
-    })
-}
 
 pub fn render_marketplace<T: SettingsDelegate>(
     kind: ToolKind,
@@ -38,61 +20,6 @@ pub fn render_marketplace<T: SettingsDelegate>(
         .gap_3()
         .min_w_0()
         .children(cards)
-        .into_any_element()
-}
-
-fn render_language_card<T: SettingsDelegate>(
-    info: &'static language::LanguageInfo,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-
-    let formatters: Vec<&'static RegistryEntry> =
-        registry::for_language(info.id, ToolKind::Formatter).collect();
-    let linters: Vec<&'static RegistryEntry> =
-        registry::for_language(info.id, ToolKind::Linter).collect();
-
-    let mut body: Vec<AnyElement> = Vec::new();
-
-    if !formatters.is_empty() {
-        body.push(section_header("Formatters", theme));
-        body.push(render_picker_row(
-            info.id,
-            "formatters",
-            ToolKind::Formatter,
-            &formatters,
-            true,
-            cx,
-        ));
-    }
-    if !linters.is_empty() {
-        body.push(section_header("Linters", theme));
-        body.push(render_picker_row(
-            info.id,
-            "linters",
-            ToolKind::Linter,
-            &linters,
-            false,
-            cx,
-        ));
-    }
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .p_3()
-        .rounded(rems(0.5))
-        .bg(theme.bg_surface)
-        .border_1()
-        .border_color(theme.border_subtle)
-        .child(
-            div()
-                .text_lg()
-                .text_color(theme.text_emphasis)
-                .child(info.name),
-        )
-        .children(body)
         .into_any_element()
 }
 
@@ -202,66 +129,6 @@ fn render_tool_card<T: SettingsDelegate>(
     card.into_any_element()
 }
 
-fn render_picker_row<T: SettingsDelegate>(
-    language_id: &'static str,
-    suffix: &'static str,
-    _kind: ToolKind,
-    candidates: &[&'static RegistryEntry],
-    ordered: bool,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let setting_key = setting_key(language_id, suffix);
-
-    let opts: Vec<DropdownOption> = candidates
-        .iter()
-        .copied()
-        .filter(|e| installer::is_installed(e))
-        .map(|e| DropdownOption::new(e.id, e.id))
-        .collect();
-
-    if opts.is_empty() {
-        let theme = *cx.theme();
-        return div()
-            .text_xs()
-            .text_color(theme.text_subtle)
-            .child("None installed yet.")
-            .into_any_element();
-    }
-
-    let current: Vec<SharedString> = cx
-        .settings()
-        .get(setting_key)
-        .and_then(|v| v.as_list().map(|l| l.to_vec()))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|v| match v {
-            SettingValue::String(s) => Some(s),
-            _ => None,
-        })
-        .collect();
-
-    let open_dropdown = cx.settings_ui().open_dropdown;
-
-    MultiSelect::new(
-        SharedString::from(format!("picker-{setting_key}")),
-        current,
-        opts,
-    )
-    .ordered(ordered)
-    .open(open_dropdown == Some(setting_key))
-    .on_toggle(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-        this.toggle_settings_dropdown(setting_key, cx);
-    }))
-    .on_change(cx.listener(move |this, new_value: &Vec<SharedString>, _, cx| {
-        let list = new_value
-            .iter()
-            .map(|s| SettingValue::String(s.clone()))
-            .collect();
-        this.set_setting_value(setting_key, SettingValue::List(list), cx);
-    }))
-    .into_any_element()
-}
-
 fn install_action<T: SettingsDelegate>(
     tool_id: &'static str,
     installed: bool,
@@ -322,29 +189,4 @@ fn install_action<T: SettingsDelegate>(
         }))
         .child(label)
         .into_any_element()
-}
-
-fn section_header(label: &'static str, theme: theme::Theme) -> AnyElement {
-    div()
-        .pt_1()
-        .text_xs()
-        .text_color(theme.text_subtle)
-        .child(label)
-        .into_any_element()
-}
-
-fn setting_key(language_id: &'static str, suffix: &'static str) -> &'static str {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<(&'static str, &'static str), &'static str>>> =
-        OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap();
-    if let Some(s) = guard.get(&(language_id, suffix)) {
-        return s;
-    }
-    let leaked: &'static str =
-        Box::leak(format!("languages.{language_id}.{suffix}").into_boxed_str());
-    guard.insert((language_id, suffix), leaked);
-    leaked
 }
