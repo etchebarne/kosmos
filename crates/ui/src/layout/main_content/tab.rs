@@ -7,7 +7,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::PaneDelegate;
 use crate::drag::TabDrag;
-use crate::metrics::{TAB_HEIGHT, TAB_RADIUS, TAB_WIDTH};
+use crate::metrics::{TAB_HEIGHT, TAB_MAX_WIDTH, TAB_RADIUS};
 
 pub fn render<T: PaneDelegate>(
     pane: &Pane,
@@ -33,7 +33,7 @@ pub fn render<T: PaneDelegate>(
         .items_center()
         .gap_2()
         .h(TAB_HEIGHT)
-        .w(TAB_WIDTH)
+        .max_w(TAB_MAX_WIDTH)
         .px_2()
         .rounded(TAB_RADIUS)
         .when(is_active, |this| this.bg(theme.bg_selected))
@@ -84,7 +84,7 @@ pub fn render<T: PaneDelegate>(
         )
         .child(
             div()
-                .flex_1()
+                .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()

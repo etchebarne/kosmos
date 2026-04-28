@@ -6,7 +6,7 @@ use icons::{Icon, IconName};
 use pane_tree::SplitAxis;
 use theme::ActiveTheme;
 
-use crate::metrics::{TAB_HEIGHT, TAB_RADIUS, TAB_WIDTH};
+use crate::metrics::{TAB_HEIGHT, TAB_MAX_WIDTH, TAB_RADIUS};
 
 #[derive(Clone)]
 pub struct TabDrag {
@@ -44,7 +44,7 @@ impl Render for TabDrag {
             .child(
                 div()
                     .h(TAB_HEIGHT)
-                    .w(TAB_WIDTH)
+                    .max_w(TAB_MAX_WIDTH)
                     .flex()
                     .flex_none()
                     .items_center()
@@ -63,7 +63,7 @@ impl Render for TabDrag {
                     )
                     .child(
                         div()
-                            .flex_1()
+                            .min_w_0()
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
