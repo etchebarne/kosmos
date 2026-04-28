@@ -201,8 +201,6 @@ fn render_breadcrumb(path: &Path, root: Option<&Path>, theme: Theme) -> AnyEleme
         .gap(rems(0.25))
         .text_xs()
         .text_color(theme.text_subtle)
-        .border_b_1()
-        .border_color(theme.border_subtle)
         .overflow_hidden()
         .whitespace_nowrap();
 
