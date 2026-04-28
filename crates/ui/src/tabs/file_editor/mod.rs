@@ -44,7 +44,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buffer_for_render = buffer.clone();
         list(list_state, move |index, _window, cx| {
             if index >= line_count {
-                return render_spacer_row().into_any_element();
+                return render_spacer_row(px(0.0), *cx.theme()).into_any_element();
             }
             let theme = *cx.theme();
             let line: SharedString = buffer_for_render
@@ -53,7 +53,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 .unwrap_or("")
                 .to_string()
                 .into();
-            render_row(index + 1, line, soft_wrap, theme).into_any_element()
+            // Soft wrap can't scroll horizontally, so the gutter is never
+            // sticky — its offset is always 0.
+            render_row(index + 1, line, soft_wrap, px(0.0), theme).into_any_element()
         })
         .size_full()
         .into_any_element()
@@ -66,14 +68,21 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             move |range, _window, cx| {
                 let theme = *cx.theme();
                 let buffer = buffer_for_render.read(cx);
+                // Negate the list's current x scroll so the gutter overlay
+                // shifts back to the viewport's left edge as content scrolls
+                // past it horizontally — i.e. position: sticky on x only.
+                let sticky_offset =
+                    -buffer.uniform_scroll().0.borrow().base_handle.offset().x;
                 range
                     .map(|i| {
                         if i >= line_count {
-                            return render_spacer_row().into_any_element();
+                            return render_spacer_row(sticky_offset, theme)
+                                .into_any_element();
                         }
                         let line: SharedString =
                             buffer.line(i).unwrap_or("").to_string().into();
-                        render_row(i + 1, line, soft_wrap, theme).into_any_element()
+                        render_row(i + 1, line, soft_wrap, sticky_offset, theme)
+                            .into_any_element()
                     })
                     .collect()
             },
@@ -254,10 +263,12 @@ fn file_icon_for_path(path: &Path) -> IconName {
         .unwrap_or(IconName::File)
 }
 
-fn render_spacer_row() -> AnyElement {
+fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
     div()
+        .relative()
         .w_full()
         .h(rems(ROW_HEIGHT_REM))
+        .child(render_gutter(None, sticky_offset, theme))
         .into_any_element()
 }
 
@@ -265,34 +276,48 @@ fn render_row(
     line_number: usize,
     line: SharedString,
     soft_wrap: bool,
+    sticky_offset: Pixels,
     theme: Theme,
 ) -> impl IntoElement {
     div()
+        .relative()
         .w_full()
         // Soft-wrap mode lets rows grow vertically to fit wrapped lines, so
         // we only fix the row height for the non-wrap path.
         .when(!soft_wrap, |this| this.h(rems(ROW_HEIGHT_REM)))
         .line_height(rems(ROW_HEIGHT_REM))
-        .flex()
-        .flex_row()
-        .items_start()
         .child(
+            // Reserve left space for the gutter overlay so the line text
+            // never starts underneath it.
             div()
-                .flex_none()
-                .w(rems(GUTTER_WIDTH_REM))
-                .pr(rems(GUTTER_PADDING_REM))
-                .text_right()
-                .text_color(theme.text_subtle)
-                .child(format!("{line_number}")),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .pl(rems(BODY_PADDING_LEFT_REM))
+                .w_full()
+                .pl(rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM))
                 .when(!soft_wrap, |this| this.whitespace_nowrap())
                 .child(line),
         )
+        .child(render_gutter(Some(line_number), sticky_offset, theme))
+}
+
+fn render_gutter(
+    line_number: Option<usize>,
+    sticky_offset: Pixels,
+    theme: Theme,
+) -> impl IntoElement {
+    let label: SharedString = match line_number {
+        Some(n) => format!("{n}").into(),
+        None => SharedString::default(),
+    };
+    div()
+        .absolute()
+        .top(rems(0.0))
+        .left(sticky_offset)
+        .h(rems(ROW_HEIGHT_REM))
+        .w(rems(GUTTER_WIDTH_REM))
+        .pr(rems(GUTTER_PADDING_REM))
+        .text_right()
+        .text_color(theme.text_subtle)
+        .bg(theme.bg_surface)
+        .child(label)
 }
 
 fn missing_path<T: 'static>(cx: &mut Context<T>) -> AnyElement {
