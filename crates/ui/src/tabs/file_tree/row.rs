@@ -516,7 +516,7 @@ pub fn indent_guides(depth: usize, theme: Theme) -> AnyElement {
                         .top_0()
                         .bottom_0()
                         .w(rems(GUIDE_WIDTH_REM))
-                        .bg(theme.border_subtle),
+                        .bg(gpui::Hsla::from(theme.text).opacity(0.1)),
                 ),
         );
     }
