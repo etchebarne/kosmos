@@ -50,6 +50,20 @@ impl Tab {
     }
 
     pub fn icon(&self) -> IconName {
+        if let Some(path) = &self.path
+            && let Some(icon) = icon_for_path(path)
+        {
+            return icon;
+        }
         self.kind().map(|k| k.icon).unwrap_or(IconName::File)
     }
+}
+
+fn icon_for_path(path: &std::path::Path) -> Option<IconName> {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str())
+        && let Some(icon) = IconName::for_file_name(name)
+    {
+        return Some(icon);
+    }
+    language::from_path(path).and_then(|id| IconName::for_language(id.as_str()))
 }
