@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -175,35 +176,55 @@ pub struct EditorView {
     row_count: usize,
     uniform_scroll: UniformListScrollHandle,
     /// Backing state for the variable-height `list` element used in soft-wrap
-    /// mode. Created up front; reset whenever the wrap mode toggles so cached
-    /// row heights don't go stale.
-    list_state: ListState,
+    /// mode. Constructed lazily on first use because building the underlying
+    /// SumTree is O(row_count) — for a 34k-line file we don't want to pay
+    /// that on tab open if soft-wrap is off (the default).
+    list_state: Option<ListState>,
     list_state_soft_wrap: bool,
-    /// Last viewport width we saw the list rendered at. gpui's `list` element
-    /// invalidates cached item heights when its width changes but does NOT
-    /// re-trigger `measure_all`, so we have to detect the change ourselves
-    /// and force a fresh full pre-measurement.
-    list_state_known_width: Option<Pixels>,
     /// EntityId of an external entity (typically a syntax snapshot) that the
     /// renderer has already wired up an observer for, used to avoid attaching
     /// a fresh observer on every render frame.
     observed_external: Option<EntityId>,
+    /// Cached pixel width for the buffer's longest line, captured from
+    /// gpui's `last_item_size` after the first real measurement. Subsequent
+    /// frames hand gpui a width-only stub element instead of re-shaping the
+    /// real line, which avoids per-frame text layout for files like
+    /// pnpm-lock.yaml whose longest row is a 200+ character integrity hash.
+    /// `Cell` so we can update it through `&EditorView` from the renderer.
+    cached_longest_width: Cell<Option<Pixels>>,
+    /// `rem_size` at which `cached_longest_width` was captured. If the user
+    /// zooms (changes rem), the cached pixel width is wrong and we fall back
+    /// to a real measurement until it stabilizes again.
+    cached_longest_rem: Cell<Option<Pixels>>,
 }
 
 impl EditorView {
     pub fn new(row_count: usize) -> Self {
-        // measure_all = list pre-measures every row up front so the scrollbar
-        // size doesn't shift as more rows scroll into view.
-        let list_state =
-            ListState::new(row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all();
         Self {
             row_count,
             uniform_scroll: UniformListScrollHandle::new(),
-            list_state,
+            list_state: None,
             list_state_soft_wrap: false,
-            list_state_known_width: None,
             observed_external: None,
+            cached_longest_width: Cell::new(None),
+            cached_longest_rem: Cell::new(None),
         }
+    }
+
+    /// Pixel width measured for the longest line, valid only at the
+    /// `rem_size` it was captured at. Returns `None` if we haven't measured
+    /// yet or if the rem has since changed.
+    pub fn cached_longest_width(&self, rem_size: Pixels) -> Option<Pixels> {
+        let cached_rem = self.cached_longest_rem.get()?;
+        if cached_rem != rem_size {
+            return None;
+        }
+        self.cached_longest_width.get()
+    }
+
+    pub fn set_cached_longest_width(&self, rem_size: Pixels, width: Pixels) {
+        self.cached_longest_width.set(Some(width));
+        self.cached_longest_rem.set(Some(rem_size));
     }
 
     pub fn observed_external(&self) -> Option<EntityId> {
@@ -218,37 +239,43 @@ impl EditorView {
         self.uniform_scroll.clone()
     }
 
-    /// Hand out the `ListState` for soft-wrap rendering. Triggers a full
-    /// re-measurement when either the wrap mode toggles or the rendered
-    /// width changes — both invalidate cached row heights, but gpui's
-    /// `list` only re-runs `measure_all` if `has_measured` is back to false.
+    /// Hand out the `ListState` for soft-wrap rendering, constructing it on
+    /// first use. Forces a full re-measurement only when the wrap mode
+    /// toggles. Width changes are intentionally **not** re-measured —
+    /// gpui's `list` self-invalidates per-row heights on width change
+    /// (list.rs:1025-1038) and re-measures visible rows incrementally as
+    /// the user scrolls. Re-running `force_remeasure` here would walk all
+    /// 34k rows synchronously on the main thread, freezing the UI for a
+    /// second or two on every pane-resize release. The trade-off is that
+    /// the scrollbar size is approximate right after a resize and grows
+    /// toward accurate as the user scrolls through the file.
     pub fn list_state_for(&mut self, soft_wrap: bool) -> ListState {
+        let list_state = self.list_state.get_or_insert_with(|| {
+            // measure_all = list pre-measures every row up front so the
+            // scrollbar size doesn't shift as more rows scroll into view.
+            ListState::new(self.row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all()
+        });
         if self.list_state_soft_wrap != soft_wrap {
-            self.force_remeasure();
+            Self::force_remeasure(list_state, self.row_count);
             self.list_state_soft_wrap = soft_wrap;
-            self.list_state_known_width = None;
         }
-        let current_width = self.list_state.viewport_bounds().size.width;
-        if current_width > px(0.0) && Some(current_width) != self.list_state_known_width {
-            self.force_remeasure();
-            self.list_state_known_width = Some(current_width);
-        }
-        self.list_state.clone()
+        list_state.clone()
     }
 
     /// Reset the list state so the next layout pre-measures every row, while
     /// preserving the user's logical scroll position (item index + offset
     /// within that item) — `ListState::reset` clears it otherwise.
-    fn force_remeasure(&mut self) {
-        let saved = self.list_state.logical_scroll_top();
-        self.list_state.reset(self.row_count);
-        self.list_state.scroll_to(saved);
+    fn force_remeasure(list_state: &ListState, row_count: usize) {
+        let saved = list_state.logical_scroll_top();
+        list_state.reset(row_count);
+        list_state.scroll_to(saved);
     }
 
     /// Read-only snapshot of the current `ListState`. Used by overlays
     /// (e.g. the scrollbar) that want to inspect or drive scroll position
-    /// without disturbing the cached row heights.
-    pub fn list_state_snapshot(&self) -> ListState {
+    /// without disturbing the cached row heights. Returns `None` when the
+    /// list has never been used (soft-wrap has stayed off the whole time).
+    pub fn list_state_snapshot(&self) -> Option<ListState> {
         self.list_state.clone()
     }
 }

@@ -70,21 +70,40 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         uniform_list(
             "file-editor-lines",
             row_count,
-            move |range, _window, cx| {
+            move |range, window, cx| {
                 let theme = *cx.theme();
+                let view_ref = view_for_render.read(cx);
+                let scroll_handle = view_ref.uniform_scroll();
                 // Negate the list's current x scroll so the gutter overlay
                 // shifts back to the viewport's left edge as content scrolls
                 // past it horizontally — i.e. position: sticky on x only.
-                let sticky_offset = -view_for_render
-                    .read(cx)
-                    .uniform_scroll()
-                    .0
-                    .borrow()
-                    .base_handle
-                    .offset()
-                    .x;
+                let scroll_state = scroll_handle.0.borrow();
+                let sticky_offset = -scroll_state.base_handle.offset().x;
+                // gpui set this from the previous prepaint's measurement.
+                // `contents.width` is `viewport.max(longest_item_width)`, so
+                // it only matches the true longest width when the longest
+                // line is wider than the viewport — which is the case we
+                // care about (long pnpm-lock.yaml integrity hashes etc.).
+                let prev_sizes = scroll_state.last_item_size;
+                drop(scroll_state);
+                let rem_size = window.rem_size();
+                if let Some(sizes) = prev_sizes
+                    && sizes.contents.width > sizes.item.width
+                {
+                    view_ref.set_cached_longest_width(rem_size, sizes.contents.width);
+                }
+                let cached_longest = view_ref.cached_longest_width(rem_size);
+                // Heuristic: gpui's `measure_item` always calls us with a
+                // single-element range starting at `longest_idx`. The visible
+                // render uses a multi-element range. Treat single-row calls
+                // for the longest line as measurement-only and serve a stub.
+                let is_longest_measure = range.len() == 1 && range.start == longest_idx;
+
                 range
                     .map(|i| {
+                        if is_longest_measure && let Some(width) = cached_longest {
+                            return render_longest_stub(width, theme).into_any_element();
+                        }
                         if i >= line_count {
                             return render_spacer_row(sticky_offset, theme)
                                 .into_any_element();
@@ -121,6 +140,14 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .min_w_0()
         .text_sm()
         .font_family(FONT_FAMILY)
+        // gpui's StyledText reads `white_space` from the window's text-style
+        // stack at request_layout time. With the default `Normal`, its layout
+        // closure derives `wrap_width = available_width`, which changes on
+        // every pane-resize frame and invalidates the per-line shape cache.
+        // Pinning nowrap at the editor's outermost layer guarantees nowrap
+        // is on the stack before the row elements push their refinements,
+        // so resize-driven width changes don't re-shape every visible line.
+        .when(!soft_wrap, |this| this.whitespace_nowrap())
         .child(body)
         .child(scrollbar_overlay)
         .on_drag_move(cx.listener(
@@ -168,7 +195,10 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
 fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
     let v = view.read(cx);
     if soft_wrap {
-        EditorScrollMetrics::from_list(&v.list_state_snapshot())
+        v.list_state_snapshot()
+            .as_ref()
+            .map(EditorScrollMetrics::from_list)
+            .unwrap_or_default()
     } else {
         EditorScrollMetrics::from_uniform(&v.uniform_scroll())
     }
@@ -177,8 +207,9 @@ fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> Edit
 fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
     let v = view.read(cx);
     if soft_wrap {
-        v.list_state_snapshot()
-            .set_offset_from_scrollbar(Point::new(px(0.0), -scrolled));
+        if let Some(state) = v.list_state_snapshot() {
+            state.set_offset_from_scrollbar(Point::new(px(0.0), -scrolled));
+        }
     } else {
         let handle = v.uniform_scroll();
         let state = handle.0.borrow();
@@ -301,28 +332,27 @@ fn line_with_spans(
     let raw = snapshot
         .read(cx)
         .highlights(buf.content(), line_range.clone());
-    let spans = clip_spans_to_line(&line_text, line_range.start, raw);
+    let spans = clip_spans_to_line(&line_text, line_range.start, &raw);
     (line_text, spans)
 }
 
-/// Reduce `raw_spans` (in absolute buffer byte offsets, possibly overlapping
-/// or nested as tree-sitter emits) to a non-overlapping list of
-/// `(line-relative-range, id)` tuples. Spans are sorted by
-/// `(specificity, pattern_index)` ascending and applied last-wins per byte —
-/// so a more-dotted capture name (`@string.special.key`) beats a less-dotted
-/// one (`@string`) regardless of pattern position, and at equal specificity
-/// later patterns (e.g. the JSX overlay) override earlier ones. Ranges are
-/// truncated to char boundaries so gpui doesn't panic laying the runs out.
+/// Reduce `raw_spans` (in absolute buffer byte offsets, pre-sorted by
+/// `(specificity, pattern_index)` ascending by [`SyntaxSnapshot::highlights`])
+/// to a non-overlapping list of `(line-relative-range, id)` tuples, applying
+/// last-wins per byte — so a more-dotted capture name (`@string.special.key`)
+/// beats a less-dotted one (`@string`) regardless of pattern position, and at
+/// equal specificity later patterns (e.g. the JSX overlay) override earlier
+/// ones. Ranges are truncated to char boundaries so gpui doesn't panic laying
+/// the runs out.
 fn clip_spans_to_line(
     line: &str,
     line_byte_start: usize,
-    mut raw_spans: Vec<syntax::HighlightSpan>,
+    raw_spans: &[syntax::HighlightSpan],
 ) -> Vec<(Range<usize>, HighlightId)> {
     let len = line.len();
     if len == 0 {
         return Vec::new();
     }
-    raw_spans.sort_by_key(|s| (s.specificity, s.pattern_index));
     let mut bytes_id: Vec<Option<HighlightId>> = vec![None; len];
     for span in raw_spans {
         let start = span.range.start.saturating_sub(line_byte_start);
@@ -380,6 +410,16 @@ fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
         .h(rems(ROW_HEIGHT_REM))
         .child(render_gutter(None, sticky_offset, theme))
         .into_any_element()
+}
+
+/// Width-and-height-only proxy for the longest line, served to gpui's
+/// `measure_item` so it doesn't re-shape the real (potentially 200+ char)
+/// line on every prepaint. The width is the previous frame's measured value
+/// captured from `UniformListScrollHandle::last_item_size`; height matches
+/// the fixed row height. No children are added — taffy returns the declared
+/// `width`/`height` directly under MinContent measurement.
+fn render_longest_stub(width: Pixels, _theme: Theme) -> impl IntoElement {
+    div().w(width).h(rems(ROW_HEIGHT_REM))
 }
 
 fn render_row(

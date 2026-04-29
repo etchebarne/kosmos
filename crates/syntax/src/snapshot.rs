@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -11,10 +11,11 @@ use tree_sitter::{InputEdit, Node, Point as TsPoint, Query, QueryCursor, Streami
 use crate::grammar::Grammar;
 use crate::highlight::HighlightSpan;
 
-/// Hard ceiling on the per-snapshot highlight cache. The renderer asks for
-/// one entry per visible line on every frame; with hundreds of entries we
-/// cover several viewports of scroll history before we start evicting.
-const HIGHLIGHT_CACHE_LIMIT: usize = 512;
+/// Hard ceiling on the per-snapshot highlight cache. Sized to cover ~20+
+/// viewports of scroll history before any eviction happens. Memory cost per
+/// entry is small (a `Vec<HighlightSpan>` for one line range), so we'd rather
+/// keep more than re-walk the parse tree.
+const HIGHLIGHT_CACHE_LIMIT: usize = 2048;
 
 /// One injected sub-tree: a region of the buffer that should be parsed by a
 /// different grammar than the main one (e.g. `<script>` content as
@@ -44,7 +45,46 @@ pub struct SyntaxSnapshot {
     grammar: Option<Arc<Grammar>>,
     tree: Option<Tree>,
     injections: Vec<Injection>,
-    cache: RefCell<HashMap<(usize, usize), Vec<HighlightSpan>>>,
+    cache: RefCell<HighlightCache>,
+}
+
+/// Bounded FIFO cache for [`SyntaxSnapshot::highlights`]. Eviction drops the
+/// oldest insertion only — replacing the previous all-or-nothing
+/// `HashMap::clear` once the limit is hit, which used to flush the entire
+/// hot set on every scroll past the boundary.
+///
+/// The renderer asks for the same line ranges every frame at a given scroll
+/// position, so FIFO behaves like LRU here: entries naturally retire as the
+/// user scrolls into new ranges.
+#[derive(Default)]
+struct HighlightCache {
+    entries: HashMap<(usize, usize), Arc<[HighlightSpan]>>,
+    order: VecDeque<(usize, usize)>,
+}
+
+impl HighlightCache {
+    fn get(&self, key: &(usize, usize)) -> Option<Arc<[HighlightSpan]>> {
+        self.entries.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: (usize, usize), value: Arc<[HighlightSpan]>) {
+        if self.entries.insert(key, value).is_some() {
+            return;
+        }
+        self.order.push_back(key);
+        while self.entries.len() > HIGHLIGHT_CACHE_LIMIT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
 }
 
 impl SyntaxSnapshot {
@@ -54,7 +94,7 @@ impl SyntaxSnapshot {
             grammar,
             tree: None,
             injections: Vec::new(),
-            cache: RefCell::new(HashMap::new()),
+            cache: RefCell::new(HighlightCache::default()),
         }
     }
 
@@ -117,21 +157,21 @@ impl SyntaxSnapshot {
     /// Memoized per byte range while the parse state is unchanged. A typical
     /// editor frame asks for this once per visible line; without the cache
     /// each idle re-render walks the tree N times for nothing.
-    pub fn highlights(&self, content: &str, byte_range: Range<usize>) -> Vec<HighlightSpan> {
+    /// Returns spans pre-sorted by `(specificity, pattern_index)` so callers
+    /// can apply them last-wins without re-sorting on every frame. Result is
+    /// cheap-to-clone (`Arc<[..]>`); cache hits are an atomic refcount bump
+    /// rather than a Vec copy.
+    pub fn highlights(&self, content: &str, byte_range: Range<usize>) -> Arc<[HighlightSpan]> {
         let key = (byte_range.start, byte_range.end);
         if let Some(cached) = self.cache.borrow().get(&key) {
-            return cached.clone();
+            return cached;
         }
         let spans = self.compute_highlights(content, byte_range);
-        let mut cache = self.cache.borrow_mut();
-        if cache.len() >= HIGHLIGHT_CACHE_LIMIT {
-            cache.clear();
-        }
-        cache.insert(key, spans.clone());
+        self.cache.borrow_mut().insert(key, spans.clone());
         spans
     }
 
-    fn compute_highlights(&self, content: &str, byte_range: Range<usize>) -> Vec<HighlightSpan> {
+    fn compute_highlights(&self, content: &str, byte_range: Range<usize>) -> Arc<[HighlightSpan]> {
         let mut spans = Vec::new();
         if let (Some(grammar), Some(tree)) = (self.grammar.as_ref(), self.tree.as_ref()) {
             collect_highlights(
@@ -159,7 +199,10 @@ impl SyntaxSnapshot {
                 &mut spans,
             );
         }
-        spans
+        // Pre-sort here so renderers can do last-wins per byte without
+        // re-sorting on every cache hit.
+        spans.sort_by_key(|s| (s.specificity, s.pattern_index));
+        spans.into()
     }
 }
 

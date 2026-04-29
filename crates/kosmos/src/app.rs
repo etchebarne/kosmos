@@ -40,6 +40,11 @@ pub struct KosmosApp {
     pub(crate) file_tree: Entity<FileTree>,
     focus_handle: FocusHandle,
     workspace_watch_task: Option<Task<()>>,
+    /// Set whenever a transient mutation (e.g. a pane resize drag-move) has
+    /// changed workspace state without writing to disk. Drained by the next
+    /// non-transient mutation or on app quit, so the user's last resize ratio
+    /// always lands in the database eventually without thrashing the disk.
+    pending_persist: bool,
 }
 
 impl KosmosApp {
@@ -60,9 +65,17 @@ impl KosmosApp {
             file_tree,
             focus_handle: cx.focus_handle(),
             workspace_watch_task: None,
+            pending_persist: false,
         };
         app.sync_file_tree_root(cx);
         app.start_workspace_watch_task(cx);
+        cx.on_app_quit(|this, _cx| {
+            // Flush any resize-drag mutations that bypassed persistence so
+            // the last ratio lands on disk before the process exits.
+            this.flush_pending_persist();
+            async {}
+        })
+        .detach();
         app
     }
 
@@ -148,9 +161,18 @@ impl KosmosApp {
         .detach();
     }
 
-    pub(crate) fn persist_active_workspace(&self) {
+    pub(crate) fn persist_active_workspace(&mut self) {
         if let Some(workspace) = self.workspaces.active_workspace() {
             persistence::save_workspace(workspace);
+        }
+        self.pending_persist = false;
+    }
+
+    /// Write any deferred state to disk if a transient mutation left a
+    /// pending change behind. No-op when the cache is clean.
+    pub(crate) fn flush_pending_persist(&mut self) {
+        if self.pending_persist {
+            self.persist_active_workspace();
         }
     }
 
@@ -182,6 +204,26 @@ impl KosmosApp {
         }
         cx.notify();
         self.persist_active_workspace();
+    }
+
+    /// Mutate the active pane tree without writing to disk. Use for high-rate
+    /// drag-driven operations like pane resize, where a per-frame SQLite
+    /// transaction (delete-and-rewrite of every pane node) is the dominant
+    /// cost. The mutation is marked dirty and gets flushed by the next
+    /// regular `mutate_active_tree` call or by `on_app_quit`.
+    pub(crate) fn mutate_active_tree_transient(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut PaneTree) -> bool,
+    ) {
+        let Some(tree) = self.workspaces.active_pane_tree_mut() else {
+            return;
+        };
+        if !f(tree) {
+            return;
+        }
+        cx.notify();
+        self.pending_persist = true;
     }
 }
 
