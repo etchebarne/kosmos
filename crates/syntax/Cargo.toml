@@ -1,0 +1,26 @@
+[package]
+name = "syntax"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+gpui = { workspace = true }
+file_editor = { path = "../file_editor" }
+highlight = { path = "../highlight" }
+language = { path = "../language" }
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-xml = "0.7"
+tree-sitter-yaml = "0.7"

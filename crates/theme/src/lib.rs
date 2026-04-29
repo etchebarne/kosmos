@@ -1,4 +1,5 @@
 use gpui::{App, Global, Rgba, rgb};
+use highlight::HighlightId;
 
 pub const SETTING_ID: &str = "appearance.theme";
 pub const DEFAULT_ID: &str = "dark";
@@ -26,6 +27,143 @@ pub struct Theme {
 
     pub accent: Rgba,
     pub danger: Rgba,
+
+    pub syntax: SyntaxStyles,
+}
+
+/// Color palette for syntax highlighting, keyed by [`HighlightId`]. Every
+/// variant must have an entry; consumers expect [`Self::color`] to be total.
+#[derive(Clone, Copy)]
+pub struct SyntaxStyles {
+    pub attribute: Rgba,
+    pub boolean: Rgba,
+    pub comment: Rgba,
+    pub constant: Rgba,
+    pub constructor: Rgba,
+    pub escape: Rgba,
+    pub function: Rgba,
+    pub function_macro: Rgba,
+    pub keyword: Rgba,
+    pub label: Rgba,
+    pub markup_code: Rgba,
+    pub markup_emphasis: Rgba,
+    pub markup_heading: Rgba,
+    pub markup_link: Rgba,
+    pub markup_strong: Rgba,
+    pub method: Rgba,
+    pub namespace: Rgba,
+    pub number: Rgba,
+    pub operator: Rgba,
+    pub parameter: Rgba,
+    pub property: Rgba,
+    pub punctuation: Rgba,
+    pub string: Rgba,
+    pub tag: Rgba,
+    pub r#type: Rgba,
+    pub type_builtin: Rgba,
+    pub variable: Rgba,
+}
+
+impl SyntaxStyles {
+    pub fn color(&self, id: HighlightId) -> Rgba {
+        match id {
+            HighlightId::Attribute => self.attribute,
+            HighlightId::Boolean => self.boolean,
+            HighlightId::Comment => self.comment,
+            HighlightId::Constant => self.constant,
+            HighlightId::Constructor => self.constructor,
+            HighlightId::Escape => self.escape,
+            HighlightId::Function => self.function,
+            HighlightId::FunctionMacro => self.function_macro,
+            HighlightId::Keyword => self.keyword,
+            HighlightId::Label => self.label,
+            HighlightId::MarkupCode => self.markup_code,
+            HighlightId::MarkupEmphasis => self.markup_emphasis,
+            HighlightId::MarkupHeading => self.markup_heading,
+            HighlightId::MarkupLink => self.markup_link,
+            HighlightId::MarkupStrong => self.markup_strong,
+            HighlightId::Method => self.method,
+            HighlightId::Namespace => self.namespace,
+            HighlightId::Number => self.number,
+            HighlightId::Operator => self.operator,
+            HighlightId::Parameter => self.parameter,
+            HighlightId::Property => self.property,
+            HighlightId::Punctuation => self.punctuation,
+            HighlightId::String => self.string,
+            HighlightId::Tag => self.tag,
+            HighlightId::Type => self.r#type,
+            HighlightId::TypeBuiltin => self.type_builtin,
+            HighlightId::Variable => self.variable,
+        }
+    }
+
+    // Palette tracks VS Code's Default Dark+ / Light+ themes so familiar code
+    // colorings carry over: variables/parameters/properties/attributes share
+    // a single identifier color, functions are warm yellow, types are teal,
+    // strings warm orange, keywords purple, numbers light green.
+    fn dark() -> Self {
+        Self {
+            attribute: rgb(0x9cdcfe),
+            boolean: rgb(0x569cd6),
+            comment: rgb(0x6a9955),
+            constant: rgb(0x4fc1ff),
+            constructor: rgb(0x4ec9b0),
+            escape: rgb(0xd7ba7d),
+            function: rgb(0xdcdcaa),
+            function_macro: rgb(0xdcdcaa),
+            keyword: rgb(0xc586c0),
+            label: rgb(0xc8c8c8),
+            markup_code: rgb(0xce9178),
+            markup_emphasis: rgb(0xdcdcaa),
+            markup_heading: rgb(0x4ec9b0),
+            markup_link: rgb(0x9cdcfe),
+            markup_strong: rgb(0xdcdcaa),
+            method: rgb(0xdcdcaa),
+            namespace: rgb(0x4ec9b0),
+            number: rgb(0xb5cea8),
+            operator: rgb(0xd4d4d4),
+            parameter: rgb(0x9cdcfe),
+            property: rgb(0x9cdcfe),
+            punctuation: rgb(0xd4d4d4),
+            string: rgb(0xce9178),
+            tag: rgb(0x569cd6),
+            r#type: rgb(0x4ec9b0),
+            type_builtin: rgb(0x569cd6),
+            variable: rgb(0x9cdcfe),
+        }
+    }
+
+    fn light() -> Self {
+        Self {
+            attribute: rgb(0x001080),
+            boolean: rgb(0x0000ff),
+            comment: rgb(0x008000),
+            constant: rgb(0x0070c1),
+            constructor: rgb(0x267f99),
+            escape: rgb(0xee0000),
+            function: rgb(0x795e26),
+            function_macro: rgb(0x795e26),
+            keyword: rgb(0xaf00db),
+            label: rgb(0x000000),
+            markup_code: rgb(0xa31515),
+            markup_emphasis: rgb(0x795e26),
+            markup_heading: rgb(0x267f99),
+            markup_link: rgb(0x001080),
+            markup_strong: rgb(0x795e26),
+            method: rgb(0x795e26),
+            namespace: rgb(0x267f99),
+            number: rgb(0x098658),
+            operator: rgb(0x000000),
+            parameter: rgb(0x001080),
+            property: rgb(0x001080),
+            punctuation: rgb(0x000000),
+            string: rgb(0xa31515),
+            tag: rgb(0x800000),
+            r#type: rgb(0x267f99),
+            type_builtin: rgb(0x0000ff),
+            variable: rgb(0x001080),
+        }
+    }
 }
 
 impl Theme {
@@ -52,6 +190,8 @@ impl Theme {
 
             accent: rgb(0x3b82f6),
             danger: rgb(0xdc2626),
+
+            syntax: SyntaxStyles::dark(),
         }
     }
 
@@ -78,6 +218,8 @@ impl Theme {
 
             accent: rgb(0x2563eb),
             danger: rgb(0xdc2626),
+
+            syntax: SyntaxStyles::light(),
         }
     }
 

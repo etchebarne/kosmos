@@ -97,6 +97,7 @@ pub const ALL: &[LanguageInfo] = &[
     LanguageInfo { id: "sql", name: "SQL" },
     LanguageInfo { id: "stylus", name: "Stylus" },
     LanguageInfo { id: "svelte", name: "Svelte" },
+    LanguageInfo { id: "svg", name: "SVG" },
     LanguageInfo { id: "swift", name: "Swift" },
     LanguageInfo { id: "terraform", name: "Terraform" },
     LanguageInfo { id: "toml", name: "TOML" },
@@ -183,7 +184,11 @@ pub fn from_extension(ext: &str) -> Option<LanguageId> {
         "json5" => "json5",
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
-        "xml" => "xml",
+        // SVG keeps its own id so the UI labels it correctly; other XML
+        // dialects collapse onto `xml` since they share the grammar and
+        // there's no useful distinction at render time.
+        "svg" => "svg",
+        "xml" | "xsd" | "xsl" | "xslt" | "rss" | "atom" | "plist" => "xml",
         "ini" | "cfg" | "conf" => "ini",
         "env" => "dotenv",
         "properties" => "properties",
@@ -224,6 +229,11 @@ pub fn from_path(path: &Path) -> Option<LanguageId> {
             ".gitignore" | ".gitattributes" | ".gitmodules" => Some("gitignore"),
             ".env" => Some("dotenv"),
             ".editorconfig" => Some("editorconfig"),
+            // Bun's lockfile is JSON-with-comments + trailing commas. JSONC
+            // routes to the JSON grammar in our registry; tree-sitter-json's
+            // error recovery handles the trailing commas well enough that the
+            // file colorizes cleanly.
+            "bun.lock" => Some("jsonc"),
             _ => None,
         };
         if let Some(id) = by_name {

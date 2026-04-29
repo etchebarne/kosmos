@@ -18,6 +18,8 @@ fn main() {
             ui::tabs::file_tree::FileTreeUi::install(cx);
             file_editor::BufferStore::install(cx);
             file_editor::EditorViewStore::install(cx);
+            syntax::SyntaxRegistry::install(cx);
+            syntax::SyntaxStore::install(cx);
             ui::components::install_default_keybindings(cx);
             shortcuts::install_defaults(cx);
             let window_bounds = persistence::load_window_bounds().unwrap_or_else(|| {

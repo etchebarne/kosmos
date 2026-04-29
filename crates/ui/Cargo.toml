@@ -7,11 +7,13 @@ edition = "2024"
 file_editor = { path = "../file_editor" }
 file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
+highlight = { path = "../highlight" }
 icons = { path = "../icons" }
 installer = { path = "../installer" }
 language = { path = "../language" }
 registry = { path = "../registry" }
 settings = { path = "../settings" }
+syntax = { path = "../syntax" }
 theme = { path = "../theme" }
 unicode-segmentation = "1.12"
 workspace = { path = "../workspace" }

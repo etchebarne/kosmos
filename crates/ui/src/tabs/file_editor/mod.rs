@@ -1,15 +1,19 @@
+use std::ops::Range;
 use std::path::Path;
 
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, Entity, IntoElement, ListHorizontalSizingBehavior,
-    Pixels, Point, SharedString, div, list, prelude::*, px, rems, uniform_list,
+    AnyElement, App, Context, DragMoveEvent, Entity, HighlightStyle, IntoElement,
+    ListHorizontalSizingBehavior, Pixels, Point, SharedString, StyledText, div, list, prelude::*,
+    px, rems, uniform_list,
 };
 
-use file_editor::{BufferStore, EditorView, EditorViewStore, soft_wrap_enabled};
+use file_editor::{Buffer, BufferStore, EditorView, EditorViewStore, soft_wrap_enabled};
 use file_tree::ActiveFileTree;
+use highlight::HighlightId;
 use icons::{Icon, IconName};
+use syntax::{SyntaxSnapshot, SyntaxStore};
 use tabs::{Tab, registry};
-use theme::{ActiveTheme, Theme};
+use theme::{ActiveTheme, SyntaxStyles, Theme};
 
 use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
@@ -34,6 +38,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
     let buffer = BufferStore::open(path, cx);
     let view = EditorViewStore::for_tab(tab.id, &buffer, cx);
+    let snapshot = SyntaxStore::for_buffer(&buffer, cx);
+    observe_snapshot(&view, &snapshot, cx);
     let soft_wrap = soft_wrap_enabled(cx);
     let (line_count, row_count, longest_idx) = {
         let buf = buffer.read(cx);
@@ -43,20 +49,16 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let body: AnyElement = if soft_wrap {
         let list_state = view.update(cx, |v, _| v.list_state_for(true));
         let buffer_for_render = buffer.clone();
+        let snapshot_for_render = snapshot.clone();
         list(list_state, move |index, _window, cx| {
             if index >= line_count {
                 return render_spacer_row(px(0.0), *cx.theme()).into_any_element();
             }
             let theme = *cx.theme();
-            let line: SharedString = buffer_for_render
-                .read(cx)
-                .line(index)
-                .unwrap_or("")
-                .to_string()
-                .into();
+            let (line, spans) = line_with_spans(&buffer_for_render, &snapshot_for_render, index, cx);
             // Soft wrap can't scroll horizontally, so the gutter is never
             // sticky — its offset is always 0.
-            render_row(index + 1, line, soft_wrap, px(0.0), theme).into_any_element()
+            render_row(index + 1, line, spans, soft_wrap, px(0.0), &theme).into_any_element()
         })
         .size_full()
         .into_any_element()
@@ -64,12 +66,12 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let scroll = view.read(cx).uniform_scroll();
         let buffer_for_render = buffer.clone();
         let view_for_render = view.clone();
+        let snapshot_for_render = snapshot.clone();
         uniform_list(
             "file-editor-lines",
             row_count,
             move |range, _window, cx| {
                 let theme = *cx.theme();
-                let buffer = buffer_for_render.read(cx);
                 // Negate the list's current x scroll so the gutter overlay
                 // shifts back to the viewport's left edge as content scrolls
                 // past it horizontally — i.e. position: sticky on x only.
@@ -87,9 +89,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                             return render_spacer_row(sticky_offset, theme)
                                 .into_any_element();
                         }
-                        let line: SharedString =
-                            buffer.line(i).unwrap_or("").to_string().into();
-                        render_row(i + 1, line, soft_wrap, sticky_offset, theme)
+                        let (line, spans) =
+                            line_with_spans(&buffer_for_render, &snapshot_for_render, i, cx);
+                        render_row(i + 1, line, spans, soft_wrap, sticky_offset, &theme)
                             .into_any_element()
                     })
                     .collect()
@@ -277,6 +279,100 @@ fn file_icon_for_path(path: &Path) -> IconName {
         .unwrap_or(IconName::File)
 }
 
+/// Return the text of `line_index` in `buffer` along with the highlight
+/// spans for that line, translated to be relative to the line's start so
+/// they can be passed straight into [`StyledText::with_highlights`]. Spans
+/// that overlap or share bytes are reduced to a non-overlapping last-wins
+/// sequence — tree-sitter queries can emit nested or repeated captures over
+/// the same range, but gpui's run builder requires a clean sequence.
+fn line_with_spans(
+    buffer: &Entity<Buffer>,
+    snapshot: &Entity<SyntaxSnapshot>,
+    line_index: usize,
+    cx: &App,
+) -> (SharedString, Vec<(Range<usize>, HighlightId)>) {
+    let buf = buffer.read(cx);
+    let Some(line_range) = buf.line_range(line_index) else {
+        return (SharedString::default(), Vec::new());
+    };
+    let line_text: SharedString = buf.content()[line_range.clone()]
+        .to_string()
+        .into();
+    let raw = snapshot
+        .read(cx)
+        .highlights(buf.content(), line_range.clone());
+    let spans = clip_spans_to_line(&line_text, line_range.start, raw);
+    (line_text, spans)
+}
+
+/// Reduce `raw_spans` (in absolute buffer byte offsets, possibly overlapping
+/// or nested as tree-sitter emits) to a non-overlapping list of
+/// `(line-relative-range, id)` tuples. Spans are sorted by
+/// `(specificity, pattern_index)` ascending and applied last-wins per byte —
+/// so a more-dotted capture name (`@string.special.key`) beats a less-dotted
+/// one (`@string`) regardless of pattern position, and at equal specificity
+/// later patterns (e.g. the JSX overlay) override earlier ones. Ranges are
+/// truncated to char boundaries so gpui doesn't panic laying the runs out.
+fn clip_spans_to_line(
+    line: &str,
+    line_byte_start: usize,
+    mut raw_spans: Vec<syntax::HighlightSpan>,
+) -> Vec<(Range<usize>, HighlightId)> {
+    let len = line.len();
+    if len == 0 {
+        return Vec::new();
+    }
+    raw_spans.sort_by_key(|s| (s.specificity, s.pattern_index));
+    let mut bytes_id: Vec<Option<HighlightId>> = vec![None; len];
+    for span in raw_spans {
+        let start = span.range.start.saturating_sub(line_byte_start);
+        let end = span.range.end.saturating_sub(line_byte_start);
+        let start = start.min(len);
+        let end = end.min(len);
+        for slot in &mut bytes_id[start..end] {
+            *slot = Some(span.id);
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < len {
+        if !line.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        let id = bytes_id[i];
+        let mut j = i + 1;
+        while j < len && bytes_id[j] == id {
+            j += 1;
+        }
+        while j < len && !line.is_char_boundary(j) {
+            j += 1;
+        }
+        if let Some(id) = id {
+            out.push((i..j, id));
+        }
+        i = j;
+    }
+    out
+}
+
+/// Wire `view` to re-render whenever `snapshot` notifies (e.g. when the
+/// initial parse completes). Idempotent across renders by stashing the
+/// observed entity id on the editor view — without that gate we'd attach a
+/// new observer every frame.
+fn observe_snapshot<T: 'static>(
+    view: &Entity<EditorView>,
+    snapshot: &Entity<SyntaxSnapshot>,
+    cx: &mut Context<T>,
+) {
+    let snapshot_id = snapshot.entity_id();
+    if view.read(cx).observed_external() == Some(snapshot_id) {
+        return;
+    }
+    view.update(cx, |v, _| v.set_observed_external(snapshot_id));
+    cx.observe(snapshot, |_, _, cx| cx.notify()).detach();
+}
+
 fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
     div()
         .relative()
@@ -289,9 +385,10 @@ fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
 fn render_row(
     line_number: usize,
     line: SharedString,
+    spans: Vec<(Range<usize>, HighlightId)>,
     soft_wrap: bool,
     sticky_offset: Pixels,
-    theme: Theme,
+    theme: &Theme,
 ) -> impl IntoElement {
     div()
         .relative()
@@ -307,9 +404,35 @@ fn render_row(
                 .w_full()
                 .pl(rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM))
                 .when(!soft_wrap, |this| this.whitespace_nowrap())
-                .child(line),
+                .child(render_line_text(line, spans, &theme.syntax)),
         )
-        .child(render_gutter(Some(line_number), sticky_offset, theme))
+        .child(render_gutter(Some(line_number), sticky_offset, *theme))
+}
+
+/// Build the styled text element for a line, lifting the highlight spans into
+/// gpui [`HighlightStyle`] runs. Falls back to plain text when there are no
+/// spans (no grammar, parse not finished, or this line has no captures).
+fn render_line_text(
+    line: SharedString,
+    spans: Vec<(Range<usize>, HighlightId)>,
+    syntax: &SyntaxStyles,
+) -> AnyElement {
+    if spans.is_empty() {
+        return div().child(line).into_any_element();
+    }
+    let highlights = spans.into_iter().map(|(range, id)| {
+        let color = syntax.color(id);
+        (
+            range,
+            HighlightStyle {
+                color: Some(color.into()),
+                ..Default::default()
+            },
+        )
+    });
+    StyledText::new(line)
+        .with_highlights(highlights)
+        .into_any_element()
 }
 
 fn render_gutter(

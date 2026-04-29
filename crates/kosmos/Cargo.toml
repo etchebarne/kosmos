@@ -11,6 +11,7 @@ icons = { path = "../icons" }
 installer = { path = "../installer" }
 registry = { path = "../registry" }
 settings = { path = "../settings" }
+syntax = { path = "../syntax" }
 ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 pane_tree = { path = "../pane_tree" }

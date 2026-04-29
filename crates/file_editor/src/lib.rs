@@ -3,10 +3,57 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, AppContext, BorrowAppContext, Context, Entity, FocusHandle, Focusable, Global,
-    ListAlignment, ListState, Pixels, UniformListScrollHandle, px,
+    App, AppContext, BorrowAppContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, ListAlignment, ListState, Pixels, UniformListScrollHandle, px,
 };
+use language::LanguageId;
 use settings::{ActiveSettings, SettingValue};
+
+/// Stable identifier for an open buffer. Issued by [`BufferStore`] and never
+/// reused, so other systems (syntax parsers, diagnostics, persisted per-buffer
+/// state) can hold onto an id across path changes, untitled buffers, or
+/// multi-root collisions where two paths could otherwise alias.
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub struct BufferId(u64);
+
+impl BufferId {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// Row/column position within a buffer's text. Mirrors the shape of
+/// `tree_sitter::Point` so downstream consumers can convert without us taking
+/// a tree-sitter dependency here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Point {
+    pub row: usize,
+    pub column: usize,
+}
+
+/// One byte-level edit applied to a buffer. Mirrors `tree_sitter::InputEdit`
+/// for the same reason: lets the `syntax` crate forward edits straight into
+/// an incremental reparse without any cross-crate coupling here.
+#[derive(Clone, Copy, Debug)]
+pub struct TextEdit {
+    pub start_byte: usize,
+    pub old_end_byte: usize,
+    pub new_end_byte: usize,
+    pub start_point: Point,
+    pub old_end_point: Point,
+    pub new_end_point: Point,
+}
+
+/// Events emitted by a [`Buffer`] when its observable state changes. Wired
+/// through gpui's [`EventEmitter`] so per-buffer subsystems (syntax trees,
+/// diagnostics, semantic analyses) can subscribe without polling. No
+/// emissions exist yet — editing isn't implemented — but the contract is
+/// pinned now so subsystems can be wired against it from day one.
+#[derive(Clone, Debug)]
+pub enum BufferEvent {
+    Edited { edits: Vec<TextEdit> },
+    LanguageChanged,
+}
 
 pub const SOFT_WRAP_SETTING_ID: &str = "editor.soft_wrap";
 
@@ -35,7 +82,9 @@ pub fn soft_wrap_enabled(cx: &App) -> bool {
 /// position, list measurement caches) lives on [`EditorView`] instead so two
 /// tabs of the same file scroll independently.
 pub struct Buffer {
+    id: BufferId,
     path: PathBuf,
+    language: Option<LanguageId>,
     content: String,
     line_starts: Vec<usize>,
     /// Index of the line with the most characters. Used by `uniform_list` as
@@ -45,13 +94,16 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
+    fn new(id: BufferId, path: PathBuf, cx: &mut Context<Self>) -> Self {
         let content = std::fs::read_to_string(&path)
             .unwrap_or_default()
             .replace("\r\n", "\n");
         let (line_starts, longest_line_index) = analyze_content(&content);
+        let language = language::from_path(&path);
         Self {
+            id,
             path,
+            language,
             content,
             line_starts,
             longest_line_index,
@@ -59,8 +111,16 @@ impl Buffer {
         }
     }
 
+    pub fn id(&self) -> BufferId {
+        self.id
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn language(&self) -> Option<&LanguageId> {
+        self.language.as_ref()
     }
 
     pub fn content(&self) -> &str {
@@ -106,6 +166,8 @@ impl Focusable for Buffer {
     }
 }
 
+impl EventEmitter<BufferEvent> for Buffer {}
+
 /// Per-tab editor state: scroll handles and list measurement caches. Each
 /// editor tab gets its own so two tabs viewing the same buffer scroll
 /// independently.
@@ -122,6 +184,10 @@ pub struct EditorView {
     /// re-trigger `measure_all`, so we have to detect the change ourselves
     /// and force a fresh full pre-measurement.
     list_state_known_width: Option<Pixels>,
+    /// EntityId of an external entity (typically a syntax snapshot) that the
+    /// renderer has already wired up an observer for, used to avoid attaching
+    /// a fresh observer on every render frame.
+    observed_external: Option<EntityId>,
 }
 
 impl EditorView {
@@ -136,7 +202,16 @@ impl EditorView {
             list_state,
             list_state_soft_wrap: false,
             list_state_known_width: None,
+            observed_external: None,
         }
+    }
+
+    pub fn observed_external(&self) -> Option<EntityId> {
+        self.observed_external
+    }
+
+    pub fn set_observed_external(&mut self, id: EntityId) {
+        self.observed_external = Some(id);
     }
 
     pub fn uniform_scroll(&self) -> UniformListScrollHandle {
@@ -207,10 +282,15 @@ fn analyze_content(content: &str) -> (Vec<usize>, usize) {
 }
 
 /// Global cache that hands out (or creates) the `Buffer` entity for a given
-/// path so all editor tabs viewing the same file share state.
+/// path so all editor tabs viewing the same file share state. Dual-keyed
+/// (`PathBuf` → `BufferId` → `Entity<Buffer>`) so subsystems that don't have
+/// a path — scratch buffers, multi-root collisions, persisted analyses — can
+/// look buffers up by their stable id.
 #[derive(Default)]
 pub struct BufferStore {
-    buffers: HashMap<PathBuf, Entity<Buffer>>,
+    next_id: u64,
+    by_path: HashMap<PathBuf, BufferId>,
+    by_id: HashMap<BufferId, Entity<Buffer>>,
 }
 
 impl BufferStore {
@@ -221,18 +301,31 @@ impl BufferStore {
     /// Return the existing buffer for `path`, opening (and caching) one if
     /// none exists yet.
     pub fn open(path: PathBuf, cx: &mut App) -> Entity<Buffer> {
-        if let Some(existing) = cx
-            .try_global::<Self>()
-            .and_then(|s| s.buffers.get(&path).cloned())
-        {
+        if let Some(existing) = cx.try_global::<Self>().and_then(|s| {
+            s.by_path
+                .get(&path)
+                .and_then(|id| s.by_id.get(id))
+                .cloned()
+        }) {
             return existing;
         }
+        let id = cx.update_global::<Self, _>(|store, _| {
+            let id = BufferId(store.next_id);
+            store.next_id += 1;
+            id
+        });
         let path_for_buffer = path.clone();
-        let entity = cx.new(move |cx| Buffer::new(path_for_buffer, cx));
+        let entity = cx.new(move |cx| Buffer::new(id, path_for_buffer, cx));
         cx.update_global::<Self, _>(|store, _| {
-            store.buffers.insert(path, entity.clone());
+            store.by_path.insert(path, id);
+            store.by_id.insert(id, entity.clone());
         });
         entity
+    }
+
+    pub fn get(id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
+        cx.try_global::<Self>()
+            .and_then(|s| s.by_id.get(&id).cloned())
     }
 }
 
