@@ -201,6 +201,136 @@ impl PaneTree {
         Some((pane_id, count))
     }
 
+    /// Open `path` in a file_editor tab inside `target_pane_id`. If that pane
+    /// already has a file_editor for this path, focus it; otherwise append a
+    /// new tab there. Returns `(pane_id, tab_count)` so the caller can scroll
+    /// the tab strip.
+    pub fn open_file_in_pane(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+    ) -> Option<(usize, usize)> {
+        let pane = Self::find_pane(&self.root, target_pane_id)?;
+        let existing = pane.tabs().iter().find(|t| {
+            t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(&path)
+        });
+        if let Some(tab) = existing {
+            let tab_id = tab.id;
+            self.select_tab(target_pane_id, tab_id);
+            let count = Self::find_pane(&self.root, target_pane_id)
+                .map(|p| p.tabs().len())
+                .unwrap_or(0);
+            return Some((target_pane_id, count));
+        }
+
+        let tab_id = self.next_tab_id;
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
+            .with_title(title)
+            .with_path(path);
+
+        let pane = Self::find_pane_mut(&mut self.root, target_pane_id)?;
+        pane.add_tab(tab);
+        self.next_tab_id += 1;
+        self.active_pane_id = target_pane_id;
+        let count = pane.tabs().len();
+        Some((target_pane_id, count))
+    }
+
+    /// Insert a file_editor tab for `path` immediately before `target_tab_id`
+    /// in `target_pane_id`. If that pane already has a file_editor tab for the
+    /// path, focus it instead.
+    pub fn open_file_before(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+        target_tab_id: usize,
+    ) -> Option<(usize, usize)> {
+        let pane = Self::find_pane(&self.root, target_pane_id)?;
+        if !pane.has_tab(target_tab_id) {
+            return None;
+        }
+        let existing = pane.tabs().iter().find(|t| {
+            t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(&path)
+        });
+        if let Some(tab) = existing {
+            let tab_id = tab.id;
+            self.select_tab(target_pane_id, tab_id);
+            let count = Self::find_pane(&self.root, target_pane_id)
+                .map(|p| p.tabs().len())
+                .unwrap_or(0);
+            return Some((target_pane_id, count));
+        }
+
+        let tab_id = self.next_tab_id;
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
+            .with_title(title)
+            .with_path(path);
+
+        let pane = Self::find_pane_mut(&mut self.root, target_pane_id)?;
+        if !pane.insert_tab_before(tab, target_tab_id) {
+            return None;
+        }
+        self.next_tab_id += 1;
+        self.active_pane_id = target_pane_id;
+        let count = pane.tabs().len();
+        Some((target_pane_id, count))
+    }
+
+    /// Split `target_pane_id` along `drop_zone` and seed the new pane with a
+    /// file_editor tab for `path`. Returns `(new_pane_id, tab_count)`.
+    pub fn split_pane_with_file(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+        drop_zone: DropZone,
+    ) -> Option<(usize, usize)> {
+        if drop_zone == DropZone::Center {
+            return None;
+        }
+        if Self::find_pane(&self.root, target_pane_id).is_none() {
+            return None;
+        }
+
+        let new_pane_id = self.next_pane_id;
+        let new_split_id = self.next_split_id;
+        let tab_id = self.next_tab_id;
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
+            .with_title(title)
+            .with_path(path);
+
+        if !Self::split_leaf_with_tab(
+            &mut self.root,
+            target_pane_id,
+            tab,
+            new_pane_id,
+            new_split_id,
+            drop_zone,
+        ) {
+            return None;
+        }
+
+        self.next_tab_id += 1;
+        self.next_pane_id += 1;
+        self.next_split_id += 1;
+        self.active_pane_id = new_pane_id;
+        Some((new_pane_id, 1))
+    }
+
     pub fn add_tab_to_active(&mut self, kind: &'static TabKind) -> bool {
         self.add_tab(self.active_pane_id, kind)
     }

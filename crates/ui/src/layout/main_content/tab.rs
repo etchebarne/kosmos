@@ -1,3 +1,4 @@
+use file_tree::NodeKind;
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
@@ -8,6 +9,7 @@ use theme::ActiveTheme;
 use crate::delegate::PaneDelegate;
 use crate::drag::TabDrag;
 use crate::metrics::{TAB_HEIGHT, TAB_RADIUS};
+use crate::tabs::file_tree::drag::FileNodeDrag;
 
 pub fn render<T: PaneDelegate>(
     pane: &Pane,
@@ -44,12 +46,28 @@ pub fn render<T: PaneDelegate>(
         .text_sm()
         .hover(move |this| this.bg(theme.bg_hover))
         .can_drop(move |drag, _, _| {
-            drag.downcast_ref::<TabDrag>()
+            if drag
+                .downcast_ref::<TabDrag>()
                 .is_some_and(|drag| drag.id != id)
+            {
+                return true;
+            }
+            drag.downcast_ref::<FileNodeDrag>()
+                .is_some_and(|d| d.kind == NodeKind::File)
         })
         .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
             cx.stop_propagation();
             this.move_tab_before(drag.clone(), pane_id, id, cx);
+        }))
+        .on_drop(cx.listener(move |this, drag: &FileNodeDrag, _, cx| {
+            if drag.kind != NodeKind::File {
+                return;
+            }
+            let Some(path) = drag.paths.first().cloned() else {
+                return;
+            };
+            cx.stop_propagation();
+            this.open_file_before(path, pane_id, id, cx);
         }))
         .on_drag(
             TabDrag::new(id, pane_id, title.clone(), icon_name),
@@ -69,7 +87,8 @@ pub fn render<T: PaneDelegate>(
                 // No-op hover forces GPUI to insert a hitbox; without it,
                 // group_drag_over styles are skipped and the line never paints.
                 .hover(|s| s)
-                .group_drag_over::<TabDrag>(hover_group.clone(), move |s| s.bg(accent)),
+                .group_drag_over::<TabDrag>(hover_group.clone(), move |s| s.bg(accent))
+                .group_drag_over::<FileNodeDrag>(hover_group.clone(), move |s| s.bg(accent)),
         )
         .child(
             Icon::new(icon_name)

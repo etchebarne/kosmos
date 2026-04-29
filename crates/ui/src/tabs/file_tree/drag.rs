@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use file_tree::NodeKind;
 use gpui::{
     Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, rems,
 };
@@ -12,15 +13,17 @@ pub struct FileNodeDrag {
     pub paths: Vec<PathBuf>,
     pub label: SharedString,
     pub icon: IconName,
+    pub kind: NodeKind,
     position: Point<Pixels>,
 }
 
 impl FileNodeDrag {
-    pub fn new(paths: Vec<PathBuf>, label: SharedString, icon: IconName) -> Self {
+    pub fn new(paths: Vec<PathBuf>, label: SharedString, icon: IconName, kind: NodeKind) -> Self {
         Self {
             paths,
             label,
             icon,
+            kind,
             position: Point::default(),
         }
     }

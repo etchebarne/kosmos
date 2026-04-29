@@ -1,5 +1,5 @@
 mod actions;
-mod drag;
+pub mod drag;
 mod menu;
 mod row;
 mod state;

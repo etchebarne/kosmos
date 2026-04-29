@@ -202,7 +202,7 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
     if !state.is_renaming {
         let paths = drag_paths_for(entity, &drag_path, cx);
         row = row.on_drag(
-            FileNodeDrag::new(paths, drag_name, icon_name),
+            FileNodeDrag::new(paths, drag_name, icon_name, NodeKind::Directory),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         );
     }
@@ -310,7 +310,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
     if !state.is_renaming {
         let paths = drag_paths_for(entity, &drag_path, cx);
         row = row.on_drag(
-            FileNodeDrag::new(paths, drag_name, icon_name),
+            FileNodeDrag::new(paths, drag_name, icon_name, NodeKind::File),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         );
     }

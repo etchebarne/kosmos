@@ -210,6 +210,69 @@ impl PaneDelegate for KosmosApp {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
     }
+
+    fn open_file_in_pane(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let mut opened: Option<(usize, usize)> = None;
+        self.mutate_active_tree(cx, |tree| match tree.open_file_in_pane(path, target_pane_id) {
+            Some(result) => {
+                opened = Some(result);
+                true
+            }
+            None => false,
+        });
+        if let Some((pane_id, count)) = opened {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
+    }
+
+    fn open_file_before(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+        target_tab_id: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let mut opened: Option<(usize, usize)> = None;
+        self.mutate_active_tree(cx, |tree| {
+            match tree.open_file_before(path, target_pane_id, target_tab_id) {
+                Some(result) => {
+                    opened = Some(result);
+                    true
+                }
+                None => false,
+            }
+        });
+        if let Some((pane_id, count)) = opened {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
+    }
+
+    fn split_pane_with_file(
+        &mut self,
+        path: PathBuf,
+        target_pane_id: usize,
+        drop_zone: DropZone,
+        cx: &mut Context<Self>,
+    ) {
+        let mut opened: Option<(usize, usize)> = None;
+        self.mutate_active_tree(cx, |tree| {
+            match tree.split_pane_with_file(path, target_pane_id, drop_zone) {
+                Some(result) => {
+                    opened = Some(result);
+                    true
+                }
+                None => false,
+            }
+        });
+        if let Some((pane_id, count)) = opened {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
+    }
 }
 
 impl SettingsDelegate for KosmosApp {

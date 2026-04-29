@@ -1,3 +1,4 @@
+use file_tree::NodeKind;
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
@@ -9,6 +10,7 @@ use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles};
 use crate::drag::TabDrag;
 use crate::metrics::{PANE_HEADER_HEIGHT, TAB_HEIGHT};
 use crate::tabs as tab_views;
+use crate::tabs::file_tree::drag::FileNodeDrag;
 
 use super::tab;
 
@@ -43,6 +45,10 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
 
     let pane_id = pane.id();
     let scroll_handle = tab_scrolls.handle(pane_id);
+    let accept_file_drops = active_tab
+        .as_ref()
+        .map(|t| t.kind.as_ref() != tabs::registry::FILE_TREE.id)
+        .unwrap_or(true);
     let body = match active_tab {
         Some(tab) => tab_views::render(pane_id, &tab, cx),
         None => div().flex_1().min_h_0().into_any_element(),
@@ -96,11 +102,11 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .bottom_0()
                 .left_0()
                 .right_0()
-                .child(render_drop_zone(pane_id, DropZone::Center, cx))
-                .child(render_drop_zone(pane_id, DropZone::Left, cx))
-                .child(render_drop_zone(pane_id, DropZone::Right, cx))
-                .child(render_drop_zone(pane_id, DropZone::Top, cx))
-                .child(render_drop_zone(pane_id, DropZone::Bottom, cx)),
+                .child(render_drop_zone(pane_id, DropZone::Center, accept_file_drops, cx))
+                .child(render_drop_zone(pane_id, DropZone::Left, accept_file_drops, cx))
+                .child(render_drop_zone(pane_id, DropZone::Right, accept_file_drops, cx))
+                .child(render_drop_zone(pane_id, DropZone::Top, accept_file_drops, cx))
+                .child(render_drop_zone(pane_id, DropZone::Bottom, accept_file_drops, cx)),
         )
         .into_any_element()
 }
@@ -120,10 +126,26 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(
         .flex_1()
         .min_w(rems(1.25))
         .h(TAB_HEIGHT)
-        .can_drop(|drag, _, _| drag.downcast_ref::<TabDrag>().is_some())
+        .can_drop(|drag, _, _| {
+            if drag.downcast_ref::<TabDrag>().is_some() {
+                return true;
+            }
+            drag.downcast_ref::<FileNodeDrag>()
+                .is_some_and(|d| d.kind == NodeKind::File)
+        })
         .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
             cx.stop_propagation();
             this.move_tab_to_end(drag.clone(), pane_id, cx);
+        }))
+        .on_drop(cx.listener(move |this, drag: &FileNodeDrag, _, cx| {
+            if drag.kind != NodeKind::File {
+                return;
+            }
+            let Some(path) = drag.paths.first().cloned() else {
+                return;
+            };
+            cx.stop_propagation();
+            this.open_file_in_pane(path, pane_id, cx);
         }))
         .child(
             // Indicator sits in the gap between the last tab and the add button:
@@ -136,7 +158,8 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(
                 .w(rems(0.125))
                 .rounded_full()
                 .hover(|s| s)
-                .group_drag_over::<TabDrag>(group_name, move |s| s.bg(accent)),
+                .group_drag_over::<TabDrag>(group_name.clone(), move |s| s.bg(accent))
+                .group_drag_over::<FileNodeDrag>(group_name, move |s| s.bg(accent)),
         )
         .into_any_element()
 }
@@ -174,6 +197,7 @@ fn drop_zone_group_name(pane_id: usize, drop_zone: DropZone) -> String {
 fn render_drop_zone<T: PaneDelegate>(
     pane_id: usize,
     drop_zone: DropZone,
+    accept_file_drops: bool,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -216,14 +240,18 @@ fn render_drop_zone<T: PaneDelegate>(
         .when(
             !matches!(drop_zone, DropZone::Left | DropZone::Right),
             |this| {
-                this.drag_over::<TabDrag>(move |s, _, _, _| {
-                    let alpha = if drop_zone == DropZone::Center {
-                        0.08
-                    } else {
-                        0.18
-                    };
-                    s.bg(gpui::Hsla::from(theme.accent).opacity(alpha))
-                })
+                let alpha = if drop_zone == DropZone::Center {
+                    0.08
+                } else {
+                    0.18
+                };
+                let bg = gpui::Hsla::from(theme.accent).opacity(alpha);
+                let this = this.drag_over::<TabDrag>(move |s, _: &TabDrag, _, _| s.bg(bg));
+                if accept_file_drops {
+                    this.drag_over::<FileNodeDrag>(move |s, _: &FileNodeDrag, _, _| s.bg(bg))
+                } else {
+                    this
+                }
             },
         )
         .when(
@@ -231,27 +259,55 @@ fn render_drop_zone<T: PaneDelegate>(
             |this| {
                 let group_name = drop_zone_group_name(pane_id, drop_zone);
                 let highlight_bg = gpui::Hsla::from(theme.accent).opacity(0.18);
-                this.child(
-                    div()
-                        .absolute()
-                        .top(gpui::relative(-0.5))
-                        .bottom(gpui::relative(-0.5))
-                        .left_0()
-                        .right_0()
-                        // No-op hover forces GPUI to insert a hitbox; without it,
-                        // group_drag_over styles are skipped and the highlight never paints.
-                        .hover(|s| s)
-                        .group_drag_over::<TabDrag>(group_name, move |s| s.bg(highlight_bg)),
-                )
+                let highlight = div()
+                    .absolute()
+                    .top(gpui::relative(-0.5))
+                    .bottom(gpui::relative(-0.5))
+                    .left_0()
+                    .right_0()
+                    // No-op hover forces GPUI to insert a hitbox; without it,
+                    // group_drag_over styles are skipped and the highlight never paints.
+                    .hover(|s| s)
+                    .group_drag_over::<TabDrag>(group_name.clone(), move |s| s.bg(highlight_bg));
+                let highlight = if accept_file_drops {
+                    highlight
+                        .group_drag_over::<FileNodeDrag>(group_name, move |s| s.bg(highlight_bg))
+                } else {
+                    highlight
+                };
+                this.child(highlight)
             },
         )
-        .can_drop(|drag, _, _| drag.downcast_ref::<TabDrag>().is_some())
+        .can_drop(move |drag, _, _| {
+            if drag.downcast_ref::<TabDrag>().is_some() {
+                return true;
+            }
+            accept_file_drops
+                && drag
+                    .downcast_ref::<FileNodeDrag>()
+                    .is_some_and(|d| d.kind == NodeKind::File)
+        })
         .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
             cx.stop_propagation();
             match drop_zone {
                 DropZone::Center => this.move_tab_to_pane(drag.clone(), pane_id, cx),
                 DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
                     this.split_pane(drag.clone(), pane_id, drop_zone, cx)
+                }
+            }
+        }))
+        .on_drop(cx.listener(move |this, drag: &FileNodeDrag, _, cx| {
+            if drag.kind != NodeKind::File {
+                return;
+            }
+            let Some(path) = drag.paths.first().cloned() else {
+                return;
+            };
+            cx.stop_propagation();
+            match drop_zone {
+                DropZone::Center => this.open_file_in_pane(path, pane_id, cx),
+                DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
+                    this.split_pane_with_file(path, pane_id, drop_zone, cx)
                 }
             }
         }))
