@@ -1,4 +1,4 @@
-use gpui::{App, Global, Rgba, rgb};
+use gpui::{App, FontStyle, FontWeight, Global, HighlightStyle, Rgba, rgb};
 use highlight::HighlightId;
 
 pub const SETTING_ID: &str = "appearance.theme";
@@ -65,6 +65,27 @@ pub struct SyntaxStyles {
 }
 
 impl SyntaxStyles {
+    /// Build the full [`HighlightStyle`] for `id` — color plus the few
+    /// font-shape modifiers that make code read closer to how editors like
+    /// VS Code render it: italic comments, italic markdown emphasis, bold
+    /// markdown strong. Other ids stay color-only.
+    pub fn style(&self, id: HighlightId) -> HighlightStyle {
+        let mut style = HighlightStyle {
+            color: Some(self.color(id).into()),
+            ..Default::default()
+        };
+        match id {
+            HighlightId::Comment | HighlightId::MarkupEmphasis => {
+                style.font_style = Some(FontStyle::Italic);
+            }
+            HighlightId::MarkupStrong => {
+                style.font_weight = Some(FontWeight::BOLD);
+            }
+            _ => {}
+        }
+        style
+    }
+
     pub fn color(&self, id: HighlightId) -> Rgba {
         match id {
             HighlightId::Attribute => self.attribute,

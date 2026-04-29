@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -8,6 +10,11 @@ use tree_sitter::{InputEdit, Node, Point as TsPoint, Query, QueryCursor, Streami
 
 use crate::grammar::Grammar;
 use crate::highlight::HighlightSpan;
+
+/// Hard ceiling on the per-snapshot highlight cache. The renderer asks for
+/// one entry per visible line on every frame; with hundreds of entries we
+/// cover several viewports of scroll history before we start evicting.
+const HIGHLIGHT_CACHE_LIMIT: usize = 512;
 
 /// One injected sub-tree: a region of the buffer that should be parsed by a
 /// different grammar than the main one (e.g. `<script>` content as
@@ -27,11 +34,17 @@ pub(crate) struct Injection {
 /// `Edited` and `LanguageChanged` events. The snapshot does not own the
 /// buffer's text — callers pass `content` into [`Self::highlights`] — so it
 /// stays small and safe to clone the tree handle independently if needed.
+///
+/// `cache` memoizes the result of [`Self::highlights`] keyed by byte range,
+/// since the renderer typically asks for the same line ranges on every
+/// frame while the parse tree is unchanged. The cache is cleared whenever
+/// the parse state changes (new tree, new grammar, edited).
 pub struct SyntaxSnapshot {
     language: Option<LanguageId>,
     grammar: Option<Arc<Grammar>>,
     tree: Option<Tree>,
     injections: Vec<Injection>,
+    cache: RefCell<HashMap<(usize, usize), Vec<HighlightSpan>>>,
 }
 
 impl SyntaxSnapshot {
@@ -41,6 +54,7 @@ impl SyntaxSnapshot {
             grammar,
             tree: None,
             injections: Vec::new(),
+            cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -63,6 +77,7 @@ impl SyntaxSnapshot {
     pub(crate) fn set_tree_and_injections(&mut self, tree: Tree, injections: Vec<Injection>) {
         self.tree = Some(tree);
         self.injections = injections;
+        self.cache.borrow_mut().clear();
     }
 
     /// Replace the active grammar (typically because the buffer's language
@@ -73,6 +88,7 @@ impl SyntaxSnapshot {
         self.grammar = grammar;
         self.tree = None;
         self.injections.clear();
+        self.cache.borrow_mut().clear();
     }
 
     /// Apply the buffer's edit deltas to the existing tree so subsequent
@@ -89,6 +105,7 @@ impl SyntaxSnapshot {
         // they're easier to drop and rebuild on the next parse than to keep
         // in sync.
         self.injections.clear();
+        self.cache.borrow_mut().clear();
     }
 
     /// Highlight spans intersecting `byte_range`. Returns spans from the main
@@ -96,7 +113,25 @@ impl SyntaxSnapshot {
     /// range — so e.g. a single line that's inside a `<script>` tag gets
     /// both HTML's punctuation captures and JavaScript's keyword/identifier
     /// captures, with overlap resolution sorting them out per byte.
+    ///
+    /// Memoized per byte range while the parse state is unchanged. A typical
+    /// editor frame asks for this once per visible line; without the cache
+    /// each idle re-render walks the tree N times for nothing.
     pub fn highlights(&self, content: &str, byte_range: Range<usize>) -> Vec<HighlightSpan> {
+        let key = (byte_range.start, byte_range.end);
+        if let Some(cached) = self.cache.borrow().get(&key) {
+            return cached.clone();
+        }
+        let spans = self.compute_highlights(content, byte_range);
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() >= HIGHLIGHT_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(key, spans.clone());
+        spans
+    }
+
+    fn compute_highlights(&self, content: &str, byte_range: Range<usize>) -> Vec<HighlightSpan> {
         let mut spans = Vec::new();
         if let (Some(grammar), Some(tree)) = (self.grammar.as_ref(), self.tree.as_ref()) {
             collect_highlights(
@@ -178,25 +213,51 @@ fn capture_name_to_id(name: &str) -> Option<HighlightId> {
         "constant" | "constant.builtin" => Some(HighlightId::Constant),
         "constructor" => Some(HighlightId::Constructor),
         "escape" | "string.escape" => Some(HighlightId::Escape),
-        "function" | "function.builtin" | "function.special" => Some(HighlightId::Function),
+        "function" | "function.builtin" | "function.special" | "function.call" | "method"
+        | "method.call" => Some(HighlightId::Function),
         "function.macro" => Some(HighlightId::FunctionMacro),
-        "function.method" => Some(HighlightId::Method),
-        // CSS-specific keywords — `@import`, `@media`, etc. are still
-        // semantically keywords from the user's point of view.
-        "keyword" | "import" | "media" | "keyframes" | "supports" | "charset" => {
-            Some(HighlightId::Keyword)
-        }
+        "function.method" | "function.method.builtin" => Some(HighlightId::Method),
+        // CSS at-rule keywords (`@import`, `@media`, …) and the misc.
+        // `keyword.*` / synonym captures used by Lua / Zig / Kotlin / Svelte
+        // — all collapse to plain Keyword from the user's point of view.
+        "keyword"
+        | "keyword.function"
+        | "keyword.operator"
+        | "keyword.return"
+        | "keyword.conditional"
+        | "keyword.coroutine"
+        | "keyword.exception"
+        | "keyword.import"
+        | "keyword.modifier"
+        | "keyword.repeat"
+        | "keyword.type"
+        | "conditional"
+        | "exception"
+        | "include"
+        | "repeat"
+        | "import"
+        | "media"
+        | "keyframes"
+        | "supports"
+        | "charset" => Some(HighlightId::Keyword),
         "label" => Some(HighlightId::Label),
-        "namespace" => Some(HighlightId::Namespace),
-        "number" => Some(HighlightId::Number),
+        // `module` / `module.builtin` (Zig / PHP) sit in our Namespace slot.
+        "namespace" | "module" | "module.builtin" => Some(HighlightId::Namespace),
+        "number" | "number.float" | "float" => Some(HighlightId::Number),
         "operator" => Some(HighlightId::Operator),
-        "property" => Some(HighlightId::Property),
+        // `field` (Lua) and `variable.member` (Zig) are the same concept as
+        // our Property highlight — record/struct field access.
+        "property" | "field" | "variable.member" => Some(HighlightId::Property),
         "punctuation"
         | "punctuation.bracket"
         | "punctuation.delimiter"
         | "punctuation.special"
-        | "delimiter" => Some(HighlightId::Punctuation),
-        "string" | "string.special" => Some(HighlightId::String),
+        | "delimiter"
+        | "tag.delimiter" => Some(HighlightId::Punctuation),
+        "string" | "string.special" | "string.regex" | "string.special.regex"
+        // Character literals (Zig / Kotlin) render at the same color as
+        // strings — they're effectively single-char string literals.
+        | "character" => Some(HighlightId::String),
         // JSON keys (and YAML/TOML scalars) — render with the property color
         // so they read as identifiers rather than as string literals.
         "string.special.key" => Some(HighlightId::Property),
@@ -204,7 +265,7 @@ fn capture_name_to_id(name: &str) -> Option<HighlightId> {
         "type" => Some(HighlightId::Type),
         "type.builtin" => Some(HighlightId::TypeBuiltin),
         "variable" | "variable.builtin" => Some(HighlightId::Variable),
-        "variable.parameter" => Some(HighlightId::Parameter),
+        "variable.parameter" | "parameter" => Some(HighlightId::Parameter),
         // Markdown markup classes. Italic / bold styling will require setting
         // `font_style` / `font_weight` on the `HighlightStyle` — for now we
         // only color them, which is enough to make markdown legible. Both

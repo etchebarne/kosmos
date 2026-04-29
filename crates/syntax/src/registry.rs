@@ -63,6 +63,7 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
             tree_sitter_javascript::LANGUAGE.into(),
             &strip_js_uppercase_constructor_rule(tree_sitter_javascript::HIGHLIGHT_QUERY),
         )
+        .and_then(|g| g.with_locals(tree_sitter_javascript::LOCALS_QUERY))
         .ok(),
         "javascriptreact" => Grammar::new(
             tree_sitter_javascript::LANGUAGE.into(),
@@ -73,6 +74,7 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
                 JSX_UPPERCASE_TAG_QUERY,
             ),
         )
+        .and_then(|g| g.with_locals(tree_sitter_javascript::LOCALS_QUERY))
         .ok(),
         // tree-sitter-typescript's highlights.scm only contains type-specific
         // patterns; by convention it inherits the rest from tree-sitter-
@@ -87,6 +89,7 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
                 strip_ts_uppercase_type_rule(tree_sitter_typescript::HIGHLIGHTS_QUERY),
             ),
         )
+        .and_then(|g| g.with_locals(tree_sitter_typescript::LOCALS_QUERY))
         .ok(),
         "typescriptreact" => Grammar::new(
             tree_sitter_typescript::LANGUAGE_TSX.into(),
@@ -98,6 +101,7 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
                 strip_ts_uppercase_type_rule(tree_sitter_typescript::HIGHLIGHTS_QUERY),
             ),
         )
+        .and_then(|g| g.with_locals(tree_sitter_typescript::LOCALS_QUERY))
         .ok(),
 
         // ─── Systems ────────────────────────────────────────────────────
@@ -133,6 +137,44 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
             tree_sitter_bash::LANGUAGE.into(),
             tree_sitter_bash::HIGHLIGHT_QUERY,
         )
+        .ok(),
+        "ruby" => Grammar::new(
+            tree_sitter_ruby::LANGUAGE.into(),
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+        )
+        .and_then(|g| g.with_locals(tree_sitter_ruby::LOCALS_QUERY))
+        .ok(),
+        "lua" => Grammar::new(
+            tree_sitter_lua::LANGUAGE.into(),
+            tree_sitter_lua::HIGHLIGHTS_QUERY,
+        )
+        .and_then(|g| g.with_injections(tree_sitter_lua::INJECTIONS_QUERY))
+        .and_then(|g| g.with_locals(tree_sitter_lua::LOCALS_QUERY))
+        .ok(),
+        // tree-sitter-php's LANGUAGE_PHP is the full grammar that handles
+        // mixed PHP+HTML files (the common shape for `.php`); LANGUAGE_PHP_ONLY
+        // exists for pure-PHP contexts where there's no surrounding markup.
+        "php" => Grammar::new(
+            tree_sitter_php::LANGUAGE_PHP.into(),
+            tree_sitter_php::HIGHLIGHTS_QUERY,
+        )
+        .and_then(|g| g.with_injections(tree_sitter_php::INJECTIONS_QUERY))
+        .ok(),
+
+        // ─── JVM / native systems ───────────────────────────────────────
+        // Kotlin and Svelte upstream crates pin to tree-sitter 0.20–0.22 and
+        // expose an incompatible `Language` type, so we skip them until
+        // their bindings catch up to 0.25.
+        "java" => Grammar::new(
+            tree_sitter_java::LANGUAGE.into(),
+            tree_sitter_java::HIGHLIGHTS_QUERY,
+        )
+        .ok(),
+        "zig" => Grammar::new(
+            tree_sitter_zig::LANGUAGE.into(),
+            tree_sitter_zig::HIGHLIGHTS_QUERY,
+        )
+        .and_then(|g| g.with_injections(tree_sitter_zig::INJECTIONS_QUERY))
         .ok(),
 
         // ─── Markup / styles ────────────────────────────────────────────

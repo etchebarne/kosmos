@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, Entity, HighlightStyle, IntoElement,
+    AnyElement, App, Context, DragMoveEvent, Entity, IntoElement,
     ListHorizontalSizingBehavior, Pixels, Point, SharedString, StyledText, div, list, prelude::*,
     px, rems, uniform_list,
 };
@@ -410,8 +410,9 @@ fn render_row(
 }
 
 /// Build the styled text element for a line, lifting the highlight spans into
-/// gpui [`HighlightStyle`] runs. Falls back to plain text when there are no
-/// spans (no grammar, parse not finished, or this line has no captures).
+/// gpui `HighlightStyle` runs (color + italic/bold modifiers from the theme).
+/// Falls back to plain text when there are no spans (no grammar, parse not
+/// finished, or this line has no captures).
 fn render_line_text(
     line: SharedString,
     spans: Vec<(Range<usize>, HighlightId)>,
@@ -420,16 +421,7 @@ fn render_line_text(
     if spans.is_empty() {
         return div().child(line).into_any_element();
     }
-    let highlights = spans.into_iter().map(|(range, id)| {
-        let color = syntax.color(id);
-        (
-            range,
-            HighlightStyle {
-                color: Some(color.into()),
-                ..Default::default()
-            },
-        )
-    });
+    let highlights = spans.into_iter().map(|(range, id)| (range, syntax.style(id)));
     StyledText::new(line)
         .with_highlights(highlights)
         .into_any_element()
