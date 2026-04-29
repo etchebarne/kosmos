@@ -57,9 +57,13 @@ fn render_rows<T: SettingsDelegate>(
         }
         rows.push(render_row(setting, open_dropdown, cx));
     }
-    div().flex().flex_col().gap_4().children(rows).into_any_element()
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .children(rows)
+        .into_any_element()
 }
-
 
 fn render_group_header(name: &'static str, theme: theme::Theme) -> AnyElement {
     div()
@@ -102,12 +106,7 @@ fn render_row<T: SettingsDelegate>(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.text)
-                        .child(setting.name),
-                )
+                .child(div().text_sm().text_color(theme.text).child(setting.name))
                 .children(description),
         )
         .child(

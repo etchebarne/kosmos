@@ -15,11 +15,7 @@ pub use actions::{CloseTab, NewTab};
 /// reach it. Lives next to the actions so a feature crate is fully responsible
 /// for its own keyboard surface — the binary just provides a tree.
 pub trait PaneTreeContext: Sized + 'static {
-    fn with_active_tree(
-        &mut self,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut PaneTree) -> bool,
-    );
+    fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool);
 
     fn on_tab_appended(&mut self, _pane_id: usize, _new_tab_count: usize, _cx: &mut Context<Self>) {
     }
@@ -584,8 +580,7 @@ impl PaneTree {
                 .tabs()
                 .iter()
                 .find(|t| {
-                    t.kind.as_ref() == registry::FILE_EDITOR.id
-                        && t.path.as_deref() == Some(path)
+                    t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(path)
                 })
                 .map(|t| (pane.id(), t.id)),
             PaneNode::Split { first, second, .. } => Self::find_file_editor_tab(first, path)

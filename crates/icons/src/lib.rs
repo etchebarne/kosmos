@@ -4,7 +4,9 @@ mod raster;
 
 pub use assets::*;
 
-use gpui::{App, IntoElement, RenderOnce, Rgba, SharedString, Window, canvas, prelude::*, rems, svg};
+use gpui::{
+    App, IntoElement, RenderOnce, Rgba, SharedString, Window, canvas, prelude::*, rems, svg,
+};
 use icondata_core::Icon as IconData;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -32,83 +32,302 @@ pub struct LanguageInfo {
 }
 
 pub const ALL: &[LanguageInfo] = &[
-    LanguageInfo { id: "asciidoc", name: "AsciiDoc" },
-    LanguageInfo { id: "astro", name: "Astro" },
-    LanguageInfo { id: "batch", name: "Batch" },
-    LanguageInfo { id: "bazel", name: "Bazel" },
+    LanguageInfo {
+        id: "asciidoc",
+        name: "AsciiDoc",
+    },
+    LanguageInfo {
+        id: "astro",
+        name: "Astro",
+    },
+    LanguageInfo {
+        id: "batch",
+        name: "Batch",
+    },
+    LanguageInfo {
+        id: "bazel",
+        name: "Bazel",
+    },
     LanguageInfo { id: "c", name: "C" },
-    LanguageInfo { id: "clojure", name: "Clojure" },
-    LanguageInfo { id: "cmake", name: "CMake" },
-    LanguageInfo { id: "cpp", name: "C++" },
-    LanguageInfo { id: "csharp", name: "C#" },
-    LanguageInfo { id: "css", name: "CSS" },
+    LanguageInfo {
+        id: "clojure",
+        name: "Clojure",
+    },
+    LanguageInfo {
+        id: "cmake",
+        name: "CMake",
+    },
+    LanguageInfo {
+        id: "cpp",
+        name: "C++",
+    },
+    LanguageInfo {
+        id: "csharp",
+        name: "C#",
+    },
+    LanguageInfo {
+        id: "css",
+        name: "CSS",
+    },
     LanguageInfo { id: "d", name: "D" },
-    LanguageInfo { id: "dart", name: "Dart" },
-    LanguageInfo { id: "dockerfile", name: "Dockerfile" },
-    LanguageInfo { id: "dotenv", name: "dotenv" },
-    LanguageInfo { id: "editorconfig", name: "EditorConfig" },
-    LanguageInfo { id: "elixir", name: "Elixir" },
-    LanguageInfo { id: "elm", name: "Elm" },
-    LanguageInfo { id: "erlang", name: "Erlang" },
-    LanguageInfo { id: "fish", name: "Fish" },
-    LanguageInfo { id: "fsharp", name: "F#" },
-    LanguageInfo { id: "gdscript", name: "GDScript" },
-    LanguageInfo { id: "gitignore", name: "Git Ignore" },
-    LanguageInfo { id: "go", name: "Go" },
-    LanguageInfo { id: "graphql", name: "GraphQL" },
-    LanguageInfo { id: "groovy", name: "Groovy" },
-    LanguageInfo { id: "haskell", name: "Haskell" },
-    LanguageInfo { id: "hcl", name: "HCL" },
-    LanguageInfo { id: "html", name: "HTML" },
-    LanguageInfo { id: "ini", name: "INI" },
-    LanguageInfo { id: "java", name: "Java" },
-    LanguageInfo { id: "javascript", name: "JavaScript" },
-    LanguageInfo { id: "javascriptreact", name: "JavaScript JSX" },
-    LanguageInfo { id: "json", name: "JSON" },
-    LanguageInfo { id: "json5", name: "JSON5" },
-    LanguageInfo { id: "jsonc", name: "JSON with Comments" },
-    LanguageInfo { id: "julia", name: "Julia" },
-    LanguageInfo { id: "kotlin", name: "Kotlin" },
-    LanguageInfo { id: "latex", name: "LaTeX" },
-    LanguageInfo { id: "less", name: "Less" },
-    LanguageInfo { id: "lua", name: "Lua" },
-    LanguageInfo { id: "makefile", name: "Makefile" },
-    LanguageInfo { id: "markdown", name: "Markdown" },
-    LanguageInfo { id: "mdx", name: "MDX" },
-    LanguageInfo { id: "nim", name: "Nim" },
-    LanguageInfo { id: "nix", name: "Nix" },
-    LanguageInfo { id: "ocaml", name: "OCaml" },
-    LanguageInfo { id: "org", name: "Org Mode" },
-    LanguageInfo { id: "perl", name: "Perl" },
-    LanguageInfo { id: "php", name: "PHP" },
-    LanguageInfo { id: "powershell", name: "PowerShell" },
-    LanguageInfo { id: "properties", name: "Properties" },
-    LanguageInfo { id: "proto", name: "Protocol Buffers" },
-    LanguageInfo { id: "python", name: "Python" },
+    LanguageInfo {
+        id: "dart",
+        name: "Dart",
+    },
+    LanguageInfo {
+        id: "dockerfile",
+        name: "Dockerfile",
+    },
+    LanguageInfo {
+        id: "dotenv",
+        name: "dotenv",
+    },
+    LanguageInfo {
+        id: "editorconfig",
+        name: "EditorConfig",
+    },
+    LanguageInfo {
+        id: "elixir",
+        name: "Elixir",
+    },
+    LanguageInfo {
+        id: "elm",
+        name: "Elm",
+    },
+    LanguageInfo {
+        id: "erlang",
+        name: "Erlang",
+    },
+    LanguageInfo {
+        id: "fish",
+        name: "Fish",
+    },
+    LanguageInfo {
+        id: "fsharp",
+        name: "F#",
+    },
+    LanguageInfo {
+        id: "gdscript",
+        name: "GDScript",
+    },
+    LanguageInfo {
+        id: "gitignore",
+        name: "Git Ignore",
+    },
+    LanguageInfo {
+        id: "go",
+        name: "Go",
+    },
+    LanguageInfo {
+        id: "graphql",
+        name: "GraphQL",
+    },
+    LanguageInfo {
+        id: "groovy",
+        name: "Groovy",
+    },
+    LanguageInfo {
+        id: "haskell",
+        name: "Haskell",
+    },
+    LanguageInfo {
+        id: "hcl",
+        name: "HCL",
+    },
+    LanguageInfo {
+        id: "html",
+        name: "HTML",
+    },
+    LanguageInfo {
+        id: "ini",
+        name: "INI",
+    },
+    LanguageInfo {
+        id: "java",
+        name: "Java",
+    },
+    LanguageInfo {
+        id: "javascript",
+        name: "JavaScript",
+    },
+    LanguageInfo {
+        id: "javascriptreact",
+        name: "JavaScript JSX",
+    },
+    LanguageInfo {
+        id: "json",
+        name: "JSON",
+    },
+    LanguageInfo {
+        id: "json5",
+        name: "JSON5",
+    },
+    LanguageInfo {
+        id: "jsonc",
+        name: "JSON with Comments",
+    },
+    LanguageInfo {
+        id: "julia",
+        name: "Julia",
+    },
+    LanguageInfo {
+        id: "kotlin",
+        name: "Kotlin",
+    },
+    LanguageInfo {
+        id: "latex",
+        name: "LaTeX",
+    },
+    LanguageInfo {
+        id: "less",
+        name: "Less",
+    },
+    LanguageInfo {
+        id: "lua",
+        name: "Lua",
+    },
+    LanguageInfo {
+        id: "makefile",
+        name: "Makefile",
+    },
+    LanguageInfo {
+        id: "markdown",
+        name: "Markdown",
+    },
+    LanguageInfo {
+        id: "mdx",
+        name: "MDX",
+    },
+    LanguageInfo {
+        id: "nim",
+        name: "Nim",
+    },
+    LanguageInfo {
+        id: "nix",
+        name: "Nix",
+    },
+    LanguageInfo {
+        id: "ocaml",
+        name: "OCaml",
+    },
+    LanguageInfo {
+        id: "org",
+        name: "Org Mode",
+    },
+    LanguageInfo {
+        id: "perl",
+        name: "Perl",
+    },
+    LanguageInfo {
+        id: "php",
+        name: "PHP",
+    },
+    LanguageInfo {
+        id: "powershell",
+        name: "PowerShell",
+    },
+    LanguageInfo {
+        id: "properties",
+        name: "Properties",
+    },
+    LanguageInfo {
+        id: "proto",
+        name: "Protocol Buffers",
+    },
+    LanguageInfo {
+        id: "python",
+        name: "Python",
+    },
     LanguageInfo { id: "r", name: "R" },
-    LanguageInfo { id: "rst", name: "reStructuredText" },
-    LanguageInfo { id: "ruby", name: "Ruby" },
-    LanguageInfo { id: "rust", name: "Rust" },
-    LanguageInfo { id: "sass", name: "Sass" },
-    LanguageInfo { id: "scala", name: "Scala" },
-    LanguageInfo { id: "scss", name: "SCSS" },
-    LanguageInfo { id: "shellscript", name: "Shell" },
-    LanguageInfo { id: "solidity", name: "Solidity" },
-    LanguageInfo { id: "sql", name: "SQL" },
-    LanguageInfo { id: "stylus", name: "Stylus" },
-    LanguageInfo { id: "svelte", name: "Svelte" },
-    LanguageInfo { id: "svg", name: "SVG" },
-    LanguageInfo { id: "swift", name: "Swift" },
-    LanguageInfo { id: "terraform", name: "Terraform" },
-    LanguageInfo { id: "toml", name: "TOML" },
-    LanguageInfo { id: "typescript", name: "TypeScript" },
-    LanguageInfo { id: "typescriptreact", name: "TypeScript JSX" },
+    LanguageInfo {
+        id: "rst",
+        name: "reStructuredText",
+    },
+    LanguageInfo {
+        id: "ruby",
+        name: "Ruby",
+    },
+    LanguageInfo {
+        id: "rust",
+        name: "Rust",
+    },
+    LanguageInfo {
+        id: "sass",
+        name: "Sass",
+    },
+    LanguageInfo {
+        id: "scala",
+        name: "Scala",
+    },
+    LanguageInfo {
+        id: "scss",
+        name: "SCSS",
+    },
+    LanguageInfo {
+        id: "shellscript",
+        name: "Shell",
+    },
+    LanguageInfo {
+        id: "solidity",
+        name: "Solidity",
+    },
+    LanguageInfo {
+        id: "sql",
+        name: "SQL",
+    },
+    LanguageInfo {
+        id: "stylus",
+        name: "Stylus",
+    },
+    LanguageInfo {
+        id: "svelte",
+        name: "Svelte",
+    },
+    LanguageInfo {
+        id: "svg",
+        name: "SVG",
+    },
+    LanguageInfo {
+        id: "swift",
+        name: "Swift",
+    },
+    LanguageInfo {
+        id: "terraform",
+        name: "Terraform",
+    },
+    LanguageInfo {
+        id: "toml",
+        name: "TOML",
+    },
+    LanguageInfo {
+        id: "typescript",
+        name: "TypeScript",
+    },
+    LanguageInfo {
+        id: "typescriptreact",
+        name: "TypeScript JSX",
+    },
     LanguageInfo { id: "v", name: "V" },
-    LanguageInfo { id: "vb", name: "Visual Basic" },
-    LanguageInfo { id: "vue", name: "Vue" },
-    LanguageInfo { id: "xml", name: "XML" },
-    LanguageInfo { id: "yaml", name: "YAML" },
-    LanguageInfo { id: "zig", name: "Zig" },
+    LanguageInfo {
+        id: "vb",
+        name: "Visual Basic",
+    },
+    LanguageInfo {
+        id: "vue",
+        name: "Vue",
+    },
+    LanguageInfo {
+        id: "xml",
+        name: "XML",
+    },
+    LanguageInfo {
+        id: "yaml",
+        name: "YAML",
+    },
+    LanguageInfo {
+        id: "zig",
+        name: "Zig",
+    },
 ];
 
 pub fn info(id: &str) -> Option<&'static LanguageInfo> {

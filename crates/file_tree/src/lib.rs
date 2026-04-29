@@ -4,6 +4,6 @@ mod watcher;
 
 pub use ops::ClipboardOp;
 pub use state::{
-    ContextMenuState, FileTree, FileTreeState, FileTreeUiActions, Node, NodeKind, RenameTarget,
-    NewEntryDraft, ActiveFileTree,
+    ActiveFileTree, ContextMenuState, FileTree, FileTreeEvent, FileTreeState, FileTreeUiActions,
+    NewEntryDraft, Node, NodeKind, RenameTarget,
 };

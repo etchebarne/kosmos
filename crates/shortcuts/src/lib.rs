@@ -17,10 +17,7 @@ pub struct ShortcutBinding {
 
 impl ShortcutBinding {
     pub const fn new(keystrokes: &'static str, action: &'static str) -> Self {
-        Self {
-            keystrokes,
-            action,
-        }
+        Self { keystrokes, action }
     }
 }
 

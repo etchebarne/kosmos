@@ -24,15 +24,15 @@ pub fn render<T: SettingsDelegate>(
         }))
         .into_any_element(),
 
-        SettingControl::Number {
-            min, max, step, ..
-        } => {
-            let mut input =
-                NumericInput::new(format!("setting-num:{setting_id}"), value.as_int().unwrap_or(0))
-                    .step(*step)
-                    .on_change(cx.listener(move |this, new_value: &i64, _, cx| {
-                        this.set_setting_value(setting_id, SettingValue::Int(*new_value), cx);
-                    }));
+        SettingControl::Number { min, max, step, .. } => {
+            let mut input = NumericInput::new(
+                format!("setting-num:{setting_id}"),
+                value.as_int().unwrap_or(0),
+            )
+            .step(*step)
+            .on_change(cx.listener(move |this, new_value: &i64, _, cx| {
+                this.set_setting_value(setting_id, SettingValue::Int(*new_value), cx);
+            }));
             if let Some(min) = min {
                 input = input.min(*min);
             }
@@ -54,11 +54,7 @@ pub fn render<T: SettingsDelegate>(
                     this.toggle_settings_dropdown(setting_id, cx);
                 }))
                 .on_select(cx.listener(move |this, value: &SharedString, _, cx| {
-                    this.set_setting_value(
-                        setting_id,
-                        SettingValue::String(value.clone()),
-                        cx,
-                    );
+                    this.set_setting_value(setting_id, SettingValue::String(value.clone()), cx);
                 }))
                 .into_any_element()
         }
@@ -66,10 +62,7 @@ pub fn render<T: SettingsDelegate>(
         SettingControl::Input { placeholder, .. } => {
             let theme = *cx.theme();
             match cx.settings_inputs().get(setting_id) {
-                Some(entity) => div()
-                    .min_w(rems(13.75))
-                    .child(entity)
-                    .into_any_element(),
+                Some(entity) => div().min_w(rems(13.75)).child(entity).into_any_element(),
                 None => div()
                     .h(rems(1.75))
                     .min_w(rems(13.75))
@@ -111,13 +104,15 @@ pub fn render<T: SettingsDelegate>(
                 .on_toggle(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                     this.toggle_settings_dropdown(setting_id, cx);
                 }))
-                .on_change(cx.listener(move |this, new_value: &Vec<SharedString>, _, cx| {
-                    let list = new_value
-                        .iter()
-                        .map(|s| SettingValue::String(s.clone()))
-                        .collect();
-                    this.set_setting_value(setting_id, SettingValue::List(list), cx);
-                }))
+                .on_change(
+                    cx.listener(move |this, new_value: &Vec<SharedString>, _, cx| {
+                        let list = new_value
+                            .iter()
+                            .map(|s| SettingValue::String(s.clone()))
+                            .collect();
+                        this.set_setting_value(setting_id, SettingValue::List(list), cx);
+                    }),
+                )
                 .into_any_element()
         }
     }

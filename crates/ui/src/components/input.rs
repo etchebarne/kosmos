@@ -2,10 +2,10 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, Focusable, FocusHandle, GlobalElementId,
-    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, Render, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
-    UnderlineStyle, Window, actions, div, fill, hsla, point, prelude::*, relative, rems, size,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    Render, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, div, fill, hsla, point, prelude::*, relative, rems, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -15,7 +15,20 @@ pub const KEY_CONTEXT: &str = "TextInput";
 
 actions!(
     text_input,
-    [Backspace, Delete, Left, Right, SelectLeft, SelectRight, SelectAll, Home, End, Paste, Cut, Copy]
+    [
+        Backspace,
+        Delete,
+        Left,
+        Right,
+        SelectLeft,
+        SelectRight,
+        SelectAll,
+        Home,
+        End,
+        Paste,
+        Cut,
+        Copy
+    ]
 );
 
 pub fn install_default_keybindings(cx: &mut App) {

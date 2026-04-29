@@ -1,8 +1,8 @@
+use file_editor::VirtualListState;
 use gpui::{
     AnyElement, App, Empty, EntityId, IntoElement, Pixels, UniformListScrollHandle, div,
     prelude::*, px, rems,
 };
-use file_editor::VirtualListState;
 use theme::ActiveTheme;
 
 const TRACK_THICKNESS_REM: f32 = 0.625;

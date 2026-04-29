@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{
-    App, ElementId, IntoElement, MouseButton, RenderOnce, Window, div, prelude::*, rems,
-};
+use gpui::{App, ElementId, IntoElement, MouseButton, RenderOnce, Window, div, prelude::*, rems};
 
 use theme::ActiveTheme;
 

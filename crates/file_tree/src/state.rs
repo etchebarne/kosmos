@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
-use gpui::{App, Context, Entity, Global, Pixels, Point, SharedString, Task};
+use gpui::{App, Context, Entity, EventEmitter, Global, Pixels, Point, SharedString, Task};
 
 use crate::ops::{self, ClipboardOp};
 use crate::watcher::{self, FsEvents};
@@ -55,6 +55,11 @@ pub struct FileTree {
     watcher: Option<notify::RecommendedWatcher>,
     watcher_rx: Option<Receiver<FsEvents>>,
     watcher_task: Option<Task<()>>,
+}
+
+#[derive(Clone, Debug)]
+pub enum FileTreeEvent {
+    FsChanged { paths: Vec<PathBuf> },
 }
 
 impl FileTree {
@@ -198,12 +203,11 @@ impl FileTree {
     fn spawn_poll_task(&mut self, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
             loop {
-                let timer = cx
-                    .background_executor()
-                    .timer(Duration::from_millis(150));
+                let timer = cx.background_executor().timer(Duration::from_millis(150));
                 timer.await;
 
                 let mut paths_to_refresh: HashSet<PathBuf> = HashSet::new();
+                let mut affected_paths: HashSet<PathBuf> = HashSet::new();
                 let drained = this
                     .update(cx, |tree, _| {
                         let Some(rx) = tree.watcher_rx.as_ref() else {
@@ -211,6 +215,7 @@ impl FileTree {
                         };
                         while let Ok(events) = rx.try_recv() {
                             for path in events.affected_paths {
+                                affected_paths.insert(path.clone());
                                 if let Some(parent) = path.parent() {
                                     paths_to_refresh.insert(parent.to_path_buf());
                                 }
@@ -225,6 +230,11 @@ impl FileTree {
 
                 if drained.is_none() {
                     break;
+                }
+
+                if !affected_paths.is_empty() {
+                    let paths = affected_paths.into_iter().collect::<Vec<_>>();
+                    let _ = this.update(cx, |_, cx| cx.emit(FileTreeEvent::FsChanged { paths }));
                 }
 
                 if !paths_to_refresh.is_empty() {
@@ -656,6 +666,8 @@ impl FileTreeState {
         self.active.as_ref()
     }
 }
+
+impl EventEmitter<FileTreeEvent> for FileTree {}
 
 impl Global for FileTreeState {}
 

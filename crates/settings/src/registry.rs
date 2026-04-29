@@ -67,7 +67,9 @@ pub const EDITOR: Category = Category {
     settings: &[Setting {
         id: "editor.soft_wrap",
         name: "Soft Wrap",
-        description: Some("Wrap long lines to the editor's width instead of scrolling horizontally."),
+        description: Some(
+            "Wrap long lines to the editor's width instead of scrolling horizontally.",
+        ),
         group: None,
         control: SettingControl::Switch { default: false },
     }],

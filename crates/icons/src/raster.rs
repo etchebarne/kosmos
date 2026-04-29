@@ -29,12 +29,7 @@ type CacheKey = (SharedString, u32, u32);
 static CACHE: LazyLock<Mutex<HashMap<CacheKey, Arc<RenderImage>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(crate) fn paint(
-    path: SharedString,
-    bounds: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub(crate) fn paint(path: SharedString, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let scale = window.scale_factor();
     let device = bounds.size.scale(scale);
     let w = u32::from(device.width).max(1);

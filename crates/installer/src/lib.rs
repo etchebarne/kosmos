@@ -136,10 +136,7 @@ fn run(cmd: &mut Command, tool: &'static str) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn finish(
-    bin_path: PathBuf,
-    entry: &'static RegistryEntry,
-) -> Result<InstalledTool, InstallError> {
+fn finish(bin_path: PathBuf, entry: &'static RegistryEntry) -> Result<InstalledTool, InstallError> {
     if !bin_path.exists() {
         return Err(InstallError::BinaryMissing(bin_path));
     }

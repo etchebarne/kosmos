@@ -154,8 +154,7 @@ impl RenderOnce for DropdownMenu {
         let theme = *cx.theme();
         let mut items: Vec<AnyElement> = Vec::with_capacity(self.options.len());
         for (index, option) in self.options.into_iter().enumerate() {
-            let item_id =
-                ElementId::Name(format!("{}-item-{}", self.id, index).into());
+            let item_id = ElementId::Name(format!("{}-item-{}", self.id, index).into());
             let option_id = option.id.clone();
             let on_select = self.on_select.clone();
             let on_toggle = self.on_toggle.clone();
@@ -169,9 +168,7 @@ impl RenderOnce for DropdownMenu {
                     .rounded(rems(0.25))
                     .text_sm()
                     .text_color(theme.text)
-                    .hover(move |this| {
-                        this.bg(theme.bg_selected).text_color(theme.text_emphasis)
-                    })
+                    .hover(move |this| this.bg(theme.bg_selected).text_color(theme.text_emphasis))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |event, window, cx| {
                         cx.stop_propagation();

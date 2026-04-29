@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{BorrowAppContext, Context, PathPromptOptions, Pixels, Point};
 
 use pane_tree::{DropZone, PaneTree, PaneTreeContext};
-use settings::{Settings, SettingValue};
+use settings::{SettingValue, Settings};
 use ui::delegate::{
     HeaderDelegate, HeaderMenu, PaneDelegate, SettingsDelegate, SettingsUiState, TabScrollHandles,
     WorkspaceDelegate, WorkspaceMenuState,
@@ -67,12 +67,7 @@ impl WorkspaceDelegate for KosmosApp {
         }
     }
 
-    fn move_workspace_before(
-        &mut self,
-        drag_id: usize,
-        target_id: usize,
-        cx: &mut Context<Self>,
-    ) {
+    fn move_workspace_before(&mut self, drag_id: usize, target_id: usize, cx: &mut Context<Self>) {
         if self.workspaces.reorder_before(drag_id, target_id) {
             cx.notify();
             persistence::save_session(&self.workspaces);
@@ -86,12 +81,7 @@ impl WorkspaceDelegate for KosmosApp {
         }
     }
 
-    fn open_workspace_menu(
-        &mut self,
-        id: usize,
-        position: Point<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_workspace_menu(&mut self, id: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.workspace_menu = Some(WorkspaceMenuState { id, position });
         cx.notify();
     }
@@ -222,19 +212,16 @@ impl PaneDelegate for KosmosApp {
         }
     }
 
-    fn open_file_in_pane(
-        &mut self,
-        path: PathBuf,
-        target_pane_id: usize,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_file_in_pane(&mut self, path: PathBuf, target_pane_id: usize, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
-        self.mutate_active_tree(cx, |tree| match tree.open_file_in_pane(path, target_pane_id) {
-            Some(result) => {
-                opened = Some(result);
-                true
+        self.mutate_active_tree(cx, |tree| {
+            match tree.open_file_in_pane(path, target_pane_id) {
+                Some(result) => {
+                    opened = Some(result);
+                    true
+                }
+                None => false,
             }
-            None => false,
         });
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
@@ -287,11 +274,7 @@ impl PaneDelegate for KosmosApp {
 }
 
 impl SettingsDelegate for KosmosApp {
-    fn select_settings_category(
-        &mut self,
-        category_id: &'static str,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_settings_category(&mut self, category_id: &'static str, cx: &mut Context<Self>) {
         let mut changed = false;
         cx.update_global::<SettingsUiState, _>(|state, _| {
             if state.active_category != category_id {
@@ -328,11 +311,7 @@ impl SettingsDelegate for KosmosApp {
         cx.notify();
     }
 
-    fn install_tool(
-        &mut self,
-        entry: &'static registry::RegistryEntry,
-        cx: &mut Context<Self>,
-    ) {
+    fn install_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>) {
         let tool_id = entry.id;
         let already = cx.global::<SettingsUiState>().installing.contains(tool_id);
         if already {
@@ -364,11 +343,7 @@ impl SettingsDelegate for KosmosApp {
         .detach();
     }
 
-    fn uninstall_tool(
-        &mut self,
-        entry: &'static registry::RegistryEntry,
-        cx: &mut Context<Self>,
-    ) {
+    fn uninstall_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>) {
         let dir = installer::tool_dir(entry);
         let tool_id = entry.id;
         let result = std::fs::remove_dir_all(&dir);
@@ -387,11 +362,7 @@ impl SettingsDelegate for KosmosApp {
 }
 
 impl PaneTreeContext for KosmosApp {
-    fn with_active_tree(
-        &mut self,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut PaneTree) -> bool,
-    ) {
+    fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool) {
         self.mutate_active_tree(cx, f);
     }
 

@@ -6,7 +6,8 @@ use gpui::{
     prelude::*,
 };
 
-use file_tree::{FileTree, FileTreeState};
+use file_editor::BufferStore;
+use file_tree::{FileTree, FileTreeEvent, FileTreeState};
 use gpui::BorrowAppContext;
 use pane_tree::{PaneTree, WirePaneTreeActions};
 use settings::{ActiveSettings, SettingValue};
@@ -53,6 +54,10 @@ impl KosmosApp {
         let workspaces = persistence::load();
         let file_tree = cx.new(FileTree::new);
         cx.observe(&file_tree, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&file_tree, |_, _, event, cx| match event {
+            FileTreeEvent::FsChanged { paths } => BufferStore::reload_paths(paths.clone(), cx),
+        })
+        .detach();
         cx.set_global(FileTreeState::new());
         cx.update_global::<FileTreeState, _>(|state, _| {
             state.set_active(Some(file_tree.clone()));
@@ -85,9 +90,7 @@ impl KosmosApp {
     fn start_workspace_watch_task(&mut self, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(1))
-                    .await;
+                cx.background_executor().timer(Duration::from_secs(1)).await;
 
                 let Ok(paths) = this.update(cx, |this, _| {
                     this.workspaces
@@ -142,10 +145,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn sync_file_tree_root(&mut self, cx: &mut Context<Self>) {
-        let path: Option<PathBuf> = self
-            .workspaces
-            .active_workspace()
-            .map(|w| w.path.clone());
+        let path: Option<PathBuf> = self.workspaces.active_workspace().map(|w| w.path.clone());
         if let Some(path) = path {
             self.file_tree.update(cx, |tree, cx| {
                 tree.set_root(path, cx);
@@ -253,16 +253,11 @@ impl Render for KosmosApp {
                 window,
                 cx,
             ))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(layout::main_content::render(
-                        &self.workspaces,
-                        &self.tab_scrolls,
-                        cx,
-                    )),
-            )
+            .child(div().flex_1().min_h_0().child(layout::main_content::render(
+                &self.workspaces,
+                &self.tab_scrolls,
+                cx,
+            )))
             .child(layout::bottom_bar::render(&theme))
     }
 }

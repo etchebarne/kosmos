@@ -6,11 +6,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::PaneDelegate;
 
-pub fn render<T: PaneDelegate>(
-    pane_id: usize,
-    tab_id: usize,
-    cx: &mut Context<T>,
-) -> AnyElement {
+pub fn render<T: PaneDelegate>(pane_id: usize, tab_id: usize, cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
     let buttons: Vec<AnyElement> = registry::ALL
         .iter()

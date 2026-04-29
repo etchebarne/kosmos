@@ -186,8 +186,8 @@ impl SyntaxSnapshot {
             if inj.range.end <= byte_range.start || inj.range.start >= byte_range.end {
                 continue;
             }
-            let sub_range = byte_range.start.max(inj.range.start)
-                ..byte_range.end.min(inj.range.end);
+            let sub_range =
+                byte_range.start.max(inj.range.start)..byte_range.end.min(inj.range.end);
             if sub_range.start >= sub_range.end {
                 continue;
             }

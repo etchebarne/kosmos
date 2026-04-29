@@ -174,6 +174,34 @@ impl Buffer {
         let range = self.line_range(line_index)?;
         Some(&self.content[range])
     }
+
+    fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
+        let Ok(content) = std::fs::read_to_string(&self.path) else {
+            return;
+        };
+        let content = content.replace("\r\n", "\n");
+        if content == self.content {
+            return;
+        }
+
+        let old_content = std::mem::replace(&mut self.content, content);
+        let (line_starts, line_chars, longest_line_index) = analyze_content(&self.content);
+        self.line_starts = line_starts;
+        self.line_chars = line_chars;
+        self.longest_line_index = longest_line_index;
+
+        cx.emit(BufferEvent::Edited {
+            edits: vec![TextEdit {
+                start_byte: 0,
+                old_end_byte: old_content.len(),
+                new_end_byte: self.content.len(),
+                start_point: Point { row: 0, column: 0 },
+                old_end_point: end_point(&old_content),
+                new_end_point: end_point(&self.content),
+            }],
+        });
+        cx.notify();
+    }
 }
 
 impl Focusable for Buffer {
@@ -287,6 +315,20 @@ fn analyze_content(content: &str) -> (Vec<usize>, Vec<usize>, usize) {
     (starts, chars_per_line, longest_index)
 }
 
+fn end_point(content: &str) -> Point {
+    let mut row = 0usize;
+    let mut column = 0usize;
+    for byte in content.bytes() {
+        if byte == b'\n' {
+            row += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    Point { row, column }
+}
+
 /// Global cache that hands out (or creates) the `Buffer` entity for a given
 /// path so all editor tabs viewing the same file share state. Dual-keyed
 /// (`PathBuf` → `BufferId` → `Entity<Buffer>`) so subsystems that don't have
@@ -307,12 +349,10 @@ impl BufferStore {
     /// Return the existing buffer for `path`, opening (and caching) one if
     /// none exists yet.
     pub fn open(path: PathBuf, cx: &mut App) -> Entity<Buffer> {
-        if let Some(existing) = cx.try_global::<Self>().and_then(|s| {
-            s.by_path
-                .get(&path)
-                .and_then(|id| s.by_id.get(id))
-                .cloned()
-        }) {
+        if let Some(existing) = cx
+            .try_global::<Self>()
+            .and_then(|s| s.by_path.get(&path).and_then(|id| s.by_id.get(id)).cloned())
+        {
             return existing;
         }
         let id = cx.update_global::<Self, _>(|store, _| {
@@ -332,6 +372,28 @@ impl BufferStore {
     pub fn get(id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
         cx.try_global::<Self>()
             .and_then(|s| s.by_id.get(&id).cloned())
+    }
+
+    pub fn reload_paths(paths: impl IntoIterator<Item = PathBuf>, cx: &mut App) {
+        let buffers = cx
+            .try_global::<Self>()
+            .map(|store| {
+                paths
+                    .into_iter()
+                    .filter_map(|path| {
+                        store
+                            .by_path
+                            .get(&path)
+                            .and_then(|id| store.by_id.get(id))
+                            .cloned()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        for buffer in buffers {
+            buffer.update(cx, |buffer, cx| buffer.reload_from_disk(cx));
+        }
     }
 }
 

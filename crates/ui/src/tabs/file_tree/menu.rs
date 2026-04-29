@@ -289,8 +289,16 @@ fn menu_item<T: PaneDelegate + SettingsDelegate>(
     let theme = *cx.theme();
     let hover_bg = theme.bg_selected;
     let hover_text = theme.text_emphasis;
-    let text_color = if enabled { theme.text } else { theme.text_subtle };
-    let icon_color = if enabled { theme.text_muted } else { theme.text_subtle };
+    let text_color = if enabled {
+        theme.text
+    } else {
+        theme.text_subtle
+    };
+    let icon_color = if enabled {
+        theme.text_muted
+    } else {
+        theme.text_subtle
+    };
     let label_text: SharedString = label.into();
     let _ = cx;
 

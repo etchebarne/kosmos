@@ -48,8 +48,13 @@ fn load_inner(conn: &mut Connection) -> Result<Option<WorkspaceManager>> {
     let workspace_rows = read_workspace_rows(conn)?;
     let mut workspaces = Vec::with_capacity(workspace_rows.len());
     for row in workspace_rows {
-        let pane_tree =
-            load_pane_tree(conn, row.id, row.next_tab_id, row.next_pane_id, row.next_split_id)?;
+        let pane_tree = load_pane_tree(
+            conn,
+            row.id,
+            row.next_tab_id,
+            row.next_pane_id,
+            row.next_split_id,
+        )?;
         workspaces.push(Workspace {
             id: row.id,
             path: PathBuf::from(row.path),
@@ -153,10 +158,9 @@ fn build_node(conn: &Connection, nodes: &[NodeRow], node: &NodeRow) -> Result<Pa
     match node.kind.as_str() {
         "leaf" => {
             let pane_id = node.pane_id.ok_or_else(|| bad("leaf missing pane_id"))? as usize;
-            let active_tab = node
-                .active_tab_id
-                .ok_or_else(|| bad("leaf missing active_tab_id"))?
-                as usize;
+            let active_tab =
+                node.active_tab_id
+                    .ok_or_else(|| bad("leaf missing active_tab_id"))? as usize;
             let tabs = load_tabs(conn, node.id)?;
             Ok(PaneNode::Leaf(Pane::from_parts(pane_id, tabs, active_tab)))
         }

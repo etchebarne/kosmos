@@ -102,19 +102,41 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .bottom_0()
                 .left_0()
                 .right_0()
-                .child(render_drop_zone(pane_id, DropZone::Center, accept_file_drops, cx))
-                .child(render_drop_zone(pane_id, DropZone::Left, accept_file_drops, cx))
-                .child(render_drop_zone(pane_id, DropZone::Right, accept_file_drops, cx))
-                .child(render_drop_zone(pane_id, DropZone::Top, accept_file_drops, cx))
-                .child(render_drop_zone(pane_id, DropZone::Bottom, accept_file_drops, cx)),
+                .child(render_drop_zone(
+                    pane_id,
+                    DropZone::Center,
+                    accept_file_drops,
+                    cx,
+                ))
+                .child(render_drop_zone(
+                    pane_id,
+                    DropZone::Left,
+                    accept_file_drops,
+                    cx,
+                ))
+                .child(render_drop_zone(
+                    pane_id,
+                    DropZone::Right,
+                    accept_file_drops,
+                    cx,
+                ))
+                .child(render_drop_zone(
+                    pane_id,
+                    DropZone::Top,
+                    accept_file_drops,
+                    cx,
+                ))
+                .child(render_drop_zone(
+                    pane_id,
+                    DropZone::Bottom,
+                    accept_file_drops,
+                    cx,
+                )),
         )
         .into_any_element()
 }
 
-fn render_tab_end_drop_zone<T: PaneDelegate>(
-    pane_id: usize,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
     let group_name = format!("tab-end-drop-{pane_id}");
     let accent = theme.accent;

@@ -71,13 +71,12 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         .child(render(tree, first, tab_scrolls, cx)),
                 )
                 .child(render_resize_handle(split_id, axis, &theme))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .min_h_0()
-                        .child(render(tree, second, tab_scrolls, cx)),
-                )
+                .child(div().flex_1().min_w_0().min_h_0().child(render(
+                    tree,
+                    second,
+                    tab_scrolls,
+                    cx,
+                )))
                 .into_any_element()
         }
     }
@@ -94,7 +93,9 @@ fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyE
         .bg(theme.bg_hover)
         .group_hover(group_name, move |this| this.bg(hover_bg))
         .when(axis == SplitAxis::Row, |this| this.w(rems(0.1875)).h_full())
-        .when(axis == SplitAxis::Column, |this| this.h(rems(0.1875)).w_full())
+        .when(axis == SplitAxis::Column, |this| {
+            this.h(rems(0.1875)).w_full()
+        })
         .child(
             div()
                 .id(("resize-hit", split_id))

@@ -70,7 +70,12 @@ static ENTRIES: &[RegistryEntry] = &[
     RegistryEntry {
         id: "typescript-language-server",
         kinds: &[ToolKind::Lsp],
-        languages: &["typescript", "typescriptreact", "javascript", "javascriptreact"],
+        languages: &[
+            "typescript",
+            "typescriptreact",
+            "javascript",
+            "javascriptreact",
+        ],
         install: InstallSource::Npm {
             package: "typescript-language-server",
             bin: "typescript-language-server",
@@ -85,8 +90,15 @@ static ENTRIES: &[RegistryEntry] = &[
         id: "tailwindcss-language-server",
         kinds: &[ToolKind::Lsp],
         languages: &[
-            "html", "css", "javascript", "javascriptreact",
-            "typescript", "typescriptreact", "vue", "svelte", "astro",
+            "html",
+            "css",
+            "javascript",
+            "javascriptreact",
+            "typescript",
+            "typescriptreact",
+            "vue",
+            "svelte",
+            "astro",
         ],
         install: InstallSource::Npm {
             package: "@tailwindcss/language-server",
@@ -210,7 +222,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── LSPs (pip) ───────────────────────────────────────────────────────
     RegistryEntry {
         id: "python-lsp-server",
@@ -226,7 +237,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── LSPs (cargo) ─────────────────────────────────────────────────────
     RegistryEntry {
         id: "taplo",
@@ -241,7 +251,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── LSPs (go) ────────────────────────────────────────────────────────
     RegistryEntry {
         id: "gopls",
@@ -256,7 +265,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── LSPs (github release) ────────────────────────────────────────────
     RegistryEntry {
         id: "rust-analyzer",
@@ -307,17 +315,28 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── Formatters (npm) ─────────────────────────────────────────────────
     RegistryEntry {
         id: "prettier",
         kinds: &[ToolKind::Formatter],
         languages: &[
-            "typescript", "typescriptreact", "javascript", "javascriptreact",
-            "vue", "svelte", "astro",
-            "html", "css", "scss", "less",
-            "json", "jsonc", "yaml",
-            "markdown", "mdx", "graphql",
+            "typescript",
+            "typescriptreact",
+            "javascript",
+            "javascriptreact",
+            "vue",
+            "svelte",
+            "astro",
+            "html",
+            "css",
+            "scss",
+            "less",
+            "json",
+            "jsonc",
+            "yaml",
+            "markdown",
+            "mdx",
+            "graphql",
         ],
         install: InstallSource::Npm {
             package: "prettier",
@@ -333,8 +352,13 @@ static ENTRIES: &[RegistryEntry] = &[
         id: "biome",
         kinds: &[ToolKind::Formatter, ToolKind::Linter],
         languages: &[
-            "typescript", "typescriptreact", "javascript", "javascriptreact",
-            "json", "jsonc", "css",
+            "typescript",
+            "typescriptreact",
+            "javascript",
+            "javascriptreact",
+            "json",
+            "jsonc",
+            "css",
         ],
         install: InstallSource::Npm {
             package: "@biomejs/biome",
@@ -346,7 +370,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── Formatters (pip) ─────────────────────────────────────────────────
     RegistryEntry {
         id: "black",
@@ -404,7 +427,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── Formatters (cargo) ───────────────────────────────────────────────
     RegistryEntry {
         id: "stylua",
@@ -419,14 +441,18 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── Linters (npm) ────────────────────────────────────────────────────
     RegistryEntry {
         id: "eslint",
         kinds: &[ToolKind::Linter],
         languages: &[
-            "typescript", "typescriptreact", "javascript", "javascriptreact",
-            "vue", "svelte", "astro",
+            "typescript",
+            "typescriptreact",
+            "javascript",
+            "javascriptreact",
+            "vue",
+            "svelte",
+            "astro",
         ],
         install: InstallSource::Npm {
             package: "eslint",
@@ -466,7 +492,6 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
-
     // ─── Linters (pip) ────────────────────────────────────────────────────
     RegistryEntry {
         id: "pylint",
@@ -528,7 +553,7 @@ pub fn for_language<'a>(
     language: &'a str,
     kind: ToolKind,
 ) -> impl Iterator<Item = &'static RegistryEntry> + 'a {
-    ENTRIES.iter().filter(move |e| {
-        e.kinds.contains(&kind) && e.languages.iter().any(|l| *l == language)
-    })
+    ENTRIES
+        .iter()
+        .filter(move |e| e.kinds.contains(&kind) && e.languages.iter().any(|l| *l == language))
 }

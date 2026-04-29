@@ -94,14 +94,12 @@ impl RenderOnce for MultiSelect {
                 .into()
         };
 
-        let menu = self.is_open.then(|| {
-            MultiSelectMenu {
-                id: self.id.clone(),
-                selected: self.selected.clone(),
-                options: self.options.clone(),
-                ordered: self.ordered,
-                on_change: self.on_change.clone(),
-            }
+        let menu = self.is_open.then(|| MultiSelectMenu {
+            id: self.id.clone(),
+            selected: self.selected.clone(),
+            options: self.options.clone(),
+            ordered: self.ordered,
+            on_change: self.on_change.clone(),
         });
 
         let on_toggle = self.on_toggle.clone();
@@ -226,9 +224,7 @@ impl RenderOnce for MultiSelectMenu {
                             .px_1()
                             .text_color(theme.text_subtle)
                             .hover(move |this| this.text_color(theme.text_emphasis))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation()
-                            })
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(handler) = &on_change_up {
@@ -252,9 +248,7 @@ impl RenderOnce for MultiSelectMenu {
                             .px_1()
                             .text_color(theme.text_subtle)
                             .hover(move |this| this.text_color(theme.text_emphasis))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation()
-                            })
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(handler) = &on_change_down {

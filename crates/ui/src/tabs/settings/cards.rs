@@ -7,10 +7,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
 
-pub fn render_marketplace<T: SettingsDelegate>(
-    kind: ToolKind,
-    cx: &mut Context<T>,
-) -> AnyElement {
+pub fn render_marketplace<T: SettingsDelegate>(kind: ToolKind, cx: &mut Context<T>) -> AnyElement {
     let cards: Vec<AnyElement> = registry::by_kind(kind)
         .map(|entry| render_tool_card(entry, cx))
         .collect();
@@ -69,12 +66,7 @@ fn render_tool_card<T: SettingsDelegate>(
                         .text_color(theme.text_emphasis)
                         .child(entry.id),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_subtle)
-                        .child(kinds),
-                ),
+                .child(div().text_xs().text_color(theme.text_subtle).child(kinds)),
         )
         .child(action);
 
@@ -118,12 +110,7 @@ fn render_tool_card<T: SettingsDelegate>(
         .child(supports_row);
 
     if let Some(err) = error {
-        card = card.child(
-            div()
-                .text_xs()
-                .text_color(theme.danger)
-                .child(err),
-        );
+        card = card.child(div().text_xs().text_color(theme.danger).child(err));
     }
 
     card.into_any_element()
@@ -151,7 +138,11 @@ fn install_action<T: SettingsDelegate>(
 
     let entry = registry::get(tool_id).expect("tool id must exist in registry");
     let label = if installed { "Remove" } else { "Install" };
-    let resting_text = if installed { theme.text_muted } else { theme.accent };
+    let resting_text = if installed {
+        theme.text_muted
+    } else {
+        theme.accent
+    };
 
     let base = div()
         .id(ElementId::Name(format!("install-{tool_id}").into()))

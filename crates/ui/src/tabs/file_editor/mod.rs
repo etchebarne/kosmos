@@ -2,9 +2,8 @@ use std::ops::Range;
 use std::path::Path;
 
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, Entity, IntoElement,
-    ListHorizontalSizingBehavior, Pixels, Point, SharedString, StyledText, div, prelude::*, px,
-    rems, uniform_list,
+    AnyElement, App, Context, DragMoveEvent, Entity, IntoElement, ListHorizontalSizingBehavior,
+    Pixels, Point, SharedString, StyledText, div, prelude::*, px, rems, uniform_list,
 };
 
 use file_editor::{
@@ -61,24 +60,23 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         // is fine for wrap-count estimation — VirtualList feeds this height
         // straight into the cumulative table without ever shaping text for
         // non-visible rows, so the scrollbar tracks our estimate exactly.
-        let height_fn =
-            move |index: usize, viewport_w: Pixels, rem_size: Pixels| -> Pixels {
-                let font_size_px = rems(0.875).to_pixels(rem_size);
-                let line_height_px = rems(ROW_HEIGHT_REM).to_pixels(rem_size);
-                let em_width = font_size_px * 0.6;
-                if index >= line_chars.len() {
-                    // Bottom spacer rows: fixed single-line height.
-                    return line_height_px;
-                }
-                let cpl = if viewport_w > px(0.0) && em_width > px(0.0) {
-                    ((viewport_w / em_width).floor() as usize).max(1)
-                } else {
-                    80
-                };
-                let chars = line_chars[index];
-                let wraps = ((chars.max(1) + cpl - 1) / cpl).max(1) as f32;
-                line_height_px * wraps
+        let height_fn = move |index: usize, viewport_w: Pixels, rem_size: Pixels| -> Pixels {
+            let font_size_px = rems(0.875).to_pixels(rem_size);
+            let line_height_px = rems(ROW_HEIGHT_REM).to_pixels(rem_size);
+            let em_width = font_size_px * 0.6;
+            if index >= line_chars.len() {
+                // Bottom spacer rows: fixed single-line height.
+                return line_height_px;
+            }
+            let cpl = if viewport_w > px(0.0) && em_width > px(0.0) {
+                ((viewport_w / em_width).floor() as usize).max(1)
+            } else {
+                80
             };
+            let chars = line_chars[index];
+            let wraps = ((chars.max(1) + cpl - 1) / cpl).max(1) as f32;
+            line_height_px * wraps
+        };
 
         let buffer_for_render = buffer.clone();
         let snapshot_for_render = snapshot.clone();
@@ -106,55 +104,50 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buffer_for_render = buffer.clone();
         let view_for_render = view.clone();
         let snapshot_for_render = snapshot.clone();
-        uniform_list(
-            "file-editor-lines",
-            row_count,
-            move |range, window, cx| {
-                let theme = *cx.theme();
-                let view_ref = view_for_render.read(cx);
-                let scroll_handle = view_ref.uniform_scroll();
-                // Negate the list's current x scroll so the gutter overlay
-                // shifts back to the viewport's left edge as content scrolls
-                // past it horizontally — i.e. position: sticky on x only.
-                let scroll_state = scroll_handle.0.borrow();
-                let sticky_offset = -scroll_state.base_handle.offset().x;
-                // gpui set this from the previous prepaint's measurement.
-                // `contents.width` is `viewport.max(longest_item_width)`, so
-                // it only matches the true longest width when the longest
-                // line is wider than the viewport — which is the case we
-                // care about (long pnpm-lock.yaml integrity hashes etc.).
-                let prev_sizes = scroll_state.last_item_size;
-                drop(scroll_state);
-                let rem_size = window.rem_size();
-                if let Some(sizes) = prev_sizes
-                    && sizes.contents.width > sizes.item.width
-                {
-                    view_ref.set_cached_longest_width(rem_size, sizes.contents.width);
-                }
-                let cached_longest = view_ref.cached_longest_width(rem_size);
-                // Heuristic: gpui's `measure_item` always calls us with a
-                // single-element range starting at `longest_idx`. The visible
-                // render uses a multi-element range. Treat single-row calls
-                // for the longest line as measurement-only and serve a stub.
-                let is_longest_measure = range.len() == 1 && range.start == longest_idx;
+        uniform_list("file-editor-lines", row_count, move |range, window, cx| {
+            let theme = *cx.theme();
+            let view_ref = view_for_render.read(cx);
+            let scroll_handle = view_ref.uniform_scroll();
+            // Negate the list's current x scroll so the gutter overlay
+            // shifts back to the viewport's left edge as content scrolls
+            // past it horizontally — i.e. position: sticky on x only.
+            let scroll_state = scroll_handle.0.borrow();
+            let sticky_offset = -scroll_state.base_handle.offset().x;
+            // gpui set this from the previous prepaint's measurement.
+            // `contents.width` is `viewport.max(longest_item_width)`, so
+            // it only matches the true longest width when the longest
+            // line is wider than the viewport — which is the case we
+            // care about (long pnpm-lock.yaml integrity hashes etc.).
+            let prev_sizes = scroll_state.last_item_size;
+            drop(scroll_state);
+            let rem_size = window.rem_size();
+            if let Some(sizes) = prev_sizes
+                && sizes.contents.width > sizes.item.width
+            {
+                view_ref.set_cached_longest_width(rem_size, sizes.contents.width);
+            }
+            let cached_longest = view_ref.cached_longest_width(rem_size);
+            // Heuristic: gpui's `measure_item` always calls us with a
+            // single-element range starting at `longest_idx`. The visible
+            // render uses a multi-element range. Treat single-row calls
+            // for the longest line as measurement-only and serve a stub.
+            let is_longest_measure = range.len() == 1 && range.start == longest_idx;
 
-                range
-                    .map(|i| {
-                        if is_longest_measure && let Some(width) = cached_longest {
-                            return render_longest_stub(width, theme).into_any_element();
-                        }
-                        if i >= line_count {
-                            return render_spacer_row(sticky_offset, theme)
-                                .into_any_element();
-                        }
-                        let (line, spans) =
-                            line_with_spans(&buffer_for_render, &snapshot_for_render, i, cx);
-                        render_row(i + 1, line, spans, soft_wrap, sticky_offset, &theme)
-                            .into_any_element()
-                    })
-                    .collect()
-            },
-        )
+            range
+                .map(|i| {
+                    if is_longest_measure && let Some(width) = cached_longest {
+                        return render_longest_stub(width, theme).into_any_element();
+                    }
+                    if i >= line_count {
+                        return render_spacer_row(sticky_offset, theme).into_any_element();
+                    }
+                    let (line, spans) =
+                        line_with_spans(&buffer_for_render, &snapshot_for_render, i, cx);
+                    render_row(i + 1, line, spans, soft_wrap, sticky_offset, &theme)
+                        .into_any_element()
+                })
+                .collect()
+        })
         .size_full()
         .track_scroll(scroll)
         // Let the longest line drive the horizontal extent so shift+wheel
@@ -169,7 +162,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     // positioned at the scrolled origin, so their visible area shrinks as
     // the user scrolls down. A sibling absolute child of the editor's
     // outer wrapper stays fixed to the viewport.
-    let scrollbar_overlay = scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
+    let scrollbar_overlay =
+        scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
 
     let view_for_drag = view.clone();
     let editor_area = div()
@@ -208,7 +202,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         set_scroll_y(&view_for_drag, soft_wrap, new_scroll, cx);
                     }
                     ScrollbarDrag::Horizontal(_) => {
-                        let Some(axis) = metrics.horizontal else { return };
+                        let Some(axis) = metrics.horizontal else {
+                            return;
+                        };
                         let mouse_x = event.event.position.x - event.bounds.left();
                         let new_scroll = axis.scroll_for_mouse_position(mouse_x);
                         set_scroll_x(&view_for_drag, new_scroll, cx);
@@ -360,9 +356,7 @@ fn line_with_spans(
     let Some(line_range) = buf.line_range(line_index) else {
         return (SharedString::default(), Vec::new());
     };
-    let line_text: SharedString = buf.content()[line_range.clone()]
-        .to_string()
-        .into();
+    let line_text: SharedString = buf.content()[line_range.clone()].to_string().into();
     let raw = snapshot
         .read(cx)
         .highlights(buf.content(), line_range.clone());
@@ -495,7 +489,9 @@ fn render_line_text(
     if spans.is_empty() {
         return div().child(line).into_any_element();
     }
-    let highlights = spans.into_iter().map(|(range, id)| (range, syntax.style(id)));
+    let highlights = spans
+        .into_iter()
+        .map(|(range, id)| (range, syntax.style(id)));
     StyledText::new(line)
         .with_highlights(highlights)
         .into_any_element()

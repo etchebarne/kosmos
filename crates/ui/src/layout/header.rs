@@ -385,7 +385,11 @@ fn render_workspace_menu<T: WorkspaceDelegate>(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(IconName::Close).size(14.0).color(theme.text_muted)),
+                .child(
+                    Icon::new(IconName::Close)
+                        .size(14.0)
+                        .color(theme.text_muted),
+                ),
         )
         .child("Close");
 

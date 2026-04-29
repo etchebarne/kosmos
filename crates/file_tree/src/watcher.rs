@@ -62,7 +62,10 @@ fn watch_tree(watcher: &mut RecommendedWatcher, dir: &Path) -> notify::Result<()
             continue;
         }
         let name = entry.file_name();
-        if SKIP_DIRS.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
+        if SKIP_DIRS
+            .iter()
+            .any(|s| *s == name.to_string_lossy().as_ref())
+        {
             continue;
         }
         // Best-effort: a child failing to watch (e.g. raced delete, permission

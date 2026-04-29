@@ -81,11 +81,7 @@ impl VirtualListState {
 
     pub fn max_scroll_y(&self) -> Pixels {
         let inner = self.0.borrow();
-        let total = inner
-            .cumulative
-            .last()
-            .copied()
-            .unwrap_or(Pixels::ZERO);
+        let total = inner.cumulative.last().copied().unwrap_or(Pixels::ZERO);
         (total - inner.viewport_size.height).max(Pixels::ZERO)
     }
 
@@ -93,11 +89,7 @@ impl VirtualListState {
     /// Clamped to the legal range.
     pub fn set_scroll_y(&self, y: Pixels) {
         let mut inner = self.0.borrow_mut();
-        let total = inner
-            .cumulative
-            .last()
-            .copied()
-            .unwrap_or(Pixels::ZERO);
+        let total = inner.cumulative.last().copied().unwrap_or(Pixels::ZERO);
         let max = (total - inner.viewport_size.height).max(Pixels::ZERO);
         inner.scroll_y = y.max(Pixels::ZERO).min(max);
     }
@@ -197,11 +189,7 @@ impl Element for VirtualList {
         {
             let mut inner = self.state.0.borrow_mut();
             inner.viewport_size = bounds.size;
-            let total = inner
-                .cumulative
-                .last()
-                .copied()
-                .unwrap_or(Pixels::ZERO);
+            let total = inner.cumulative.last().copied().unwrap_or(Pixels::ZERO);
             let max = (total - viewport_h).max(Pixels::ZERO);
             inner.scroll_y = inner.scroll_y.max(Pixels::ZERO).min(max);
         }
@@ -251,11 +239,7 @@ impl Element for VirtualList {
                 return;
             }
             let mut inner = state.0.borrow_mut();
-            let total = inner
-                .cumulative
-                .last()
-                .copied()
-                .unwrap_or(Pixels::ZERO);
+            let total = inner.cumulative.last().copied().unwrap_or(Pixels::ZERO);
             let max = (total - inner.viewport_size.height).max(Pixels::ZERO);
             let next = (inner.scroll_y - delta.y).max(Pixels::ZERO).min(max);
             if next != inner.scroll_y {
@@ -285,4 +269,3 @@ impl Element for VirtualList {
         });
     }
 }
-

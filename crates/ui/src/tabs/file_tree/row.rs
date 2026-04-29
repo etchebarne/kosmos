@@ -288,7 +288,8 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
         .can_drop({
             let parent = drop_target_dir.clone();
             move |drag, _, _| {
-                let (Some(d), Some(parent)) = (drag.downcast_ref::<FileNodeDrag>(), parent.as_ref())
+                let (Some(d), Some(parent)) =
+                    (drag.downcast_ref::<FileNodeDrag>(), parent.as_ref())
                 else {
                     return false;
                 };
@@ -365,15 +366,12 @@ pub fn render_new_entry<T: PaneDelegate + SettingsDelegate>(
                         match event.keystroke.key.as_str() {
                             "enter" => {
                                 cx.stop_propagation();
-                                let value =
-                                    input_for_submit.read(cx).value().to_string();
-                                entity_submit
-                                    .update(cx, |t, cx| t.apply_new_entry(value, cx));
+                                let value = input_for_submit.read(cx).value().to_string();
+                                entity_submit.update(cx, |t, cx| t.apply_new_entry(value, cx));
                             }
                             "escape" => {
                                 cx.stop_propagation();
-                                entity_cancel
-                                    .update(cx, |t, cx| t.cancel_new_entry(cx));
+                                entity_cancel.update(cx, |t, cx| t.cancel_new_entry(cx));
                             }
                             _ => {}
                         }
@@ -549,9 +547,7 @@ fn can_drop_into_dir(drag: &FileNodeDrag, dest_dir: &Path) -> bool {
     if drag.paths.iter().any(|p| dest_dir.starts_with(p)) {
         return false;
     }
-    drag.paths
-        .iter()
-        .any(|p| p.parent() != Some(dest_dir))
+    drag.paths.iter().any(|p| p.parent() != Some(dest_dir))
 }
 
 pub fn path_id(prefix: &'static str, path: &Path) -> gpui::ElementId {

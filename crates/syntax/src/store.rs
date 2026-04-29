@@ -47,16 +47,16 @@ impl SyntaxStore {
                     move |this: &mut SyntaxSnapshot, buffer, event, cx| match event {
                         BufferEvent::Edited { edits } => {
                             this.apply_edits(edits);
-                            spawn_parse(&buffer, cx);
+                            spawn_parse(&buffer, this.grammar().cloned(), this.tree().cloned(), cx);
                         }
                         BufferEvent::LanguageChanged => {
                             let new_language = buffer.read(cx).language().cloned();
                             let new_grammar = new_language
                                 .as_ref()
                                 .and_then(|l| SyntaxRegistry::load(l, cx));
-                            this.set_grammar(new_language, new_grammar);
+                            this.set_grammar(new_language, new_grammar.clone());
                             cx.notify();
-                            spawn_parse(&buffer, cx);
+                            spawn_parse(&buffer, new_grammar, None, cx);
                         }
                     },
                 )
@@ -67,7 +67,7 @@ impl SyntaxStore {
             store.snapshots.insert(id, snapshot.clone());
         });
         if grammar.is_some() {
-            spawn_parse(buffer, cx);
+            spawn_parse(buffer, grammar, None, cx);
         }
         snapshot
     }
@@ -91,7 +91,15 @@ impl Global for SyntaxStore {}
 /// describes) back into the snapshot on the main thread. Cheap to call — if
 /// there's no grammar or no snapshot, this turns into a few `Option`
 /// lookups and exits.
-fn spawn_parse(buffer: &Entity<Buffer>, cx: &mut App) {
+fn spawn_parse(
+    buffer: &Entity<Buffer>,
+    grammar: Option<Arc<Grammar>>,
+    old_tree: Option<Tree>,
+    cx: &mut App,
+) {
+    let Some(grammar) = grammar else {
+        return;
+    };
     let id = buffer.read(cx).id();
     let Some(snapshot) = cx
         .try_global::<SyntaxStore>()
@@ -99,13 +107,9 @@ fn spawn_parse(buffer: &Entity<Buffer>, cx: &mut App) {
     else {
         return;
     };
-    let Some(grammar) = snapshot.read(cx).grammar().cloned() else {
-        return;
-    };
     let content = buffer.read(cx).content().to_string();
     let content_for_injections = content.clone();
     let grammar_for_injections = grammar.clone();
-    let old_tree = snapshot.read(cx).tree().cloned();
     let snapshot_weak = snapshot.downgrade();
     cx.spawn(async move |cx| {
         // Heavy main parse runs on the background pool so the UI thread
@@ -119,12 +123,8 @@ fn spawn_parse(buffer: &Entity<Buffer>, cx: &mut App) {
             .await;
         let Some(tree) = parsed else { return };
         let _ = cx.update(|app| {
-            let injections = resolve_injections(
-                &grammar_for_injections,
-                &tree,
-                &content_for_injections,
-                app,
-            );
+            let injections =
+                resolve_injections(&grammar_for_injections, &tree, &content_for_injections, app);
             let Some(snapshot) = snapshot_weak.upgrade() else {
                 return;
             };
@@ -197,8 +197,8 @@ fn resolve_injections(
         else {
             continue;
         };
-        let span: Range<usize> = content_ranges.first().unwrap().start_byte
-            ..content_ranges.last().unwrap().end_byte;
+        let span: Range<usize> =
+            content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
         out.push(Injection {
             range: span,
             grammar: injected_grammar,

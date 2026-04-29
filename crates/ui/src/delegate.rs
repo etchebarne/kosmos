@@ -18,19 +18,9 @@ pub struct WorkspaceMenuState {
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>);
-    fn move_workspace_before(
-        &mut self,
-        drag_id: usize,
-        target_id: usize,
-        cx: &mut Context<Self>,
-    );
+    fn move_workspace_before(&mut self, drag_id: usize, target_id: usize, cx: &mut Context<Self>);
     fn move_workspace_to_end(&mut self, drag_id: usize, cx: &mut Context<Self>);
-    fn open_workspace_menu(
-        &mut self,
-        id: usize,
-        position: Point<Pixels>,
-        cx: &mut Context<Self>,
-    );
+    fn open_workspace_menu(&mut self, id: usize, position: Point<Pixels>, cx: &mut Context<Self>);
     fn close_workspace_menu(&mut self, cx: &mut Context<Self>);
     fn close_workspace(&mut self, id: usize, cx: &mut Context<Self>);
 }
@@ -69,12 +59,7 @@ pub trait PaneDelegate: Sized + 'static {
     );
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>);
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>);
-    fn open_file_in_pane(
-        &mut self,
-        path: PathBuf,
-        target_pane_id: usize,
-        cx: &mut Context<Self>,
-    );
+    fn open_file_in_pane(&mut self, path: PathBuf, target_pane_id: usize, cx: &mut Context<Self>);
     fn open_file_before(
         &mut self,
         path: PathBuf,
@@ -94,12 +79,7 @@ pub trait PaneDelegate: Sized + 'static {
 pub trait SettingsDelegate: Sized + 'static {
     fn select_settings_category(&mut self, category_id: &'static str, cx: &mut Context<Self>);
     fn toggle_settings_dropdown(&mut self, setting_id: &'static str, cx: &mut Context<Self>);
-    fn set_setting_value(
-        &mut self,
-        key: &'static str,
-        value: SettingValue,
-        cx: &mut Context<Self>,
-    );
+    fn set_setting_value(&mut self, key: &'static str, value: SettingValue, cx: &mut Context<Self>);
     fn install_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>);
     fn uninstall_tool(&mut self, entry: &'static registry::RegistryEntry, cx: &mut Context<Self>);
 }

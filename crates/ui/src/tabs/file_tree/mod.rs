@@ -65,10 +65,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
         collect_rows::<T>(&entity, &root, 0, &mut rows, &new_entry, cx);
     }
 
-    let scroll_handle = cx
-        .file_tree_ui()
-        .map(|ui| ui.scroll())
-        .unwrap_or_default();
+    let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
 
     let entity_for_dismiss = entity.clone();
 
@@ -237,10 +234,7 @@ fn actions_row<T: PaneDelegate + SettingsDelegate>(
             "New File",
             cx.listener(move |_, _, window, cx| {
                 let entity = entity_new_file.clone();
-                let anchor = entity
-                    .read(cx)
-                    .selected()
-                    .map(|p| p.to_path_buf());
+                let anchor = entity.read(cx).selected().map(|p| p.to_path_buf());
                 entity.update(cx, |t, cx| {
                     t.start_new_entry(anchor.as_deref(), NodeKind::File, cx);
                 });
@@ -254,10 +248,7 @@ fn actions_row<T: PaneDelegate + SettingsDelegate>(
             "New Folder",
             cx.listener(move |_, _, window, cx| {
                 let entity = entity_new_dir.clone();
-                let anchor = entity
-                    .read(cx)
-                    .selected()
-                    .map(|p| p.to_path_buf());
+                let anchor = entity.read(cx).selected().map(|p| p.to_path_buf());
                 entity.update(cx, |t, cx| {
                     t.start_new_entry(anchor.as_deref(), NodeKind::Directory, cx);
                 });
@@ -360,7 +351,11 @@ fn error_banner<T: PaneDelegate + SettingsDelegate>(
                     entity.update(cx, |t, _| t.clear_error());
                     cx.notify();
                 }))
-                .child(Icon::new(IconName::Close).size(12.0).color(theme.text_muted)),
+                .child(
+                    Icon::new(IconName::Close)
+                        .size(12.0)
+                        .color(theme.text_muted),
+                ),
         )
         .into_any_element()
 }
