@@ -1,5 +1,5 @@
 use file_tree::NodeKind;
-use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui::{AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use panes::Pane;
@@ -73,6 +73,15 @@ pub fn render<T: PaneDelegate>(
             TabDrag::new(id, pane_id, title.clone(), icon_name),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         )
+        .when(can_close, |this| {
+            this.on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.close_tab(pane_id, id, cx);
+                }),
+            )
+        })
         .on_click(cx.listener(move |this, _, _, cx| {
             this.select_tab(pane_id, id, cx);
         }))
