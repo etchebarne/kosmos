@@ -3,11 +3,13 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, App, Context, DragMoveEvent, Entity, IntoElement,
-    ListHorizontalSizingBehavior, Pixels, Point, SharedString, StyledText, div, list, prelude::*,
-    px, rems, uniform_list,
+    ListHorizontalSizingBehavior, Pixels, Point, SharedString, StyledText, div, prelude::*, px,
+    rems, uniform_list,
 };
 
-use file_editor::{Buffer, BufferStore, EditorView, EditorViewStore, soft_wrap_enabled};
+use file_editor::{
+    Buffer, BufferStore, EditorView, EditorViewStore, soft_wrap_enabled, virtual_list,
+};
 use file_tree::ActiveFileTree;
 use highlight::HighlightId;
 use icons::{Icon, IconName};
@@ -47,19 +49,56 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     };
 
     let body: AnyElement = if soft_wrap {
-        let list_state = view.update(cx, |v, _| v.list_state_for(true));
+        let virtual_state = view.read(cx).virtual_scroll();
+        // Snapshot per-line char counts so the height closure doesn't need
+        // App context. ~one usize per logical line, doesn't change while
+        // the buffer is read-only.
+        let line_chars: Vec<usize> = {
+            let buf = buffer.read(cx);
+            (0..buf.line_count()).map(|i| buf.line_chars(i)).collect()
+        };
+        // Approximate em width for monospace as 0.6 × font_size. Off-by-10%
+        // is fine for wrap-count estimation — VirtualList feeds this height
+        // straight into the cumulative table without ever shaping text for
+        // non-visible rows, so the scrollbar tracks our estimate exactly.
+        let height_fn =
+            move |index: usize, viewport_w: Pixels, rem_size: Pixels| -> Pixels {
+                let font_size_px = rems(0.875).to_pixels(rem_size);
+                let line_height_px = rems(ROW_HEIGHT_REM).to_pixels(rem_size);
+                let em_width = font_size_px * 0.6;
+                if index >= line_chars.len() {
+                    // Bottom spacer rows: fixed single-line height.
+                    return line_height_px;
+                }
+                let cpl = if viewport_w > px(0.0) && em_width > px(0.0) {
+                    ((viewport_w / em_width).floor() as usize).max(1)
+                } else {
+                    80
+                };
+                let chars = line_chars[index];
+                let wraps = ((chars.max(1) + cpl - 1) / cpl).max(1) as f32;
+                line_height_px * wraps
+            };
+
         let buffer_for_render = buffer.clone();
         let snapshot_for_render = snapshot.clone();
-        list(list_state, move |index, _window, cx| {
-            if index >= line_count {
-                return render_spacer_row(px(0.0), *cx.theme()).into_any_element();
-            }
-            let theme = *cx.theme();
-            let (line, spans) = line_with_spans(&buffer_for_render, &snapshot_for_render, index, cx);
-            // Soft wrap can't scroll horizontally, so the gutter is never
-            // sticky — its offset is always 0.
-            render_row(index + 1, line, spans, soft_wrap, px(0.0), &theme).into_any_element()
-        })
+        virtual_list(
+            "file-editor-soft-wrap",
+            virtual_state,
+            row_count,
+            height_fn,
+            move |index, _window, cx| {
+                if index >= line_count {
+                    return render_spacer_row(px(0.0), *cx.theme()).into_any_element();
+                }
+                let theme = *cx.theme();
+                let (line, spans) =
+                    line_with_spans(&buffer_for_render, &snapshot_for_render, index, cx);
+                // Soft wrap can't scroll horizontally, so the gutter is never
+                // sticky — its offset is always 0.
+                render_row(index + 1, line, spans, soft_wrap, px(0.0), &theme).into_any_element()
+            },
+        )
         .size_full()
         .into_any_element()
     } else {
@@ -195,10 +234,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
 fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
     let v = view.read(cx);
     if soft_wrap {
-        v.list_state_snapshot()
-            .as_ref()
-            .map(EditorScrollMetrics::from_list)
-            .unwrap_or_default()
+        EditorScrollMetrics::from_virtual(&v.virtual_scroll())
     } else {
         EditorScrollMetrics::from_uniform(&v.uniform_scroll())
     }
@@ -207,9 +243,7 @@ fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> Edit
 fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
     let v = view.read(cx);
     if soft_wrap {
-        if let Some(state) = v.list_state_snapshot() {
-            state.set_offset_from_scrollbar(Point::new(px(0.0), -scrolled));
-        }
+        v.virtual_scroll().set_scroll_y(scrolled);
     } else {
         let handle = v.uniform_scroll();
         let state = handle.0.borrow();

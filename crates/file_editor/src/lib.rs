@@ -1,3 +1,7 @@
+mod virtual_list;
+
+pub use virtual_list::{VirtualList, VirtualListState, virtual_list};
+
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -5,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     App, AppContext, BorrowAppContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, ListAlignment, ListState, Pixels, UniformListScrollHandle, px,
+    Focusable, Global, Pixels, UniformListScrollHandle,
 };
 use language::LanguageId;
 use settings::{ActiveSettings, SettingValue};
@@ -64,8 +68,6 @@ pub const SOFT_WRAP_SETTING_ID: &str = "editor.soft_wrap";
 /// `>= line_count` as blank spacers.
 pub const BOTTOM_SPACER_LINES: usize = 20;
 
-const LIST_OVERDRAW_PX: f32 = 200.0;
-
 /// Resolve `editor.soft_wrap` from the global settings, falling back to the
 /// default declared in `settings::registry::EDITOR`.
 pub fn soft_wrap_enabled(cx: &App) -> bool {
@@ -88,6 +90,10 @@ pub struct Buffer {
     language: Option<LanguageId>,
     content: String,
     line_starts: Vec<usize>,
+    /// Per-line character count (excluding the trailing newline). Used by
+    /// the soft-wrap path to estimate row heights without doing real text
+    /// shaping — `wraps = ceil(chars / chars_per_visible_width)`.
+    line_chars: Vec<usize>,
     /// Index of the line with the most characters. Used by `uniform_list` as
     /// the row to measure when sizing the horizontal extent of the editor.
     longest_line_index: usize,
@@ -99,7 +105,7 @@ impl Buffer {
         let content = std::fs::read_to_string(&path)
             .unwrap_or_default()
             .replace("\r\n", "\n");
-        let (line_starts, longest_line_index) = analyze_content(&content);
+        let (line_starts, line_chars, longest_line_index) = analyze_content(&content);
         let language = language::from_path(&path);
         Self {
             id,
@@ -107,6 +113,7 @@ impl Buffer {
             language,
             content,
             line_starts,
+            line_chars,
             longest_line_index,
             focus_handle: cx.focus_handle(),
         }
@@ -143,6 +150,14 @@ impl Buffer {
         self.longest_line_index
     }
 
+    /// Character count of `line_index`, excluding the trailing newline.
+    /// Returns 0 for out-of-range indexes (so callers iterating past the
+    /// real lines into the bottom-spacer rows can keep going without
+    /// branching).
+    pub fn line_chars(&self, line_index: usize) -> usize {
+        self.line_chars.get(line_index).copied().unwrap_or(0)
+    }
+
     /// Byte range of `line_index` within `content`, excluding the trailing
     /// newline. `None` if the index is out of range.
     pub fn line_range(&self, line_index: usize) -> Option<Range<usize>> {
@@ -169,18 +184,15 @@ impl Focusable for Buffer {
 
 impl EventEmitter<BufferEvent> for Buffer {}
 
-/// Per-tab editor state: scroll handles and list measurement caches. Each
+/// Per-tab editor state: scroll handles for the two render modes. Each
 /// editor tab gets its own so two tabs viewing the same buffer scroll
 /// independently.
 pub struct EditorView {
-    row_count: usize,
+    /// Scroll handle used by `uniform_list` in non-soft-wrap mode.
     uniform_scroll: UniformListScrollHandle,
-    /// Backing state for the variable-height `list` element used in soft-wrap
-    /// mode. Constructed lazily on first use because building the underlying
-    /// SumTree is O(row_count) — for a 34k-line file we don't want to pay
-    /// that on tab open if soft-wrap is off (the default).
-    list_state: Option<ListState>,
-    list_state_soft_wrap: bool,
+    /// Scroll handle used by [`virtual_list`] in soft-wrap mode. Always
+    /// present (cheap to construct), but only updated while soft-wrap is on.
+    virtual_scroll: VirtualListState,
     /// EntityId of an external entity (typically a syntax snapshot) that the
     /// renderer has already wired up an observer for, used to avoid attaching
     /// a fresh observer on every render frame.
@@ -199,12 +211,10 @@ pub struct EditorView {
 }
 
 impl EditorView {
-    pub fn new(row_count: usize) -> Self {
+    pub fn new(_row_count: usize) -> Self {
         Self {
-            row_count,
             uniform_scroll: UniformListScrollHandle::new(),
-            list_state: None,
-            list_state_soft_wrap: false,
+            virtual_scroll: VirtualListState::new(),
             observed_external: None,
             cached_longest_width: Cell::new(None),
             cached_longest_rem: Cell::new(None),
@@ -239,51 +249,18 @@ impl EditorView {
         self.uniform_scroll.clone()
     }
 
-    /// Hand out the `ListState` for soft-wrap rendering, constructing it on
-    /// first use. Forces a full re-measurement only when the wrap mode
-    /// toggles. Width changes are intentionally **not** re-measured —
-    /// gpui's `list` self-invalidates per-row heights on width change
-    /// (list.rs:1025-1038) and re-measures visible rows incrementally as
-    /// the user scrolls. Re-running `force_remeasure` here would walk all
-    /// 34k rows synchronously on the main thread, freezing the UI for a
-    /// second or two on every pane-resize release. The trade-off is that
-    /// the scrollbar size is approximate right after a resize and grows
-    /// toward accurate as the user scrolls through the file.
-    pub fn list_state_for(&mut self, soft_wrap: bool) -> ListState {
-        let list_state = self.list_state.get_or_insert_with(|| {
-            // measure_all = list pre-measures every row up front so the
-            // scrollbar size doesn't shift as more rows scroll into view.
-            ListState::new(self.row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all()
-        });
-        if self.list_state_soft_wrap != soft_wrap {
-            Self::force_remeasure(list_state, self.row_count);
-            self.list_state_soft_wrap = soft_wrap;
-        }
-        list_state.clone()
-    }
-
-    /// Reset the list state so the next layout pre-measures every row, while
-    /// preserving the user's logical scroll position (item index + offset
-    /// within that item) — `ListState::reset` clears it otherwise.
-    fn force_remeasure(list_state: &ListState, row_count: usize) {
-        let saved = list_state.logical_scroll_top();
-        list_state.reset(row_count);
-        list_state.scroll_to(saved);
-    }
-
-    /// Read-only snapshot of the current `ListState`. Used by overlays
-    /// (e.g. the scrollbar) that want to inspect or drive scroll position
-    /// without disturbing the cached row heights. Returns `None` when the
-    /// list has never been used (soft-wrap has stayed off the whole time).
-    pub fn list_state_snapshot(&self) -> Option<ListState> {
-        self.list_state.clone()
+    pub fn virtual_scroll(&self) -> VirtualListState {
+        self.virtual_scroll.clone()
     }
 }
 
-/// Single pass over `content` that produces both the line-start byte offsets
-/// and the index of the line with the most characters.
-fn analyze_content(content: &str) -> (Vec<usize>, usize) {
-    let mut starts = Vec::with_capacity(content.bytes().filter(|b| *b == b'\n').count() + 1);
+/// Single pass over `content` that produces the line-start byte offsets,
+/// per-line character counts, and the index of the line with the most
+/// characters.
+fn analyze_content(content: &str) -> (Vec<usize>, Vec<usize>, usize) {
+    let line_count_estimate = content.bytes().filter(|b| *b == b'\n').count() + 1;
+    let mut starts = Vec::with_capacity(line_count_estimate);
+    let mut chars_per_line = Vec::with_capacity(line_count_estimate);
     starts.push(0);
     let mut longest_index = 0usize;
     let mut longest_chars = 0usize;
@@ -295,6 +272,7 @@ fn analyze_content(content: &str) -> (Vec<usize>, usize) {
                 longest_chars = current_chars;
                 longest_index = current_line_index;
             }
+            chars_per_line.push(current_chars);
             starts.push(byte_idx + 1);
             current_line_index += 1;
             current_chars = 0;
@@ -302,10 +280,11 @@ fn analyze_content(content: &str) -> (Vec<usize>, usize) {
             current_chars += 1;
         }
     }
+    chars_per_line.push(current_chars);
     if current_chars > longest_chars {
         longest_index = current_line_index;
     }
-    (starts, longest_index)
+    (starts, chars_per_line, longest_index)
 }
 
 /// Global cache that hands out (or creates) the `Buffer` entity for a given

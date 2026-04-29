@@ -1,7 +1,8 @@
 use gpui::{
-    AnyElement, App, Empty, EntityId, IntoElement, ListState, Pixels, UniformListScrollHandle, div,
+    AnyElement, App, Empty, EntityId, IntoElement, Pixels, UniformListScrollHandle, div,
     prelude::*, px, rems,
 };
+use file_editor::VirtualListState;
 use theme::ActiveTheme;
 
 const TRACK_THICKNESS_REM: f32 = 0.625;
@@ -92,15 +93,14 @@ impl EditorScrollMetrics {
         }
     }
 
-    pub fn from_list(state: &ListState) -> Self {
-        let viewport_h = state.viewport_bounds().size.height;
+    pub fn from_virtual(state: &VirtualListState) -> Self {
+        let viewport_h = state.viewport_size().height;
         if viewport_h <= px(0.0) {
             return Self::default();
         }
-        let max_offset = state.max_offset_for_scrollbar().height;
-        let offset = state.scroll_px_offset_for_scrollbar();
+        let content_h = state.content_height();
         Self {
-            vertical: AxisScrollbar::new(viewport_h, viewport_h + max_offset, -offset.y),
+            vertical: AxisScrollbar::new(viewport_h, content_h, state.scroll_y()),
             // Soft-wrap mode never scrolls horizontally — lines wrap.
             horizontal: None,
         }
