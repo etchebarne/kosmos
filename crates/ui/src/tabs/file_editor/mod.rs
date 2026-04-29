@@ -5,7 +5,7 @@ use gpui::{
     Pixels, Point, SharedString, div, list, prelude::*, px, rems, uniform_list,
 };
 
-use file_editor::{Buffer, BufferStore, soft_wrap_enabled};
+use file_editor::{BufferStore, EditorView, EditorViewStore, soft_wrap_enabled};
 use file_tree::ActiveFileTree;
 use icons::{Icon, IconName};
 use tabs::{Tab, registry};
@@ -33,6 +33,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .and_then(|tree| tree.read(cx).root().map(Path::to_path_buf));
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
     let buffer = BufferStore::open(path, cx);
+    let view = EditorViewStore::for_tab(tab.id, &buffer, cx);
     let soft_wrap = soft_wrap_enabled(cx);
     let (line_count, row_count, longest_idx) = {
         let buf = buffer.read(cx);
@@ -40,7 +41,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     };
 
     let body: AnyElement = if soft_wrap {
-        let list_state = buffer.update(cx, |b, _| b.list_state_for(true));
+        let list_state = view.update(cx, |v, _| v.list_state_for(true));
         let buffer_for_render = buffer.clone();
         list(list_state, move |index, _window, cx| {
             if index >= line_count {
@@ -60,8 +61,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .size_full()
         .into_any_element()
     } else {
-        let scroll = buffer.read(cx).uniform_scroll();
+        let scroll = view.read(cx).uniform_scroll();
         let buffer_for_render = buffer.clone();
+        let view_for_render = view.clone();
         uniform_list(
             "file-editor-lines",
             row_count,
@@ -71,8 +73,14 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 // Negate the list's current x scroll so the gutter overlay
                 // shifts back to the viewport's left edge as content scrolls
                 // past it horizontally — i.e. position: sticky on x only.
-                let sticky_offset =
-                    -buffer.uniform_scroll().0.borrow().base_handle.offset().x;
+                let sticky_offset = -view_for_render
+                    .read(cx)
+                    .uniform_scroll()
+                    .0
+                    .borrow()
+                    .base_handle
+                    .offset()
+                    .x;
                 range
                     .map(|i| {
                         if i >= line_count {
@@ -96,13 +104,14 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .into_any_element()
     };
 
+    let view_owner = view.entity_id();
     // Sibling overlay (not a uniform_list decoration): decorations are
     // positioned at the scrolled origin, so their visible area shrinks as
     // the user scrolls down. A sibling absolute child of the editor's
     // outer wrapper stays fixed to the viewport.
-    let scrollbar_overlay = scrollbar::render(current_metrics(&buffer, soft_wrap, cx), cx);
+    let scrollbar_overlay = scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
 
-    let buffer_for_drag = buffer.clone();
+    let view_for_drag = view.clone();
     let editor_area = div()
         .relative()
         .flex_1()
@@ -115,19 +124,26 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .on_drag_move(cx.listener(
             move |_, event: &DragMoveEvent<ScrollbarDrag>, _window, cx| {
                 let drag = *event.drag(cx);
-                let metrics = current_metrics(&buffer_for_drag, soft_wrap, cx);
+                // gpui fires on_drag_move on every listener of this drag
+                // type, so each side-by-side editor would otherwise scroll
+                // when any of them is dragged. Ignore drags that didn't
+                // start in this editor's own scrollbar.
+                if drag.owner() != view_owner {
+                    return;
+                }
+                let metrics = current_metrics(&view_for_drag, soft_wrap, cx);
                 match drag {
-                    ScrollbarDrag::Vertical => {
+                    ScrollbarDrag::Vertical(_) => {
                         let Some(axis) = metrics.vertical else { return };
                         let mouse_y = event.event.position.y - event.bounds.top();
                         let new_scroll = axis.scroll_for_mouse_position(mouse_y);
-                        set_scroll_y(&buffer_for_drag, soft_wrap, new_scroll, cx);
+                        set_scroll_y(&view_for_drag, soft_wrap, new_scroll, cx);
                     }
-                    ScrollbarDrag::Horizontal => {
+                    ScrollbarDrag::Horizontal(_) => {
                         let Some(axis) = metrics.horizontal else { return };
                         let mouse_x = event.event.position.x - event.bounds.left();
                         let new_scroll = axis.scroll_for_mouse_position(mouse_x);
-                        set_scroll_x(&buffer_for_drag, new_scroll, cx);
+                        set_scroll_x(&view_for_drag, new_scroll, cx);
                     }
                 }
                 cx.notify();
@@ -147,22 +163,22 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .into_any_element()
 }
 
-fn current_metrics(buffer: &Entity<Buffer>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
-    let buf = buffer.read(cx);
+fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
+    let v = view.read(cx);
     if soft_wrap {
-        EditorScrollMetrics::from_list(&buf.list_state_snapshot())
+        EditorScrollMetrics::from_list(&v.list_state_snapshot())
     } else {
-        EditorScrollMetrics::from_uniform(&buf.uniform_scroll())
+        EditorScrollMetrics::from_uniform(&v.uniform_scroll())
     }
 }
 
-fn set_scroll_y(buffer: &Entity<Buffer>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
-    let buf = buffer.read(cx);
+fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
+    let v = view.read(cx);
     if soft_wrap {
-        buf.list_state_snapshot()
+        v.list_state_snapshot()
             .set_offset_from_scrollbar(Point::new(px(0.0), -scrolled));
     } else {
-        let handle = buf.uniform_scroll();
+        let handle = v.uniform_scroll();
         let state = handle.0.borrow();
         let current = state.base_handle.offset();
         state
@@ -171,9 +187,9 @@ fn set_scroll_y(buffer: &Entity<Buffer>, soft_wrap: bool, scrolled: Pixels, cx: 
     }
 }
 
-fn set_scroll_x(buffer: &Entity<Buffer>, scrolled: Pixels, cx: &App) {
-    let buf = buffer.read(cx);
-    let handle = buf.uniform_scroll();
+fn set_scroll_x(view: &Entity<EditorView>, scrolled: Pixels, cx: &App) {
+    let v = view.read(cx);
+    let handle = v.uniform_scroll();
     let state = handle.0.borrow();
     let current = state.base_handle.offset();
     state

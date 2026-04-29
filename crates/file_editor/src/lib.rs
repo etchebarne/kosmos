@@ -30,6 +30,10 @@ pub fn soft_wrap_enabled(cx: &App) -> bool {
 /// In-memory view of a file open in an editor tab. Holds the loaded text plus
 /// a cached `line_starts` index so the renderer (and, later, LSP-driven
 /// analysis) can resolve any line in O(1) without rescanning the content.
+///
+/// Shared across all tabs viewing the same path. Per-tab state (scroll
+/// position, list measurement caches) lives on [`EditorView`] instead so two
+/// tabs of the same file scroll independently.
 pub struct Buffer {
     path: PathBuf,
     content: String,
@@ -38,17 +42,6 @@ pub struct Buffer {
     /// the row to measure when sizing the horizontal extent of the editor.
     longest_line_index: usize,
     focus_handle: FocusHandle,
-    uniform_scroll: UniformListScrollHandle,
-    /// Backing state for the variable-height `list` element used in soft-wrap
-    /// mode. Created up front; reset whenever the wrap mode toggles so cached
-    /// row heights don't go stale.
-    list_state: ListState,
-    list_state_soft_wrap: bool,
-    /// Last viewport width we saw the list rendered at. gpui's `list` element
-    /// invalidates cached item heights when its width changes but does NOT
-    /// re-trigger `measure_all`, so we have to detect the change ourselves
-    /// and force a fresh full pre-measurement.
-    list_state_known_width: Option<Pixels>,
 }
 
 impl Buffer {
@@ -57,21 +50,12 @@ impl Buffer {
             .unwrap_or_default()
             .replace("\r\n", "\n");
         let (line_starts, longest_line_index) = analyze_content(&content);
-        // measure_all = list pre-measures every row up front so the scrollbar
-        // size doesn't shift as more rows scroll into view.
-        let row_count = line_starts.len() + BOTTOM_SPACER_LINES;
-        let list_state =
-            ListState::new(row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all();
         Self {
             path,
             content,
             line_starts,
             longest_line_index,
             focus_handle: cx.focus_handle(),
-            uniform_scroll: UniformListScrollHandle::new(),
-            list_state,
-            list_state_soft_wrap: false,
-            list_state_known_width: None,
         }
     }
 
@@ -114,6 +98,46 @@ impl Buffer {
         let range = self.line_range(line_index)?;
         Some(&self.content[range])
     }
+}
+
+impl Focusable for Buffer {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+/// Per-tab editor state: scroll handles and list measurement caches. Each
+/// editor tab gets its own so two tabs viewing the same buffer scroll
+/// independently.
+pub struct EditorView {
+    row_count: usize,
+    uniform_scroll: UniformListScrollHandle,
+    /// Backing state for the variable-height `list` element used in soft-wrap
+    /// mode. Created up front; reset whenever the wrap mode toggles so cached
+    /// row heights don't go stale.
+    list_state: ListState,
+    list_state_soft_wrap: bool,
+    /// Last viewport width we saw the list rendered at. gpui's `list` element
+    /// invalidates cached item heights when its width changes but does NOT
+    /// re-trigger `measure_all`, so we have to detect the change ourselves
+    /// and force a fresh full pre-measurement.
+    list_state_known_width: Option<Pixels>,
+}
+
+impl EditorView {
+    pub fn new(row_count: usize) -> Self {
+        // measure_all = list pre-measures every row up front so the scrollbar
+        // size doesn't shift as more rows scroll into view.
+        let list_state =
+            ListState::new(row_count, ListAlignment::Top, px(LIST_OVERDRAW_PX)).measure_all();
+        Self {
+            row_count,
+            uniform_scroll: UniformListScrollHandle::new(),
+            list_state,
+            list_state_soft_wrap: false,
+            list_state_known_width: None,
+        }
+    }
 
     pub fn uniform_scroll(&self) -> UniformListScrollHandle {
         self.uniform_scroll.clone()
@@ -142,7 +166,7 @@ impl Buffer {
     /// within that item) — `ListState::reset` clears it otherwise.
     fn force_remeasure(&mut self) {
         let saved = self.list_state.logical_scroll_top();
-        self.list_state.reset(self.line_starts.len() + BOTTOM_SPACER_LINES);
+        self.list_state.reset(self.row_count);
         self.list_state.scroll_to(saved);
     }
 
@@ -151,12 +175,6 @@ impl Buffer {
     /// without disturbing the cached row heights.
     pub fn list_state_snapshot(&self) -> ListState {
         self.list_state.clone()
-    }
-}
-
-impl Focusable for Buffer {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
 
@@ -219,3 +237,47 @@ impl BufferStore {
 }
 
 impl Global for BufferStore {}
+
+/// Global cache of per-tab [`EditorView`]s keyed by tab id. Tabs created in a
+/// `PaneTree` get unique ids that persist across pane moves, so a single
+/// `usize` is enough to identify the view for a tab's lifetime.
+#[derive(Default)]
+pub struct EditorViewStore {
+    views: HashMap<usize, Entity<EditorView>>,
+}
+
+impl EditorViewStore {
+    pub fn install(cx: &mut App) {
+        cx.set_global(Self::default());
+    }
+
+    /// Return the editor view for `tab_id`, creating one sized for `buffer`'s
+    /// row count if it doesn't exist yet.
+    pub fn for_tab(tab_id: usize, buffer: &Entity<Buffer>, cx: &mut App) -> Entity<EditorView> {
+        if let Some(existing) = cx
+            .try_global::<Self>()
+            .and_then(|s| s.views.get(&tab_id).cloned())
+        {
+            return existing;
+        }
+        let row_count = buffer.read(cx).row_count();
+        let entity = cx.new(|_| EditorView::new(row_count));
+        cx.update_global::<Self, _>(|store, _| {
+            store.views.insert(tab_id, entity.clone());
+        });
+        entity
+    }
+
+    /// Drop the cached view for `tab_id`. Call when a tab is closed so its
+    /// scroll state isn't carried into a future tab that reuses the id.
+    pub fn drop_tab(tab_id: usize, cx: &mut App) {
+        if cx.try_global::<Self>().is_none() {
+            return;
+        }
+        cx.update_global::<Self, _>(|store, _| {
+            store.views.remove(&tab_id);
+        });
+    }
+}
+
+impl Global for EditorViewStore {}

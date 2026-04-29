@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Empty, IntoElement, ListState, Pixels, UniformListScrollHandle, div,
+    AnyElement, App, Empty, EntityId, IntoElement, ListState, Pixels, UniformListScrollHandle, div,
     prelude::*, px, rems,
 };
 use theme::ActiveTheme;
@@ -107,25 +107,36 @@ impl EditorScrollMetrics {
     }
 }
 
-/// Drag marker that identifies which axis is being scrubbed. The editor's
-/// container listens for `DragMoveEvent<ScrollbarDrag>` and dispatches by axis.
+/// Drag marker that identifies which axis is being scrubbed. Carries the
+/// owning editor's [`EntityId`] so editors with multiple side-by-side instances
+/// can ignore drag-move events that didn't originate in their own scrollbar —
+/// gpui dispatches `on_drag_move` to every listener of a given drag type, not
+/// just the element the drag started on.
 #[derive(Clone, Copy)]
 pub enum ScrollbarDrag {
-    Vertical,
-    Horizontal,
+    Vertical(EntityId),
+    Horizontal(EntityId),
 }
 
-pub fn render(metrics: EditorScrollMetrics, cx: &App) -> AnyElement {
+impl ScrollbarDrag {
+    pub fn owner(self) -> EntityId {
+        match self {
+            Self::Vertical(id) | Self::Horizontal(id) => id,
+        }
+    }
+}
+
+pub fn render(metrics: EditorScrollMetrics, owner: EntityId, cx: &App) -> AnyElement {
     let theme = *cx.theme();
     let thumb_bg = gpui::Hsla::from(theme.text).opacity(0.3);
     let thumb_hover_bg = gpui::Hsla::from(theme.text).opacity(0.55);
 
     let mut overlays: Vec<AnyElement> = Vec::new();
     if let Some(v) = metrics.vertical {
-        overlays.push(render_vertical(v, thumb_bg, thumb_hover_bg));
+        overlays.push(render_vertical(v, owner, thumb_bg, thumb_hover_bg));
     }
     if let Some(h) = metrics.horizontal {
-        overlays.push(render_horizontal(h, thumb_bg, thumb_hover_bg));
+        overlays.push(render_horizontal(h, owner, thumb_bg, thumb_hover_bg));
     }
 
     if overlays.is_empty() {
@@ -144,6 +155,7 @@ pub fn render(metrics: EditorScrollMetrics, cx: &App) -> AnyElement {
 
 fn render_vertical(
     metrics: AxisScrollbar,
+    owner: EntityId,
     thumb_bg: gpui::Hsla,
     thumb_hover_bg: gpui::Hsla,
 ) -> AnyElement {
@@ -167,13 +179,16 @@ fn render_vertical(
                 .rounded(rems(0.25))
                 .bg(thumb_bg)
                 .hover(move |this| this.bg(thumb_hover_bg))
-                .on_drag(ScrollbarDrag::Vertical, |_, _, _, cx| cx.new(|_| Empty)),
+                .on_drag(ScrollbarDrag::Vertical(owner), |_, _, _, cx| {
+                    cx.new(|_| Empty)
+                }),
         )
         .into_any_element()
 }
 
 fn render_horizontal(
     metrics: AxisScrollbar,
+    owner: EntityId,
     thumb_bg: gpui::Hsla,
     thumb_hover_bg: gpui::Hsla,
 ) -> AnyElement {
@@ -197,7 +212,9 @@ fn render_horizontal(
                 .rounded(rems(0.25))
                 .bg(thumb_bg)
                 .hover(move |this| this.bg(thumb_hover_bg))
-                .on_drag(ScrollbarDrag::Horizontal, |_, _, _, cx| cx.new(|_| Empty)),
+                .on_drag(ScrollbarDrag::Horizontal(owner), |_, _, _, cx| {
+                    cx.new(|_| Empty)
+                }),
         )
         .into_any_element()
 }

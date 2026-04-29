@@ -154,7 +154,18 @@ impl PaneDelegate for KosmosApp {
     }
 
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        self.mutate_active_tree(cx, |tree| tree.close_tab(pane_id, tab_id));
+        let mut closed = false;
+        self.mutate_active_tree(cx, |tree| {
+            if tree.close_tab(pane_id, tab_id) {
+                closed = true;
+                true
+            } else {
+                false
+            }
+        });
+        if closed {
+            file_editor::EditorViewStore::drop_tab(tab_id, cx);
+        }
     }
 
     fn move_tab_before(
