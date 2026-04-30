@@ -7385,6 +7385,7 @@ version = "1.0.0"
 dependencies = [
  "file_editor",
  "file_tree",
+ "git",
  "gpui",
  "highlight",
  "icons",

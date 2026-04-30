@@ -10,6 +10,7 @@ gpui = { workspace = true }
 highlight = { path = "../highlight" }
 icons = { path = "../icons" }
 installer = { path = "../installer" }
+kosmos_git = { package = "git", path = "../git" }
 language = { path = "../language" }
 registry = { path = "../registry" }
 settings = { path = "../settings" }
