@@ -11,7 +11,7 @@ use kosmos_git::{FileChange, FileChangeKind, Remote, RepositorySummary, Stash, T
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextInput, modal};
+use crate::components::{TextInput, Tooltip, TooltipPosition, modal};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,6 +150,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                 .child(icon_button::<T>(
                     "git-refresh",
                     IconName::Refresh,
+                    None,
                     move |_, _, cx| {
                         clear_error(cx);
                         refresh_summary(root_refresh.clone(), true, true, cx);
@@ -172,6 +173,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                 .child(icon_button::<T>(
                     "git-stage-all",
                     IconName::Add,
+                    Some("Stage All Changes"),
                     move |_, _, cx| {
                         run_git_action(root_stage.clone(), kosmos_git::stage_all, cx);
                     },
@@ -180,6 +182,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                 .child(icon_button::<T>(
                     "git-unstage-all",
                     IconName::Remove,
+                    Some("Unstage All Changes"),
                     move |_, _, cx| {
                         run_git_action(root_unstage.clone(), kosmos_git::unstage_all, cx);
                     },
@@ -188,6 +191,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                 .child(icon_button::<T>(
                     "git-stash-staged",
                     IconName::Archive,
+                    Some("Stash Staged Changes"),
                     move |_, _, cx| {
                         run_git_action(root_stash.clone(), kosmos_git::stash_staged, cx);
                     },
@@ -285,12 +289,13 @@ fn diff_stats<T: PaneDelegate + SettingsDelegate>(
 fn icon_button<T: PaneDelegate + SettingsDelegate>(
     id: &'static str,
     icon: IconName,
+    tooltip: Option<&'static str>,
     listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     let _ = cx;
-    div()
+    let button = div()
         .id(id)
         .size(rems(1.375))
         .flex_none()
@@ -305,8 +310,14 @@ fn icon_button<T: PaneDelegate + SettingsDelegate>(
             cx.stop_propagation();
             listener(event, window, cx);
         }))
-        .child(Icon::new(icon).size(14.0).color(theme.text_muted))
-        .into_any_element()
+        .child(Icon::new(icon).size(14.0).color(theme.text_muted));
+
+    match tooltip {
+        Some(tooltip) => Tooltip::new(format!("{id}-tooltip"), tooltip, button)
+            .position(TooltipPosition::Bottom)
+            .into_any_element(),
+        None => button.into_any_element(),
+    }
 }
 
 fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
@@ -1681,7 +1692,9 @@ fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: 
                 .await;
 
             let should_continue = this
-                .update(cx, |_, cx| apply_watched_summary(&root, generation, result, cx))
+                .update(cx, |_, cx| {
+                    apply_watched_summary(&root, generation, result, cx)
+                })
                 .unwrap_or(false);
 
             if !should_continue {

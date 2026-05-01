@@ -19,6 +19,7 @@ use icons::{Icon, IconName};
 use tabs::registry;
 use theme::ActiveTheme;
 
+use crate::components::{Tooltip, TooltipPosition};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 use crate::tabs::file_tree::state::ActiveFileTreeUi;
 
@@ -292,9 +293,8 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let _ = tooltip;
     let _ = cx;
-    div()
+    let button = div()
         .id(id)
         .size(rems(1.375))
         .flex_none()
@@ -309,7 +309,10 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
             cx.stop_propagation();
             listener(event, window, cx);
         })
-        .child(Icon::new(icon).size(14.0).color(theme.text_muted))
+        .child(Icon::new(icon).size(14.0).color(theme.text_muted));
+
+    Tooltip::new(format!("{id}-tooltip"), tooltip, button)
+        .position(TooltipPosition::Top)
         .into_any_element()
 }
 

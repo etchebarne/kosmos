@@ -215,7 +215,10 @@ pub fn discard_all_changes(path: impl AsRef<Path>) -> Result<(), Error> {
 
 pub fn discard_files(path: impl AsRef<Path>, files: &[String]) -> Result<(), Error> {
     for file in files {
-        run_git(path.as_ref(), &["restore", "--staged", "--worktree", "--", file])?;
+        run_git(
+            path.as_ref(),
+            &["restore", "--staged", "--worktree", "--", file],
+        )?;
     }
     Ok(())
 }
