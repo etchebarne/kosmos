@@ -213,6 +213,13 @@ pub fn discard_all_changes(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["clean", "-fd"])
 }
 
+pub fn discard_files(path: impl AsRef<Path>, files: &[String]) -> Result<(), Error> {
+    for file in files {
+        run_git(path.as_ref(), &["restore", "--staged", "--worktree", "--", file])?;
+    }
+    Ok(())
+}
+
 pub fn list_remotes(path: impl AsRef<Path>) -> Result<Vec<Remote>, Error> {
     let output = git_output(path.as_ref(), &["remote", "-v"])?;
     let mut remotes = Vec::new();

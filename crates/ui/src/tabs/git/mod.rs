@@ -19,6 +19,7 @@ enum GitModal {
     Remotes,
     Stashes,
     Tags,
+    ConfirmDiscardSelected,
     ConfirmDiscard,
 }
 
@@ -352,7 +353,13 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
     let root_remotes = root.clone();
     let root_stashes = root.clone();
     let root_tags = root.clone();
+    let root_discard_selected = root.clone();
     let root_discard = root.clone();
+    let has_selected_changes = cx
+        .global::<GitUiState>()
+        .summary
+        .as_ref()
+        .is_some_and(|summary| summary.files.iter().any(|file| file.staged));
     deferred(
         anchored().position(position).snap_to_window().child(
             div()
@@ -427,9 +434,24 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                 ))
                 .child(menu_separator(theme))
                 .child(menu_item::<T>(
-                    "git-menu-discard",
+                    "git-menu-discard-selected",
                     IconName::Trash,
-                    "Discard Changes",
+                    "Discard Selected Changes",
+                    has_selected_changes,
+                    true,
+                    move |_, _, cx| {
+                        open_modal(
+                            root_discard_selected.clone(),
+                            GitModal::ConfirmDiscardSelected,
+                            cx,
+                        )
+                    },
+                    cx,
+                ))
+                .child(menu_item::<T>(
+                    "git-menu-discard-all",
+                    IconName::Trash,
+                    "Discard All Changes",
                     true,
                     true,
                     move |_, _, cx| open_modal(root_discard.clone(), GitModal::ConfirmDiscard, cx),
@@ -548,6 +570,50 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             theme,
             cx.listener(|_, _, _, cx| close_modal(cx)),
         ),
+        GitModal::ConfirmDiscardSelected => {
+            let root = root.clone();
+            let selected_paths = selected_change_paths(cx);
+            let selected_count = selected_paths.len();
+            modal::render(
+                "git-discard-selected-modal",
+                "Discard Selected Changes",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .text_sm()
+                    .child(format!(
+                        "This will permanently discard {selected_count} selected working tree change{}. This action cannot be undone.",
+                        plural(selected_count)
+                    ))
+                    .into_any_element(),
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(close_modal_button(cx))
+                    .child(action_button(
+                        "git-confirm-discard-selected",
+                        "Discard Selected",
+                        true,
+                        cx.listener(move |_, _, _, cx| {
+                            close_modal(cx);
+                            run_git_action(
+                                root.clone(),
+                                {
+                                    let selected_paths = selected_paths.clone();
+                                    move |root| kosmos_git::discard_files(root, &selected_paths)
+                                },
+                                cx,
+                            );
+                        }),
+                        cx,
+                    ))
+                    .into_any_element(),
+                theme,
+                cx.listener(|_, _, _, cx| close_modal(cx)),
+            )
+        }
         GitModal::ConfirmDiscard => {
             let root = root.clone();
             modal::render(
@@ -1455,6 +1521,21 @@ fn close_modal(cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| state.modal = None);
 }
 
+fn selected_change_paths<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> Vec<String> {
+    cx.global::<GitUiState>()
+        .summary
+        .as_ref()
+        .map(|summary| {
+            summary
+                .files
+                .iter()
+                .filter(|file| file.staged)
+                .map(|file| file.path.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn toggle_stash<T: PaneDelegate + SettingsDelegate>(id: &str, cx: &mut Context<T>) {
     cx.update_global::<GitUiState, _>(|state, _| {
         if !state.expanded_stashes.remove(id) {
@@ -1497,7 +1578,7 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
                 apply_modal_list_result(modal, result.map(ModalList::Tags), cx);
             });
         }
-        GitModal::ConfirmDiscard => {}
+        GitModal::ConfirmDiscardSelected | GitModal::ConfirmDiscard => {}
     })
     .detach();
 }
