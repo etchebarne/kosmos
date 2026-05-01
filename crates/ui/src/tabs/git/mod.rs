@@ -7,7 +7,7 @@ use gpui::{
 
 use file_tree::ActiveFileTree;
 use icons::{Icon, IconName};
-use kosmos_git::{Remote, RepositorySummary, Stash, Tag};
+use kosmos_git::{FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag};
 use tabs::registry;
 use theme::ActiveTheme;
 
@@ -87,19 +87,16 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .gap_3()
-                .p_3()
-                .child(match summary.as_ref() {
-                    Some(summary) => summary_card(summary, cx),
-                    None if loading => loading_state(cx),
-                    None => empty_panel("Git status unavailable", cx),
+                .when(summary.is_none(), |this| {
+                    this.child(if loading {
+                        loading_state(cx)
+                    } else {
+                        empty_panel("Git status unavailable", cx)
+                    })
                 })
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_subtle)
-                        .child("Basic Git integration is wired through crates/git using gix."),
-                ),
+                .when_some(summary.as_ref(), |this, summary| {
+                    this.child(change_list(&root, summary, cx))
+                }),
         )
         .when_some(dismiss_layer, |this, layer| this.child(layer))
         .when_some(menu_overlay, |this, menu| this.child(menu))
@@ -1016,98 +1013,340 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn summary_card<T: PaneDelegate + SettingsDelegate>(
+fn change_list<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
     summary: &RepositorySummary,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let branch = summary.branch.as_deref().unwrap_or("Detached HEAD");
-    let status = if summary.is_clean() {
-        "Working tree clean".to_string()
-    } else {
-        format!(
-            "{} changed item{}",
-            summary.changes,
-            plural(summary.changes)
+    let tree = build_change_tree(&summary.files);
+    div()
+        .id("git-change-list")
+        .flex_1()
+        .min_h_0()
+        .bg(theme.bg_surface)
+        .overflow_y_scroll()
+        .child(
+            div()
+                .flex_none()
+                .px_4()
+                .pt_3()
+                .pb_2()
+                .text_xs()
+                .text_color(theme.text_subtle)
+                .child("TRACKED"),
         )
-    };
+        .when(summary.files.is_empty(), |this| {
+            this.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .p_3()
+                    .text_sm()
+                    .text_color(theme.text_subtle)
+                    .child(
+                        Icon::new(IconName::SourceControl)
+                            .size(14.0)
+                            .color(theme.text_muted),
+                    )
+                    .child("No file changes"),
+            )
+        })
+        .children(
+            tree.dirs
+                .into_values()
+                .map(|node| change_dir_row(root.clone(), node, 0, true, cx)),
+        )
+        .children(
+            tree.files
+                .into_iter()
+                .map(|change| change_file_row(root.clone(), change, 0, cx)),
+        )
+        .into_any_element()
+}
+
+#[derive(Default)]
+struct ChangeTreeNode {
+    name: String,
+    path: String,
+    dirs: std::collections::BTreeMap<String, ChangeTreeNode>,
+    files: Vec<FileChange>,
+}
+
+fn build_change_tree(files: &[FileChange]) -> ChangeTreeNode {
+    let mut root = ChangeTreeNode::default();
+    for change in files {
+        let mut parts = change.path.split('/').collect::<Vec<_>>();
+        let Some(file_name) = parts.pop() else {
+            continue;
+        };
+        let mut node = &mut root;
+        let mut path = String::new();
+        for part in parts {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(part);
+            node = node
+                .dirs
+                .entry(part.to_string())
+                .or_insert_with(|| ChangeTreeNode {
+                    name: part.to_string(),
+                    path: path.clone(),
+                    ..Default::default()
+                });
+        }
+        let mut file = change.clone();
+        file.path = if node.path.is_empty() {
+            file_name.to_string()
+        } else {
+            format!("{}/{}", node.path, file_name)
+        };
+        node.files.push(file);
+    }
+    root
+}
+
+fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    mut node: ChangeTreeNode,
+    depth: usize,
+    keep_separate: bool,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let mut label = node.name.clone();
+    while !keep_separate && node.files.is_empty() && node.dirs.len() == 1 {
+        let (_, child) = node.dirs.into_iter().next().unwrap();
+        label = format!("{label}/{}", child.name);
+        node = child;
+    }
+    let stats = node_stats(&node);
+    let path = node.path.clone();
 
     div()
         .flex()
         .flex_col()
-        .gap_3()
-        .rounded(rems(0.5))
-        .border_1()
-        .border_color(theme.border_subtle)
-        .bg(theme.bg_elevated)
-        .p_3()
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_between()
                 .gap_2()
+                .h(rems(2.125))
+                .pl(rems(1.25 + depth as f32 * 1.25))
+                .pr_4()
+                .hover(move |this| this.bg(theme.bg_hover))
                 .child(
                     div()
+                        .min_w_0()
                         .flex()
                         .items_center()
                         .gap_2()
                         .child(
-                            Icon::new(IconName::SourceControl)
+                            Icon::new(IconName::FolderOpened)
                                 .size(14.0)
-                                .color(theme.text_muted),
+                                .color(theme.accent),
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.text_emphasis)
-                                .child(branch.to_string()),
-                        ),
+                        .child(div().text_sm().text_color(theme.text).child(label)),
                 )
-                .child(
-                    div()
-                        .rounded(rems(0.25))
-                        .bg(if summary.is_clean() {
-                            gpui::Hsla::from(theme.accent).opacity(0.14)
-                        } else {
-                            gpui::Hsla::from(theme.danger).opacity(0.14)
-                        })
-                        .px_2()
-                        .py_1()
-                        .text_xs()
-                        .text_color(if summary.is_clean() {
-                            theme.accent
-                        } else {
-                            theme.danger
-                        })
-                        .child(status),
-                ),
+                .child(stage_checkbox(
+                    SharedString::from(format!("git-folder-toggle:{path}")),
+                    stats.staged == stats.total,
+                    root.clone(),
+                    path,
+                    cx,
+                )),
         )
-        .child(detail_row(
-            "Repository",
-            summary.work_dir.display().to_string(),
-            cx,
-        ))
-        .child(detail_row(
-            "Git directory",
-            summary.git_dir.display().to_string(),
-            cx,
-        ))
+        .children(
+            node.dirs
+                .into_values()
+                .map(|child| change_dir_row(root.clone(), child, depth + 1, false, cx)),
+        )
+        .children(
+            node.files
+                .into_iter()
+                .map(|change| change_file_row(root.clone(), change, depth + 1, cx)),
+        )
         .into_any_element()
 }
 
-fn detail_row<T: PaneDelegate + SettingsDelegate>(
-    label: &'static str,
-    value: String,
+fn change_file_row<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    change: FileChange,
+    depth: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
+    let name = change
+        .path
+        .rsplit_once('/')
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| change.path.clone());
+    let icon_color = match change.kind {
+        FileChangeKind::Created => rgb(0x22c55e),
+        FileChangeKind::Modified => theme.text_muted,
+        FileChangeKind::Deleted => theme.danger,
+        FileChangeKind::Renamed => rgb(0xa855f7),
+    };
+
     div()
         .flex()
-        .flex_col()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .h(rems(2.125))
+        .pl(rems(1.25 + depth as f32 * 1.25))
+        .pr_4()
+        .hover(move |this| this.bg(theme.bg_hover))
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Icon::new(IconName::File).size(14.0).color(icon_color))
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_sm()
+                        .text_color(if change.kind == FileChangeKind::Deleted {
+                            theme.text_subtle
+                        } else {
+                            theme.text
+                        })
+                        .child(name),
+                ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(change_stats(&change, theme))
+                .child(stage_checkbox(
+                    SharedString::from(format!("git-file-toggle:{}", change.path)),
+                    change.staged,
+                    root,
+                    change.path,
+                    cx,
+                )),
+        )
+        .into_any_element()
+}
+
+#[derive(Default)]
+struct ChangeNodeStats {
+    total: usize,
+    staged: usize,
+}
+
+fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
+    let mut stats = ChangeNodeStats::default();
+    for file in &node.files {
+        stats.total += 1;
+        if file.staged {
+            stats.staged += 1;
+        }
+    }
+    for child in node.dirs.values() {
+        let child_stats = node_stats(child);
+        stats.total += child_stats.total;
+        stats.staged += child_stats.staged;
+    }
+    stats
+}
+
+fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
+    let added = rgb(0x22c55e);
+    div()
+        .flex()
+        .items_center()
         .gap_1()
-        .child(div().text_xs().text_color(theme.text_subtle).child(label))
-        .child(div().text_sm().text_color(theme.text).child(value))
+        .text_sm()
+        .when(change.insertions > 0, |this| {
+            this.child(
+                div()
+                    .text_color(added)
+                    .child(format!("+{}", change.insertions)),
+            )
+        })
+        .when(change.deletions > 0, |this| {
+            this.child(
+                div()
+                    .text_color(theme.danger)
+                    .child(format!("-{}", change.deletions)),
+            )
+        })
+        .when(change.insertions == 0 && change.deletions == 0, |this| {
+            this.child(div().text_color(theme.text_subtle).child("0"))
+        })
+        .into_any_element()
+}
+
+fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
+    id: SharedString,
+    staged: bool,
+    root: PathBuf,
+    path: String,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let unselected_color = gpui::Hsla::from(if theme.is_dark {
+        rgb(0xffffff)
+    } else {
+        rgb(0x000000)
+    })
+    .opacity(0.28);
+    div()
+        .id(id)
+        .size(rems(1.125))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(rems(0.0625))
+        .border_1()
+        .border_color(if staged {
+            gpui::Hsla::from(theme.accent)
+        } else {
+            unselected_color
+        })
+        .bg(gpui::Hsla::from(theme.bg_surface).opacity(0.0))
+        .hover(move |this| {
+            this.border_color(if staged {
+                gpui::Hsla::from(theme.accent)
+            } else {
+                gpui::Hsla::from(theme.text_subtle)
+            })
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |_, _, _, cx| {
+            let path = path.clone();
+            if staged {
+                run_git_action(
+                    root.clone(),
+                    move |root| kosmos_git::unstage_file(root, &path),
+                    cx,
+                );
+            } else {
+                run_git_action(
+                    root.clone(),
+                    move |root| kosmos_git::stage_file(root, &path),
+                    cx,
+                );
+            }
+        }))
+        .when(staged, |this| {
+            this.child(
+                div()
+                    .size(rems(0.625))
+                    .rounded(rems(0.03125))
+                    .bg(theme.accent),
+            )
+        })
         .into_any_element()
 }
 

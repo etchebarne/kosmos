@@ -8,6 +8,24 @@ pub struct RepositorySummary {
     pub changes: usize,
     pub insertions: usize,
     pub deletions: usize,
+    pub files: Vec<FileChange>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileChange {
+    pub path: String,
+    pub kind: FileChangeKind,
+    pub staged: bool,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileChangeKind {
+    Created,
+    Modified,
+    Deleted,
+    Renamed,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +69,12 @@ impl RepositorySummary {
                     .map_err(|source| Error::Status(source.to_string()))
             })?;
 
-        let stats = diff_stats(path.as_ref()).unwrap_or_default();
+        let files = file_changes(path.as_ref()).unwrap_or_default();
+        let stats = files.iter().fold(DiffStats::default(), |mut stats, file| {
+            stats.insertions += file.insertions;
+            stats.deletions += file.deletions;
+            stats
+        });
 
         Ok(Self {
             work_dir: repo
@@ -63,6 +86,7 @@ impl RepositorySummary {
             changes,
             insertions: stats.insertions,
             deletions: stats.deletions,
+            files,
         })
     }
 
@@ -77,30 +101,79 @@ struct DiffStats {
     deletions: usize,
 }
 
-fn diff_stats(path: &Path) -> Result<DiffStats, Error> {
-    let output = std::process::Command::new("git")
-        .arg("diff")
-        .arg("--numstat")
-        .arg("HEAD")
-        .current_dir(path)
-        .output()
-        .map_err(|source| Error::Status(source.to_string()))?;
-
-    if !output.status.success() {
-        return Err(Error::Status(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-
-    let mut stats = DiffStats::default();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
+fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
+    let repo = gix::discover(path).map_err(|source| Error::Discover {
+        path: path.to_path_buf(),
+        source: source.to_string(),
+    })?;
+    let work_dir = repo.workdir().unwrap_or(path);
+    let mut stats_by_path = std::collections::HashMap::new();
+    for line in git_output(work_dir, &["diff", "--numstat", "HEAD"])?.lines() {
         let mut parts = line.split('\t');
         let insertions = parts.next().unwrap_or_default();
         let deletions = parts.next().unwrap_or_default();
-        stats.insertions += insertions.parse::<usize>().unwrap_or(0);
-        stats.deletions += deletions.parse::<usize>().unwrap_or(0);
+        if let Some(path) = parts.last().filter(|path| !path.is_empty()) {
+            stats_by_path.insert(
+                normalize_numstat_path(path),
+                DiffStats {
+                    insertions: insertions.parse::<usize>().unwrap_or(0),
+                    deletions: deletions.parse::<usize>().unwrap_or(0),
+                },
+            );
+        }
     }
-    Ok(stats)
+
+    let status = git_output(work_dir, &["status", "--porcelain=v1", "-z"])?;
+    let mut changes = Vec::new();
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let bytes = entry.as_bytes();
+        let index_status = bytes[0] as char;
+        let worktree_status = bytes[1] as char;
+        let path = entry[3..].to_string();
+        if matches!(index_status, 'R' | 'C') {
+            let _ = entries.next();
+        }
+
+        let kind = change_kind(index_status, worktree_status);
+        let staged = index_status != ' ' && index_status != '?';
+        let mut stats = stats_by_path.remove(&path).unwrap_or_default();
+        if index_status == '?' && stats.insertions == 0 && stats.deletions == 0 {
+            stats.insertions = count_text_lines(work_dir.join(&path));
+        }
+        changes.push(FileChange {
+            path,
+            kind,
+            staged,
+            insertions: stats.insertions,
+            deletions: stats.deletions,
+        });
+    }
+    Ok(changes)
+}
+
+fn change_kind(index_status: char, worktree_status: char) -> FileChangeKind {
+    match (index_status, worktree_status) {
+        ('R', _) | ('C', _) => FileChangeKind::Renamed,
+        ('A', _) | ('?', '?') => FileChangeKind::Created,
+        ('D', _) | (_, 'D') => FileChangeKind::Deleted,
+        _ => FileChangeKind::Modified,
+    }
+}
+
+fn normalize_numstat_path(path: &str) -> String {
+    path.rsplit_once(" => ")
+        .map(|(_, after)| after.trim_matches(['{', '}']).to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+fn count_text_lines(path: impl AsRef<Path>) -> usize {
+    std::fs::read_to_string(path)
+        .map(|contents| contents.lines().count())
+        .unwrap_or(0)
 }
 
 pub fn stage_all(path: impl AsRef<Path>) -> Result<(), Error> {
@@ -109,6 +182,14 @@ pub fn stage_all(path: impl AsRef<Path>) -> Result<(), Error> {
 
 pub fn unstage_all(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["restore", "--staged", "."])
+}
+
+pub fn stage_file(path: impl AsRef<Path>, file: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["add", "--", file])
+}
+
+pub fn unstage_file(path: impl AsRef<Path>, file: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["restore", "--staged", "--", file])
 }
 
 pub fn stash_staged(path: impl AsRef<Path>) -> Result<(), Error> {
