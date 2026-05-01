@@ -2,7 +2,7 @@ mod blank;
 mod file_editor;
 mod file_search;
 pub mod file_tree;
-mod git;
+pub mod git;
 mod placeholder;
 pub mod settings;
 mod terminal;

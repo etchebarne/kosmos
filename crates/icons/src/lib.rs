@@ -12,6 +12,7 @@ use icondata_core::Icon as IconData;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconName {
     Add,
+    Archive,
     Blank,
     ChevronDown,
     ChevronRight,
@@ -24,6 +25,7 @@ pub enum IconName {
     CollapseAll,
     Copy,
     Edit,
+    Ellipsis,
     EmptyWindow,
     File,
     FileAdd,
@@ -32,6 +34,7 @@ pub enum IconName {
     FolderOpened,
     ListTree,
     Refresh,
+    Remove,
     Search,
     SettingsGear,
     SourceControl,
@@ -83,6 +86,7 @@ pub enum IconName {
 impl IconName {
     pub const ALL: &'static [Self] = &[
         Self::Add,
+        Self::Archive,
         Self::Blank,
         Self::ChevronDown,
         Self::ChevronRight,
@@ -95,6 +99,7 @@ impl IconName {
         Self::CollapseAll,
         Self::Copy,
         Self::Edit,
+        Self::Ellipsis,
         Self::EmptyWindow,
         Self::File,
         Self::FileAdd,
@@ -103,6 +108,7 @@ impl IconName {
         Self::FolderOpened,
         Self::ListTree,
         Self::Refresh,
+        Self::Remove,
         Self::Search,
         Self::SettingsGear,
         Self::SourceControl,
@@ -154,6 +160,7 @@ impl IconName {
     pub fn path(self) -> &'static str {
         match self {
             Self::Add => "icons/add.svg",
+            Self::Archive => "icons/archive.svg",
             Self::Blank => "icons/blank.svg",
             Self::ChevronDown => "icons/chevron-down.svg",
             Self::ChevronRight => "icons/chevron-right.svg",
@@ -166,6 +173,7 @@ impl IconName {
             Self::CollapseAll => "icons/collapse-all.svg",
             Self::Copy => "icons/copy.svg",
             Self::Edit => "icons/edit.svg",
+            Self::Ellipsis => "icons/ellipsis.svg",
             Self::EmptyWindow => "icons/empty-window.svg",
             Self::File => "icons/file.svg",
             Self::FileAdd => "icons/file-add.svg",
@@ -174,6 +182,7 @@ impl IconName {
             Self::FolderOpened => "icons/folder-opened.svg",
             Self::ListTree => "icons/list-tree.svg",
             Self::Refresh => "icons/refresh.svg",
+            Self::Remove => "icons/remove.svg",
             Self::Search => "icons/search.svg",
             Self::SettingsGear => "icons/settings-gear.svg",
             Self::SourceControl => "icons/source-control.svg",
@@ -240,6 +249,7 @@ impl IconName {
     fn data(self) -> Option<IconData> {
         let data = match self {
             Self::Add => icondata_vs::VsAdd,
+            Self::Archive => icondata_vs::VsArchive,
             Self::Blank => icondata_vs::VsBlank,
             Self::ChevronDown => icondata_vs::VsChevronDown,
             Self::ChevronRight => icondata_vs::VsChevronRight,
@@ -252,6 +262,7 @@ impl IconName {
             Self::CollapseAll => icondata_vs::VsCollapseAll,
             Self::Copy => icondata_vs::VsCopy,
             Self::Edit => icondata_vs::VsEdit,
+            Self::Ellipsis => icondata_vs::VsEllipsis,
             Self::EmptyWindow => icondata_vs::VsEmptyWindow,
             Self::File => icondata_vs::VsFile,
             Self::FileAdd => icondata_vs::VsNewFile,
@@ -260,6 +271,7 @@ impl IconName {
             Self::FolderOpened => icondata_vs::VsFolderOpened,
             Self::ListTree => icondata_vs::VsListTree,
             Self::Refresh => icondata_vs::VsRefresh,
+            Self::Remove => icondata_vs::VsRemove,
             Self::Search => icondata_vs::VsSearch,
             Self::SettingsGear => icondata_vs::VsSettingsGear,
             Self::SourceControl => icondata_vs::VsSourceControl,

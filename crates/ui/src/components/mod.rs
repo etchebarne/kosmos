@@ -1,5 +1,6 @@
 pub mod dropdown;
 pub mod input;
+pub mod modal;
 pub mod multi_select;
 pub mod numeric_input;
 pub mod scrollbar;
