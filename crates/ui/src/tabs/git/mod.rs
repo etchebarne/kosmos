@@ -1219,6 +1219,7 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                 .hover(move |this| this.bg(theme.bg_hover))
                 .child(
                     div()
+                        .flex_1()
                         .min_w_0()
                         .flex()
                         .items_center()
@@ -1228,7 +1229,17 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                                 .size(14.0)
                                 .color(theme.accent),
                         )
-                        .child(div().text_sm().text_color(theme.text).child(label)),
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_sm()
+                                .text_color(theme.text)
+                                .child(label),
+                        ),
                 )
                 .child(stage_checkbox(
                     SharedString::from(format!("git-folder-toggle:{path}")),
@@ -1281,6 +1292,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
         .hover(move |this| this.bg(theme.bg_hover))
         .child(
             div()
+                .flex_1()
                 .min_w_0()
                 .flex()
                 .items_center()
@@ -1288,7 +1300,11 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                 .child(Icon::new(IconName::File).size(14.0).color(icon_color))
                 .child(
                     div()
+                        .flex_1()
                         .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .text_sm()
                         .text_color(if change.kind == FileChangeKind::Deleted {
                             theme.text_subtle
