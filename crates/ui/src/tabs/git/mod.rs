@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, MouseDownEvent,
@@ -38,6 +41,7 @@ struct GitUiState {
     remotes: Vec<Remote>,
     stashes: Vec<Stash>,
     expanded_stashes: std::collections::HashSet<String>,
+    collapsed_change_dirs: std::collections::HashSet<String>,
     tags: Vec<Tag>,
     remote_name: Option<Entity<TextInput>>,
     remote_url: Option<Entity<TextInput>>,
@@ -1203,6 +1207,11 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
     }
     let stats = node_stats(&node);
     let path = node.path.clone();
+    let is_expanded = !cx
+        .global::<GitUiState>()
+        .collapsed_change_dirs
+        .contains(&path);
+    let toggle_path = path.clone();
 
     div()
         .flex()
@@ -1214,20 +1223,39 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                 .justify_between()
                 .gap_2()
                 .h(rems(2.125))
-                .pl(rems(1.25 + depth as f32 * 1.25))
+                .pl(rems(1.25))
                 .pr_4()
                 .hover(move |this| this.bg(theme.bg_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_, _, _, cx| {
+                        toggle_change_dir(&toggle_path, cx);
+                    }),
+                )
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .child(change_indent_guides(depth, theme))
                         .child(
-                            Icon::new(IconName::FolderOpened)
-                                .size(14.0)
-                                .color(theme.accent),
+                            div()
+                                .w(rems(1.25))
+                                .h(rems(2.125))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    Icon::new(if is_expanded {
+                                        IconName::FolderOpened
+                                    } else {
+                                        IconName::Folder
+                                    })
+                                    .size(14.0)
+                                    .color(theme.text_muted),
+                                ),
                         )
                         .child(
                             div()
@@ -1236,6 +1264,7 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
+                                .pl(rems(0.25))
                                 .text_sm()
                                 .text_color(theme.text)
                                 .child(label),
@@ -1249,16 +1278,18 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                     cx,
                 )),
         )
-        .children(
-            node.dirs
-                .into_values()
-                .map(|child| change_dir_row(root.clone(), child, depth + 1, false, cx)),
-        )
-        .children(
-            node.files
-                .into_iter()
-                .map(|change| change_file_row(root.clone(), change, depth + 1, cx)),
-        )
+        .when(is_expanded, |this| {
+            this.children(
+                node.dirs
+                    .into_values()
+                    .map(|child| change_dir_row(root.clone(), child, depth + 1, false, cx)),
+            )
+            .children(
+                node.files
+                    .into_iter()
+                    .map(|change| change_file_row(root.clone(), change, depth + 1, cx)),
+            )
+        })
         .into_any_element()
 }
 
@@ -1274,6 +1305,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
         .rsplit_once('/')
         .map(|(_, name)| name.to_string())
         .unwrap_or_else(|| change.path.clone());
+    let icon_name = icon_for_git_file(Path::new(&change.path));
     let icon_color = match change.kind {
         FileChangeKind::Created => rgb(0x22c55e),
         FileChangeKind::Modified => theme.text_muted,
@@ -1287,7 +1319,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
         .justify_between()
         .gap_2()
         .h(rems(2.125))
-        .pl(rems(1.25 + depth as f32 * 1.25))
+        .pl(rems(1.25))
         .pr_4()
         .hover(move |this| this.bg(theme.bg_hover))
         .child(
@@ -1296,8 +1328,17 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                 .min_w_0()
                 .flex()
                 .items_center()
-                .gap_2()
-                .child(Icon::new(IconName::File).size(14.0).color(icon_color))
+                .child(change_indent_guides(depth, theme))
+                .child(
+                    div()
+                        .w(rems(1.25))
+                        .h(rems(2.125))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Icon::new(icon_name).size(14.0).color(icon_color)),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -1305,6 +1346,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
+                        .pl(rems(0.25))
                         .text_sm()
                         .text_color(if change.kind == FileChangeKind::Deleted {
                             theme.text_subtle
@@ -1352,6 +1394,45 @@ fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
         stats.staged += child_stats.staged;
     }
     stats
+}
+
+fn change_indent_guides(depth: usize, theme: theme::Theme) -> AnyElement {
+    if depth == 0 {
+        return div().flex_none().into_any_element();
+    }
+
+    let mut row = div().flex().flex_none().h(rems(2.125));
+    for _ in 0..depth {
+        row = row.child(
+            div()
+                .relative()
+                .w(rems(1.25))
+                .h(rems(2.125))
+                .flex_none()
+                .child(
+                    div()
+                        .absolute()
+                        .left(rems(0.625))
+                        .top_0()
+                        .bottom_0()
+                        .w(rems(0.0625))
+                        .bg(gpui::Hsla::from(theme.text).opacity(0.1)),
+                ),
+        );
+    }
+    row.into_any_element()
+}
+
+fn icon_for_git_file(path: &Path) -> IconName {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str())
+        && let Some(icon) = IconName::for_file_name(name)
+    {
+        return icon;
+    }
+
+    language::from_path(path)
+        .and_then(|id| IconName::for_language(id.as_str()))
+        .unwrap_or(IconName::File)
 }
 
 fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
@@ -1574,6 +1655,15 @@ fn toggle_stash<T: PaneDelegate + SettingsDelegate>(id: &str, cx: &mut Context<T
     cx.notify();
 }
 
+fn toggle_change_dir<T: PaneDelegate + SettingsDelegate>(path: &str, cx: &mut Context<T>) {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        if !state.collapsed_change_dirs.remove(path) {
+            state.collapsed_change_dirs.insert(path.to_string());
+        }
+    });
+    cx.notify();
+}
+
 fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     modal: GitModal,
@@ -1769,6 +1859,7 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
         if state.root.as_ref() != Some(&root) {
             state.summary = None;
             state.last_error = None;
+            state.collapsed_change_dirs.clear();
         }
         state.root = Some(root.clone());
         if show_loading {
