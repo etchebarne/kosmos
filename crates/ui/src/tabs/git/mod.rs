@@ -52,6 +52,14 @@ struct GitUiState {
 
 impl Global for GitUiState {}
 
+const CHANGE_ROW_HEIGHT_REM: f32 = 1.625;
+const CHANGE_ROW_PADDING_REM: f32 = 1.00;
+const CHANGE_INDENT_REM: f32 = 1.25;
+const CHANGE_GUIDE_OFFSET_REM: f32 = 0.625;
+const CHANGE_GUIDE_WIDTH_REM: f32 = 0.0625;
+const CHANGE_ICON_WIDTH_REM: f32 = 1.25;
+const CHANGE_LABEL_PADDING_REM: f32 = 0.25;
+
 pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
     ensure_state(cx);
     let theme = *cx.theme();
@@ -1222,9 +1230,8 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                 .items_center()
                 .justify_between()
                 .gap_2()
-                .h(rems(2.125))
-                .pl(rems(1.25))
-                .pr_4()
+                .h(rems(CHANGE_ROW_HEIGHT_REM))
+                .px(rems(CHANGE_ROW_PADDING_REM))
                 .hover(move |this| this.bg(theme.bg_hover))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -1241,8 +1248,8 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                         .child(change_indent_guides(depth, theme))
                         .child(
                             div()
-                                .w(rems(1.25))
-                                .h(rems(2.125))
+                                .w(rems(CHANGE_ICON_WIDTH_REM))
+                                .h(rems(CHANGE_ROW_HEIGHT_REM))
                                 .flex_none()
                                 .flex()
                                 .items_center()
@@ -1264,7 +1271,7 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .pl(rems(0.25))
+                                .pl(rems(CHANGE_LABEL_PADDING_REM))
                                 .text_sm()
                                 .text_color(theme.text)
                                 .child(label),
@@ -1318,9 +1325,8 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
         .items_center()
         .justify_between()
         .gap_2()
-        .h(rems(2.125))
-        .pl(rems(1.25))
-        .pr_4()
+        .h(rems(CHANGE_ROW_HEIGHT_REM))
+        .px(rems(CHANGE_ROW_PADDING_REM))
         .hover(move |this| this.bg(theme.bg_hover))
         .child(
             div()
@@ -1331,8 +1337,8 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                 .child(change_indent_guides(depth, theme))
                 .child(
                     div()
-                        .w(rems(1.25))
-                        .h(rems(2.125))
+                        .w(rems(CHANGE_ICON_WIDTH_REM))
+                        .h(rems(CHANGE_ROW_HEIGHT_REM))
                         .flex_none()
                         .flex()
                         .items_center()
@@ -1346,7 +1352,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .pl(rems(0.25))
+                        .pl(rems(CHANGE_LABEL_PADDING_REM))
                         .text_sm()
                         .text_color(if change.kind == FileChangeKind::Deleted {
                             theme.text_subtle
@@ -1401,21 +1407,21 @@ fn change_indent_guides(depth: usize, theme: theme::Theme) -> AnyElement {
         return div().flex_none().into_any_element();
     }
 
-    let mut row = div().flex().flex_none().h(rems(2.125));
+    let mut row = div().flex().flex_none().h(rems(CHANGE_ROW_HEIGHT_REM));
     for _ in 0..depth {
         row = row.child(
             div()
                 .relative()
-                .w(rems(1.25))
-                .h(rems(2.125))
+                .w(rems(CHANGE_INDENT_REM))
+                .h(rems(CHANGE_ROW_HEIGHT_REM))
                 .flex_none()
                 .child(
                     div()
                         .absolute()
-                        .left(rems(0.625))
+                        .left(rems(CHANGE_GUIDE_OFFSET_REM))
                         .top_0()
                         .bottom_0()
-                        .w(rems(0.0625))
+                        .w(rems(CHANGE_GUIDE_WIDTH_REM))
                         .bg(gpui::Hsla::from(theme.text).opacity(0.1)),
                 ),
         );
