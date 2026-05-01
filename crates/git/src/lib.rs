@@ -22,6 +22,13 @@ pub struct Tag {
     pub message: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct Stash {
+    pub id: String,
+    pub message: String,
+    pub files: Vec<String>,
+}
+
 impl RepositorySummary {
     pub fn discover(path: impl AsRef<Path>) -> Result<Self, Error> {
         let repo = gix::discover(path.as_ref()).map_err(|source| Error::Discover {
@@ -186,6 +193,34 @@ pub fn add_tag(
 
 pub fn delete_tag(path: impl AsRef<Path>, name: &str) -> Result<(), Error> {
     run_git(path.as_ref(), &["tag", "-d", name])
+}
+
+pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
+    let path = path.as_ref();
+    let output = git_output(path, &["stash", "list"])?;
+    output
+        .lines()
+        .filter_map(|line| {
+            let (id, message) = line.split_once(':')?;
+            Some((id.to_string(), message.trim().to_string()))
+        })
+        .map(|(id, message)| {
+            let files = git_output(path, &["stash", "show", "--name-only", &id])?
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(ToString::to_string)
+                .collect();
+            Ok(Stash { id, message, files })
+        })
+        .collect()
+}
+
+pub fn apply_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["stash", "apply", id])
+}
+
+pub fn delete_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["stash", "drop", id])
 }
 
 fn git_output(path: &Path, args: &[&str]) -> Result<String, Error> {

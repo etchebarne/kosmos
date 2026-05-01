@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, MouseDownEvent,
-    Pixels, Point, Task, Window, anchored, deferred, div, prelude::*, rems, rgb,
+    Pixels, Point, SharedString, Task, Window, anchored, deferred, div, prelude::*, rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
 use icons::{Icon, IconName};
-use kosmos_git::{Remote, RepositorySummary, Tag};
+use kosmos_git::{Remote, RepositorySummary, Stash, Tag};
 use tabs::registry;
 use theme::ActiveTheme;
 
@@ -17,6 +17,7 @@ use crate::delegate::{PaneDelegate, SettingsDelegate};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GitModal {
     Remotes,
+    Stashes,
     Tags,
     ConfirmDiscard,
 }
@@ -32,6 +33,8 @@ struct GitUiState {
     modal: Option<GitModal>,
     last_error: Option<String>,
     remotes: Vec<Remote>,
+    stashes: Vec<Stash>,
+    expanded_stashes: std::collections::HashSet<String>,
     tags: Vec<Tag>,
     remote_name: Option<Entity<TextInput>>,
     remote_url: Option<Entity<TextInput>>,
@@ -350,6 +353,7 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
     let root_pull = root.clone();
     let root_fetch = root.clone();
     let root_remotes = root.clone();
+    let root_stashes = root.clone();
     let root_tags = root.clone();
     let root_discard = root.clone();
     deferred(
@@ -372,17 +376,19 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(menu_item::<T>(
                     "git-menu-push",
-                    IconName::SourceControl,
+                    IconName::ArrowUp,
                     "Push",
                     true,
+                    false,
                     move |_, _, cx| run_git_action(root_push.clone(), kosmos_git::push, cx),
                     cx,
                 ))
                 .child(menu_item::<T>(
                     "git-menu-pull",
-                    IconName::SourceControl,
+                    IconName::ArrowDown,
                     "Pull",
                     true,
+                    false,
                     move |_, _, cx| run_git_action(root_pull.clone(), kosmos_git::pull, cx),
                     cx,
                 ))
@@ -391,22 +397,34 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                     IconName::Refresh,
                     "Fetch",
                     true,
+                    false,
                     move |_, _, cx| run_git_action(root_fetch.clone(), kosmos_git::fetch, cx),
                     cx,
                 ))
                 .child(menu_item::<T>(
                     "git-menu-remotes",
-                    IconName::SourceControl,
+                    IconName::Server,
                     "Remotes",
                     true,
+                    false,
                     move |_, _, cx| open_modal(root_remotes.clone(), GitModal::Remotes, cx),
                     cx,
                 ))
                 .child(menu_item::<T>(
-                    "git-menu-tags",
+                    "git-menu-stashes",
                     IconName::Archive,
+                    "Stashes",
+                    true,
+                    false,
+                    move |_, _, cx| open_modal(root_stashes.clone(), GitModal::Stashes, cx),
+                    cx,
+                ))
+                .child(menu_item::<T>(
+                    "git-menu-tags",
+                    IconName::Tag,
                     "Tags",
                     true,
+                    false,
                     move |_, _, cx| open_modal(root_tags.clone(), GitModal::Tags, cx),
                     cx,
                 ))
@@ -415,6 +433,7 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                     "git-menu-discard",
                     IconName::Trash,
                     "Discard Changes",
+                    true,
                     true,
                     move |_, _, cx| open_modal(root_discard.clone(), GitModal::ConfirmDiscard, cx),
                     cx,
@@ -430,17 +449,22 @@ fn menu_item<T: PaneDelegate + SettingsDelegate>(
     icon: IconName,
     label: &'static str,
     enabled: bool,
+    danger: bool,
     listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     let text_color = if enabled {
-        theme.text
+        if danger { theme.danger } else { theme.text }
     } else {
         theme.text_subtle
     };
     let icon_color = if enabled {
-        theme.text_muted
+        if danger {
+            theme.danger
+        } else {
+            theme.text_muted
+        }
     } else {
         theme.text_subtle
     };
@@ -511,6 +535,14 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             theme,
             cx.listener(|_, _, _, cx| close_modal(cx)),
         ),
+        GitModal::Stashes => modal::render(
+            "git-stashes-modal",
+            "Git Stashes",
+            stashes_modal_body(root, cx),
+            modal_footer(close_modal_button(cx), cx),
+            theme,
+            cx.listener(|_, _, _, cx| close_modal(cx)),
+        ),
         GitModal::Tags => modal::render(
             "git-tags-modal",
             "Git Tags",
@@ -529,8 +561,7 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
                     .flex_col()
                     .gap_2()
                     .text_sm()
-                    .child("This will permanently discard all tracked and untracked working tree changes.")
-                    .child("This action cannot be undone.")
+                    .child("This will permanently discard all tracked and untracked working tree changes. This action cannot be undone.")
                     .into_any_element(),
                 div()
                     .flex()
@@ -659,6 +690,162 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
+fn stashes_modal_body<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let (stashes, expanded) = {
+        let state = cx.global::<GitUiState>();
+        (state.stashes.clone(), state.expanded_stashes.clone())
+    };
+    let theme = *cx.theme();
+
+    let mut body = div().flex().flex_col().gap_2();
+    if stashes.is_empty() {
+        body = body.child(
+            div()
+                .rounded(rems(0.375))
+                .border_1()
+                .border_color(theme.border_subtle)
+                .p_3()
+                .text_sm()
+                .text_color(theme.text_subtle)
+                .child("No stashes"),
+        );
+    } else {
+        body = body.children(
+            stashes
+                .into_iter()
+                .map(|stash| stash_row(root.clone(), stash, expanded.clone(), cx)),
+        );
+    }
+    body.into_any_element()
+}
+
+fn stash_row<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    stash: Stash,
+    expanded: std::collections::HashSet<String>,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let is_expanded = expanded.contains(&stash.id);
+    let toggle_id = stash.id.clone();
+    let apply_id = stash.id.clone();
+    let delete_id = stash.id.clone();
+    let root_apply = root.clone();
+    let root_delete = root.clone();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .rounded(rems(0.375))
+        .border_1()
+        .border_color(theme.border_subtle)
+        .p_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, _, _, cx| {
+                                toggle_stash(&toggle_id, cx);
+                            }),
+                        )
+                        .child(
+                            div().mt(rems(0.1875)).child(
+                                Icon::new(if is_expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .size(14.0)
+                                .color(theme.text_muted),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.text)
+                                        .child(stash.id.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_subtle)
+                                        .child(stash.message.clone()),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(icon_action_button(
+                            SharedString::from(format!("git-apply-stash:{}", stash.id)),
+                            IconName::ArrowDown,
+                            theme.text_muted,
+                            cx.listener(move |_, _, _, cx| {
+                                run_modal_action(
+                                    root_apply.clone(),
+                                    GitModal::Stashes,
+                                    {
+                                        let apply_id = apply_id.clone();
+                                        move |root| kosmos_git::apply_stash(root, &apply_id)
+                                    },
+                                    cx,
+                                );
+                            }),
+                            cx,
+                        ))
+                        .child(delete_button(
+                            SharedString::from(format!("git-delete-stash:{}", stash.id)),
+                            cx.listener(move |_, _, _, cx| {
+                                run_modal_action(
+                                    root_delete.clone(),
+                                    GitModal::Stashes,
+                                    {
+                                        let delete_id = delete_id.clone();
+                                        move |root| kosmos_git::delete_stash(root, &delete_id)
+                                    },
+                                    cx,
+                                );
+                            }),
+                            cx,
+                        )),
+                ),
+        )
+        .when(is_expanded, |this| {
+            this.child(
+                div().ml_6().flex().flex_col().gap_1().children(
+                    stash
+                        .files
+                        .into_iter()
+                        .map(|file| div().text_xs().text_color(theme.text_subtle).child(file)),
+                ),
+            )
+        })
+        .into_any_element()
+}
+
 fn input_row(label: &'static str, input: Entity<TextInput>) -> AnyElement {
     div()
         .flex()
@@ -752,27 +939,39 @@ fn list_row<T: PaneDelegate + SettingsDelegate>(
                         .child(subtitle),
                 ),
         )
-        .child(delete_button(delete, cx))
+        .child(delete_button("git-delete-list-item", delete, cx))
         .into_any_element()
 }
 
 fn delete_button<T: PaneDelegate + SettingsDelegate>(
+    id: impl Into<gpui::ElementId>,
+    listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    icon_action_button(id, IconName::Trash, theme.danger, listener, cx)
+}
+
+fn icon_action_button<T: PaneDelegate + SettingsDelegate>(
+    id: impl Into<gpui::ElementId>,
+    icon: IconName,
+    color: gpui::Rgba,
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     div()
-        .id("git-delete-list-item")
+        .id(id)
         .size(rems(1.375))
         .flex_none()
         .flex()
         .items_center()
         .justify_center()
         .rounded(rems(0.25))
-        .text_color(theme.danger)
+        .text_color(color)
         .hover(move |this| this.bg(theme.bg_hover))
         .on_click(listener)
-        .child(Icon::new(IconName::Trash).size(14.0).color(theme.danger))
+        .child(Icon::new(icon).size(14.0).color(color))
         .into_any_element()
 }
 
@@ -1017,6 +1216,15 @@ fn close_modal(cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| state.modal = None);
 }
 
+fn toggle_stash<T: PaneDelegate + SettingsDelegate>(id: &str, cx: &mut Context<T>) {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        if !state.expanded_stashes.remove(id) {
+            state.expanded_stashes.insert(id.to_string());
+        }
+    });
+    cx.notify();
+}
+
 fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     modal: GitModal,
@@ -1030,6 +1238,15 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
                 .await;
             let _ = this.update(cx, |_, cx| {
                 apply_modal_list_result(modal, result.map(ModalList::Remotes), cx);
+            });
+        }
+        GitModal::Stashes => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_stashes(root) })
+                .await;
+            let _ = this.update(cx, |_, cx| {
+                apply_modal_list_result(modal, result.map(ModalList::Stashes), cx);
             });
         }
         GitModal::Tags => {
@@ -1048,6 +1265,7 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
 
 enum ModalList {
     Remotes(Vec<Remote>),
+    Stashes(Vec<Stash>),
     Tags(Vec<Tag>),
 }
 
@@ -1059,6 +1277,10 @@ fn apply_modal_list_result<T: PaneDelegate + SettingsDelegate>(
     cx.update_global::<GitUiState, _>(|state, _| match result {
         Ok(ModalList::Remotes(remotes)) if modal == GitModal::Remotes => {
             state.remotes = remotes;
+            state.last_error = None;
+        }
+        Ok(ModalList::Stashes(stashes)) if modal == GitModal::Stashes => {
+            state.stashes = stashes;
             state.last_error = None;
         }
         Ok(ModalList::Tags(tags)) if modal == GitModal::Tags => {
