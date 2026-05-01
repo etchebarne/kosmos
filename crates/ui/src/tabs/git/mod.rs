@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, MouseDownEvent,
@@ -30,6 +30,8 @@ struct GitUiState {
     loading: bool,
     refresh_generation: u64,
     refresh_task: Option<Task<()>>,
+    watch_generation: u64,
+    watch_task: Option<Task<()>>,
     menu_position: Option<Point<Pixels>>,
     modal: Option<GitModal>,
     last_error: Option<String>,
@@ -150,7 +152,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     IconName::Refresh,
                     move |_, _, cx| {
                         clear_error(cx);
-                        refresh_summary(root_refresh.clone(), true, cx);
+                        refresh_summary(root_refresh.clone(), true, true, cx);
                     },
                     cx,
                 ))
@@ -1640,18 +1642,98 @@ fn run_modal_action<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: &mut Context<T>) {
+    ensure_summary_watch(root, cx);
+
     let needs_refresh = {
         let state = cx.global::<GitUiState>();
         state.root.as_ref() != Some(root) || (!state.loading && state.summary.is_none())
     };
     if needs_refresh {
-        refresh_summary(root.clone(), false, cx);
+        refresh_summary(root.clone(), false, true, cx);
     }
+}
+
+fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: &mut Context<T>) {
+    let generation = cx.update_global::<GitUiState, _>(|state, _| {
+        if state.root.as_ref() == Some(root) && state.watch_task.is_some() {
+            return None;
+        }
+
+        state.watch_generation = state.watch_generation.wrapping_add(1);
+        Some(state.watch_generation)
+    });
+
+    let Some(generation) = generation else {
+        return;
+    };
+
+    let root = root.clone();
+    let task = cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(750))
+                .await;
+
+            let refresh_root = root.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { RepositorySummary::discover(refresh_root) })
+                .await;
+
+            let should_continue = this
+                .update(cx, |_, cx| apply_watched_summary(&root, generation, result, cx))
+                .unwrap_or(false);
+
+            if !should_continue {
+                break;
+            }
+        }
+    });
+
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.watch_task = Some(task);
+    });
+}
+
+fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    generation: u64,
+    result: Result<RepositorySummary, kosmos_git::Error>,
+    cx: &mut Context<T>,
+) -> bool {
+    let mut changed = false;
+    let should_continue = cx.update_global::<GitUiState, _>(|state, _| {
+        if state.watch_generation != generation || state.root.as_ref() != Some(root) {
+            return false;
+        }
+
+        match result {
+            Ok(summary) => {
+                changed = state.summary.as_ref() != Some(&summary) || state.last_error.is_some();
+                state.summary = Some(summary);
+                state.last_error = None;
+            }
+            Err(error) => {
+                let error = error.to_string();
+                changed = state.summary.is_some() || state.last_error.as_ref() != Some(&error);
+                state.summary = None;
+                state.last_error = Some(error);
+            }
+        }
+        true
+    });
+
+    if changed {
+        cx.notify();
+    }
+
+    should_continue
 }
 
 fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     notify_now: bool,
+    show_loading: bool,
     cx: &mut Context<T>,
 ) {
     let generation = cx.update_global::<GitUiState, _>(|state, _| {
@@ -1660,7 +1742,9 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
             state.last_error = None;
         }
         state.root = Some(root.clone());
-        state.loading = true;
+        if show_loading {
+            state.loading = true;
+        }
         state.refresh_generation = state.refresh_generation.wrapping_add(1);
         state.refresh_generation
     });
@@ -1717,7 +1801,7 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
             .spawn(async move { action(action_root) })
             .await;
         let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => refresh_summary(root, true, cx),
+            Ok(()) => refresh_summary(root, true, true, cx),
             Err(error) => {
                 cx.update_global::<GitUiState, _>(|state, _| {
                     state.loading = false;

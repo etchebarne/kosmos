@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositorySummary {
     pub work_dir: PathBuf,
     pub git_dir: PathBuf,
@@ -11,7 +11,7 @@ pub struct RepositorySummary {
     pub files: Vec<FileChange>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileChange {
     pub path: String,
     pub kind: FileChangeKind,
