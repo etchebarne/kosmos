@@ -9,6 +9,8 @@ pub fn render(
     theme: Theme,
     on_close: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
+    let backdrop = Theme::dark().bg_root;
+
     div()
         .id(id)
         .absolute()
@@ -19,7 +21,7 @@ pub fn render(
         .flex()
         .items_center()
         .justify_center()
-        .bg(gpui::Hsla::from(theme.bg_root).opacity(0.72))
+        .bg(gpui::Hsla::from(backdrop).opacity(0.72))
         .on_mouse_down(MouseButton::Left, on_close)
         .child(
             div()

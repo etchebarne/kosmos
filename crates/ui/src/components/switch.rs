@@ -37,9 +37,14 @@ impl RenderOnce for Switch {
         let track_bg = if self.value {
             theme.accent
         } else {
-            theme.bg_hover
+            theme.bg_selected
         };
-        let knob_offset = if self.value { 1.125 } else { 0.125 };
+        let knob_bg = if theme.is_dark {
+            theme.text_emphasis
+        } else {
+            gpui::rgb(0xffffff)
+        };
+        let knob_offset = if self.value { 1.1875 } else { 0.1875 };
         let new_value = !self.value;
         let on_change = self.on_change;
 
@@ -50,8 +55,6 @@ impl RenderOnce for Switch {
             .h(rems(1.25))
             .rounded(rems(0.625))
             .bg(track_bg)
-            .border_1()
-            .border_color(theme.border)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
@@ -62,11 +65,11 @@ impl RenderOnce for Switch {
             .child(
                 div()
                     .absolute()
-                    .top(rems(0.125))
+                    .top(rems(0.1875))
                     .left(rems(knob_offset))
                     .size(rems(0.875))
                     .rounded_full()
-                    .bg(theme.text_emphasis),
+                    .bg(knob_bg),
             )
     }
 }
