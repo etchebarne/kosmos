@@ -1342,31 +1342,27 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
         .min_h_0()
         .bg(theme.bg_surface)
         .overflow_y_scroll()
-        .child(
-            div()
-                .flex_none()
-                .px_4()
-                .pt_3()
-                .pb_2()
-                .text_xs()
-                .text_color(theme.text_subtle)
-                .child("TRACKED"),
-        )
+        .when(summary.files.is_empty(), |this| {
+            this.flex().items_center().justify_center()
+        })
+        .when(!summary.files.is_empty(), |this| {
+            this.child(
+                div()
+                    .flex_none()
+                    .px_4()
+                    .pt_3()
+                    .pb_2()
+                    .text_xs()
+                    .text_color(theme.text_subtle)
+                    .child("TRACKED"),
+            )
+        })
         .when(summary.files.is_empty(), |this| {
             this.child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .p_3()
                     .text_sm()
                     .text_color(theme.text_subtle)
-                    .child(
-                        Icon::new(IconName::SourceControl)
-                            .size(14.0)
-                            .color(theme.text_muted),
-                    )
-                    .child("No file changes"),
+                    .child("No changes"),
             )
         })
         .children(
