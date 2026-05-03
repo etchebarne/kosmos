@@ -10,15 +10,16 @@ use gpui::{
 
 use file_tree::ActiveFileTree;
 use icons::{Icon, IconName};
-use kosmos_git::{FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag};
+use kosmos_git::{Branch, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag};
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextInput, Tooltip, TooltipPosition, modal};
+use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, modal};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GitModal {
+    Branches,
     Remotes,
     Stashes,
     Tags,
@@ -43,6 +44,8 @@ struct GitUiState {
     expanded_stashes: std::collections::HashSet<String>,
     collapsed_change_dirs: std::collections::HashSet<String>,
     tags: Vec<Tag>,
+    branches: Vec<Branch>,
+    commit_message: Option<Entity<TextArea>>,
     remote_name: Option<Entity<TextInput>>,
     remote_url: Option<Entity<TextInput>>,
     tag_name: Option<Entity<TextInput>>,
@@ -113,6 +116,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                     this.child(change_list(&root, summary, cx))
                 }),
         )
+        .child(commit_panel(&root, summary.as_ref(), cx))
         .when_some(dismiss_layer, |this, layer| this.child(layer))
         .when_some(menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
@@ -235,6 +239,93 @@ fn change_count<T: PaneDelegate + SettingsDelegate>(
 
 fn loading_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
     empty_panel("Loading Git status", cx)
+}
+
+fn commit_panel<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    summary: Option<&RepositorySummary>,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let commit_message = cx
+        .global::<GitUiState>()
+        .commit_message
+        .as_ref()
+        .unwrap()
+        .clone();
+    let branch = summary
+        .and_then(|summary| summary.branch.as_deref())
+        .unwrap_or("Detached HEAD")
+        .to_string();
+    let has_staged = summary.is_some_and(|summary| summary.files.iter().any(|file| file.staged));
+    let root_branch = root.clone();
+    let root_commit = root.clone();
+    let message_input = commit_message.clone();
+
+    div()
+        .flex_none()
+        .border_t_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.bg_surface)
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(div().min_w_0().flex_1().child(commit_message))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .id("git-current-branch")
+                        .min_w_0()
+                        .max_w_full()
+                        .rounded(rems(0.3125))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg_elevated)
+                        .px_2()
+                        .py_1()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .hover(move |this| this.bg(theme.bg_hover))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            open_modal(root_branch.clone(), GitModal::Branches, cx);
+                        }))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::SourceControl)
+                                        .size(14.0)
+                                        .color(theme.text_muted),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(branch),
+                                ),
+                        ),
+                )
+                .child(commit_button(
+                    has_staged,
+                    cx.listener(move |_, _, _, cx| {
+                        let message = message_input.read(cx).value().to_string();
+                        commit_tracked(root_commit.clone(), message, message_input.clone(), cx);
+                    }),
+                    cx,
+                )),
+        )
+        .into_any_element()
 }
 
 fn empty_panel<T: PaneDelegate + SettingsDelegate>(
@@ -571,6 +662,14 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     match modal_state {
+        GitModal::Branches => modal::render(
+            "git-branches-modal",
+            "Switch Branch",
+            branches_modal_body(root, cx),
+            modal_footer(close_modal_button(cx), cx),
+            theme,
+            cx.listener(|_, _, _, cx| close_modal(cx)),
+        ),
         GitModal::Remotes => modal::render(
             "git-remotes-modal",
             "Git Remotes",
@@ -672,6 +771,96 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             )
         }
     }
+}
+
+fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let branches = cx.global::<GitUiState>().branches.clone();
+    let theme = *cx.theme();
+
+    if branches.is_empty() {
+        return div()
+            .rounded(rems(0.375))
+            .border_1()
+            .border_color(theme.border_subtle)
+            .p_3()
+            .text_sm()
+            .text_color(theme.text_subtle)
+            .child("No branches")
+            .into_any_element();
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .children(
+            branches
+                .into_iter()
+                .map(|branch| branch_row(root.clone(), branch, cx)),
+        )
+        .into_any_element()
+}
+
+fn branch_row<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    branch: Branch,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let branch_name = branch.name.clone();
+    div()
+        .id(SharedString::from(format!("git-branch:{}", branch.name)))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .rounded(rems(0.375))
+        .border_1()
+        .border_color(if branch.current {
+            gpui::Hsla::from(theme.accent)
+        } else {
+            gpui::Hsla::from(theme.border_subtle)
+        })
+        .p_2()
+        .text_sm()
+        .text_color(if branch.current {
+            theme.text_emphasis
+        } else {
+            theme.text
+        })
+        .when(!branch.current, |this| {
+            this.hover(move |this| this.bg(theme.bg_hover))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    close_modal(cx);
+                    let branch_name = branch_name.clone();
+                    run_git_action(
+                        root.clone(),
+                        move |root| kosmos_git::switch_branch(root, &branch_name),
+                        cx,
+                    );
+                }))
+        })
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(branch.name),
+        )
+        .when(branch.current, |this| {
+            this.child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme.text_subtle)
+                    .child("Current"),
+            )
+        })
+        .into_any_element()
 }
 
 fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
@@ -1101,6 +1290,42 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
         .hover(move |this| this.bg(theme.bg_hover))
         .on_click(listener)
         .child(label)
+        .into_any_element()
+}
+
+fn commit_button<T: PaneDelegate + SettingsDelegate>(
+    enabled: bool,
+    listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .id("git-commit-tracked")
+        .rounded(rems(0.3125))
+        .border_1()
+        .border_color(if enabled {
+            gpui::Hsla::from(theme.accent)
+        } else {
+            gpui::Hsla::from(theme.border)
+        })
+        .bg(if enabled {
+            theme.accent
+        } else {
+            theme.bg_elevated
+        })
+        .px_3()
+        .py_1()
+        .text_sm()
+        .text_color(if enabled {
+            theme.bg_surface
+        } else {
+            theme.text_subtle
+        })
+        .when(enabled, |this| {
+            this.hover(move |this| this.bg(gpui::Hsla::from(theme.accent).opacity(0.85)))
+                .on_click(listener)
+        })
+        .child("Commit Tracked")
         .into_any_element()
 }
 
@@ -1602,12 +1827,14 @@ fn centered_state<T: PaneDelegate + SettingsDelegate>(
 
 fn ensure_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) {
     if cx.try_global::<GitUiState>().is_none() {
+        let commit_message = cx.new(|cx| TextArea::new("", "Commit message", cx));
         let remote_name = cx.new(|cx| TextInput::new("", "origin", cx));
         let remote_url = cx.new(|cx| TextInput::new("", "https://github.com/user/repo.git", cx));
         let tag_name = cx.new(|cx| TextInput::new("", "v1.0.0", cx));
         let tag_message = cx.new(|cx| TextInput::new("", "Release notes", cx));
         let tag_sha = cx.new(|cx| TextInput::new("", "HEAD", cx));
         cx.set_global(GitUiState {
+            commit_message: Some(commit_message),
             remote_name: Some(remote_name),
             remote_url: Some(remote_url),
             tag_name: Some(tag_name),
@@ -1676,6 +1903,15 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) {
     cx.spawn(async move |this, cx| match modal {
+        GitModal::Branches => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_branches(root) })
+                .await;
+            let _ = this.update(cx, |_, cx| {
+                apply_modal_list_result(modal, result.map(ModalList::Branches), cx);
+            });
+        }
         GitModal::Remotes => {
             let result = cx
                 .background_executor()
@@ -1709,6 +1945,7 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
 }
 
 enum ModalList {
+    Branches(Vec<Branch>),
     Remotes(Vec<Remote>),
     Stashes(Vec<Stash>),
     Tags(Vec<Tag>),
@@ -1720,6 +1957,10 @@ fn apply_modal_list_result<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) {
     cx.update_global::<GitUiState, _>(|state, _| match result {
+        Ok(ModalList::Branches(branches)) if modal == GitModal::Branches => {
+            state.branches = branches;
+            state.last_error = None;
+        }
         Ok(ModalList::Remotes(remotes)) if modal == GitModal::Remotes => {
             state.remotes = remotes;
             state.last_error = None;
@@ -1928,6 +2169,49 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
             .await;
         let _ = this.update(cx, |_, cx| match result {
             Ok(()) => refresh_summary(root, true, true, cx),
+            Err(error) => {
+                cx.update_global::<GitUiState, _>(|state, _| {
+                    state.loading = false;
+                    state.last_error = Some(error.to_string());
+                });
+                cx.notify();
+            }
+        });
+    })
+    .detach();
+}
+
+fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    message: String,
+    input: Entity<TextArea>,
+    cx: &mut Context<T>,
+) {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        cx.update_global::<GitUiState, _>(|state, _| {
+            state.last_error = Some("Commit message is required".to_string())
+        });
+        cx.notify();
+        return;
+    }
+
+    close_menu(cx);
+    clear_error(cx);
+    cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
+    cx.notify();
+
+    cx.spawn(async move |this, cx| {
+        let action_root = root.clone();
+        let result = cx
+            .background_executor()
+            .spawn(async move { kosmos_git::commit_staged(action_root, &message) })
+            .await;
+        let _ = this.update(cx, |_, cx| match result {
+            Ok(()) => {
+                input.update(cx, |input, cx| input.set_value("", cx));
+                refresh_summary(root, true, true, cx);
+            }
             Err(error) => {
                 cx.update_global::<GitUiState, _>(|state, _| {
                     state.loading = false;

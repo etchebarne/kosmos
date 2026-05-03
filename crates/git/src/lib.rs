@@ -47,6 +47,12 @@ pub struct Stash {
     pub files: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Branch {
+    pub name: String,
+    pub current: bool,
+}
+
 impl RepositorySummary {
     pub fn discover(path: impl AsRef<Path>) -> Result<Self, Error> {
         let repo = gix::discover(path.as_ref()).map_err(|source| Error::Discover {
@@ -194,6 +200,35 @@ pub fn unstage_file(path: impl AsRef<Path>, file: &str) -> Result<(), Error> {
 
 pub fn stash_staged(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["stash", "push", "--staged"])
+}
+
+pub fn commit_staged(path: impl AsRef<Path>, message: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["commit", "-m", message])
+}
+
+pub fn list_branches(path: impl AsRef<Path>) -> Result<Vec<Branch>, Error> {
+    let output = git_output(
+        path.as_ref(),
+        &["branch", "--format=%(HEAD)%09%(refname:short)"],
+    )?;
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let (head, name) = line.split_once('\t')?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(Branch {
+                name: name.to_string(),
+                current: head.trim() == "*",
+            })
+        })
+        .collect())
+}
+
+pub fn switch_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["switch", branch])
 }
 
 pub fn push(path: impl AsRef<Path>) -> Result<(), Error> {

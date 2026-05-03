@@ -8,7 +8,7 @@ pub mod switch;
 pub mod tooltip;
 
 pub use dropdown::{Dropdown, DropdownOption};
-pub use input::{TextInput, ValueChanged, install_default_keybindings};
+pub use input::{TextArea, TextInput, ValueChanged, install_default_keybindings};
 pub use multi_select::MultiSelect;
 pub use numeric_input::NumericInput;
 pub use switch::Switch;
