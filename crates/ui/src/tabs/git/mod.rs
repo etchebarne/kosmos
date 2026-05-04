@@ -10,7 +10,9 @@ use gpui::{
 
 use file_tree::ActiveFileTree;
 use icons::{Icon, IconName};
-use kosmos_git::{Branch, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag};
+use kosmos_git::{
+    Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
+};
 use tabs::registry;
 use theme::ActiveTheme;
 
@@ -117,6 +119,12 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                 }),
         )
         .child(commit_panel(&root, summary.as_ref(), cx))
+        .when_some(
+            summary
+                .as_ref()
+                .and_then(|summary| summary.latest_commit.clone()),
+            |this, commit| this.child(latest_commit_panel(commit, cx)),
+        )
         .when_some(dismiss_layer, |this, layer| this.child(layer))
         .when_some(menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
@@ -324,6 +332,43 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
                     }),
                     cx,
                 )),
+        )
+        .into_any_element()
+}
+
+fn latest_commit_panel<T: PaneDelegate + SettingsDelegate>(
+    commit: CommitInfo,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let subject = commit
+        .subject
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    if subject.is_empty() {
+        return div().into_any_element();
+    }
+
+    div()
+        .flex_none()
+        .border_t_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.bg_surface)
+        .px_3()
+        .py_2()
+        .flex()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_xs()
+                .text_color(theme.text_subtle)
+                .child(SharedString::from(subject)),
         )
         .into_any_element()
 }

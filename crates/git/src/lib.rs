@@ -9,6 +9,15 @@ pub struct RepositorySummary {
     pub insertions: usize,
     pub deletions: usize,
     pub files: Vec<FileChange>,
+    pub latest_commit: Option<CommitInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
+    pub short_sha: String,
+    pub subject: String,
+    pub author: String,
+    pub relative_time: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +90,7 @@ impl RepositorySummary {
             stats.deletions += file.deletions;
             stats
         });
+        let latest_commit = read_latest_commit(path.as_ref()).ok().flatten();
 
         Ok(Self {
             work_dir: repo
@@ -93,6 +103,7 @@ impl RepositorySummary {
             insertions: stats.insertions,
             deletions: stats.deletions,
             files,
+            latest_commit,
         })
     }
 
@@ -174,6 +185,31 @@ fn normalize_numstat_path(path: &str) -> String {
     path.rsplit_once(" => ")
         .map(|(_, after)| after.trim_matches(['{', '}']).to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+fn read_latest_commit(path: &Path) -> Result<Option<CommitInfo>, Error> {
+    let output = git_output(
+        path,
+        &["log", "-1", "--pretty=format:%h%x1f%s%x1f%an%x1f%ar"],
+    )?;
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let mut parts = trimmed.splitn(4, '\x1f');
+    let short_sha = parts.next().unwrap_or("").to_string();
+    let subject = parts.next().unwrap_or("").to_string();
+    let author = parts.next().unwrap_or("").to_string();
+    let relative_time = parts.next().unwrap_or("").to_string();
+    if short_sha.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(CommitInfo {
+        short_sha,
+        subject,
+        author,
+        relative_time,
+    }))
 }
 
 fn count_text_lines(path: impl AsRef<Path>) -> usize {
