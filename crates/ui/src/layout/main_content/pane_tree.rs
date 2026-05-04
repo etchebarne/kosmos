@@ -71,12 +71,15 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         .child(render(tree, first, tab_scrolls, cx)),
                 )
                 .child(render_resize_handle(split_id, axis, &theme))
-                .child(div().flex_1().min_w_0().min_h_0().child(render(
-                    tree,
-                    second,
-                    tab_scrolls,
-                    cx,
-                )))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .when(axis == SplitAxis::Row, |this| this.h_full())
+                        .when(axis == SplitAxis::Column, |this| this.w_full())
+                        .child(render(tree, second, tab_scrolls, cx)),
+                )
                 .into_any_element()
         }
     }
