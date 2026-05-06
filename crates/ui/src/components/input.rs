@@ -818,6 +818,12 @@ pub struct TextArea {
     last_visual_line_count: usize,
     scroll_handle: ScrollHandle,
     is_selecting: bool,
+    height_rem: f32,
+    padding_x_rem: f32,
+    padding_top_rem: f32,
+    padding_bottom_rem: f32,
+    framed: bool,
+    pending_reveal_cursor: bool,
 }
 
 impl TextArea {
@@ -840,7 +846,38 @@ impl TextArea {
             last_visual_line_count: 3,
             scroll_handle: ScrollHandle::new(),
             is_selecting: false,
+            height_rem: 4.75,
+            padding_x_rem: 0.5,
+            padding_top_rem: 0.25,
+            padding_bottom_rem: 0.25,
+            framed: true,
+            pending_reveal_cursor: false,
         }
+    }
+
+    pub fn height_rem(mut self, height_rem: f32) -> Self {
+        self.height_rem = height_rem;
+        self
+    }
+
+    pub fn padding_bottom_rem(mut self, padding_bottom_rem: f32) -> Self {
+        self.padding_bottom_rem = padding_bottom_rem;
+        self
+    }
+
+    pub fn padding_x_rem(mut self, padding_x_rem: f32) -> Self {
+        self.padding_x_rem = padding_x_rem;
+        self
+    }
+
+    pub fn padding_top_rem(mut self, padding_top_rem: f32) -> Self {
+        self.padding_top_rem = padding_top_rem;
+        self
+    }
+
+    pub fn unframed(mut self) -> Self {
+        self.framed = false;
+        self
     }
 
     pub fn value(&self) -> &SharedString {
@@ -856,6 +893,7 @@ impl TextArea {
         let len = self.content.len();
         self.selected_range = len..len;
         self.marked_range = None;
+        self.pending_reveal_cursor = true;
         cx.notify();
     }
 
@@ -1187,51 +1225,40 @@ impl TextArea {
         ranges
     }
 
-    fn shape_current_lines(&self, window: &mut Window) -> Option<Vec<WrappedLine>> {
-        let bounds = self.last_bounds?;
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let mut lines = Vec::new();
-        for range in self.line_ranges() {
-            let display_text = SharedString::from(self.content[range].to_string());
-            let run = TextRun {
-                len: display_text.len(),
-                font: style.font(),
-                color: style.color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let mut wrapped = window
-                .text_system()
-                .shape_text(
-                    display_text,
-                    font_size,
-                    &[run],
-                    Some(bounds.size.width),
-                    None,
-                )
-                .ok()?;
-            lines.extend(wrapped.drain(..));
-        }
-        Some(lines)
+    fn viewport_text_height(&self, window: &mut Window) -> Pixels {
+        let scroll_bounds = self.scroll_handle.bounds();
+        let viewport_height = if scroll_bounds.size.height > Pixels::ZERO {
+            scroll_bounds.size.height
+        } else {
+            rems(self.height_rem).to_pixels(window.rem_size())
+        };
+        let padding_y =
+            rems(self.padding_top_rem + self.padding_bottom_rem).to_pixels(window.rem_size());
+
+        (viewport_height - padding_y).max(window.line_height())
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>, window: &mut Window) -> usize {
         if self.content.is_empty() {
             return 0;
         }
-        let Some(bounds) = self.last_bounds else {
+        if self.last_bounds.is_none() {
             return self.content.len();
-        };
+        }
         let line_height = window.line_height();
-        let y = (position.y - bounds.top()).max(Pixels::ZERO);
+        let scroll_bounds = self.scroll_handle.bounds();
+        let padding_x = rems(self.padding_x_rem).to_pixels(window.rem_size());
+        let padding_top = rems(self.padding_top_rem).to_pixels(window.rem_size());
+        let scroll_offset = self.scroll_handle.offset();
+        let x = position.x - scroll_bounds.left() - padding_x - scroll_offset.x;
+        let y =
+            (position.y - scroll_bounds.top() - padding_top - scroll_offset.y).max(Pixels::ZERO);
         let ranges = self.line_ranges();
         let mut visual_top = Pixels::ZERO;
         for (line_index, line) in self.last_lines.iter().enumerate() {
             let visual_height = line_height * Self::wrapped_line_height(line);
             if y <= visual_top + visual_height {
-                let local = point(position.x - bounds.left(), y - visual_top);
+                let local = point(x, y - visual_top);
                 let offset = line
                     .closest_index_for_position(local, line_height)
                     .unwrap_or_else(|offset| offset)
@@ -1310,41 +1337,38 @@ impl TextArea {
         self.content.len()
     }
 
-    fn reveal_cursor(&mut self, window: &mut Window) {
-        if self.content.is_empty() {
-            self.last_visual_line_count = 3;
-            self.scroll_handle
-                .set_offset(point(Pixels::ZERO, Pixels::ZERO));
-            return;
-        }
+    fn reveal_cursor(&mut self, _: &mut Window) {
+        self.pending_reveal_cursor = true;
+    }
 
-        let lines = self
-            .shape_current_lines(window)
-            .unwrap_or_else(|| self.last_lines.clone());
+    fn scroll_top_to_reveal_cursor(&self, lines: &[WrappedLine], window: &mut Window) -> Pixels {
         let visual_line_count = lines.iter().map(Self::wrapped_line_height).sum::<usize>();
-        let (line_index, line_range) = self.line_for_offset(self.cursor_offset());
+        let cursor = self.cursor_offset();
+        let (line_index, line_range) = self.line_for_offset(cursor);
         let line_height = window.line_height();
-        let viewport_height = rems(4.75).to_pixels(window.rem_size());
-        let current_scroll_top = -self.scroll_handle.offset().y;
+        let viewport_height = self.viewport_text_height(window);
+        let content_height = line_height * visual_line_count;
+        let max_scroll_top = (content_height - viewport_height).max(Pixels::ZERO);
+        let current_scroll_top =
+            (-self.scroll_handle.offset().y).clamp(Pixels::ZERO, max_scroll_top);
         let mut cursor_top = Self::visual_top_for_line(&lines, line_index, line_height);
         if let Some(line) = lines.get(line_index)
             && let Some(position) =
-                line.position_for_index(self.cursor_offset() - line_range.start, line_height)
+                line.position_for_index(cursor.saturating_sub(line_range.start), line_height)
         {
             cursor_top += position.y;
         }
         let cursor_bottom = cursor_top + line_height;
+        let mut target_scroll_top = current_scroll_top;
 
         if cursor_top < current_scroll_top {
-            self.scroll_handle
-                .set_offset(point(Pixels::ZERO, -cursor_top));
+            target_scroll_top = cursor_top;
         } else if cursor_bottom > current_scroll_top + viewport_height {
-            self.scroll_handle
-                .set_offset(point(Pixels::ZERO, viewport_height - cursor_bottom));
+            target_scroll_top = cursor_bottom - viewport_height;
         }
 
-        self.last_visual_line_count = visual_line_count.max(3);
-        self.last_lines = lines;
+        target_scroll_top = target_scroll_top.clamp(Pixels::ZERO, max_scroll_top);
+        target_scroll_top
     }
 }
 
@@ -1502,6 +1526,7 @@ struct TextAreaPrepaintState {
     lines: Vec<WrappedLine>,
     cursor: Option<PaintQuad>,
     selections: Vec<PaintQuad>,
+    target_scroll_top: Option<Pixels>,
 }
 
 impl IntoElement for TextAreaElement {
@@ -1596,27 +1621,33 @@ impl Element for TextAreaElement {
                 };
                 let visual_top =
                     TextArea::visual_top_for_line(&lines, hard_line_index, line_height);
-                for segment in TextArea::wrapped_segments(line) {
+                let segments = TextArea::wrapped_segments(line);
+                let last_segment_index = segments.len().saturating_sub(1);
+                for (segment_index, segment) in segments.into_iter().enumerate() {
                     let segment_start = line_range.start + segment.start;
                     let segment_end = line_range.start + segment.end;
                     let start = selected_range.start.max(segment_start);
                     let end = selected_range.end.min(segment_end);
                     if start < end {
-                        let start_position = line
-                            .position_for_index(start - line_range.start, line_height)
-                            .unwrap_or(point(Pixels::ZERO, Pixels::ZERO));
-                        let end_position = line
-                            .position_for_index(end - line_range.start, line_height)
-                            .unwrap_or(point(bounds.size.width, Pixels::ZERO));
+                        let start_x = if start == segment_start {
+                            Pixels::ZERO
+                        } else {
+                            line.position_for_index(start - line_range.start, line_height)
+                                .map_or(Pixels::ZERO, |position| position.x)
+                        };
+                        let end_x = if end == segment_end && segment_index < last_segment_index {
+                            bounds.size.width
+                        } else {
+                            line.position_for_index(end - line_range.start, line_height)
+                                .map_or(bounds.size.width, |position| position.x)
+                        };
+                        let segment_top = visual_top + line_height * segment_index;
                         selections.push(fill(
                             Bounds::from_corners(
+                                point(bounds.left() + start_x, bounds.top() + segment_top),
                                 point(
-                                    bounds.left() + start_position.x,
-                                    bounds.top() + visual_top + start_position.y,
-                                ),
-                                point(
-                                    bounds.left() + end_position.x,
-                                    bounds.top() + visual_top + end_position.y + line_height,
+                                    bounds.left() + end_x,
+                                    bounds.top() + segment_top + line_height,
                                 ),
                             ),
                             gpui::Hsla::from(theme.accent).opacity(0.35),
@@ -1648,11 +1679,15 @@ impl Element for TextAreaElement {
         } else {
             None
         };
+        let target_scroll_top = input
+            .pending_reveal_cursor
+            .then(|| input.scroll_top_to_reveal_cursor(&lines, window));
 
         TextAreaPrepaintState {
             lines,
             cursor: cursor_quad,
             selections,
+            target_scroll_top,
         }
     }
 
@@ -1698,17 +1733,42 @@ impl Element for TextAreaElement {
             window.paint_quad(cursor);
         }
         let lines = std::mem::take(&mut prepaint.lines);
+        let target_scroll_top = prepaint.target_scroll_top.take();
+        let mut refresh = false;
         self.input.update(cx, |input, _cx| {
             input.last_visual_line_count = visual_line_index;
             input.last_lines = lines;
             input.last_bounds = Some(bounds);
+            if let Some(target_scroll_top) = target_scroll_top {
+                input.pending_reveal_cursor = false;
+                if target_scroll_top != -input.scroll_handle.offset().y {
+                    input
+                        .scroll_handle
+                        .set_offset(point(Pixels::ZERO, -target_scroll_top));
+                    refresh = true;
+                }
+            }
         });
+        if refresh {
+            cx.refresh_windows();
+        }
     }
 }
 
 impl Render for TextArea {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
+        let border_color = if self.focus_handle.is_focused(window) {
+            theme.border_strong
+        } else {
+            theme.border
+        };
+        let framed = self.framed;
+        let height_rem = self.height_rem;
+        let padding_x_rem = self.padding_x_rem;
+        let padding_top_rem = self.padding_top_rem;
+        let padding_bottom_rem = self.padding_bottom_rem;
+
         div()
             .id(SharedString::from(format!(
                 "text-area:{:?}",
@@ -1743,21 +1803,21 @@ impl Render for TextArea {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .min_w(rems(13.75))
-            .h(rems(4.75))
-            .px_2()
-            .py_1()
+            .h(rems(height_rem))
+            .px(rems(padding_x_rem))
+            .pt(rems(padding_top_rem))
+            .pb(rems(padding_bottom_rem))
             .flex()
             .items_start()
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .rounded(rems(0.3125))
-            .bg(theme.bg_elevated)
-            .border_1()
-            .border_color(if self.focus_handle.is_focused(window) {
-                theme.border_strong
-            } else {
-                theme.border
+            .when(framed, |this| {
+                this.rounded(rems(0.3125))
+                    .bg(theme.bg_elevated)
+                    .border_1()
+                    .border_color(border_color)
             })
+            .when(!framed, |this| this.bg(theme.bg_surface))
             .text_sm()
             .text_color(theme.text)
             .child(TextAreaElement {

@@ -64,6 +64,12 @@ const CHANGE_GUIDE_OFFSET_REM: f32 = 0.625;
 const CHANGE_GUIDE_WIDTH_REM: f32 = 0.0625;
 const CHANGE_ICON_WIDTH_REM: f32 = 1.25;
 const CHANGE_LABEL_PADDING_REM: f32 = 0.25;
+const COMMIT_MESSAGE_HEIGHT_REM: f32 = 11.0;
+const COMMIT_MESSAGE_PADDING_X_REM: f32 = 1.25;
+const COMMIT_MESSAGE_PADDING_TOP_REM: f32 = 1.25;
+const COMMIT_MESSAGE_PADDING_BOTTOM_REM: f32 = 3.25;
+const COMMIT_CONTROLS_INSET_X_REM: f32 = 1.0;
+const COMMIT_CONTROLS_INSET_BOTTOM_REM: f32 = 1.0;
 
 pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
     ensure_state(cx);
@@ -275,63 +281,74 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
         .border_t_1()
         .border_color(theme.border_subtle)
         .bg(theme.bg_surface)
-        .p_3()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(div().min_w_0().flex_1().child(commit_message))
         .child(
             div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
+                .relative()
+                .min_w_0()
+                .w_full()
+                .child(commit_message)
                 .child(
                     div()
-                        .id("git-current-branch")
-                        .min_w_0()
-                        .max_w_full()
-                        .rounded(rems(0.3125))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.bg_elevated)
-                        .px_2()
-                        .py_1()
-                        .text_sm()
-                        .text_color(theme.text)
-                        .hover(move |this| this.bg(theme.bg_hover))
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            open_modal(root_branch.clone(), GitModal::Branches, cx);
-                        }))
+                        .absolute()
+                        .left(rems(COMMIT_CONTROLS_INSET_X_REM))
+                        .right(rems(COMMIT_CONTROLS_INSET_X_REM))
+                        .bottom(rems(COMMIT_CONTROLS_INSET_BOTTOM_REM))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
                         .child(
                             div()
+                                .id("git-current-branch")
                                 .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::SourceControl)
-                                        .size(14.0)
-                                        .color(theme.text_muted),
-                                )
+                                .max_w_full()
+                                .rounded(rems(0.3125))
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.bg_elevated)
+                                .px_2()
+                                .py_1()
+                                .text_sm()
+                                .text_color(theme.text)
+                                .hover(move |this| this.bg(theme.bg_hover))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    open_modal(root_branch.clone(), GitModal::Branches, cx);
+                                }))
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .child(branch),
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::SourceControl)
+                                                .size(14.0)
+                                                .color(theme.text_muted),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .child(branch),
+                                        ),
                                 ),
-                        ),
-                )
-                .child(commit_button(
-                    has_staged,
-                    cx.listener(move |_, _, _, cx| {
-                        let message = message_input.read(cx).value().to_string();
-                        commit_tracked(root_commit.clone(), message, message_input.clone(), cx);
-                    }),
-                    cx,
-                )),
+                        )
+                        .child(commit_button(
+                            has_staged,
+                            cx.listener(move |_, _, _, cx| {
+                                let message = message_input.read(cx).value().to_string();
+                                commit_tracked(
+                                    root_commit.clone(),
+                                    message,
+                                    message_input.clone(),
+                                    cx,
+                                );
+                            }),
+                            cx,
+                        )),
+                ),
         )
         .into_any_element()
 }
@@ -1868,7 +1885,14 @@ fn centered_state<T: PaneDelegate + SettingsDelegate>(
 
 fn ensure_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) {
     if cx.try_global::<GitUiState>().is_none() {
-        let commit_message = cx.new(|cx| TextArea::new("", "Commit message", cx));
+        let commit_message = cx.new(|cx| {
+            TextArea::new("", "Commit message", cx)
+                .height_rem(COMMIT_MESSAGE_HEIGHT_REM)
+                .padding_x_rem(COMMIT_MESSAGE_PADDING_X_REM)
+                .padding_top_rem(COMMIT_MESSAGE_PADDING_TOP_REM)
+                .padding_bottom_rem(COMMIT_MESSAGE_PADDING_BOTTOM_REM)
+                .unframed()
+        });
         let remote_name = cx.new(|cx| TextInput::new("", "origin", cx));
         let remote_url = cx.new(|cx| TextInput::new("", "https://github.com/user/repo.git", cx));
         let tag_name = cx.new(|cx| TextInput::new("", "v1.0.0", cx));
