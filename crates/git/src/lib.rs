@@ -308,8 +308,16 @@ pub fn push(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["push"])
 }
 
+pub fn force_push(path: impl AsRef<Path>) -> Result<(), Error> {
+    run_git(path.as_ref(), &["push", "--force-with-lease"])
+}
+
 pub fn pull(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["pull"])
+}
+
+pub fn pull_rebase(path: impl AsRef<Path>) -> Result<(), Error> {
+    run_git(path.as_ref(), &["pull", "--rebase"])
 }
 
 pub fn fetch(path: impl AsRef<Path>) -> Result<(), Error> {

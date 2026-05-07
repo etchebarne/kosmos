@@ -529,7 +529,9 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let root_push = root.clone();
+    let root_force_push = root.clone();
     let root_pull = root.clone();
+    let root_pull_rebase = root.clone();
     let root_fetch = root.clone();
     let root_branches = root.clone();
     let root_remotes = root.clone();
@@ -570,12 +572,34 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                     cx,
                 ))
                 .child(menu_item::<T>(
+                    "git-menu-force-push",
+                    IconName::ArrowUp,
+                    "Force Push",
+                    true,
+                    true,
+                    move |_, _, cx| {
+                        run_git_action(root_force_push.clone(), kosmos_git::force_push, cx)
+                    },
+                    cx,
+                ))
+                .child(menu_item::<T>(
                     "git-menu-pull",
                     IconName::ArrowDown,
                     "Pull",
                     true,
                     false,
                     move |_, _, cx| run_git_action(root_pull.clone(), kosmos_git::pull, cx),
+                    cx,
+                ))
+                .child(menu_item::<T>(
+                    "git-menu-pull-rebase",
+                    IconName::ArrowDown,
+                    "Pull (Rebase)",
+                    true,
+                    false,
+                    move |_, _, cx| {
+                        run_git_action(root_pull_rebase.clone(), kosmos_git::pull_rebase, cx)
+                    },
                     cx,
                 ))
                 .child(menu_item::<T>(
