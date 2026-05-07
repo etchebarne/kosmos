@@ -16,12 +16,13 @@ use kosmos_git::{
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, modal};
+use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GitModal {
     Branches,
+    CreateBranch,
     Remotes,
     Stashes,
     Tags,
@@ -48,6 +49,8 @@ struct GitUiState {
     tags: Vec<Tag>,
     branches: Vec<Branch>,
     commit_message: Option<Entity<TextArea>>,
+    branch_search: Option<Entity<TextInput>>,
+    branch_name: Option<Entity<TextInput>>,
     remote_name: Option<Entity<TextInput>>,
     remote_url: Option<Entity<TextInput>>,
     tag_name: Option<Entity<TextInput>>,
@@ -528,6 +531,7 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
     let root_push = root.clone();
     let root_pull = root.clone();
     let root_fetch = root.clone();
+    let root_branches = root.clone();
     let root_remotes = root.clone();
     let root_stashes = root.clone();
     let root_tags = root.clone();
@@ -581,6 +585,15 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                     true,
                     false,
                     move |_, _, cx| run_git_action(root_fetch.clone(), kosmos_git::fetch, cx),
+                    cx,
+                ))
+                .child(menu_item::<T>(
+                    "git-menu-branches",
+                    IconName::SourceControl,
+                    "Branches",
+                    true,
+                    false,
+                    move |_, _, cx| open_modal(root_branches.clone(), GitModal::Branches, cx),
                     cx,
                 ))
                 .child(menu_item::<T>(
@@ -726,9 +739,17 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
     match modal_state {
         GitModal::Branches => modal::render(
             "git-branches-modal",
-            "Switch Branch",
+            "Git Branches",
             branches_modal_body(root, cx),
             modal_footer(close_modal_button(cx), cx),
+            theme,
+            cx.listener(|_, _, _, cx| close_modal(cx)),
+        ),
+        GitModal::CreateBranch => modal::render(
+            "git-create-branch-modal",
+            "Create Branch",
+            create_branch_modal_body(cx),
+            create_branch_modal_footer(root, cx),
             theme,
             cx.listener(|_, _, _, cx| close_modal(cx)),
         ),
@@ -839,29 +860,131 @@ fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
     root: &PathBuf,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let branches = cx.global::<GitUiState>().branches.clone();
+    let (branch_search, branches, last_error) = {
+        let state = cx.global::<GitUiState>();
+        (
+            state.branch_search.as_ref().unwrap().clone(),
+            state.branches.clone(),
+            state.last_error.clone(),
+        )
+    };
     let theme = *cx.theme();
-
-    if branches.is_empty() {
-        return div()
-            .rounded(rems(0.375))
-            .border_1()
-            .border_color(theme.border_subtle)
-            .p_3()
-            .text_sm()
-            .text_color(theme.text_subtle)
-            .child("No branches")
-            .into_any_element();
-    }
+    let query = branch_search.read(cx).value().trim().to_lowercase();
+    let has_branches = !branches.is_empty();
+    let branches = if query.is_empty() {
+        branches
+    } else {
+        branches
+            .into_iter()
+            .filter(|branch| {
+                branch.name.to_lowercase().contains(&query)
+                    || (if branch.remote { "remote" } else { "local" }).contains(&query)
+            })
+            .collect()
+    };
 
     div()
         .flex()
         .flex_col()
-        .gap_1()
-        .children(
-            branches
-                .into_iter()
-                .map(|branch| branch_row(root.clone(), branch, cx)),
+        .gap_2()
+        .child(input_row("Search Branches", branch_search))
+        .when_some(last_error, |this, error| {
+            this.child(
+                div()
+                    .rounded(rems(0.375))
+                    .border_1()
+                    .border_color(gpui::Hsla::from(theme.danger).opacity(0.35))
+                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
+                    .p_2()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .child(error),
+            )
+        })
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(create_branch_row(root.clone(), cx))
+                .when(branches.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .rounded(rems(0.375))
+                            .border_1()
+                            .border_color(theme.border_subtle)
+                            .p_3()
+                            .text_sm()
+                            .text_color(theme.text_subtle)
+                            .child(if has_branches {
+                                "No branches match your search"
+                            } else {
+                                "No branches"
+                            }),
+                    )
+                })
+                .when(!branches.is_empty(), |this| {
+                    this.children(
+                        branches
+                            .into_iter()
+                            .map(|branch| branch_row(root.clone(), branch, cx)),
+                    )
+                }),
+        )
+        .into_any_element()
+}
+
+fn create_branch_row<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let branch_name = cx
+        .global::<GitUiState>()
+        .branch_name
+        .as_ref()
+        .unwrap()
+        .clone();
+    div()
+        .id("git-create-branch-row")
+        .flex()
+        .items_start()
+        .gap_2()
+        .rounded(rems(0.375))
+        .border_1()
+        .border_color(theme.border_subtle)
+        .p_2p5()
+        .text_sm()
+        .text_color(theme.text)
+        .hover(move |this| this.bg(theme.bg_hover))
+        .on_click(cx.listener(move |_, _, _, cx| {
+            branch_name.update(cx, |input, cx| input.set_value("", cx));
+            open_modal(root.clone(), GitModal::CreateBranch, cx);
+        }))
+        .child(
+            div()
+                .size(rems(1.25))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(rems(0.25))
+                .bg(gpui::Hsla::from(theme.accent).opacity(0.14))
+                .child(Icon::new(IconName::Add).size(14.0).color(theme.accent)),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(div().text_color(theme.text_emphasis).child("Create Branch"))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_subtle)
+                        .child("Create a new local branch"),
+                ),
         )
         .into_any_element()
 }
@@ -872,56 +995,194 @@ fn branch_row<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let branch_name = branch.name.clone();
+    let name = branch.name.clone();
+    let is_current = branch.current;
+    let is_remote = branch.remote;
+    let row_id = SharedString::from(format!("git-branch:{name}"));
+    let delete_id = SharedString::from(format!("git-delete-branch:{name}"));
+    let switch_branch = name.clone();
+    let delete_branch = name.clone();
+    let root_switch = root.clone();
+    let root_delete = root.clone();
+
     div()
-        .id(SharedString::from(format!("git-branch:{}", branch.name)))
+        .id(row_id)
         .flex()
         .items_center()
         .justify_between()
         .gap_2()
         .rounded(rems(0.375))
         .border_1()
-        .border_color(if branch.current {
+        .border_color(if is_current {
             gpui::Hsla::from(theme.accent)
         } else {
             gpui::Hsla::from(theme.border_subtle)
         })
-        .p_2()
+        .p_2p5()
         .text_sm()
-        .text_color(if branch.current {
+        .text_color(if is_current {
             theme.text_emphasis
         } else {
             theme.text
         })
-        .when(!branch.current, |this| {
+        .when(!is_current, |this| {
             this.hover(move |this| this.bg(theme.bg_hover))
                 .on_click(cx.listener(move |_, _, _, cx| {
-                    close_modal(cx);
-                    let branch_name = branch_name.clone();
-                    run_git_action(
-                        root.clone(),
-                        move |root| kosmos_git::switch_branch(root, &branch_name),
+                    let branch = switch_branch.clone();
+                    run_modal_action(
+                        root_switch.clone(),
+                        GitModal::Branches,
+                        move |root| {
+                            if is_remote {
+                                kosmos_git::switch_remote_branch(root, &branch)
+                            } else {
+                                kosmos_git::switch_branch(root, &branch)
+                            }
+                        },
                         cx,
                     );
                 }))
         })
         .child(
             div()
+                .flex_1()
                 .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(branch.name),
+                .flex()
+                .items_start()
+                .gap_2()
+                .child(
+                    div().mt(rems(0.1875)).child(
+                        Icon::new(IconName::SourceControl)
+                            .size(14.0)
+                            .color(theme.text_muted),
+                    ),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(name),
+                        )
+                        .when(is_remote, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_subtle)
+                                    .child("Remote"),
+                            )
+                        }),
+                ),
         )
-        .when(branch.current, |this| {
+        .when(!is_current && !is_remote, |this| {
+            this.child(div().flex_none().child(delete_button(
+                delete_id,
+                cx.listener(move |_, _, _, cx| {
+                    let branch = delete_branch.clone();
+                    run_modal_action(
+                        root_delete.clone(),
+                        GitModal::Branches,
+                        move |root| kosmos_git::delete_branch(root, &branch),
+                        cx,
+                    );
+                }),
+                cx,
+            )))
+        })
+        .into_any_element()
+}
+
+fn create_branch_modal_body<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let (branch_name, last_error) = {
+        let state = cx.global::<GitUiState>();
+        (
+            state.branch_name.as_ref().unwrap().clone(),
+            state.last_error.clone(),
+        )
+    };
+    let theme = *cx.theme();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(input_row("Branch Name", branch_name))
+        .when_some(last_error, |this, error| {
             this.child(
                 div()
-                    .flex_none()
+                    .rounded(rems(0.375))
+                    .border_1()
+                    .border_color(gpui::Hsla::from(theme.danger).opacity(0.35))
+                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
+                    .p_2()
                     .text_xs()
-                    .text_color(theme.text_subtle)
-                    .child("Current"),
+                    .text_color(theme.text)
+                    .child(error),
             )
         })
+        .into_any_element()
+}
+
+fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let branch_name = cx
+        .global::<GitUiState>()
+        .branch_name
+        .as_ref()
+        .unwrap()
+        .clone();
+    let root_cancel = root.clone();
+    let root_create = root.clone();
+    let cancel_input = branch_name.clone();
+    let create_input = branch_name.clone();
+
+    div()
+        .flex()
+        .justify_end()
+        .gap_2()
+        .child(action_button(
+            "git-cancel-create-branch",
+            "Cancel",
+            false,
+            cx.listener(move |_, _, _, cx| {
+                cancel_input.update(cx, |input, cx| input.set_value("", cx));
+                open_modal(root_cancel.clone(), GitModal::Branches, cx);
+            }),
+            cx,
+        ))
+        .child(action_button(
+            "git-confirm-create-branch",
+            "Create",
+            false,
+            cx.listener(move |_, _, _, cx| {
+                let branch = create_input.read(cx).value().trim().to_string();
+                if branch.is_empty() {
+                    return;
+                }
+                let input = create_input.clone();
+                run_modal_action_after_success(
+                    root_create.clone(),
+                    GitModal::Branches,
+                    move |root| kosmos_git::create_branch(root, &branch),
+                    move |cx| {
+                        input.update(cx, |input, cx| input.set_value("", cx));
+                        cx.update_global::<GitUiState, _>(|state, _| {
+                            state.modal = Some(GitModal::Branches)
+                        });
+                    },
+                    cx,
+                );
+            }),
+            cx,
+        ))
         .into_any_element()
 }
 
@@ -1309,7 +1570,11 @@ fn icon_action_button<T: PaneDelegate + SettingsDelegate>(
         .rounded(rems(0.25))
         .text_color(color)
         .hover(move |this| this.bg(theme.bg_hover))
-        .on_click(listener)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |event, window, cx| {
+            cx.stop_propagation();
+            listener(event, window, cx);
+        })
         .child(Icon::new(icon).size(14.0).color(color))
         .into_any_element()
 }
@@ -1332,7 +1597,7 @@ fn close_modal_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -
 }
 
 fn action_button<T: PaneDelegate + SettingsDelegate>(
-    id: &'static str,
+    id: impl Into<gpui::ElementId>,
     label: &'static str,
     danger: bool,
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -1893,6 +2158,10 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) {
                 .padding_bottom_rem(COMMIT_MESSAGE_PADDING_BOTTOM_REM)
                 .unframed()
         });
+        let branch_search = cx.new(|cx| TextInput::new("", "Search branches", cx));
+        cx.subscribe(&branch_search, |_, _, _: &ValueChanged, cx| cx.notify())
+            .detach();
+        let branch_name = cx.new(|cx| TextInput::new("", "feature/my-branch", cx));
         let remote_name = cx.new(|cx| TextInput::new("", "origin", cx));
         let remote_url = cx.new(|cx| TextInput::new("", "https://github.com/user/repo.git", cx));
         let tag_name = cx.new(|cx| TextInput::new("", "v1.0.0", cx));
@@ -1900,6 +2169,8 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) {
         let tag_sha = cx.new(|cx| TextInput::new("", "HEAD", cx));
         cx.set_global(GitUiState {
             commit_message: Some(commit_message),
+            branch_search: Some(branch_search),
+            branch_name: Some(branch_name),
             remote_name: Some(remote_name),
             remote_url: Some(remote_url),
             tag_name: Some(tag_name),
@@ -2004,7 +2275,7 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
                 apply_modal_list_result(modal, result.map(ModalList::Tags), cx);
             });
         }
-        GitModal::ConfirmDiscardSelected | GitModal::ConfirmDiscard => {}
+        GitModal::CreateBranch | GitModal::ConfirmDiscardSelected | GitModal::ConfirmDiscard => {}
     })
     .detach();
 }
@@ -2050,6 +2321,16 @@ fn run_modal_action<T: PaneDelegate + SettingsDelegate>(
     action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
     cx: &mut Context<T>,
 ) {
+    run_modal_action_after_success(root, modal, action, |_| {}, cx);
+}
+
+fn run_modal_action_after_success<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    modal: GitModal,
+    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
+    on_success: impl FnOnce(&mut Context<T>) + 'static,
+    cx: &mut Context<T>,
+) {
     clear_error(cx);
     cx.spawn(async move |this, cx| {
         let action_root = root.clone();
@@ -2058,7 +2339,11 @@ fn run_modal_action<T: PaneDelegate + SettingsDelegate>(
             .spawn(async move { action(action_root) })
             .await;
         let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => refresh_modal_data(root, modal, cx),
+            Ok(()) => {
+                on_success(cx);
+                refresh_modal_data(root.clone(), modal, cx);
+                refresh_summary(root, true, false, cx);
+            }
             Err(error) => {
                 cx.update_global::<GitUiState, _>(|state, _| {
                     state.last_error = Some(error.to_string())

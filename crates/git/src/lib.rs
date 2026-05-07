@@ -60,6 +60,7 @@ pub struct Stash {
 pub struct Branch {
     pub name: String,
     pub current: bool,
+    pub remote: bool,
 }
 
 impl RepositorySummary {
@@ -243,11 +244,19 @@ pub fn commit_staged(path: impl AsRef<Path>, message: &str) -> Result<(), Error>
 }
 
 pub fn list_branches(path: impl AsRef<Path>) -> Result<Vec<Branch>, Error> {
-    let output = git_output(
+    let local_output = git_output(
         path.as_ref(),
         &["branch", "--format=%(HEAD)%09%(refname:short)"],
     )?;
-    Ok(output
+    let remote_output = git_output(
+        path.as_ref(),
+        &[
+            "branch",
+            "--remotes",
+            "--format=%(refname:short)%09%(symref)",
+        ],
+    )?;
+    let mut branches = local_output
         .lines()
         .filter_map(|line| {
             let (head, name) = line.split_once('\t')?;
@@ -258,13 +267,41 @@ pub fn list_branches(path: impl AsRef<Path>) -> Result<Vec<Branch>, Error> {
             Some(Branch {
                 name: name.to_string(),
                 current: head.trim() == "*",
+                remote: false,
             })
         })
-        .collect())
+        .collect::<Vec<_>>();
+
+    branches.extend(remote_output.lines().filter_map(|line| {
+        let (name, symref) = line.split_once('\t').unwrap_or((line, ""));
+        let name = name.trim();
+        if name.is_empty() || !symref.trim().is_empty() {
+            return None;
+        }
+        Some(Branch {
+            name: name.to_string(),
+            current: false,
+            remote: true,
+        })
+    }));
+
+    Ok(branches)
 }
 
 pub fn switch_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
     run_git(path.as_ref(), &["switch", branch])
+}
+
+pub fn switch_remote_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["switch", "--track", branch])
+}
+
+pub fn create_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["branch", branch])
+}
+
+pub fn delete_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
+    run_git(path.as_ref(), &["branch", "-d", branch])
 }
 
 pub fn push(path: impl AsRef<Path>) -> Result<(), Error> {
