@@ -4,3 +4,7 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
+installer = { path = "../installer" }
+registry = { path = "../registry" }
+serde_json = "1"
+url = "2"

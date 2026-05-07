@@ -8,8 +8,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    App, AppContext, BorrowAppContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Pixels, UniformListScrollHandle,
+    App, AppContext, BorrowAppContext, Bounds, Context, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, Pixels, UniformListScrollHandle,
 };
 use language::LanguageId;
 use settings::{ActiveSettings, SettingValue};
@@ -236,6 +236,31 @@ pub struct EditorView {
     /// zooms (changes rem), the cached pixel width is wrong and we fall back
     /// to a real measurement until it stabilizes again.
     cached_longest_rem: Cell<Option<Pixels>>,
+    hover_generation: u64,
+    hover_hide_generation: u64,
+    hover: Option<EditorHover>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EditorHover {
+    pub line_index: usize,
+    pub byte_index: usize,
+    pub byte_range: Range<usize>,
+    pub generation: u64,
+    pub hide_generation: u64,
+    pub hide_pending: bool,
+    pub source_highlight_visible: bool,
+    pub source_bounds: Option<Bounds<Pixels>>,
+    pub popup_bounds: Option<Bounds<Pixels>>,
+    pub status: EditorHoverStatus,
+}
+
+#[derive(Clone, Debug)]
+pub enum EditorHoverStatus {
+    Loading,
+    Ready(String),
+    Empty,
+    Error(String),
 }
 
 impl EditorView {
@@ -246,6 +271,130 @@ impl EditorView {
             observed_external: None,
             cached_longest_width: Cell::new(None),
             cached_longest_rem: Cell::new(None),
+            hover_generation: 0,
+            hover_hide_generation: 0,
+            hover: None,
+        }
+    }
+
+    pub fn hover(&self) -> Option<&EditorHover> {
+        self.hover.as_ref()
+    }
+
+    pub fn begin_hover(
+        &mut self,
+        line_index: usize,
+        byte_index: usize,
+        byte_range: Range<usize>,
+    ) -> Option<u64> {
+        if self.hover.as_mut().is_some_and(|hover| {
+            hover.line_index == line_index
+                && hover.byte_range == byte_range
+                && !matches!(hover.status, EditorHoverStatus::Empty)
+        }) {
+            if let Some(hover) = self.hover.as_mut() {
+                hover.hide_pending = false;
+            }
+            return None;
+        }
+
+        self.hover_generation = self.hover_generation.wrapping_add(1);
+        let generation = self.hover_generation;
+        self.hover = Some(EditorHover {
+            line_index,
+            byte_index,
+            byte_range,
+            generation,
+            hide_generation: 0,
+            hide_pending: false,
+            source_highlight_visible: true,
+            source_bounds: None,
+            popup_bounds: None,
+            status: EditorHoverStatus::Loading,
+        });
+        Some(generation)
+    }
+
+    pub fn hover_matches(&self, generation: u64) -> bool {
+        self.hover
+            .as_ref()
+            .is_some_and(|hover| hover.generation == generation)
+    }
+
+    pub fn finish_hover(&mut self, generation: u64, status: EditorHoverStatus) {
+        let Some(hover) = self.hover.as_mut() else {
+            return;
+        };
+        if hover.generation == generation {
+            let is_empty = matches!(status, EditorHoverStatus::Empty);
+            hover.status = status;
+            if is_empty {
+                hover.source_highlight_visible = false;
+            }
+        }
+    }
+
+    pub fn clear_hover_for_line(&mut self, line_index: usize) {
+        if self
+            .hover
+            .as_ref()
+            .is_some_and(|hover| hover.line_index == line_index)
+        {
+            self.hover_generation = self.hover_generation.wrapping_add(1);
+            self.hover = None;
+        }
+    }
+
+    pub fn cancel_hover_hide_for_line(&mut self, line_index: usize) {
+        if let Some(hover) = self.hover.as_mut()
+            && hover.line_index == line_index
+        {
+            hover.hide_pending = false;
+        }
+    }
+
+    pub fn set_hover_source_bounds(
+        &mut self,
+        line_index: usize,
+        byte_range: Range<usize>,
+        bounds: Bounds<Pixels>,
+    ) {
+        if let Some(hover) = self.hover.as_mut()
+            && hover.line_index == line_index
+            && hover.byte_range == byte_range
+        {
+            hover.source_bounds = Some(bounds);
+        }
+    }
+
+    pub fn set_hover_popup_bounds(&mut self, line_index: usize, bounds: Bounds<Pixels>) {
+        if let Some(hover) = self.hover.as_mut()
+            && hover.line_index == line_index
+        {
+            hover.popup_bounds = Some(bounds);
+        }
+    }
+
+    pub fn schedule_hover_hide_for_line(&mut self, line_index: usize) -> Option<u64> {
+        let hover = self.hover.as_mut()?;
+        if hover.line_index != line_index || hover.hide_pending {
+            return None;
+        }
+
+        self.hover_hide_generation = self.hover_hide_generation.wrapping_add(1);
+        hover.hide_generation = self.hover_hide_generation;
+        hover.hide_pending = true;
+        Some(hover.hide_generation)
+    }
+
+    pub fn clear_scheduled_hover(&mut self, line_index: usize, hide_generation: u64) {
+        if self.hover.as_ref().is_some_and(|hover| {
+            hover.line_index == line_index
+                && hover.hide_pending
+                && hover.hide_generation == hide_generation
+        }) {
+            self.hover_generation = self.hover_generation.wrapping_add(1);
+            self.hover = None;
         }
     }
 

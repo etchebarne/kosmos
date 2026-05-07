@@ -10,5 +10,5 @@ mod store;
 pub use grammar::Grammar;
 pub use highlight::{HighlightId, HighlightSpan};
 pub use registry::SyntaxRegistry;
-pub use snapshot::SyntaxSnapshot;
+pub use snapshot::{SyntaxSnapshot, highlight_content};
 pub use store::SyntaxStore;

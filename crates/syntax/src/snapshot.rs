@@ -6,7 +6,9 @@ use std::sync::Arc;
 use file_editor::TextEdit;
 use highlight::HighlightId;
 use language::LanguageId;
-use tree_sitter::{InputEdit, Node, Point as TsPoint, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{
+    InputEdit, Node, Parser, Point as TsPoint, Query, QueryCursor, StreamingIterator, Tree,
+};
 
 use crate::grammar::Grammar;
 use crate::highlight::HighlightSpan;
@@ -232,6 +234,30 @@ fn collect_highlights(
             });
         }
     }
+}
+
+/// Parse a standalone snippet and return its syntax highlight spans. Used for
+/// small transient documents such as LSP hover fenced code blocks where wiring
+/// a full buffer-backed [`SyntaxSnapshot`] would be unnecessary overhead.
+pub fn highlight_content(grammar: &Grammar, content: &str) -> Vec<HighlightSpan> {
+    let mut parser = Parser::new();
+    if parser.set_language(&grammar.language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+
+    let mut spans = Vec::new();
+    collect_highlights(
+        &grammar.highlights_query,
+        tree.root_node(),
+        content,
+        0..content.len(),
+        &mut spans,
+    );
+    spans.sort_by_key(|s| (s.specificity, s.pattern_index));
+    spans
 }
 
 fn to_input_edit(edit: &TextEdit) -> InputEdit {
