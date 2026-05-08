@@ -6,7 +6,8 @@ use gpui::{
     AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, DragMoveEvent, Entity,
     FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
     ListHorizontalSizingBehavior, MouseMoveEvent, Pixels, Point, SharedString, StyledText,
-    TextLayout, Window, anchored, deferred, div, point, prelude::*, px, rems, uniform_list,
+    TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
+    rems, uniform_list,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -27,6 +28,10 @@ const GUTTER_WIDTH_REM: f32 = 3.5;
 const GUTTER_PADDING_REM: f32 = 0.5;
 const BODY_PADDING_LEFT_REM: f32 = 0.75;
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
+const DEFAULT_INDENT_GUIDE_COLUMNS: usize = 4;
+const TAB_SIZE_COLUMNS: usize = 4;
+const MONOSPACE_CHAR_WIDTH_REM: f32 = 0.525;
+const INDENT_GUIDE_WIDTH_REM: f32 = 0.0625;
 /// Fixed row height. Pinning this lets `uniform_list::measure_item` return a
 /// stable row height regardless of how it lays out our flex_row at
 /// MinContent — otherwise the reported content size jitters between renders.
@@ -40,6 +45,25 @@ struct LineHover {
     buffer: Entity<Buffer>,
     view: Entity<EditorView>,
     root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+struct VisibleIndentRow {
+    index: usize,
+    top: Pixels,
+    bottom: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveIndentGuideRun {
+    column: usize,
+    top: Pixels,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SoftWrapLineMetrics {
+    content_chars: usize,
+    indent_columns: usize,
 }
 
 pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
@@ -61,36 +85,32 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buf = buffer.read(cx);
         (buf.line_count(), buf.row_count(), buf.longest_line_index())
     };
+    let indent_guides = {
+        let buf = buffer.read(cx);
+        indent_guides_for_buffer(&buf)
+    };
 
     let body: AnyElement = if soft_wrap {
         let virtual_state = view.read(cx).virtual_scroll();
         // Snapshot per-line char counts so the height closure doesn't need
         // App context. ~one usize per logical line, doesn't change while
         // the buffer is read-only.
-        let line_chars: Vec<usize> = {
+        let line_metrics: Vec<SoftWrapLineMetrics> = {
             let buf = buffer.read(cx);
-            (0..buf.line_count()).map(|i| buf.line_chars(i)).collect()
+            (0..buf.line_count())
+                .map(|i| buf.line(i).map(soft_wrap_line_metrics).unwrap_or_default())
+                .collect()
         };
         // Approximate em width for monospace as 0.6 × font_size. Off-by-10%
         // is fine for wrap-count estimation — VirtualList feeds this height
         // straight into the cumulative table without ever shaping text for
         // non-visible rows, so the scrollbar tracks our estimate exactly.
         let height_fn = move |index: usize, viewport_w: Pixels, rem_size: Pixels| -> Pixels {
-            let font_size_px = rems(0.875).to_pixels(rem_size);
-            let line_height_px = rems(ROW_HEIGHT_REM).to_pixels(rem_size);
-            let em_width = font_size_px * 0.6;
-            if index >= line_chars.len() {
+            if index >= line_metrics.len() {
                 // Bottom spacer rows: fixed single-line height.
-                return line_height_px;
+                return rems(ROW_HEIGHT_REM).to_pixels(rem_size);
             }
-            let cpl = if viewport_w > px(0.0) && em_width > px(0.0) {
-                ((viewport_w / em_width).floor() as usize).max(1)
-            } else {
-                80
-            };
-            let chars = line_chars[index];
-            let wraps = ((chars.max(1) + cpl - 1) / cpl).max(1) as f32;
-            line_height_px * wraps
+            soft_wrap_row_height(line_metrics[index], viewport_w, rem_size)
         };
 
         let buffer_for_render = buffer.clone();
@@ -212,6 +232,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let scrollbar_overlay =
         scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
     let hover_overlay = render_hover_overlay(&view, cx);
+    let indent_guides_overlay =
+        render_indent_guides_overlay(&view, soft_wrap, row_count, indent_guides, cx);
 
     let view_for_drag = view.clone();
     let view_for_mouse = view.clone();
@@ -230,6 +252,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         // is on the stack before the row elements push their refinements,
         // so resize-driven width changes don't re-shape every visible line.
         .when(!soft_wrap, |this| this.whitespace_nowrap())
+        .child(indent_guides_overlay)
         .child(body)
         .child(scrollbar_overlay)
         .child(hover_overlay)
@@ -493,6 +516,97 @@ fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
         .into_any_element()
 }
 
+fn soft_wrap_row_height(
+    metrics: SoftWrapLineMetrics,
+    viewport_w: Pixels,
+    rem_size: Pixels,
+) -> Pixels {
+    let line_height = rems(ROW_HEIGHT_REM).to_pixels(rem_size);
+    let text_width = text_area_width(viewport_w, metrics.indent_columns, rem_size);
+    let char_width = monospace_char_width(rem_size);
+    let chars_per_line = if text_width > px(0.0) && char_width > px(0.0) {
+        ((text_width / char_width).floor() as usize).max(1)
+    } else {
+        80
+    };
+    let wraps =
+        ((metrics.content_chars.max(1) + chars_per_line - 1) / chars_per_line).max(1) as f32;
+    line_height * wraps
+}
+
+fn text_area_width(viewport_w: Pixels, indent_columns: usize, rem_size: Pixels) -> Pixels {
+    let left_padding = rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(rem_size);
+    (viewport_w - left_padding - indent_width(indent_columns, rem_size)).max(px(0.0))
+}
+
+fn indent_width(columns: usize, rem_size: Pixels) -> Pixels {
+    monospace_char_width(rem_size) * columns
+}
+
+fn monospace_char_width(rem_size: Pixels) -> Pixels {
+    rems(MONOSPACE_CHAR_WIDTH_REM).to_pixels(rem_size)
+}
+
+fn soft_wrap_line_metrics(line: &str) -> SoftWrapLineMetrics {
+    let (byte_len, indent_columns) = leading_indentation(line);
+    SoftWrapLineMetrics {
+        content_chars: line[byte_len..].chars().count(),
+        indent_columns,
+    }
+}
+
+fn leading_indentation(line: &str) -> (usize, usize) {
+    let mut byte_len = 0usize;
+    let mut columns = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => {
+                byte_len += ch.len_utf8();
+                columns += 1;
+            }
+            '\t' => {
+                byte_len += ch.len_utf8();
+                columns += TAB_SIZE_COLUMNS - (columns % TAB_SIZE_COLUMNS);
+            }
+            _ => break,
+        }
+    }
+    (byte_len, columns)
+}
+
+fn shift_spans_for_display(
+    spans: Vec<(Range<usize>, HighlightId)>,
+    display_byte_offset: usize,
+    display_len: usize,
+) -> Vec<(Range<usize>, HighlightId)> {
+    spans
+        .into_iter()
+        .filter_map(|(range, id)| {
+            shift_range_for_display(range, display_byte_offset, display_len)
+                .map(|range| (range, id))
+        })
+        .collect()
+}
+
+fn shift_range_for_display(
+    range: Range<usize>,
+    display_byte_offset: usize,
+    display_len: usize,
+) -> Option<Range<usize>> {
+    if range.end <= display_byte_offset {
+        return None;
+    }
+    let start = range
+        .start
+        .saturating_sub(display_byte_offset)
+        .min(display_len);
+    let end = range
+        .end
+        .saturating_sub(display_byte_offset)
+        .min(display_len);
+    (start < end).then_some(start..end)
+}
+
 /// Width-and-height-only proxy for the longest line, served to gpui's
 /// `measure_item` so it doesn't re-shape the real (potentially 200+ char)
 /// line on every prepaint. The width is the previous frame's measured value
@@ -525,9 +639,10 @@ fn render_row(
             // never starts underneath it.
             div()
                 .w_full()
+                .min_w_0()
                 .pl(rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM))
                 .when(!soft_wrap, |this| this.whitespace_nowrap())
-                .child(render_line_text(line, spans, theme, hover, cx)),
+                .child(render_line_text(line, spans, soft_wrap, theme, hover, cx)),
         )
         .child(render_gutter(Some(line_number), sticky_offset, *theme))
 }
@@ -539,43 +654,420 @@ fn render_row(
 fn render_line_text(
     line: SharedString,
     spans: Vec<(Range<usize>, HighlightId)>,
+    soft_wrap: bool,
     theme: &Theme,
     hover: Option<LineHover>,
     cx: &App,
 ) -> AnyElement {
+    let (display_byte_offset, indent_columns) = if soft_wrap {
+        leading_indentation(line.as_ref())
+    } else {
+        (0, 0)
+    };
+    let display_line = if display_byte_offset == 0 {
+        line
+    } else {
+        SharedString::from(line[display_byte_offset..].to_string())
+    };
+    let display_len = display_line.len();
+    let spans = shift_spans_for_display(spans, display_byte_offset, display_len);
     let source_highlight = hover
         .as_ref()
-        .and_then(|hover| hover_source_highlight_range(hover, cx));
-    let highlights = line_highlights(line.len(), spans, &theme.syntax, source_highlight, *theme);
+        .and_then(|hover| hover_source_highlight_range(hover, cx))
+        .and_then(|range| shift_range_for_display(range, display_byte_offset, display_len));
+    let highlights = line_highlights(
+        display_line.len(),
+        spans,
+        &theme.syntax,
+        source_highlight,
+        *theme,
+    );
     let text = if highlights.is_empty() {
-        StyledText::new(line)
+        StyledText::new(display_line)
     } else {
-        StyledText::new(line).with_highlights(highlights)
-    };
-
-    let Some(hover) = hover else {
-        return text.into_any_element();
+        StyledText::new(display_line).with_highlights(highlights)
     };
     let text_layout = text.layout().clone();
+    let indent_padding = rems(indent_columns as f32 * MONOSPACE_CHAR_WIDTH_REM);
+
+    let Some(hover) = hover else {
+        return div()
+            .w_full()
+            .min_w_0()
+            .when(soft_wrap && indent_columns > 0, |this| {
+                this.pl(indent_padding)
+            })
+            .child(text)
+            .into_any_element();
+    };
     let hover_for_move = hover.clone();
     let hover_for_prepaint = hover.clone();
+    let text = InteractiveText::new(("file-editor-line", hover.line_index), text)
+        .on_hover(move |byte_index, _event, _window, cx| {
+            if let Some(byte_index) = byte_index {
+                begin_lsp_hover(&hover_for_move, display_byte_offset + byte_index, cx);
+            } else {
+                schedule_hover_hide(&hover_for_move.view, hover_for_move.line_index, cx);
+            }
+        })
+        .into_any_element();
+
     div()
-        .child(
-            InteractiveText::new(("file-editor-line", hover.line_index), text).on_hover(
-                move |byte_index, _event, _window, cx| {
-                    if let Some(byte_index) = byte_index {
-                        begin_lsp_hover(&hover_for_move, byte_index, cx);
-                    } else {
-                        schedule_hover_hide(&hover_for_move.view, hover_for_move.line_index, cx);
-                    }
-                },
-            ),
-        )
+        .w_full()
+        .min_w_0()
+        .when(soft_wrap && indent_columns > 0, |this| {
+            this.pl(indent_padding)
+        })
+        .child(text)
         .on_children_prepainted(move |bounds, window, cx| {
-            update_hover_source_bounds(&hover_for_prepaint, &text_layout, bounds, window, cx);
+            update_hover_source_bounds(
+                &hover_for_prepaint,
+                &text_layout,
+                display_byte_offset,
+                bounds,
+                window,
+                cx,
+            );
         })
         .id(("file-editor-line-hover", hover.line_index))
         .into_any_element()
+}
+
+fn render_indent_guides_overlay(
+    view: &Entity<EditorView>,
+    soft_wrap: bool,
+    row_count: usize,
+    indent_guides: Vec<Vec<usize>>,
+    cx: &App,
+) -> AnyElement {
+    let theme = *cx.theme();
+    if soft_wrap {
+        let state = view.read(cx).virtual_scroll();
+        render_indent_guides_canvas(theme, move |bounds, window| {
+            let rows = state
+                .visible_rows()
+                .into_iter()
+                .map(|(index, top, bottom)| VisibleIndentRow { index, top, bottom })
+                .collect::<Vec<_>>();
+            continuous_indent_guide_bounds(bounds, rows, &indent_guides, Pixels::ZERO, window)
+        })
+    } else {
+        let scroll = view.read(cx).uniform_scroll();
+        render_indent_guides_canvas(theme, move |bounds, window| {
+            let offset = scroll.0.borrow().base_handle.offset();
+            let row_height = rems(ROW_HEIGHT_REM).to_pixels(window.rem_size());
+            let rows =
+                uniform_visible_indent_rows(row_count, row_height, -offset.y, bounds.size.height);
+            continuous_indent_guide_bounds(bounds, rows, &indent_guides, offset.x, window)
+        })
+    }
+}
+
+fn render_indent_guides_canvas(
+    theme: Theme,
+    compute: impl Fn(Bounds<Pixels>, &mut Window) -> Vec<Bounds<Pixels>> + 'static,
+) -> AnyElement {
+    canvas(
+        move |bounds, window, _cx| compute(bounds, window),
+        move |_bounds, guide_bounds, window, _cx| {
+            let color = gpui::Hsla::from(theme.text).opacity(0.1);
+            for bounds in guide_bounds {
+                window.paint_quad(fill(bounds, color));
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .right_0()
+    .bottom_0()
+    .into_any_element()
+}
+
+fn uniform_visible_indent_rows(
+    row_count: usize,
+    row_height: Pixels,
+    scroll_y: Pixels,
+    viewport_height: Pixels,
+) -> Vec<VisibleIndentRow> {
+    if row_count == 0 || row_height <= Pixels::ZERO || viewport_height <= Pixels::ZERO {
+        return Vec::new();
+    }
+
+    let first = ((scroll_y / row_height).floor() as usize).min(row_count);
+    let last = (((scroll_y + viewport_height) / row_height).ceil() as usize).min(row_count);
+    (first..last)
+        .map(|index| {
+            let top = row_height * index - scroll_y;
+            VisibleIndentRow {
+                index,
+                top,
+                bottom: top + row_height,
+            }
+        })
+        .collect()
+}
+
+fn continuous_indent_guide_bounds(
+    bounds: Bounds<Pixels>,
+    rows: Vec<VisibleIndentRow>,
+    indent_guides: &[Vec<usize>],
+    scroll_x: Pixels,
+    window: &mut Window,
+) -> Vec<Bounds<Pixels>> {
+    let Some(max_column) = rows
+        .iter()
+        .filter_map(|row| indent_guides.get(row.index))
+        .flat_map(|guides| guides.iter().copied())
+        .max()
+    else {
+        return Vec::new();
+    };
+    let Some(x_offsets) = indent_guide_x_offsets(max_column, window) else {
+        return Vec::new();
+    };
+
+    let guide_width = rems(INDENT_GUIDE_WIDTH_REM)
+        .to_pixels(window.rem_size())
+        .ceil();
+    let text_left = rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(window.rem_size());
+    let mut active: Vec<ActiveIndentGuideRun> = Vec::new();
+    let mut guide_bounds = Vec::new();
+    let mut last_row_bottom = Pixels::ZERO;
+
+    for row in rows {
+        last_row_bottom = row.bottom;
+        let row_guides = indent_guides
+            .get(row.index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let mut index = 0;
+        while index < active.len() {
+            if row_guides.binary_search(&active[index].column).is_ok() {
+                index += 1;
+            } else {
+                push_indent_guide_bound(
+                    &mut guide_bounds,
+                    bounds,
+                    active[index],
+                    row.top,
+                    scroll_x,
+                    text_left,
+                    &x_offsets,
+                    guide_width,
+                );
+                active.remove(index);
+            }
+        }
+
+        for &column in row_guides {
+            if active.iter().all(|run| run.column != column) {
+                active.push(ActiveIndentGuideRun {
+                    column,
+                    top: row.top,
+                });
+            }
+        }
+    }
+
+    for run in active {
+        push_indent_guide_bound(
+            &mut guide_bounds,
+            bounds,
+            run,
+            last_row_bottom,
+            scroll_x,
+            text_left,
+            &x_offsets,
+            guide_width,
+        );
+    }
+
+    guide_bounds
+}
+
+fn push_indent_guide_bound(
+    out: &mut Vec<Bounds<Pixels>>,
+    bounds: Bounds<Pixels>,
+    run: ActiveIndentGuideRun,
+    bottom: Pixels,
+    scroll_x: Pixels,
+    text_left: Pixels,
+    x_offsets: &[Pixels],
+    guide_width: Pixels,
+) {
+    if bottom <= run.top {
+        return;
+    }
+    let Some(column_x) = x_offsets.get(run.column).copied() else {
+        return;
+    };
+    let left = (bounds.left() + scroll_x + text_left + column_x - guide_width / 2.0).round();
+    let top = (bounds.top() + run.top).round();
+    let bottom = (bounds.top() + bottom).round();
+    if bottom <= top {
+        return;
+    }
+
+    out.push(Bounds::new(
+        point(left, top),
+        gpui::size(guide_width, bottom - top),
+    ));
+}
+
+fn indent_guide_x_offsets(max_column: usize, window: &mut Window) -> Option<Vec<Pixels>> {
+    let text_style = window.text_style();
+    let font_size = text_style.font_size.to_pixels(window.rem_size());
+    let line_height = window.line_height();
+    let text = SharedString::from(" ".repeat(max_column + 1));
+    let run = TextRun {
+        len: text.len(),
+        font: text_style.font(),
+        color: text_style.color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let Ok(lines) = window
+        .text_system()
+        .shape_text(text, font_size, &[run], None, None)
+    else {
+        return None;
+    };
+    let line = lines.first()?;
+
+    Some(
+        (0..=max_column)
+            .map(|column| {
+                line.position_for_index(column, line_height)
+                    .map(|position| position.x)
+                    .unwrap_or(Pixels::ZERO)
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+fn indent_guide_runs(rows: &[(usize, &[usize])]) -> Vec<(usize, usize, usize)> {
+    let mut active: Vec<(usize, usize)> = Vec::new();
+    let mut runs = Vec::new();
+    for (row_index, guides) in rows {
+        let mut index = 0;
+        while index < active.len() {
+            if guides.binary_search(&active[index].0).is_ok() {
+                index += 1;
+            } else {
+                let (column, start) = active.remove(index);
+                runs.push((column, start, *row_index));
+            }
+        }
+        for &column in *guides {
+            if active
+                .iter()
+                .all(|(active_column, _)| *active_column != column)
+            {
+                active.push((column, *row_index));
+            }
+        }
+    }
+    let end = rows.last().map(|(index, _)| index + 1).unwrap_or(0);
+    runs.extend(
+        active
+            .into_iter()
+            .map(|(column, start)| (column, start, end)),
+    );
+    runs.sort_unstable();
+    runs
+}
+
+fn indent_guides_for_buffer(buffer: &Buffer) -> Vec<Vec<usize>> {
+    let indents = (0..buffer.line_count())
+        .map(|index| buffer.line(index).and_then(indentation_columns))
+        .collect::<Vec<_>>();
+    indent_guides_for_indents(&indents)
+}
+
+fn indentation_columns(line: &str) -> Option<usize> {
+    let mut columns = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => columns += 1,
+            '\t' => columns += TAB_SIZE_COLUMNS - (columns % TAB_SIZE_COLUMNS),
+            _ => break,
+        }
+    }
+
+    line.chars()
+        .any(|ch| !ch.is_whitespace())
+        .then_some(columns)
+}
+
+fn indent_guides_for_indents(indents: &[Option<usize>]) -> Vec<Vec<usize>> {
+    let indent_width = infer_indent_width(indents);
+    (0..indents.len())
+        .map(|index| {
+            let columns = effective_indent_columns(index, indents);
+            indent_guide_columns(columns, indent_width)
+        })
+        .collect()
+}
+
+fn infer_indent_width(indents: &[Option<usize>]) -> usize {
+    let mut counts = [0usize; 9];
+    let mut previous = None;
+    for indent in indents.iter().flatten().copied() {
+        if let Some(previous) = previous
+            && indent > previous
+        {
+            let delta = indent - previous;
+            if (2..counts.len()).contains(&delta) {
+                counts[delta] += 1;
+            }
+        }
+        previous = Some(indent);
+    }
+
+    if let Some((width, _)) = counts
+        .iter()
+        .enumerate()
+        .skip(2)
+        .max_by_key(|(width, count)| (**count, *width))
+        .filter(|(_, count)| **count > 0)
+    {
+        return width;
+    }
+
+    indents
+        .iter()
+        .flatten()
+        .copied()
+        .find(|indent| (2..=8).contains(indent))
+        .unwrap_or(DEFAULT_INDENT_GUIDE_COLUMNS)
+}
+
+fn effective_indent_columns(index: usize, indents: &[Option<usize>]) -> usize {
+    if let Some(indent) = indents[index] {
+        return indent;
+    }
+
+    let previous = indents[..index].iter().rev().flatten().next().copied();
+    let next = indents[index + 1..].iter().flatten().next().copied();
+    match (previous, next) {
+        (Some(previous), Some(next)) => previous.min(next),
+        _ => 0,
+    }
+}
+
+fn indent_guide_columns(columns: usize, indent_width: usize) -> Vec<usize> {
+    if indent_width == 0 {
+        return Vec::new();
+    }
+
+    let offset = indent_width;
+    (indent_width..=columns)
+        .step_by(indent_width)
+        .map(|column| column.saturating_sub(offset))
+        .collect()
 }
 
 fn begin_lsp_hover(hover: &LineHover, byte_index: usize, cx: &mut App) {
@@ -952,6 +1444,7 @@ fn source_hover_highlight_style(theme: Theme) -> HighlightStyle {
 fn update_hover_source_bounds(
     hover: &LineHover,
     text_layout: &TextLayout,
+    display_byte_offset: usize,
     bounds: Vec<Bounds<Pixels>>,
     window: &mut Window,
     cx: &mut App,
@@ -965,7 +1458,14 @@ fn update_hover_source_bounds(
     if active.line_index != hover.line_index || matches!(active.status, EditorHoverStatus::Empty) {
         return;
     }
-    let source_bounds = hover_source_bounds(hover, text_layout, source_bounds, &active, cx);
+    let source_bounds = hover_source_bounds(
+        hover,
+        text_layout,
+        display_byte_offset,
+        source_bounds,
+        &active,
+        cx,
+    );
     hover.view.update(cx, |view, _| {
         view.set_hover_source_bounds(hover.line_index, active.byte_range, source_bounds)
     });
@@ -975,6 +1475,7 @@ fn update_hover_source_bounds(
 fn hover_source_bounds(
     hover: &LineHover,
     text_layout: &TextLayout,
+    display_byte_offset: usize,
     source_bounds: Bounds<Pixels>,
     active: &file_editor::EditorHover,
     cx: &App,
@@ -983,13 +1484,21 @@ fn hover_source_bounds(
     let Some(line) = buffer.line(active.line_index) else {
         return source_bounds;
     };
-    let start = clamp_to_char_boundary(line, active.byte_range.start.min(line.len()));
-    let end = clamp_to_char_boundary(line, active.byte_range.end.min(line.len())).max(start);
+    let Some(display_range) = shift_range_for_display(
+        active.byte_range.clone(),
+        display_byte_offset,
+        line.len().saturating_sub(display_byte_offset),
+    ) else {
+        return source_bounds;
+    };
+    let start = display_range.start;
+    let end = display_range.end.max(start);
     let Some(start_position) = text_layout.position_for_index(start) else {
         return source_bounds;
     };
 
-    let fallback_char_width = source_bounds.size.width / line.chars().count().max(1) as f32;
+    let fallback_char_width =
+        source_bounds.size.width / line[display_byte_offset..].chars().count().max(1) as f32;
     let right = text_layout
         .position_for_index(end)
         .map(|position| position.x)
@@ -1663,6 +2172,96 @@ mod tests {
         assert!(hover_status_has_popup(&EditorHoverStatus::Error(
             "failed".to_string()
         )));
+    }
+
+    #[test]
+    fn indent_guides_follow_four_column_indents() {
+        assert_eq!(indent_guide_columns(0, 4), Vec::<usize>::new());
+        assert_eq!(indent_guide_columns(3, 4), Vec::<usize>::new());
+        assert_eq!(indent_guide_columns(4, 4), vec![0]);
+        assert_eq!(indent_guide_columns(8, 4), vec![0, 4]);
+    }
+
+    #[test]
+    fn indent_guides_treat_tabs_as_tab_stops() {
+        assert_eq!(indentation_columns("\tlet value = 1;"), Some(4));
+        assert_eq!(indentation_columns("\t\tlet value = 1;"), Some(8));
+        assert_eq!(indentation_columns("  \tlet value = 1;"), Some(4));
+    }
+
+    #[test]
+    fn indent_guides_merge_adjacent_rows_into_runs() {
+        let rows: &[(usize, &[usize])] = &[
+            (0, &[0]),
+            (1, &[0, 2]),
+            (2, &[0, 2]),
+            (3, &[0]),
+            (4, &[]),
+            (5, &[0]),
+        ];
+
+        assert_eq!(
+            indent_guide_runs(rows),
+            vec![(0, 0, 4), (0, 5, 6), (2, 1, 3)]
+        );
+    }
+
+    #[test]
+    fn soft_wrap_height_uses_text_area_width_after_gutter_padding() {
+        let rem_size = px(16.0);
+        let height = soft_wrap_row_height(
+            SoftWrapLineMetrics {
+                content_chars: 40,
+                indent_columns: 0,
+            },
+            rems(24.0).to_pixels(rem_size),
+            rem_size,
+        );
+
+        assert_eq!(height, rems(ROW_HEIGHT_REM).to_pixels(rem_size) * 2.0);
+    }
+
+    #[test]
+    fn soft_wrap_height_accounts_for_hanging_indent_width() {
+        let rem_size = px(16.0);
+        let height = soft_wrap_row_height(
+            SoftWrapLineMetrics {
+                content_chars: 20,
+                indent_columns: 8,
+            },
+            rems(18.0).to_pixels(rem_size),
+            rem_size,
+        );
+
+        assert_eq!(height, rems(ROW_HEIGHT_REM).to_pixels(rem_size) * 2.0);
+    }
+
+    #[test]
+    fn display_ranges_are_shifted_after_stripping_indent() {
+        assert_eq!(shift_range_for_display(4..10, 4, 12), Some(0..6));
+        assert_eq!(shift_range_for_display(0..4, 4, 12), None);
+        assert_eq!(shift_range_for_display(2..8, 4, 12), Some(0..4));
+    }
+
+    #[test]
+    fn indent_guides_infer_two_space_indents() {
+        let indents = [Some(0), Some(2), Some(4), Some(2), Some(0)];
+
+        assert_eq!(infer_indent_width(&indents), 2);
+        assert_eq!(
+            indent_guides_for_indents(&indents),
+            vec![vec![], vec![0], vec![0, 2], vec![0], vec![]]
+        );
+    }
+
+    #[test]
+    fn indent_guides_continue_through_blank_lines() {
+        let indents = [Some(0), Some(2), None, Some(2), Some(0)];
+
+        assert_eq!(
+            indent_guides_for_indents(&indents),
+            vec![vec![], vec![0], vec![0], vec![0], vec![]]
+        );
     }
 }
 

@@ -53,6 +53,9 @@ struct VirtualListInner {
     /// the top of item `i`; `cumulative[count]` is total content height.
     /// Recomputed when `viewport_width` or `item_count` changes.
     cumulative: Vec<Pixels>,
+    /// Per-row heights backing `cumulative`. Initialized from `height_fn`, then
+    /// corrected for visible rows using GPUI's actual layout result.
+    heights: Vec<Pixels>,
     cumulative_width: Option<Pixels>,
     cumulative_item_count: usize,
 }
@@ -85,6 +88,34 @@ impl VirtualListState {
         (total - inner.viewport_size.height).max(Pixels::ZERO)
     }
 
+    pub fn visible_rows(&self) -> Vec<(usize, Pixels, Pixels)> {
+        let inner = self.0.borrow();
+        let item_count = inner.cumulative_item_count;
+        if item_count == 0 || inner.viewport_size.height <= Pixels::ZERO {
+            return Vec::new();
+        }
+
+        let scroll_y = inner.scroll_y;
+        let first = inner
+            .cumulative
+            .partition_point(|&top| top <= scroll_y)
+            .saturating_sub(1)
+            .min(item_count - 1);
+        let scroll_end = scroll_y + inner.viewport_size.height;
+        let last = inner
+            .cumulative
+            .partition_point(|&top| top < scroll_end)
+            .min(item_count);
+
+        (first..last)
+            .map(|index| {
+                let top = inner.cumulative[index] - scroll_y;
+                let bottom = inner.cumulative[index + 1] - scroll_y;
+                (index, top, bottom)
+            })
+            .collect()
+    }
+
     /// Set scroll position from an external driver (e.g. scrollbar drag).
     /// Clamped to the legal range.
     pub fn set_scroll_y(&self, y: Pixels) {
@@ -93,6 +124,31 @@ impl VirtualListState {
         let max = (total - inner.viewport_size.height).max(Pixels::ZERO);
         inner.scroll_y = y.max(Pixels::ZERO).min(max);
     }
+}
+
+fn update_measured_item_height(
+    state: &VirtualListState,
+    index: usize,
+    measured_height: Pixels,
+    viewport_height: Pixels,
+) {
+    let mut inner = state.0.borrow_mut();
+    let Some(current_height) = inner.heights.get(index).copied() else {
+        return;
+    };
+    if current_height == measured_height {
+        return;
+    }
+
+    let delta = measured_height - current_height;
+    inner.heights[index] = measured_height;
+    for top in &mut inner.cumulative[index + 1..] {
+        *top += delta;
+    }
+
+    let total = inner.cumulative.last().copied().unwrap_or(Pixels::ZERO);
+    let max = (total - viewport_height).max(Pixels::ZERO);
+    inner.scroll_y = inner.scroll_y.max(Pixels::ZERO).min(max);
 }
 
 pub fn virtual_list<I: Into<ElementId>>(
@@ -168,16 +224,21 @@ impl Element for VirtualList {
             inner.cumulative_width != Some(viewport_w)
                 || inner.cumulative_item_count != self.item_count
                 || inner.cumulative.len() != self.item_count + 1
+                || inner.heights.len() != self.item_count
         };
         if needs_refresh {
             let rem_size = window.rem_size();
             let mut inner = self.state.0.borrow_mut();
             inner.cumulative.clear();
+            inner.heights.clear();
             inner.cumulative.reserve(self.item_count + 1);
+            inner.heights.reserve(self.item_count);
             inner.cumulative.push(Pixels::ZERO);
             let mut acc = Pixels::ZERO;
             for i in 0..self.item_count {
-                acc += (self.height_fn)(i, viewport_w, rem_size);
+                let height = (self.height_fn)(i, viewport_w, rem_size);
+                inner.heights.push(height);
+                acc += height;
                 inner.cumulative.push(acc);
             }
             inner.cumulative_width = Some(viewport_w);
@@ -194,34 +255,54 @@ impl Element for VirtualList {
             inner.scroll_y = inner.scroll_y.max(Pixels::ZERO).min(max);
         }
 
-        // Determine the visible range via binary search on cumulative
-        // heights, then render only those items.
-        let scroll_y = self.state.0.borrow().scroll_y;
-        let cumulative = self.state.0.borrow().cumulative.clone();
-        let first = if self.item_count == 0 {
-            0
-        } else {
-            cumulative
-                .partition_point(|&p| p <= scroll_y)
-                .saturating_sub(1)
-                .min(self.item_count - 1)
+        let mut i = {
+            let inner = self.state.0.borrow();
+            if self.item_count == 0 {
+                0
+            } else {
+                inner
+                    .cumulative
+                    .partition_point(|&p| p <= inner.scroll_y)
+                    .saturating_sub(1)
+                    .min(self.item_count - 1)
+            }
         };
-        let scroll_end = scroll_y + viewport_h;
-        let last = cumulative
-            .partition_point(|&p| p < scroll_end)
-            .min(self.item_count);
 
-        for i in first..last {
+        while i < self.item_count {
+            let row_top = {
+                let inner = self.state.0.borrow();
+                inner.cumulative[i] - inner.scroll_y
+            };
+            if row_top >= viewport_h {
+                break;
+            }
+
             let mut element = (self.render_item)(i, window, cx);
-            let item_top = bounds.origin.y + cumulative[i] - scroll_y;
-            let item_height = cumulative[i + 1] - cumulative[i];
-            let avail = size(
-                AvailableSpace::Definite(viewport_w),
-                AvailableSpace::Definite(item_height),
+            let measured = element.layout_as_root(
+                size(
+                    AvailableSpace::Definite(viewport_w),
+                    AvailableSpace::MinContent,
+                ),
+                window,
+                cx,
             );
-            element.layout_as_root(avail, window, cx);
+            update_measured_item_height(&self.state, i, measured.height, viewport_h);
+
+            let item_top = {
+                let inner = self.state.0.borrow();
+                bounds.origin.y + inner.cumulative[i] - inner.scroll_y
+            };
+            element.layout_as_root(
+                size(
+                    AvailableSpace::Definite(viewport_w),
+                    AvailableSpace::Definite(measured.height),
+                ),
+                window,
+                cx,
+            );
             element.prepaint_at(point(bounds.origin.x, item_top), window, cx);
             items.push(element);
+            i += 1;
         }
 
         // Hitbox for routing scroll-wheel events to our scroll state.
