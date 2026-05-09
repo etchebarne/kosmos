@@ -251,6 +251,19 @@ static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
+    RegistryEntry {
+        id: "gdeye",
+        kinds: &[ToolKind::Lsp],
+        languages: &["gdscript"],
+        install: InstallSource::Cargo {
+            crate_name: "gdeye",
+            bin: "gdeye",
+        },
+        launch: LaunchSpec {
+            args: &["lsp"],
+            env: &[],
+        },
+    },
     // ─── LSPs (go) ────────────────────────────────────────────────────────
     RegistryEntry {
         id: "gopls",

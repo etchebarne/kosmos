@@ -151,6 +151,11 @@ fn build_grammar(language: &LanguageId) -> Option<Grammar> {
         .and_then(|g| g.with_injections(tree_sitter_lua::INJECTIONS_QUERY))
         .and_then(|g| g.with_locals(tree_sitter_lua::LOCALS_QUERY))
         .ok(),
+        "gdscript" => Grammar::new(
+            tree_sitter_gdscript::LANGUAGE.into(),
+            GDSCRIPT_HIGHLIGHTS_QUERY,
+        )
+        .ok(),
         // tree-sitter-php's LANGUAGE_PHP is the full grammar that handles
         // mixed PHP+HTML files (the common shape for `.php`); LANGUAGE_PHP_ONLY
         // exists for pure-PHP contexts where there's no surrounding markup.
@@ -275,3 +280,190 @@ const JSX_UPPERCASE_TAG_QUERY: &str = r#"
 (jsx_closing_element (identifier) @tag (#match? @tag "^[A-Z]"))
 (jsx_self_closing_element (identifier) @tag (#match? @tag "^[A-Z]"))
 "#;
+
+const GDSCRIPT_HIGHLIGHTS_QUERY: &str = r#"
+(comment) @comment
+(region_start) @comment
+(region_end) @comment
+
+[(string) (string_name) (node_path) (get_node)] @string
+(escape_sequence) @string.escape
+
+[(integer) (float)] @number
+[(true) (false)] @boolean
+(null) @constant.builtin
+
+(identifier) @variable
+
+(annotation
+  "@" @punctuation.special
+  (identifier) @attribute)
+
+(function_definition name: (name) @function)
+(lambda name: (name) @function)
+(constructor_definition "_init" @function.special)
+(call (identifier) @function.call)
+(attribute_call (identifier) @function.method)
+(base_call (identifier) @function.method)
+
+(class_definition name: (name) @type)
+(class_name_statement name: (name) @type)
+(enum_definition name: (name) @type)
+
+(signal_statement name: (name) @function)
+(const_statement name: (name) @constant)
+(enumerator left: (identifier) @constant)
+
+(for_statement left: (identifier) @variable.parameter)
+(pattern_binding (identifier) @variable.parameter)
+(typed_parameter (identifier) @variable.parameter)
+(default_parameter (identifier) @variable.parameter)
+(typed_default_parameter (identifier) @variable.parameter)
+(variadic_parameter (identifier) @variable.parameter)
+
+(pair left: (identifier) @property)
+(attribute (identifier) @property)
+(attribute_subscript (identifier) @property)
+
+(type (identifier) @type)
+
+[
+  "if"
+  "elif"
+  "else"
+  "for"
+  "while"
+  "match"
+  "when"
+] @keyword.conditional
+
+[
+  "return"
+] @keyword.return
+
+[
+  "func"
+] @keyword.function
+
+[
+  "await"
+] @keyword.coroutine
+
+[
+  "class"
+  "class_name"
+  "extends"
+  "enum"
+  "signal"
+  "var"
+  "const"
+  "export"
+  "onready"
+  "setget"
+  "set"
+  "get"
+  (static_keyword)
+  (remote_keyword)
+  (breakpoint_statement)
+] @keyword
+
+[
+  "break"
+  "continue"
+  "pass"
+] @keyword
+
+[
+  "and"
+  "or"
+  "not"
+  "in"
+  "is"
+  "as"
+  "&&"
+  "||"
+  "!"
+  "+"
+  "-"
+  "*"
+  "**"
+  "/"
+  "%"
+  "&"
+  "|"
+  "^"
+  "~"
+  "<<"
+  ">>"
+  "<"
+  "<="
+  "=="
+  "!="
+  ">="
+  ">"
+  "="
+  "+="
+  "-="
+  "*="
+  "**="
+  "/="
+  "%="
+  "&="
+  "|="
+  "^="
+  "<<="
+  ">>="
+  ":="
+] @operator
+
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+] @punctuation.bracket
+
+[
+  "."
+  ","
+  ":"
+  ";"
+  "->"
+  "..."
+] @punctuation.delimiter
+
+[
+  "$"
+  "%"
+  "&\""
+  "^\""
+] @punctuation.special
+"#;
+
+#[cfg(test)]
+mod tests {
+    use highlight::HighlightId;
+    use language::LanguageId;
+
+    use crate::highlight_content;
+
+    use super::*;
+
+    #[test]
+    fn gdscript_grammar_highlights_common_tokens() {
+        let grammar = build_grammar(&LanguageId::from("gdscript")).unwrap();
+        let spans = highlight_content(
+            &grammar,
+            "@export var speed: float = 1.5\nfunc _ready():\n\tprint(\"ok\")\n",
+        );
+
+        assert!(spans.iter().any(|span| span.id == HighlightId::Attribute));
+        assert!(spans.iter().any(|span| span.id == HighlightId::Keyword));
+        assert!(spans.iter().any(|span| span.id == HighlightId::Function));
+        assert!(spans.iter().any(|span| span.id == HighlightId::Type));
+        assert!(spans.iter().any(|span| span.id == HighlightId::Number));
+        assert!(spans.iter().any(|span| span.id == HighlightId::String));
+    }
+}
