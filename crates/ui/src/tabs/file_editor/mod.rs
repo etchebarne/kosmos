@@ -26,6 +26,11 @@ use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
 const GUTTER_WIDTH_REM: f32 = 3.5;
 const GUTTER_PADDING_REM: f32 = 0.5;
+const GUTTER_FOLD_COLUMN_REM: f32 = 0.5;
+const GUTTER_TOTAL_WIDTH_REM: f32 = GUTTER_WIDTH_REM + GUTTER_FOLD_COLUMN_REM;
+const GUTTER_HOVER_RIGHT_SLOP_REM: f32 = 1.25;
+const GUTTER_FOLD_HOVER_LEFT_REM: f32 = GUTTER_WIDTH_REM - GUTTER_PADDING_REM;
+const GUTTER_FOLD_HOVER_RIGHT_SLOP_REM: f32 = 0.5;
 const BODY_PADDING_LEFT_REM: f32 = 0.75;
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const DEFAULT_INDENT_GUIDE_COLUMNS: usize = 4;
@@ -89,6 +94,15 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buf = buffer.read(cx);
         indent_guides_for_buffer(&buf)
     };
+    let foldable_lines = {
+        let buf = buffer.read(cx);
+        foldable_lines_for_buffer(&buf)
+    };
+    let (show_fold_arrows, hovered_fold_line) = {
+        let view = view.read(cx);
+        (view.gutter_hovered(), view.hovered_fold_line())
+    };
+    let foldable_for_mouse = foldable_lines.clone();
 
     let body: AnyElement = if soft_wrap {
         let virtual_state = view.read(cx).virtual_scroll();
@@ -117,6 +131,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let view_for_render = view.clone();
         let snapshot_for_render = snapshot.clone();
         let root_for_render = file_tree_root.clone();
+        let foldable_for_render = foldable_lines.clone();
         virtual_list(
             "file-editor-soft-wrap",
             virtual_state,
@@ -124,7 +139,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             height_fn,
             move |index, _window, cx| {
                 if index >= line_count {
-                    return render_spacer_row(px(0.0), *cx.theme()).into_any_element();
+                    return render_spacer_row(index, px(0.0), &view_for_render, *cx.theme())
+                        .into_any_element();
                 }
                 let theme = *cx.theme();
                 let (line, spans) =
@@ -137,6 +153,10 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                     spans,
                     soft_wrap,
                     px(0.0),
+                    foldable_for_render.get(index).copied().unwrap_or(false),
+                    show_fold_arrows,
+                    hovered_fold_line,
+                    &view_for_render,
                     Some(LineHover {
                         line_index: index,
                         buffer: buffer_for_render.clone(),
@@ -157,6 +177,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let view_for_render = view.clone();
         let snapshot_for_render = snapshot.clone();
         let root_for_render = file_tree_root.clone();
+        let foldable_for_render = foldable_lines;
         uniform_list("file-editor-lines", row_count, move |range, window, cx| {
             let theme = *cx.theme();
             let view_ref = view_for_render.read(cx);
@@ -192,7 +213,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         return render_longest_stub(width, theme).into_any_element();
                     }
                     if i >= line_count {
-                        return render_spacer_row(sticky_offset, theme).into_any_element();
+                        return render_spacer_row(i, sticky_offset, &view_for_render, theme)
+                            .into_any_element();
                     }
                     let (line, spans) =
                         line_with_spans(&buffer_for_render, &snapshot_for_render, i, cx);
@@ -202,6 +224,10 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         spans,
                         soft_wrap,
                         sticky_offset,
+                        foldable_for_render.get(i).copied().unwrap_or(false),
+                        show_fold_arrows,
+                        hovered_fold_line,
+                        &view_for_render,
                         Some(LineHover {
                             line_index: i,
                             buffer: buffer_for_render.clone(),
@@ -237,6 +263,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
 
     let view_for_drag = view.clone();
     let view_for_mouse = view.clone();
+    let view_for_bounds = view.clone();
+    let view_for_leave = view.clone();
     let editor_area = div()
         .relative()
         .flex_1()
@@ -256,8 +284,27 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .child(body)
         .child(scrollbar_overlay)
         .child(hover_overlay)
+        .on_children_prepainted(move |bounds, _window, cx| {
+            if let Some(bounds) = bounds.first().copied() {
+                view_for_bounds.update(cx, |view, _| view.set_editor_bounds(bounds));
+            }
+        })
+        .id(("file-editor-area", view.entity_id()))
         .on_mouse_move(move |event, window, cx| {
+            update_gutter_hover_from_mouse(
+                &view_for_mouse,
+                soft_wrap,
+                &foldable_for_mouse,
+                event.position,
+                window,
+                cx,
+            );
             update_hover_visibility(&view_for_mouse, event, window, cx);
+        })
+        .on_hover(move |hovered, window, cx| {
+            if !*hovered {
+                update_gutter_hover_state(&view_for_leave, false, None, window, cx);
+            }
         })
         .on_drag_move(cx.listener(
             move |_, event: &DragMoveEvent<ScrollbarDrag>, _window, cx| {
@@ -507,12 +554,26 @@ fn observe_snapshot<T: 'static>(
     cx.observe(snapshot, |_, _, cx| cx.notify()).detach();
 }
 
-fn render_spacer_row(sticky_offset: Pixels, theme: Theme) -> AnyElement {
+fn render_spacer_row(
+    row_index: usize,
+    sticky_offset: Pixels,
+    view: &Entity<EditorView>,
+    theme: Theme,
+) -> AnyElement {
     div()
         .relative()
         .w_full()
         .h(rems(ROW_HEIGHT_REM))
-        .child(render_gutter(None, sticky_offset, theme))
+        .child(render_gutter(
+            row_index,
+            None,
+            sticky_offset,
+            false,
+            false,
+            None,
+            view,
+            theme,
+        ))
         .into_any_element()
 }
 
@@ -535,7 +596,7 @@ fn soft_wrap_row_height(
 }
 
 fn text_area_width(viewport_w: Pixels, indent_columns: usize, rem_size: Pixels) -> Pixels {
-    let left_padding = rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(rem_size);
+    let left_padding = rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(rem_size);
     (viewport_w - left_padding - indent_width(indent_columns, rem_size)).max(px(0.0))
 }
 
@@ -623,6 +684,10 @@ fn render_row(
     spans: Vec<(Range<usize>, HighlightId)>,
     soft_wrap: bool,
     sticky_offset: Pixels,
+    foldable: bool,
+    show_fold_arrow: bool,
+    hovered_fold_line: Option<usize>,
+    view: &Entity<EditorView>,
     hover: Option<LineHover>,
     theme: &Theme,
     cx: &App,
@@ -640,11 +705,20 @@ fn render_row(
             div()
                 .w_full()
                 .min_w_0()
-                .pl(rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM))
+                .pl(rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM))
                 .when(!soft_wrap, |this| this.whitespace_nowrap())
                 .child(render_line_text(line, spans, soft_wrap, theme, hover, cx)),
         )
-        .child(render_gutter(Some(line_number), sticky_offset, *theme))
+        .child(render_gutter(
+            line_number - 1,
+            Some(line_number),
+            sticky_offset,
+            foldable,
+            show_fold_arrow,
+            hovered_fold_line,
+            view,
+            *theme,
+        ))
 }
 
 /// Build the styled text element for a line, lifting the highlight spans into
@@ -830,7 +904,8 @@ fn continuous_indent_guide_bounds(
     let guide_width = rems(INDENT_GUIDE_WIDTH_REM)
         .to_pixels(window.rem_size())
         .ceil();
-    let text_left = rems(GUTTER_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(window.rem_size());
+    let text_left =
+        rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(window.rem_size());
     let mut active: Vec<ActiveIndentGuideRun> = Vec::new();
     let mut guide_bounds = Vec::new();
     let mut last_row_bottom = Pixels::ZERO;
@@ -985,6 +1060,28 @@ fn indent_guides_for_buffer(buffer: &Buffer) -> Vec<Vec<usize>> {
         .map(|index| buffer.line(index).and_then(indentation_columns))
         .collect::<Vec<_>>();
     indent_guides_for_indents(&indents)
+}
+
+fn foldable_lines_for_buffer(buffer: &Buffer) -> Vec<bool> {
+    let indents = (0..buffer.line_count())
+        .map(|index| buffer.line(index).and_then(indentation_columns))
+        .collect::<Vec<_>>();
+    foldable_lines_for_indents(&indents)
+}
+
+fn foldable_lines_for_indents(indents: &[Option<usize>]) -> Vec<bool> {
+    (0..indents.len())
+        .map(|index| {
+            let Some(indent) = indents[index] else {
+                return false;
+            };
+            indents[index + 1..]
+                .iter()
+                .flatten()
+                .next()
+                .is_some_and(|next| *next > indent)
+        })
+        .collect()
 }
 
 fn indentation_columns(line: &str) -> Option<usize> {
@@ -2190,6 +2287,26 @@ mod tests {
     }
 
     #[test]
+    fn foldable_lines_follow_deeper_content() {
+        let indents = [Some(0), Some(4), Some(8), Some(4), Some(0)];
+
+        assert_eq!(
+            foldable_lines_for_indents(&indents),
+            vec![true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn foldable_lines_skip_blank_lines() {
+        let indents = [Some(0), None, Some(4), Some(0)];
+
+        assert_eq!(
+            foldable_lines_for_indents(&indents),
+            vec![true, false, false, false]
+        );
+    }
+
+    #[test]
     fn indent_guides_merge_adjacent_rows_into_runs() {
         let rows: &[(usize, &[usize])] = &[
             (0, &[0]),
@@ -2266,25 +2383,139 @@ mod tests {
 }
 
 fn render_gutter(
+    row_index: usize,
     line_number: Option<usize>,
     sticky_offset: Pixels,
+    foldable: bool,
+    show_fold_arrow: bool,
+    hovered_fold_line: Option<usize>,
+    view: &Entity<EditorView>,
     theme: Theme,
 ) -> impl IntoElement {
     let label: SharedString = match line_number {
         Some(n) => format!("{n}").into(),
         None => SharedString::default(),
     };
-    div()
+    let mut gutter = div()
+        .id(gpui::ElementId::Name(
+            format!("file-editor-gutter:{:?}:{row_index}", view.entity_id()).into(),
+        ))
         .absolute()
-        .top(rems(0.0))
+        .top_0()
+        .bottom_0()
         .left(sticky_offset)
-        .h(rems(ROW_HEIGHT_REM))
-        .w(rems(GUTTER_WIDTH_REM))
-        .pr(rems(GUTTER_PADDING_REM))
+        .w(rems(GUTTER_TOTAL_WIDTH_REM))
+        .pr(rems(GUTTER_PADDING_REM + GUTTER_FOLD_COLUMN_REM))
         .text_right()
         .text_color(theme.text_subtle)
         .bg(theme.bg_surface)
-        .child(label)
+        .child(label);
+
+    if foldable {
+        let arrow_color = if hovered_fold_line == Some(row_index) {
+            theme.text_emphasis
+        } else {
+            theme.text_subtle
+        };
+        let mut arrow = div()
+            .id(gpui::ElementId::Name(
+                format!("file-editor-fold-arrow:{:?}:{row_index}", view.entity_id()).into(),
+            ))
+            .absolute()
+            .right(rems(0.0))
+            .top(rems(0.0))
+            .h_full()
+            .w(rems(GUTTER_FOLD_COLUMN_REM))
+            .flex()
+            .items_center()
+            .justify_center();
+
+        if show_fold_arrow {
+            arrow = arrow.child(
+                Icon::new(IconName::ChevronDown)
+                    .size(12.0)
+                    .color(arrow_color),
+            );
+        }
+
+        gutter = gutter.child(arrow);
+    }
+
+    gutter
+}
+
+fn update_gutter_hover_from_mouse(
+    view: &Entity<EditorView>,
+    soft_wrap: bool,
+    foldable_lines: &[bool],
+    position: Point<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let rem_size = window.rem_size();
+    let gutter_hover_width =
+        rems(GUTTER_TOTAL_WIDTH_REM + GUTTER_HOVER_RIGHT_SLOP_REM).to_pixels(rem_size);
+    let fold_hover_left = rems(GUTTER_FOLD_HOVER_LEFT_REM).to_pixels(rem_size);
+    let fold_hover_right =
+        rems(GUTTER_TOTAL_WIDTH_REM + GUTTER_FOLD_HOVER_RIGHT_SLOP_REM).to_pixels(rem_size);
+    let (gutter_hovered, hovered_fold_line) = {
+        let view_ref = view.read(cx);
+        let Some(bounds) = view_ref.editor_bounds() else {
+            return;
+        };
+        match bounds.localize(&position) {
+            Some(local) if local.x >= Pixels::ZERO && local.x <= gutter_hover_width => {
+                let row = hovered_row_index(&view_ref, soft_wrap, local.y, window);
+                let in_fold_hover_zone = local.x >= fold_hover_left && local.x <= fold_hover_right;
+                let hovered_fold_line = row.filter(|row| {
+                    in_fold_hover_zone && foldable_lines.get(*row).copied().unwrap_or(false)
+                });
+                (true, hovered_fold_line)
+            }
+            _ => (false, None),
+        }
+    };
+    update_gutter_hover_state(view, gutter_hovered, hovered_fold_line, window, cx);
+}
+
+fn hovered_row_index(
+    view: &EditorView,
+    soft_wrap: bool,
+    local_y: Pixels,
+    window: &mut Window,
+) -> Option<usize> {
+    if local_y < Pixels::ZERO {
+        return None;
+    }
+
+    if soft_wrap {
+        view.virtual_scroll()
+            .visible_rows()
+            .into_iter()
+            .find_map(|(index, top, bottom)| (local_y >= top && local_y < bottom).then_some(index))
+    } else {
+        let row_height = rems(ROW_HEIGHT_REM).to_pixels(window.rem_size());
+        if row_height <= Pixels::ZERO {
+            return None;
+        }
+        let scroll_y = -view.uniform_scroll().0.borrow().base_handle.offset().y;
+        Some(((local_y + scroll_y) / row_height).floor() as usize)
+    }
+}
+
+fn update_gutter_hover_state(
+    view: &Entity<EditorView>,
+    hovered: bool,
+    hovered_fold_line: Option<usize>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let changed = view.update(cx, |view, _| {
+        view.set_gutter_hover_state(hovered, hovered_fold_line)
+    });
+    if changed {
+        window.refresh();
+    }
 }
 
 fn missing_path<T: 'static>(cx: &mut Context<T>) -> AnyElement {

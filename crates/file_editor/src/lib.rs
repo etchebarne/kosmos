@@ -236,6 +236,9 @@ pub struct EditorView {
     /// zooms (changes rem), the cached pixel width is wrong and we fall back
     /// to a real measurement until it stabilizes again.
     cached_longest_rem: Cell<Option<Pixels>>,
+    editor_bounds: Option<Bounds<Pixels>>,
+    gutter_hovered: bool,
+    hovered_fold_line: Option<usize>,
     hover_generation: u64,
     hover_hide_generation: u64,
     hover: Option<EditorHover>,
@@ -271,6 +274,9 @@ impl EditorView {
             observed_external: None,
             cached_longest_width: Cell::new(None),
             cached_longest_rem: Cell::new(None),
+            editor_bounds: None,
+            gutter_hovered: false,
+            hovered_fold_line: None,
             hover_generation: 0,
             hover_hide_generation: 0,
             hover: None,
@@ -279,6 +285,36 @@ impl EditorView {
 
     pub fn hover(&self) -> Option<&EditorHover> {
         self.hover.as_ref()
+    }
+
+    pub fn editor_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.editor_bounds
+    }
+
+    pub fn set_editor_bounds(&mut self, bounds: Bounds<Pixels>) {
+        self.editor_bounds = Some(bounds);
+    }
+
+    pub fn gutter_hovered(&self) -> bool {
+        self.gutter_hovered
+    }
+
+    pub fn set_gutter_hover_state(
+        &mut self,
+        hovered: bool,
+        hovered_fold_line: Option<usize>,
+    ) -> bool {
+        let hovered_fold_line = hovered.then_some(hovered_fold_line).flatten();
+        if self.gutter_hovered == hovered && self.hovered_fold_line == hovered_fold_line {
+            return false;
+        }
+        self.gutter_hovered = hovered;
+        self.hovered_fold_line = hovered_fold_line;
+        true
+    }
+
+    pub fn hovered_fold_line(&self) -> Option<usize> {
+        self.hovered_fold_line
     }
 
     pub fn begin_hover(
