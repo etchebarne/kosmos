@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -5,15 +6,15 @@ use std::time::Duration;
 use gpui::{
     AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, DragMoveEvent, Entity,
     FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
-    ListHorizontalSizingBehavior, MouseMoveEvent, Pixels, Point, SharedString, StyledText,
-    TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
-    rems, uniform_list,
+    ListHorizontalSizingBehavior, MouseButton, MouseMoveEvent, Pixels, Point, SharedString,
+    StyledText, TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point,
+    prelude::*, px, rems, uniform_list,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use file_editor::{
-    Buffer, BufferStore, EditorHoverStatus, EditorView, EditorViewStore, soft_wrap_enabled,
-    virtual_list,
+    BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorView, EditorViewStore,
+    soft_wrap_enabled, virtual_list,
 };
 use file_tree::ActiveFileTree;
 use highlight::HighlightId;
@@ -31,6 +32,8 @@ const GUTTER_TOTAL_WIDTH_REM: f32 = GUTTER_WIDTH_REM + GUTTER_FOLD_COLUMN_REM;
 const GUTTER_HOVER_RIGHT_SLOP_REM: f32 = 1.25;
 const GUTTER_FOLD_HOVER_LEFT_REM: f32 = GUTTER_WIDTH_REM - GUTTER_PADDING_REM;
 const GUTTER_FOLD_HOVER_RIGHT_SLOP_REM: f32 = 0.5;
+const GUTTER_FOLD_HOVER_WIDTH_REM: f32 =
+    GUTTER_TOTAL_WIDTH_REM + GUTTER_FOLD_HOVER_RIGHT_SLOP_REM - GUTTER_FOLD_HOVER_LEFT_REM;
 const BODY_PADDING_LEFT_REM: f32 = 0.75;
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const DEFAULT_INDENT_GUIDE_COLUMNS: usize = 4;
@@ -86,22 +89,32 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let snapshot = SyntaxStore::for_buffer(&buffer, cx);
     observe_snapshot(&view, &snapshot, cx);
     let soft_wrap = soft_wrap_enabled(cx);
-    let (line_count, row_count, longest_idx) = {
+    let indents = {
         let buf = buffer.read(cx);
-        (buf.line_count(), buf.row_count(), buf.longest_line_index())
+        indents_for_buffer(&buf)
     };
-    let indent_guides = {
-        let buf = buffer.read(cx);
-        indent_guides_for_buffer(&buf)
-    };
-    let foldable_lines = {
-        let buf = buffer.read(cx);
-        foldable_lines_for_buffer(&buf)
-    };
-    let (show_fold_arrows, hovered_fold_line) = {
+    let indent_guides = indent_guides_for_indents(&indents);
+    let foldable_lines = foldable_lines_for_indents(&indents);
+    let (show_fold_arrows, hovered_fold_line, folded_lines) = {
         let view = view.read(cx);
-        (view.gutter_hovered(), view.hovered_fold_line())
+        (
+            view.gutter_hovered(),
+            view.hovered_fold_line(),
+            view.folded_lines().clone(),
+        )
     };
+    let visible_lines = visible_lines_for_indents(&indents, &foldable_lines, &folded_lines);
+    let has_folded_lines = !folded_lines.is_empty();
+    let visible_indent_guides = visible_lines
+        .iter()
+        .map(|&line| indent_guides.get(line).cloned().unwrap_or_default())
+        .collect::<Vec<_>>();
+    let row_count = visible_lines.len() + BOTTOM_SPACER_LINES;
+    let longest_idx = {
+        let buf = buffer.read(cx);
+        longest_visible_row_index(&buf, &visible_lines)
+    };
+    let visible_for_mouse = visible_lines.clone();
     let foldable_for_mouse = foldable_lines.clone();
 
     let body: AnyElement = if soft_wrap {
@@ -119,12 +132,13 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         // is fine for wrap-count estimation — VirtualList feeds this height
         // straight into the cumulative table without ever shaping text for
         // non-visible rows, so the scrollbar tracks our estimate exactly.
+        let visible_for_height = visible_lines.clone();
         let height_fn = move |index: usize, viewport_w: Pixels, rem_size: Pixels| -> Pixels {
-            if index >= line_metrics.len() {
+            let Some(&line_index) = visible_for_height.get(index) else {
                 // Bottom spacer rows: fixed single-line height.
                 return rems(ROW_HEIGHT_REM).to_pixels(rem_size);
-            }
-            soft_wrap_row_height(line_metrics[index], viewport_w, rem_size)
+            };
+            soft_wrap_row_height(line_metrics[line_index], viewport_w, rem_size)
         };
 
         let buffer_for_render = buffer.clone();
@@ -132,33 +146,39 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let snapshot_for_render = snapshot.clone();
         let root_for_render = file_tree_root.clone();
         let foldable_for_render = foldable_lines.clone();
+        let folded_for_render = folded_lines.clone();
+        let visible_for_render = visible_lines.clone();
         virtual_list(
             "file-editor-soft-wrap",
             virtual_state,
             row_count,
             height_fn,
             move |index, _window, cx| {
-                if index >= line_count {
+                let Some(&line_index) = visible_for_render.get(index) else {
                     return render_spacer_row(index, px(0.0), &view_for_render, *cx.theme())
                         .into_any_element();
-                }
+                };
                 let theme = *cx.theme();
                 let (line, spans) =
-                    line_with_spans(&buffer_for_render, &snapshot_for_render, index, cx);
+                    line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
                 // Soft wrap can't scroll horizontally, so the gutter is never
                 // sticky — its offset is always 0.
                 render_row(
-                    index + 1,
+                    line_index + 1,
                     line,
                     spans,
                     soft_wrap,
                     px(0.0),
-                    foldable_for_render.get(index).copied().unwrap_or(false),
+                    foldable_for_render
+                        .get(line_index)
+                        .copied()
+                        .unwrap_or(false),
+                    folded_for_render.contains(&line_index),
                     show_fold_arrows,
                     hovered_fold_line,
                     &view_for_render,
                     Some(LineHover {
-                        line_index: index,
+                        line_index,
                         buffer: buffer_for_render.clone(),
                         view: view_for_render.clone(),
                         root: root_for_render.clone(),
@@ -178,6 +198,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let snapshot_for_render = snapshot.clone();
         let root_for_render = file_tree_root.clone();
         let foldable_for_render = foldable_lines;
+        let folded_for_render = folded_lines;
+        let visible_for_render = visible_lines;
+        let has_folded_for_render = has_folded_lines;
         uniform_list("file-editor-lines", row_count, move |range, window, cx| {
             let theme = *cx.theme();
             let view_ref = view_for_render.read(cx);
@@ -209,27 +232,34 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
 
             range
                 .map(|i| {
-                    if is_longest_measure && let Some(width) = cached_longest {
+                    if !has_folded_for_render
+                        && is_longest_measure
+                        && let Some(width) = cached_longest
+                    {
                         return render_longest_stub(width, theme).into_any_element();
                     }
-                    if i >= line_count {
+                    let Some(&line_index) = visible_for_render.get(i) else {
                         return render_spacer_row(i, sticky_offset, &view_for_render, theme)
                             .into_any_element();
-                    }
+                    };
                     let (line, spans) =
-                        line_with_spans(&buffer_for_render, &snapshot_for_render, i, cx);
+                        line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
                     render_row(
-                        i + 1,
+                        line_index + 1,
                         line,
                         spans,
                         soft_wrap,
                         sticky_offset,
-                        foldable_for_render.get(i).copied().unwrap_or(false),
+                        foldable_for_render
+                            .get(line_index)
+                            .copied()
+                            .unwrap_or(false),
+                        folded_for_render.contains(&line_index),
                         show_fold_arrows,
                         hovered_fold_line,
                         &view_for_render,
                         Some(LineHover {
-                            line_index: i,
+                            line_index,
                             buffer: buffer_for_render.clone(),
                             view: view_for_render.clone(),
                             root: root_for_render.clone(),
@@ -259,7 +289,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
     let hover_overlay = render_hover_overlay(&view, cx);
     let indent_guides_overlay =
-        render_indent_guides_overlay(&view, soft_wrap, row_count, indent_guides, cx);
+        render_indent_guides_overlay(&view, soft_wrap, row_count, visible_indent_guides, cx);
 
     let view_for_drag = view.clone();
     let view_for_mouse = view.clone();
@@ -294,6 +324,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             update_gutter_hover_from_mouse(
                 &view_for_mouse,
                 soft_wrap,
+                &visible_for_mouse,
                 &foldable_for_mouse,
                 event.position,
                 window,
@@ -570,6 +601,7 @@ fn render_spacer_row(
             sticky_offset,
             false,
             false,
+            false,
             None,
             view,
             theme,
@@ -685,6 +717,7 @@ fn render_row(
     soft_wrap: bool,
     sticky_offset: Pixels,
     foldable: bool,
+    folded: bool,
     show_fold_arrow: bool,
     hovered_fold_line: Option<usize>,
     view: &Entity<EditorView>,
@@ -714,6 +747,7 @@ fn render_row(
             Some(line_number),
             sticky_offset,
             foldable,
+            folded,
             show_fold_arrow,
             hovered_fold_line,
             view,
@@ -1055,18 +1089,11 @@ fn indent_guide_runs(rows: &[(usize, &[usize])]) -> Vec<(usize, usize, usize)> {
     runs
 }
 
-fn indent_guides_for_buffer(buffer: &Buffer) -> Vec<Vec<usize>> {
+fn indents_for_buffer(buffer: &Buffer) -> Vec<Option<usize>> {
     let indents = (0..buffer.line_count())
         .map(|index| buffer.line(index).and_then(indentation_columns))
         .collect::<Vec<_>>();
-    indent_guides_for_indents(&indents)
-}
-
-fn foldable_lines_for_buffer(buffer: &Buffer) -> Vec<bool> {
-    let indents = (0..buffer.line_count())
-        .map(|index| buffer.line(index).and_then(indentation_columns))
-        .collect::<Vec<_>>();
-    foldable_lines_for_indents(&indents)
+    indents
 }
 
 fn foldable_lines_for_indents(indents: &[Option<usize>]) -> Vec<bool> {
@@ -1082,6 +1109,49 @@ fn foldable_lines_for_indents(indents: &[Option<usize>]) -> Vec<bool> {
                 .is_some_and(|next| *next > indent)
         })
         .collect()
+}
+
+fn visible_lines_for_indents(
+    indents: &[Option<usize>],
+    foldable_lines: &[bool],
+    folded_lines: &HashSet<usize>,
+) -> Vec<usize> {
+    let mut visible = Vec::with_capacity(indents.len());
+    let mut index = 0usize;
+    while index < indents.len() {
+        visible.push(index);
+        if folded_lines.contains(&index) && foldable_lines.get(index).copied().unwrap_or(false) {
+            index = fold_end_for_indents(index, indents);
+        } else {
+            index += 1;
+        }
+    }
+    visible
+}
+
+fn fold_end_for_indents(start: usize, indents: &[Option<usize>]) -> usize {
+    let Some(indent) = indents.get(start).copied().flatten() else {
+        return start.saturating_add(1).min(indents.len());
+    };
+    let mut end = start + 1;
+    while end < indents.len() {
+        if let Some(next_indent) = indents[end]
+            && next_indent <= indent
+        {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
+fn longest_visible_row_index(buffer: &Buffer, visible_lines: &[usize]) -> usize {
+    visible_lines
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, line_index)| buffer.line_chars(**line_index))
+        .map(|(row_index, _)| row_index)
+        .unwrap_or(0)
 }
 
 fn indentation_columns(line: &str) -> Option<usize> {
@@ -2307,6 +2377,30 @@ mod tests {
     }
 
     #[test]
+    fn visible_lines_skip_folded_descendants() {
+        let indents = [Some(0), Some(4), Some(8), Some(4), Some(0)];
+        let foldable = foldable_lines_for_indents(&indents);
+        let folded = HashSet::from([0usize]);
+
+        assert_eq!(
+            visible_lines_for_indents(&indents, &foldable, &folded),
+            vec![0, 4]
+        );
+    }
+
+    #[test]
+    fn visible_lines_keep_blank_lines_inside_fold() {
+        let indents = [Some(0), Some(4), None, Some(4), Some(0)];
+        let foldable = foldable_lines_for_indents(&indents);
+        let folded = HashSet::from([0usize]);
+
+        assert_eq!(
+            visible_lines_for_indents(&indents, &foldable, &folded),
+            vec![0, 4]
+        );
+    }
+
+    #[test]
     fn indent_guides_merge_adjacent_rows_into_runs() {
         let rows: &[(usize, &[usize])] = &[
             (0, &[0]),
@@ -2387,6 +2481,7 @@ fn render_gutter(
     line_number: Option<usize>,
     sticky_offset: Pixels,
     foldable: bool,
+    folded: bool,
     show_fold_arrow: bool,
     hovered_fold_line: Option<usize>,
     view: &Entity<EditorView>,
@@ -2417,25 +2512,33 @@ fn render_gutter(
         } else {
             theme.text_subtle
         };
+        let icon_name = if folded {
+            IconName::ChevronRight
+        } else {
+            IconName::ChevronDown
+        };
+        let view_for_click = view.clone();
         let mut arrow = div()
             .id(gpui::ElementId::Name(
                 format!("file-editor-fold-arrow:{:?}:{row_index}", view.entity_id()).into(),
             ))
             .absolute()
-            .right(rems(0.0))
+            .left(rems(GUTTER_FOLD_HOVER_LEFT_REM))
             .top(rems(0.0))
             .h_full()
-            .w(rems(GUTTER_FOLD_COLUMN_REM))
+            .w(rems(GUTTER_FOLD_HOVER_WIDTH_REM))
             .flex()
             .items_center()
-            .justify_center();
+            .justify_center()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                view_for_click.update(cx, |view, _| view.toggle_folded_line(row_index));
+                window.refresh();
+            });
 
         if show_fold_arrow {
-            arrow = arrow.child(
-                Icon::new(IconName::ChevronDown)
-                    .size(12.0)
-                    .color(arrow_color),
-            );
+            arrow = arrow.child(Icon::new(icon_name).size(12.0).color(arrow_color));
         }
 
         gutter = gutter.child(arrow);
@@ -2447,6 +2550,7 @@ fn render_gutter(
 fn update_gutter_hover_from_mouse(
     view: &Entity<EditorView>,
     soft_wrap: bool,
+    visible_lines: &[usize],
     foldable_lines: &[bool],
     position: Point<Pixels>,
     window: &mut Window,
@@ -2465,10 +2569,11 @@ fn update_gutter_hover_from_mouse(
         };
         match bounds.localize(&position) {
             Some(local) if local.x >= Pixels::ZERO && local.x <= gutter_hover_width => {
-                let row = hovered_row_index(&view_ref, soft_wrap, local.y, window);
+                let line = hovered_row_index(&view_ref, soft_wrap, local.y, window)
+                    .and_then(|row| visible_lines.get(row).copied());
                 let in_fold_hover_zone = local.x >= fold_hover_left && local.x <= fold_hover_right;
-                let hovered_fold_line = row.filter(|row| {
-                    in_fold_hover_zone && foldable_lines.get(*row).copied().unwrap_or(false)
+                let hovered_fold_line = line.filter(|line| {
+                    in_fold_hover_zone && foldable_lines.get(*line).copied().unwrap_or(false)
                 });
                 (true, hovered_fold_line)
             }

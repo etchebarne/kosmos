@@ -3,7 +3,7 @@ mod virtual_list;
 pub use virtual_list::{VirtualList, VirtualListState, virtual_list};
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -239,6 +239,7 @@ pub struct EditorView {
     editor_bounds: Option<Bounds<Pixels>>,
     gutter_hovered: bool,
     hovered_fold_line: Option<usize>,
+    folded_lines: HashSet<usize>,
     hover_generation: u64,
     hover_hide_generation: u64,
     hover: Option<EditorHover>,
@@ -277,6 +278,7 @@ impl EditorView {
             editor_bounds: None,
             gutter_hovered: false,
             hovered_fold_line: None,
+            folded_lines: HashSet::new(),
             hover_generation: 0,
             hover_hide_generation: 0,
             hover: None,
@@ -315,6 +317,16 @@ impl EditorView {
 
     pub fn hovered_fold_line(&self) -> Option<usize> {
         self.hovered_fold_line
+    }
+
+    pub fn folded_lines(&self) -> &HashSet<usize> {
+        &self.folded_lines
+    }
+
+    pub fn toggle_folded_line(&mut self, line_index: usize) {
+        if !self.folded_lines.remove(&line_index) {
+            self.folded_lines.insert(line_index);
+        }
     }
 
     pub fn begin_hover(
