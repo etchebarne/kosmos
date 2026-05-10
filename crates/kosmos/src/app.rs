@@ -225,6 +225,23 @@ impl KosmosApp {
         cx.notify();
         self.pending_persist = true;
     }
+
+    fn save_active_file(&mut self, _: &file_editor::Save, _: &mut Window, cx: &mut Context<Self>) {
+        let path = self
+            .workspaces
+            .active_pane_tree()
+            .and_then(|tree| tree.active_pane())
+            .and_then(|pane| pane.tabs().iter().find(|tab| tab.id == pane.active_tab()))
+            .filter(|tab| tab.kind.as_ref() == tabs::registry::FILE_EDITOR.id)
+            .and_then(|tab| tab.path.clone());
+        let Some(path) = path else {
+            return;
+        };
+        if let Err(err) = BufferStore::save_path(&path, cx) {
+            eprintln!("failed to save {}: {err}", path.display());
+        }
+        cx.notify();
+    }
 }
 
 impl Render for KosmosApp {
@@ -238,6 +255,7 @@ impl Render for KosmosApp {
             .key_context(shortcuts::CONTEXT)
             .wire_pane_tree_actions(cx)
             .wire_zoom_actions(cx)
+            .on_action(cx.listener(Self::save_active_file))
             .relative()
             .size_full()
             .flex()

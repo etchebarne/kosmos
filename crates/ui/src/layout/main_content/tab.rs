@@ -1,6 +1,9 @@
 use file_tree::NodeKind;
-use gpui::{AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, rems};
+use gpui::{
+    AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, rems, rgb,
+};
 
+use file_editor::BufferStore;
 use icons::{Icon, IconName};
 use panes::Pane;
 use tabs::Tab;
@@ -25,6 +28,10 @@ pub fn render<T: PaneDelegate>(
     let title = tab.title();
     let icon_name = tab.icon();
     let accent = theme.accent;
+    let is_dirty = tab
+        .path
+        .as_deref()
+        .is_some_and(|path| BufferStore::is_path_dirty(path, cx));
 
     div()
         .id(("tab", id))
@@ -117,6 +124,15 @@ pub fn render<T: PaneDelegate>(
                 .text_ellipsis()
                 .child(title),
         )
+        .when(is_dirty, |this| {
+            this.child(
+                div()
+                    .size(rems(0.375))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(rgb(0xffffff)),
+            )
+        })
         .child(
             div()
                 .id(("close-tab", id))

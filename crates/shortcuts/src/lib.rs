@@ -24,6 +24,7 @@ impl ShortcutBinding {
 pub const DEFAULTS: &[ShortcutBinding] = &[
     ShortcutBinding::new("ctrl-w", "pane_tree::CloseTab"),
     ShortcutBinding::new("ctrl-t", "pane_tree::NewTab"),
+    ShortcutBinding::new("ctrl-s", "file_editor::Save"),
     ShortcutBinding::new("ctrl-=", "zoom::ZoomIn"),
     ShortcutBinding::new("ctrl-+", "zoom::ZoomIn"),
     ShortcutBinding::new("ctrl--", "zoom::ZoomOut"),

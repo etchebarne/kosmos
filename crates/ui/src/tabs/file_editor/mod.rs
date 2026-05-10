@@ -4,17 +4,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
-    AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, DragMoveEvent, Entity,
-    FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
-    ListHorizontalSizingBehavior, MouseButton, MouseMoveEvent, Pixels, Point, SharedString,
-    StyledText, TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point,
-    prelude::*, px, rems, uniform_list,
+    AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, DragMoveEvent, Element,
+    ElementId, ElementInputHandler, Entity, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText,
+    TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
+    relative, rems, uniform_list,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use file_editor::{
-    BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorView, EditorViewStore,
-    soft_wrap_enabled, virtual_list,
+    BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorInputLayout,
+    EditorLineInputLayout, EditorView, EditorViewStore, soft_wrap_enabled, virtual_list,
 };
 use file_tree::ActiveFileTree;
 use highlight::HighlightId;
@@ -23,6 +24,11 @@ use syntax::{SyntaxRegistry, SyntaxSnapshot, SyntaxStore};
 use tabs::{Tab, registry};
 use theme::{ActiveTheme, SyntaxStyles, Theme};
 
+use crate::components::input::{
+    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, KEY_CONTEXT, Left, Paste, Right,
+    SelectAll, SelectDown, SelectLeft, SelectRight, SelectUp, SelectWordLeft, SelectWordRight, Up,
+    WordLeft, WordRight,
+};
 use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
 const GUTTER_WIDTH_REM: f32 = 3.5;
@@ -68,10 +74,252 @@ struct ActiveIndentGuideRun {
     top: Pixels,
 }
 
+#[derive(Clone, Default)]
+struct EditLineState {
+    selection: Option<Range<usize>>,
+    cursor: Option<usize>,
+}
+
 #[derive(Clone, Copy, Default)]
 struct SoftWrapLineMetrics {
     content_chars: usize,
     indent_columns: usize,
+}
+
+struct EditorInputElement {
+    view: Entity<EditorView>,
+}
+
+struct CursorElement {
+    text_layout: TextLayout,
+    cursor: usize,
+    color: Rgba,
+}
+
+impl IntoElement for CursorElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for CursorElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = Pixels::ZERO.into();
+        style.size.height = Pixels::ZERO.into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        let Some(position) = self.text_layout.position_for_index(self.cursor) else {
+            return;
+        };
+        window.paint_quad(fill(
+            Bounds::new(
+                point(position.x.round(), position.y.round()),
+                gpui::size(
+                    rems(0.09375).to_pixels(window.rem_size()),
+                    self.text_layout.line_height(),
+                ),
+            ),
+            self.color,
+        ));
+    }
+}
+
+impl IntoElement for EditorInputElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for EditorInputElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let focus_handle = self.view.read(cx).focus_handle();
+        window.handle_input(
+            &focus_handle,
+            ElementInputHandler::new(bounds, self.view.clone()),
+            cx,
+        );
+    }
+}
+
+fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
+    element: E,
+    view: &Entity<EditorView>,
+    cx: &mut Context<T>,
+) -> E {
+    let backspace = view.clone();
+    let delete = view.clone();
+    let enter = view.clone();
+    let left = view.clone();
+    let right = view.clone();
+    let up = view.clone();
+    let down = view.clone();
+    let word_left = view.clone();
+    let word_right = view.clone();
+    let select_left = view.clone();
+    let select_right = view.clone();
+    let select_up = view.clone();
+    let select_down = view.clone();
+    let select_word_left = view.clone();
+    let select_word_right = view.clone();
+    let select_all = view.clone();
+    let home = view.clone();
+    let end = view.clone();
+    let copy = view.clone();
+    let cut = view.clone();
+    let paste = view.clone();
+
+    element
+        .on_action(cx.listener(move |_, _: &Backspace, window, cx| {
+            backspace.update(cx, |view, cx| view.backspace(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Delete, window, cx| {
+            delete.update(cx, |view, cx| view.delete(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Enter, window, cx| {
+            enter.update(cx, |view, cx| view.enter(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Left, window, cx| {
+            left.update(cx, |view, cx| view.left(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Right, window, cx| {
+            right.update(cx, |view, cx| view.right(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Up, window, cx| {
+            up.update(cx, |view, cx| view.up(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Down, window, cx| {
+            down.update(cx, |view, cx| view.down(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &WordLeft, window, cx| {
+            word_left.update(cx, |view, cx| view.word_left(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &WordRight, window, cx| {
+            word_right.update(cx, |view, cx| view.word_right(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectLeft, window, cx| {
+            select_left.update(cx, |view, cx| view.select_left(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectRight, window, cx| {
+            select_right.update(cx, |view, cx| view.select_right(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectUp, window, cx| {
+            select_up.update(cx, |view, cx| view.select_up(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectDown, window, cx| {
+            select_down.update(cx, |view, cx| view.select_down(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectWordLeft, window, cx| {
+            select_word_left.update(cx, |view, cx| view.select_word_left(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectWordRight, window, cx| {
+            select_word_right.update(cx, |view, cx| view.select_word_right(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &SelectAll, window, cx| {
+            select_all.update(cx, |view, cx| view.select_all(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Home, window, cx| {
+            home.update(cx, |view, cx| view.home(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &End, window, cx| {
+            end.update(cx, |view, cx| view.end(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Copy, window, cx| {
+            copy.update(cx, |view, cx| view.copy(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Cut, window, cx| {
+            cut.update(cx, |view, cx| view.cut(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Paste, window, cx| {
+            paste.update(cx, |view, cx| view.paste(window, cx));
+        }))
 }
 
 pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
@@ -86,6 +334,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
     let buffer = BufferStore::open(path, cx);
     let view = EditorViewStore::for_tab(tab.id, &buffer, cx);
+    view.update(cx, |view, cx| view.set_buffer(buffer.clone(), cx));
     let snapshot = SyntaxStore::for_buffer(&buffer, cx);
     observe_snapshot(&view, &snapshot, cx);
     let soft_wrap = soft_wrap_enabled(cx);
@@ -161,6 +410,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 let theme = *cx.theme();
                 let (line, spans) =
                     line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
+                let edit_state =
+                    edit_state_for_line(&buffer_for_render, &view_for_render, line_index, cx);
                 // Soft wrap can't scroll horizontally, so the gutter is never
                 // sticky — its offset is always 0.
                 render_row(
@@ -177,6 +428,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                     show_fold_arrows,
                     hovered_fold_line,
                     &view_for_render,
+                    edit_state,
                     Some(LineHover {
                         line_index,
                         buffer: buffer_for_render.clone(),
@@ -244,6 +496,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                     };
                     let (line, spans) =
                         line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
+                    let edit_state =
+                        edit_state_for_line(&buffer_for_render, &view_for_render, line_index, cx);
                     render_row(
                         line_index + 1,
                         line,
@@ -258,6 +512,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         show_fold_arrows,
                         hovered_fold_line,
                         &view_for_render,
+                        edit_state,
                         Some(LineHover {
                             line_index,
                             buffer: buffer_for_render.clone(),
@@ -295,11 +550,18 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let view_for_mouse = view.clone();
     let view_for_bounds = view.clone();
     let view_for_leave = view.clone();
+    let view_for_click = view.clone();
+    let visible_for_bounds = visible_for_mouse.clone();
+    let input_view = view.clone();
+    let focus_handle = view.read(cx).focus_handle();
+    let focus_for_click = focus_handle.clone();
     let editor_area = div()
         .relative()
         .flex_1()
         .min_h_0()
         .min_w_0()
+        .track_focus(&focus_handle)
+        .key_context(KEY_CONTEXT)
         .text_sm()
         .font_family(FONT_FAMILY)
         // gpui's StyledText reads `white_space` from the window's text-style
@@ -314,12 +576,42 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .child(body)
         .child(scrollbar_overlay)
         .child(hover_overlay)
-        .on_children_prepainted(move |bounds, _window, cx| {
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .left_0()
+                .child(EditorInputElement { view: input_view }),
+        )
+        .on_children_prepainted(move |bounds, window, cx| {
             if let Some(bounds) = bounds.first().copied() {
-                view_for_bounds.update(cx, |view, _| view.set_editor_bounds(bounds));
+                let input_layout = editor_input_layout(
+                    bounds,
+                    &view_for_bounds,
+                    soft_wrap,
+                    visible_for_bounds.clone(),
+                    window,
+                    cx,
+                );
+                view_for_bounds.update(cx, |view, _| {
+                    view.set_editor_bounds(bounds);
+                    view.set_input_layout(input_layout);
+                });
             }
         })
         .id(("file-editor-area", view.entity_id()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |_, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                window.focus(&focus_for_click);
+                view_for_click.update(cx, |view, cx| {
+                    view.select_at_point(event.position, event.modifiers.shift, cx)
+                });
+            }),
+        )
         .on_mouse_move(move |event, window, cx| {
             update_gutter_hover_from_mouse(
                 &view_for_mouse,
@@ -367,6 +659,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 cx.notify();
             },
         ));
+    let editor_area = wire_editor_actions(editor_area, &view, cx);
 
     div()
         .size_full()
@@ -412,6 +705,33 @@ fn set_scroll_x(view: &Entity<EditorView>, scrolled: Pixels, cx: &App) {
     state
         .base_handle
         .set_offset(Point::new(-scrolled, current.y));
+}
+
+fn editor_input_layout(
+    bounds: Bounds<Pixels>,
+    view: &Entity<EditorView>,
+    soft_wrap: bool,
+    visible_lines: Vec<usize>,
+    window: &mut Window,
+    cx: &App,
+) -> EditorInputLayout {
+    let metrics = current_metrics(view, soft_wrap, cx);
+    EditorInputLayout {
+        bounds,
+        visible_lines,
+        row_height: rems(ROW_HEIGHT_REM).to_pixels(window.rem_size()),
+        scroll_x: metrics
+            .horizontal
+            .map(|horizontal| horizontal.scrolled)
+            .unwrap_or(Pixels::ZERO),
+        scroll_y: metrics
+            .vertical
+            .map(|vertical| vertical.scrolled)
+            .unwrap_or(Pixels::ZERO),
+        text_left: rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM)
+            .to_pixels(window.rem_size()),
+        char_width: monospace_char_width(window.rem_size()),
+    }
 }
 
 fn render_breadcrumb(path: &Path, root: Option<&Path>, theme: Theme) -> AnyElement {
@@ -516,6 +836,31 @@ fn line_with_spans(
         .highlights(buf.content(), line_range.clone());
     let spans = clip_spans_to_line(&line_text, line_range.start, &raw);
     (line_text, spans)
+}
+
+fn edit_state_for_line(
+    buffer: &Entity<Buffer>,
+    view: &Entity<EditorView>,
+    line_index: usize,
+    cx: &App,
+) -> EditLineState {
+    let buf = buffer.read(cx);
+    let Some(line_range) = buf.line_range(line_index) else {
+        return EditLineState::default();
+    };
+    let view = view.read(cx);
+    let selection = view.selected_range();
+    let cursor = view.cursor_offset();
+    let selection = if selection.is_empty() {
+        None
+    } else {
+        let start = selection.start.max(line_range.start);
+        let end = selection.end.min(line_range.end);
+        (start < end).then_some(start - line_range.start..end - line_range.start)
+    };
+    let cursor = (line_range.start <= cursor && cursor <= line_range.end)
+        .then_some(cursor - line_range.start);
+    EditLineState { selection, cursor }
 }
 
 /// Reduce `raw_spans` (in absolute buffer byte offsets, pre-sorted by
@@ -721,6 +1066,7 @@ fn render_row(
     show_fold_arrow: bool,
     hovered_fold_line: Option<usize>,
     view: &Entity<EditorView>,
+    edit_state: EditLineState,
     hover: Option<LineHover>,
     theme: &Theme,
     cx: &App,
@@ -740,7 +1086,9 @@ fn render_row(
                 .min_w_0()
                 .pl(rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM))
                 .when(!soft_wrap, |this| this.whitespace_nowrap())
-                .child(render_line_text(line, spans, soft_wrap, theme, hover, cx)),
+                .child(render_line_text(
+                    line, spans, soft_wrap, edit_state, theme, hover, cx,
+                )),
         )
         .child(render_gutter(
             line_number - 1,
@@ -763,6 +1111,7 @@ fn render_line_text(
     line: SharedString,
     spans: Vec<(Range<usize>, HighlightId)>,
     soft_wrap: bool,
+    edit_state: EditLineState,
     theme: &Theme,
     hover: Option<LineHover>,
     cx: &App,
@@ -779,6 +1128,16 @@ fn render_line_text(
     };
     let display_len = display_line.len();
     let spans = shift_spans_for_display(spans, display_byte_offset, display_len);
+    let selection = edit_state
+        .selection
+        .and_then(|range| shift_range_for_display(range, display_byte_offset, display_len));
+    let cursor = edit_state.cursor.and_then(|cursor| {
+        if cursor < display_byte_offset || cursor > display_byte_offset + display_len {
+            None
+        } else {
+            Some(cursor - display_byte_offset)
+        }
+    });
     let source_highlight = hover
         .as_ref()
         .and_then(|hover| hover_source_highlight_range(hover, cx))
@@ -788,6 +1147,7 @@ fn render_line_text(
         spans,
         &theme.syntax,
         source_highlight,
+        selection,
         *theme,
     );
     let text = if highlights.is_empty() {
@@ -796,20 +1156,35 @@ fn render_line_text(
         StyledText::new(display_line).with_highlights(highlights)
     };
     let text_layout = text.layout().clone();
+    let cursor = cursor.map(|cursor| {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .child(CursorElement {
+                text_layout: text_layout.clone(),
+                cursor,
+                color: theme.text_emphasis,
+            })
+            .into_any_element()
+    });
     let indent_padding = rems(indent_columns as f32 * MONOSPACE_CHAR_WIDTH_REM);
 
     let Some(hover) = hover else {
         return div()
+            .relative()
             .w_full()
             .min_w_0()
             .when(soft_wrap && indent_columns > 0, |this| {
                 this.pl(indent_padding)
             })
             .child(text)
+            .when_some(cursor, |this, cursor| this.child(cursor))
             .into_any_element();
     };
     let hover_for_move = hover.clone();
     let hover_for_prepaint = hover.clone();
+    let line_layout_for_prepaint = text_layout.clone();
     let text = InteractiveText::new(("file-editor-line", hover.line_index), text)
         .on_hover(move |byte_index, _event, _window, cx| {
             if let Some(byte_index) = byte_index {
@@ -821,13 +1196,22 @@ fn render_line_text(
         .into_any_element();
 
     div()
+        .relative()
         .w_full()
         .min_w_0()
         .when(soft_wrap && indent_columns > 0, |this| {
             this.pl(indent_padding)
         })
         .child(text)
+        .when_some(cursor, |this, cursor| this.child(cursor))
         .on_children_prepainted(move |bounds, window, cx| {
+            hover_for_prepaint.view.update(cx, |view, _| {
+                view.set_line_input_layout(EditorLineInputLayout {
+                    line_index: hover_for_prepaint.line_index,
+                    display_byte_offset,
+                    text_layout: line_layout_for_prepaint.clone(),
+                });
+            });
             update_hover_source_bounds(
                 &hover_for_prepaint,
                 &text_layout,
@@ -1529,6 +1913,7 @@ fn line_highlights(
     spans: Vec<(Range<usize>, HighlightId)>,
     syntax: &SyntaxStyles,
     source_highlight: Option<Range<usize>>,
+    selection: Option<Range<usize>>,
     theme: Theme,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let syntax_highlights = spans
@@ -1538,12 +1923,13 @@ fn line_highlights(
         })
         .collect::<Vec<_>>();
     let source_highlight = source_highlight.and_then(|range| clipped_range(range, line_len));
+    let selection = selection.and_then(|range| clipped_range(range, line_len));
 
-    if syntax_highlights.is_empty() && source_highlight.is_none() {
+    if syntax_highlights.is_empty() && source_highlight.is_none() && selection.is_none() {
         return Vec::new();
     }
 
-    let mut boundaries = Vec::with_capacity(2 + syntax_highlights.len() * 2 + 2);
+    let mut boundaries = Vec::with_capacity(2 + syntax_highlights.len() * 2 + 4);
     boundaries.push(0);
     boundaries.push(line_len);
     for (range, _) in &syntax_highlights {
@@ -1554,10 +1940,15 @@ fn line_highlights(
         boundaries.push(range.start);
         boundaries.push(range.end);
     }
+    if let Some(range) = &selection {
+        boundaries.push(range.start);
+        boundaries.push(range.end);
+    }
     boundaries.sort_unstable();
     boundaries.dedup();
 
     let source_style = source_hover_highlight_style(theme);
+    let selection_style = selection_highlight_style(theme);
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for window in boundaries.windows(2) {
         let start = window[0];
@@ -1577,6 +1968,12 @@ fn line_highlights(
             .is_some_and(|range| range.start <= start && end <= range.end)
         {
             style = style.highlight(source_style);
+        }
+        if selection
+            .as_ref()
+            .is_some_and(|range| range.start <= start && end <= range.end)
+        {
+            style = style.highlight(selection_style);
         }
         if style == HighlightStyle::default() {
             continue;
@@ -1604,6 +2001,13 @@ fn clipped_range(range: Range<usize>, line_len: usize) -> Option<Range<usize>> {
 fn source_hover_highlight_style(theme: Theme) -> HighlightStyle {
     HighlightStyle {
         background_color: Some(theme.bg_hover_strong.into()),
+        ..Default::default()
+    }
+}
+
+fn selection_highlight_style(theme: Theme) -> HighlightStyle {
+    HighlightStyle {
+        background_color: Some(gpui::Hsla::from(theme.accent).opacity(0.35).into()),
         ..Default::default()
     }
 }
@@ -2302,6 +2706,7 @@ mod tests {
             vec![(0..10, HighlightId::Variable)],
             &theme.syntax,
             Some(4..8),
+            None,
             theme,
         );
 
@@ -2319,7 +2724,7 @@ mod tests {
     #[test]
     fn line_highlights_supports_hover_source_without_syntax() {
         let theme = Theme::dark();
-        let highlights = line_highlights(10, Vec::new(), &theme.syntax, Some(2..5), theme);
+        let highlights = line_highlights(10, Vec::new(), &theme.syntax, Some(2..5), None, theme);
 
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].0, 2..5);
