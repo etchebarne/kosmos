@@ -76,8 +76,14 @@ struct ActiveIndentGuideRun {
 
 #[derive(Clone, Default)]
 struct EditLineState {
-    selection: Option<Range<usize>>,
+    selection: Option<LineSelection>,
     cursor: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LineSelection {
+    range: Range<usize>,
+    includes_line_break: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -900,7 +906,13 @@ fn edit_state_for_line(
     } else {
         let start = selection.start.max(line_range.start);
         let end = selection.end.min(line_range.end);
-        (start < end).then_some(start - line_range.start..end - line_range.start)
+        let includes_line_break = line_range.end < buf.content().len()
+            && selection.start <= line_range.end
+            && selection.end > line_range.end;
+        (start < end || includes_line_break).then_some(LineSelection {
+            range: start - line_range.start..end - line_range.start,
+            includes_line_break,
+        })
     };
     let cursor = (line_range.start <= cursor && cursor <= line_range.end)
         .then_some(cursor - line_range.start);
@@ -1115,6 +1127,8 @@ fn render_row(
     theme: &Theme,
     cx: &App,
 ) -> impl IntoElement {
+    let selection_background =
+        render_selection_background(line.as_ref(), edit_state.selection.as_ref(), *theme);
     div()
         .relative()
         .w_full()
@@ -1129,10 +1143,19 @@ fn render_row(
                 .w_full()
                 .min_w_0()
                 .pl(rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM))
-                .when(!soft_wrap, |this| this.whitespace_nowrap())
-                .child(render_line_text(
-                    line, spans, soft_wrap, edit_state, theme, hover, cx,
-                )),
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .min_w_0()
+                        .when(!soft_wrap, |this| this.whitespace_nowrap())
+                        .when_some(selection_background, |this, selection| {
+                            this.child(selection)
+                        })
+                        .child(render_line_text(
+                            line, spans, soft_wrap, edit_state, theme, hover, cx,
+                        )),
+                ),
         )
         .child(render_gutter(
             line_number - 1,
@@ -1145,6 +1168,53 @@ fn render_row(
             view,
             *theme,
         ))
+}
+
+fn render_selection_background(
+    line: &str,
+    selection: Option<&LineSelection>,
+    theme: Theme,
+) -> Option<AnyElement> {
+    let selection = selection?;
+    let (start_column, end_column) = selection_visual_columns(line, selection);
+    let width_columns = end_column.saturating_sub(start_column).max(1);
+    let left_rem = start_column as f32 * MONOSPACE_CHAR_WIDTH_REM;
+    let width_rem = width_columns as f32 * MONOSPACE_CHAR_WIDTH_REM;
+    Some(
+        div()
+            .absolute()
+            .top_0()
+            .left(rems(left_rem))
+            .h(rems(ROW_HEIGHT_REM))
+            .w(rems(width_rem))
+            .bg(gpui::Hsla::from(theme.accent).opacity(0.35))
+            .into_any_element(),
+    )
+}
+
+fn selection_visual_columns(line: &str, selection: &LineSelection) -> (usize, usize) {
+    let start = visual_column_for_byte(line, selection.range.start.min(line.len()));
+    let mut end = visual_column_for_byte(line, selection.range.end.min(line.len()));
+    if selection.includes_line_break {
+        end += 1;
+    }
+    (start, end)
+}
+
+fn visual_column_for_byte(line: &str, byte_offset: usize) -> usize {
+    let byte_offset = byte_offset.min(line.len());
+    let mut column = 0usize;
+    for (index, ch) in line.char_indices() {
+        if index >= byte_offset {
+            break;
+        }
+        column += if ch == '\t' {
+            TAB_SIZE_COLUMNS - (column % TAB_SIZE_COLUMNS)
+        } else {
+            1
+        };
+    }
+    column
 }
 
 /// Build the styled text element for a line, lifting the highlight spans into
@@ -1172,9 +1242,6 @@ fn render_line_text(
     };
     let display_len = display_line.len();
     let spans = shift_spans_for_display(spans, display_byte_offset, display_len);
-    let selection = edit_state
-        .selection
-        .and_then(|range| shift_range_for_display(range, display_byte_offset, display_len));
     let cursor = edit_state.cursor.and_then(|cursor| {
         if cursor < display_byte_offset || cursor > display_byte_offset + display_len {
             None
@@ -1191,7 +1258,7 @@ fn render_line_text(
         spans,
         &theme.syntax,
         source_highlight,
-        selection,
+        None,
         *theme,
     );
     let text = if highlights.is_empty() {
@@ -2692,6 +2759,34 @@ mod tests {
         assert_eq!(
             code_block_language_id("rust ignore").map(|id| id.to_string()),
             Some("rust".to_string())
+        );
+    }
+
+    #[test]
+    fn selection_visual_columns_include_spaces_and_tabs() {
+        assert_eq!(
+            selection_visual_columns(
+                "\tlet value",
+                &LineSelection {
+                    range: 0..5,
+                    includes_line_break: false,
+                },
+            ),
+            (0, 8)
+        );
+    }
+
+    #[test]
+    fn selection_visual_columns_include_line_break_gap() {
+        assert_eq!(
+            selection_visual_columns(
+                "    ",
+                &LineSelection {
+                    range: 0..4,
+                    includes_line_break: true,
+                },
+            ),
+            (0, 5)
         );
     }
 
