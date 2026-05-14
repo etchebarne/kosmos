@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
-    AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, DragMoveEvent, Element,
-    ElementId, ElementInputHandler, Entity, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
-    InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton,
-    MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText,
-    TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
-    relative, rems, uniform_list,
+    AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, CursorStyle, DragMoveEvent,
+    Element, ElementId, ElementInputHandler, Entity, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior,
+    MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style,
+    StyledText, TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point,
+    prelude::*, px, relative, rems, uniform_list,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -551,6 +551,9 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let view_for_bounds = view.clone();
     let view_for_leave = view.clone();
     let view_for_click = view.clone();
+    let view_for_select_move = view.clone();
+    let view_for_mouse_up = view.clone();
+    let view_for_mouse_up_out = view.clone();
     let visible_for_bounds = visible_for_mouse.clone();
     let input_view = view.clone();
     let focus_handle = view.read(cx).focus_handle();
@@ -562,6 +565,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .min_w_0()
         .track_focus(&focus_handle)
         .key_context(KEY_CONTEXT)
+        .cursor(CursorStyle::IBeam)
         .text_sm()
         .font_family(FONT_FAMILY)
         // gpui's StyledText reads `white_space` from the window's text-style
@@ -608,11 +612,23 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 cx.stop_propagation();
                 window.focus(&focus_for_click);
                 view_for_click.update(cx, |view, cx| {
-                    view.select_at_point(event.position, event.modifiers.shift, cx)
+                    view.begin_selection_at_point(
+                        event.position,
+                        event.modifiers.shift,
+                        event.click_count,
+                        cx,
+                    )
                 });
             }),
         )
         .on_mouse_move(move |event, window, cx| {
+            let selecting = view_for_select_move.update(cx, |view, cx| {
+                view.extend_selection_at_point(event.position, cx)
+            });
+            if selecting {
+                cx.stop_propagation();
+                return;
+            }
             update_gutter_hover_from_mouse(
                 &view_for_mouse,
                 soft_wrap,
@@ -624,6 +640,18 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             );
             update_hover_visibility(&view_for_mouse, event, window, cx);
         })
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |_, _, _, cx| {
+                view_for_mouse_up.update(cx, |view, _| view.finish_selection());
+            }),
+        )
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(move |_, _, _, cx| {
+                view_for_mouse_up_out.update(cx, |view, _| view.finish_selection());
+            }),
+        )
         .on_hover(move |hovered, window, cx| {
             if !*hovered {
                 update_gutter_hover_state(&view_for_leave, false, None, window, cx);
