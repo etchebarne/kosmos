@@ -39,7 +39,9 @@ actions!(
         Cut,
         Copy,
         Undo,
-        Redo
+        Redo,
+        DuplicateLineUp,
+        DuplicateLineDown
     ]
 );
 
@@ -59,13 +61,9 @@ pub fn install_default_keybindings(cx: &mut App) {
         KeyBinding::new("shift-down", SelectDown, Some(KEY_CONTEXT)),
         KeyBinding::new("alt-shift-left", SelectWordLeft, Some(KEY_CONTEXT)),
         KeyBinding::new("alt-shift-right", SelectWordRight, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-a", SelectAll, Some(KEY_CONTEXT)),
         KeyBinding::new("enter", Enter, Some(KEY_CONTEXT)),
         KeyBinding::new("home", Home, Some(KEY_CONTEXT)),
         KeyBinding::new("end", End, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-c", Copy, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-v", Paste, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-x", Cut, Some(KEY_CONTEXT)),
     ]);
 }
 

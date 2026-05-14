@@ -25,9 +25,9 @@ use tabs::{Tab, registry};
 use theme::{ActiveTheme, SyntaxStyles, Theme};
 
 use crate::components::input::{
-    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, KEY_CONTEXT, Left, Paste, Redo, Right,
-    SelectAll, SelectDown, SelectLeft, SelectRight, SelectUp, SelectWordLeft, SelectWordRight,
-    Undo, Up, WordLeft, WordRight,
+    Backspace, Copy, Cut, Delete, Down, DuplicateLineDown, DuplicateLineUp, End, Enter, Home,
+    KEY_CONTEXT, Left, Paste, Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight,
+    SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
 };
 use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
@@ -257,6 +257,8 @@ fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
     let paste = view.clone();
     let undo = view.clone();
     let redo = view.clone();
+    let duplicate_line_up = view.clone();
+    let duplicate_line_down = view.clone();
 
     element
         .on_action(cx.listener(move |_, _: &Backspace, window, cx| {
@@ -327,6 +329,12 @@ fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
         }))
         .on_action(cx.listener(move |_, _: &Redo, window, cx| {
             redo.update(cx, |view, cx| view.redo(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &DuplicateLineUp, window, cx| {
+            duplicate_line_up.update(cx, |view, cx| view.duplicate_line_up(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &DuplicateLineDown, window, cx| {
+            duplicate_line_down.update(cx, |view, cx| view.duplicate_line_down(window, cx));
         }))
 }
 

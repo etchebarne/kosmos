@@ -520,7 +520,7 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) -> Range<usize> {
         let before_selection = SelectionSnapshot::collapsed(range.end);
-        self.replace_range_with_selection(range, new_text, before_selection, true, cx)
+        self.replace_range_with_selection(range, new_text, before_selection, None, true, cx)
     }
 
     fn replace_range_with_selection(
@@ -528,6 +528,7 @@ impl Buffer {
         range: Range<usize>,
         new_text: &str,
         before_selection: SelectionSnapshot,
+        after_selection: Option<SelectionSnapshot>,
         group_with_previous: bool,
         cx: &mut Context<Self>,
     ) -> Range<usize> {
@@ -552,7 +553,7 @@ impl Buffer {
                 new_text,
             },
             before_selection,
-            SelectionSnapshot::collapsed(inserted.end),
+            after_selection.unwrap_or_else(|| SelectionSnapshot::collapsed(inserted.end)),
             before_revision,
             after_revision,
             group_with_previous,
@@ -1126,20 +1127,43 @@ impl EditorView {
     }
 
     pub fn copy(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            return;
-        }
         let Some(content) = self.buffer_content(cx) else {
             return;
         };
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            content[self.selected_range.clone()].to_string(),
-        ));
+        let range = if self.selected_range.is_empty() {
+            line_range_for_selection(&content, &self.selected_range)
+        } else {
+            self.selected_range.clone()
+        };
+        if range.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(content[range].to_string()));
     }
 
     pub fn cut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.copy(window, cx);
-        if !self.selected_range.is_empty() {
+        if self.selected_range.is_empty() {
+            let Some(content) = self.buffer_content(cx) else {
+                return;
+            };
+            let range = line_range_for_selection(&content, &self.selected_range);
+            if range.is_empty() {
+                return;
+            }
+            let before_selection = self.selection_snapshot();
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                content[range.clone()].to_string(),
+            ));
+            self.replace_buffer_range(
+                range.clone(),
+                "",
+                before_selection,
+                SelectionSnapshot::collapsed(range.start),
+                false,
+                cx,
+            );
+        } else {
+            self.copy(window, cx);
             self.replace_text_with_grouping(None, "", Some(false), cx);
         }
     }
@@ -1148,6 +1172,42 @@ impl EditorView {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.replace_text_with_grouping(None, &text, Some(false), cx);
         }
+    }
+
+    pub fn duplicate_line_up(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(content) = self.buffer_content(cx) else {
+            return;
+        };
+        let line_range = line_range_for_selection(&content, &self.selected_range);
+        let duplicate = duplicate_text_for_line_range(&content, &line_range, true);
+        let before_selection = self.selection_snapshot();
+        let after_selection = before_selection.clone();
+        self.replace_buffer_range(
+            line_range.start..line_range.start,
+            &duplicate,
+            before_selection,
+            after_selection,
+            false,
+            cx,
+        );
+    }
+
+    pub fn duplicate_line_down(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(content) = self.buffer_content(cx) else {
+            return;
+        };
+        let line_range = line_range_for_selection(&content, &self.selected_range);
+        let duplicate = duplicate_text_for_line_range(&content, &line_range, false);
+        let before_selection = self.selection_snapshot();
+        let after_selection = shift_selection(&before_selection, duplicate.len());
+        self.replace_buffer_range(
+            line_range.end..line_range.end,
+            &duplicate,
+            before_selection,
+            after_selection,
+            false,
+            cx,
+        );
     }
 
     pub fn undo(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -1192,6 +1252,31 @@ impl EditorView {
             self.clamp_selection(content.len());
         }
         cx.notify();
+    }
+
+    fn replace_buffer_range(
+        &mut self,
+        range: Range<usize>,
+        new_text: &str,
+        before_selection: SelectionSnapshot,
+        after_selection: SelectionSnapshot,
+        group_with_previous: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        let buffer = self.buffer.clone()?;
+        let inserted = buffer.update(cx, |buffer, cx| {
+            buffer.replace_range_with_selection(
+                range,
+                new_text,
+                before_selection,
+                Some(after_selection.clone()),
+                group_with_previous,
+                cx,
+            )
+        });
+        self.apply_selection_snapshot(after_selection, cx);
+        self.marked_range = None;
+        Some(inserted)
     }
 
     fn buffer_content(&self, cx: &Context<Self>) -> Option<String> {
@@ -1250,6 +1335,7 @@ impl EditorView {
                 range,
                 new_text,
                 before_selection,
+                None,
                 group_with_previous,
                 cx,
             )
@@ -1918,6 +2004,57 @@ fn line_end_for_offset(content: &str, offset: usize) -> usize {
         .map_or(content.len(), |index| offset + index)
 }
 
+fn line_range_including_newline_for_offset(content: &str, offset: usize) -> Range<usize> {
+    let offset = clamp_to_char_boundary(content, offset);
+    if offset == content.len() && offset > 0 && content.ends_with('\n') {
+        let previous = previous_char_boundary(content, offset);
+        return previous..offset;
+    }
+
+    let start = line_start_for_offset(content, offset);
+    let end = line_end_for_offset(content, offset);
+    let end = if end < content.len() {
+        next_char_boundary(content, end)
+    } else {
+        end
+    };
+    start..end
+}
+
+fn line_range_for_selection(content: &str, selection: &Range<usize>) -> Range<usize> {
+    if selection.is_empty() {
+        return line_range_including_newline_for_offset(content, selection.start);
+    }
+
+    let start = line_start_for_offset(content, selection.start);
+    let end_anchor = previous_char_boundary(content, selection.end);
+    start..line_range_including_newline_for_offset(content, end_anchor).end
+}
+
+fn duplicate_text_for_line_range(content: &str, range: &Range<usize>, above: bool) -> String {
+    let text = content.get(range.clone()).unwrap_or_default();
+    if text.is_empty() {
+        return "\n".to_string();
+    }
+
+    if text.ends_with('\n') {
+        return text.to_string();
+    }
+
+    if above {
+        format!("{text}\n")
+    } else {
+        format!("\n{text}")
+    }
+}
+
+fn shift_selection(selection: &SelectionSnapshot, offset: usize) -> SelectionSnapshot {
+    SelectionSnapshot {
+        range: selection.range.start + offset..selection.range.end + offset,
+        reversed: selection.reversed,
+    }
+}
+
 fn line_column_for_offset(content: &str, offset: usize) -> (usize, usize) {
     let offset = clamp_to_char_boundary(content, offset);
     let mut row = 0usize;
@@ -2047,6 +2184,32 @@ mod tests {
         assert!(!should_group_edit("abc", &(1..1), "xy"));
         assert!(!should_group_edit("abc", &(1..1), "\n"));
         assert!(!should_group_edit("abc", &(1..2), "x"));
+    }
+
+    #[test]
+    fn line_range_for_empty_selection_includes_newline() {
+        assert_eq!(line_range_for_selection("one\ntwo\n", &(1..1)), 0..4);
+        assert_eq!(line_range_for_selection("one\ntwo", &(5..5)), 4..7);
+        assert_eq!(line_range_for_selection("one\n", &(4..4)), 3..4);
+    }
+
+    #[test]
+    fn line_range_for_selection_covers_touched_lines() {
+        assert_eq!(line_range_for_selection("one\ntwo\nthree", &(1..6)), 0..8);
+        assert_eq!(line_range_for_selection("one\ntwo\nthree", &(0..4)), 0..4);
+    }
+
+    #[test]
+    fn duplicate_text_adds_missing_line_break_at_file_edges() {
+        assert_eq!(
+            duplicate_text_for_line_range("one", &(0..3), false),
+            "\none"
+        );
+        assert_eq!(duplicate_text_for_line_range("one", &(0..3), true), "one\n");
+        assert_eq!(
+            duplicate_text_for_line_range("one\n", &(0..4), false),
+            "one\n"
+        );
     }
 }
 
