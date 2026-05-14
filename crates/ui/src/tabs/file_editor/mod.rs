@@ -25,9 +25,9 @@ use tabs::{Tab, registry};
 use theme::{ActiveTheme, SyntaxStyles, Theme};
 
 use crate::components::input::{
-    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, KEY_CONTEXT, Left, Paste, Right,
-    SelectAll, SelectDown, SelectLeft, SelectRight, SelectUp, SelectWordLeft, SelectWordRight, Up,
-    WordLeft, WordRight,
+    Backspace, Copy, Cut, Delete, Down, End, Enter, Home, KEY_CONTEXT, Left, Paste, Redo, Right,
+    SelectAll, SelectDown, SelectLeft, SelectRight, SelectUp, SelectWordLeft, SelectWordRight,
+    Undo, Up, WordLeft, WordRight,
 };
 use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
@@ -255,6 +255,8 @@ fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
     let copy = view.clone();
     let cut = view.clone();
     let paste = view.clone();
+    let undo = view.clone();
+    let redo = view.clone();
 
     element
         .on_action(cx.listener(move |_, _: &Backspace, window, cx| {
@@ -319,6 +321,12 @@ fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
         }))
         .on_action(cx.listener(move |_, _: &Paste, window, cx| {
             paste.update(cx, |view, cx| view.paste(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Undo, window, cx| {
+            undo.update(cx, |view, cx| view.undo(window, cx));
+        }))
+        .on_action(cx.listener(move |_, _: &Redo, window, cx| {
+            redo.update(cx, |view, cx| view.redo(window, cx));
         }))
 }
 

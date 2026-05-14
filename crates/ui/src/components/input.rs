@@ -37,7 +37,9 @@ actions!(
         End,
         Paste,
         Cut,
-        Copy
+        Copy,
+        Undo,
+        Redo
     ]
 );
 

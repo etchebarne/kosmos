@@ -13,11 +13,24 @@ pub const CONTEXT: &str = "Kosmos";
 pub struct ShortcutBinding {
     pub keystrokes: &'static str,
     pub action: &'static str,
+    pub context: &'static str,
 }
 
 impl ShortcutBinding {
     pub const fn new(keystrokes: &'static str, action: &'static str) -> Self {
-        Self { keystrokes, action }
+        Self::in_context(keystrokes, action, CONTEXT)
+    }
+
+    pub const fn in_context(
+        keystrokes: &'static str,
+        action: &'static str,
+        context: &'static str,
+    ) -> Self {
+        Self {
+            keystrokes,
+            action,
+            context,
+        }
     }
 }
 
@@ -29,6 +42,9 @@ pub const DEFAULTS: &[ShortcutBinding] = &[
     ShortcutBinding::new("ctrl-+", "zoom::ZoomIn"),
     ShortcutBinding::new("ctrl--", "zoom::ZoomOut"),
     ShortcutBinding::new("ctrl-0", "zoom::ResetZoom"),
+    ShortcutBinding::in_context("ctrl-z", "text_input::Undo", "TextInput"),
+    ShortcutBinding::in_context("ctrl-y", "text_input::Redo", "TextInput"),
+    ShortcutBinding::in_context("ctrl-shift-z", "text_input::Redo", "TextInput"),
 ];
 
 /// Install a list of shortcut bindings into the app keymap. Bindings whose action
@@ -44,7 +60,7 @@ pub fn install(cx: &mut App, bindings: &[ShortcutBinding]) {
         let Ok(key_binding) = KeyBinding::load(
             binding.keystrokes,
             action,
-            Some(parse_context(CONTEXT)),
+            Some(parse_context(binding.context)),
             false,
             None,
             mapper.as_ref(),
