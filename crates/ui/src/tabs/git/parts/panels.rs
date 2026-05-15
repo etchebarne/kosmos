@@ -1,0 +1,268 @@
+fn loading_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+    empty_panel("Loading Git status", cx)
+}
+
+fn commit_panel<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    summary: Option<&RepositorySummary>,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let commit_message = cx
+        .global::<GitUiState>()
+        .commit_message
+        .as_ref()
+        .unwrap()
+        .clone();
+    let branch = summary
+        .and_then(|summary| summary.branch.as_deref())
+        .unwrap_or("Detached HEAD")
+        .to_string();
+    let has_staged = summary.is_some_and(|summary| summary.files.iter().any(|file| file.staged));
+    let root_branch = root.clone();
+    let root_commit = root.clone();
+    let message_input = commit_message.clone();
+
+    div()
+        .flex_none()
+        .border_t_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.bg_surface)
+        .child(
+            div()
+                .relative()
+                .min_w_0()
+                .w_full()
+                .child(commit_message)
+                .child(
+                    div()
+                        .absolute()
+                        .left(rems(COMMIT_CONTROLS_INSET_X_REM))
+                        .right(rems(COMMIT_CONTROLS_INSET_X_REM))
+                        .bottom(rems(COMMIT_CONTROLS_INSET_BOTTOM_REM))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .id("git-current-branch")
+                                .min_w_0()
+                                .max_w_full()
+                                .rounded(rems(0.3125))
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.bg_elevated)
+                                .px_2()
+                                .py_1()
+                                .text_sm()
+                                .text_color(theme.text)
+                                .hover(move |this| this.bg(theme.bg_hover))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    open_modal(root_branch.clone(), GitModal::Branches, cx);
+                                }))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::SourceControl)
+                                                .size(14.0)
+                                                .color(theme.text_muted),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .child(branch),
+                                        ),
+                                ),
+                        )
+                        .child(commit_button(
+                            has_staged,
+                            cx.listener(move |_, _, _, cx| {
+                                let message = message_input.read(cx).value().to_string();
+                                commit_tracked(
+                                    root_commit.clone(),
+                                    message,
+                                    message_input.clone(),
+                                    cx,
+                                );
+                            }),
+                            cx,
+                        )),
+                ),
+        )
+        .into_any_element()
+}
+
+fn latest_commit_panel<T: PaneDelegate + SettingsDelegate>(
+    commit: CommitInfo,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let subject = commit
+        .subject
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    if subject.is_empty() {
+        return div().into_any_element();
+    }
+
+    div()
+        .flex_none()
+        .border_t_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.bg_surface)
+        .px_3()
+        .py_2()
+        .flex()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_xs()
+                .text_color(theme.text_subtle)
+                .child(SharedString::from(subject)),
+        )
+        .into_any_element()
+}
+
+fn empty_panel<T: PaneDelegate + SettingsDelegate>(
+    message: &'static str,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded(rems(0.5))
+        .border_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.bg_elevated)
+        .p_3()
+        .text_sm()
+        .text_color(theme.text_subtle)
+        .child(
+            Icon::new(IconName::SourceControl)
+                .size(14.0)
+                .color(theme.text_muted),
+        )
+        .child(message)
+        .into_any_element()
+}
+
+fn diff_stats<T: PaneDelegate + SettingsDelegate>(
+    summary: &RepositorySummary,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let added = rgb(0x22c55e);
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .text_xs()
+        .when(summary.insertions > 0, |this| {
+            this.child(
+                div()
+                    .rounded(rems(0.25))
+                    .bg(gpui::Hsla::from(added).opacity(0.12))
+                    .px_1p5()
+                    .py_0p5()
+                    .text_color(added)
+                    .child(format!("+{}", summary.insertions)),
+            )
+        })
+        .when(summary.deletions > 0, |this| {
+            this.child(
+                div()
+                    .rounded(rems(0.25))
+                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
+                    .px_1p5()
+                    .py_0p5()
+                    .text_color(theme.danger)
+                    .child(format!("-{}", summary.deletions)),
+            )
+        })
+        .into_any_element()
+}
+
+fn icon_button<T: PaneDelegate + SettingsDelegate>(
+    id: &'static str,
+    icon: IconName,
+    tooltip: Option<&'static str>,
+    listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let _ = cx;
+    let button = div()
+        .id(id)
+        .size(rems(1.375))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(rems(0.25))
+        .text_color(theme.text_muted)
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            listener(event, window, cx);
+        }))
+        .child(Icon::new(icon).size(14.0).color(theme.text_muted));
+
+    match tooltip {
+        Some(tooltip) => Tooltip::new(format!("{id}-tooltip"), tooltip, button)
+            .position(TooltipPosition::Bottom)
+            .into_any_element(),
+        None => button.into_any_element(),
+    }
+}
+
+fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .id("git-more")
+        .size(rems(1.375))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(rems(0.25))
+        .text_color(theme.text_muted)
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                let position = event.position;
+                cx.update_global::<GitUiState, _>(|state, _| {
+                    state.menu_position = match state.menu_position {
+                        Some(_) => None,
+                        None => Some(position),
+                    };
+                });
+                cx.notify();
+            }),
+        )
+        .child(
+            Icon::new(IconName::Ellipsis)
+                .size(14.0)
+                .color(theme.text_muted),
+        )
+        .into_any_element()
+}
+

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 gpui = { workspace = true }
 rusqlite = { workspace = true }
+storage = { path = "../storage" }
 workspace = { path = "../workspace" }
 pane_tree = { path = "../pane_tree" }
 panes = { path = "../panes" }
