@@ -58,7 +58,7 @@ fn load_inner(conn: &mut Connection) -> Result<Option<WorkspaceManager>> {
         workspaces.push(Workspace {
             id: row.id,
             path: PathBuf::from(row.path),
-            name: row.name.into(),
+            name: row.name,
             pane_tree,
         });
     }
@@ -205,8 +205,8 @@ fn load_tabs(conn: &Connection, pane_node_id: i64) -> Result<Vec<Tab>> {
         let path: Option<String> = row.get(3)?;
         Ok(Tab {
             id: id as usize,
-            kind: kind.into(),
-            title: title.map(Into::into),
+            kind,
+            title,
             path: path.map(PathBuf::from),
         })
     })?;
@@ -260,7 +260,7 @@ fn save_workspace_inner(conn: &mut Connection, workspace: &Workspace) -> Result<
         params![
             workspace.id as i64,
             workspace.path.to_string_lossy(),
-            workspace.name.as_ref(),
+            workspace.name.as_str(),
             workspace.pane_tree.next_tab_id() as i64,
             workspace.pane_tree.next_pane_id() as i64,
             workspace.pane_tree.next_split_id() as i64,
@@ -304,8 +304,8 @@ fn write_node(
                         pane_node_id,
                         i as i64,
                         tab.id as i64,
-                        tab.kind.as_ref(),
-                        tab.title.as_ref().map(|s| s.as_ref()),
+                        tab.kind.as_str(),
+                        tab.title.as_deref(),
                         tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                     ],
                 )?;

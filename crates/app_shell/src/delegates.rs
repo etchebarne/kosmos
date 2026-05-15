@@ -1,14 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{BorrowAppContext, Context, PathPromptOptions, Pixels, Point};
 
-use pane_tree::{DropZone, PaneTree, PaneTreeContext};
+use pane_tree::{DropZone, PaneTree};
 use settings::{SettingValue, Settings};
+use tabs::Tab;
 use ui::delegate::{
     HeaderDelegate, HeaderMenu, PaneDelegate, SettingsDelegate, SettingsUiState, TabScrollHandles,
     WorkspaceDelegate, WorkspaceMenuState,
 };
 use ui::drag::TabDrag;
+use ui::pane_tree_actions::PaneTreeActionDelegate;
 
 use crate::app::KosmosApp;
 
@@ -20,6 +22,25 @@ fn scroll_tabs_to_end(tab_scrolls: &TabScrollHandles, pane_id: usize, tab_count:
     // `n` tabs + `n - 1` dividers + 1 plus button = `2 * n` children.
     // Scroll to the plus button so the new active tab is visible too.
     tab_scrolls.scroll_to_index(pane_id, 2 * tab_count - 1);
+}
+
+fn file_editor_tab(tab_id: usize, path: PathBuf) -> Tab {
+    let title = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    Tab::new(tab_id, &tabs::registry::FILE_EDITOR)
+        .with_title(title)
+        .with_path(path)
+}
+
+fn is_file_editor_tab(tab: &Tab, path: &Path) -> bool {
+    tab.kind.as_str() == tabs::registry::FILE_EDITOR.id && tab.path.as_deref() == Some(path)
+}
+
+fn tab_count(tree: &PaneTree, pane_id: usize) -> usize {
+    tree.pane(pane_id).map(|p| p.tabs().len()).unwrap_or(0)
 }
 
 impl HeaderDelegate for KosmosApp {
@@ -200,12 +221,19 @@ impl PaneDelegate for KosmosApp {
 
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
-        self.mutate_active_tree(cx, |tree| match tree.open_file_editor(path) {
-            Some(result) => {
-                opened = Some(result);
-                true
+        self.mutate_active_tree(cx, |tree| {
+            if let Some((pane_id, tab_id)) = tree.find_tab(|tab| is_file_editor_tab(tab, &path)) {
+                if !tree.select_tab(pane_id, tab_id) {
+                    return false;
+                }
+                opened = Some((pane_id, tab_count(tree, pane_id)));
+                return true;
             }
-            None => false,
+
+            let pane_id = tree.biggest_pane_id();
+            let path = path.clone();
+            opened = tree.append_new_tab(pane_id, |id| file_editor_tab(id, path));
+            opened.is_some()
         });
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
@@ -215,13 +243,23 @@ impl PaneDelegate for KosmosApp {
     fn open_file_in_pane(&mut self, path: PathBuf, target_pane_id: usize, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
-            match tree.open_file_in_pane(path, target_pane_id) {
-                Some(result) => {
-                    opened = Some(result);
-                    true
+            let existing = tree.pane(target_pane_id).and_then(|pane| {
+                pane.tabs()
+                    .iter()
+                    .find(|tab| is_file_editor_tab(tab, &path))
+                    .map(|tab| tab.id)
+            });
+            if let Some(tab_id) = existing {
+                if !tree.select_tab(target_pane_id, tab_id) {
+                    return false;
                 }
-                None => false,
+                opened = Some((target_pane_id, tab_count(tree, target_pane_id)));
+                return true;
             }
+
+            let path = path.clone();
+            opened = tree.append_new_tab(target_pane_id, |id| file_editor_tab(id, path));
+            opened.is_some()
         });
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
@@ -237,13 +275,30 @@ impl PaneDelegate for KosmosApp {
     ) {
         let mut opened: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
-            match tree.open_file_before(path, target_pane_id, target_tab_id) {
-                Some(result) => {
-                    opened = Some(result);
-                    true
-                }
-                None => false,
+            let Some(pane) = tree.pane(target_pane_id) else {
+                return false;
+            };
+            if !pane.has_tab(target_tab_id) {
+                return false;
             }
+            let existing = pane
+                .tabs()
+                .iter()
+                .find(|tab| is_file_editor_tab(tab, &path))
+                .map(|tab| tab.id);
+            if let Some(tab_id) = existing {
+                if !tree.select_tab(target_pane_id, tab_id) {
+                    return false;
+                }
+                opened = Some((target_pane_id, tab_count(tree, target_pane_id)));
+                return true;
+            }
+
+            let path = path.clone();
+            opened = tree.insert_new_tab_before(target_pane_id, target_tab_id, |id| {
+                file_editor_tab(id, path)
+            });
+            opened.is_some()
         });
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
@@ -259,13 +314,10 @@ impl PaneDelegate for KosmosApp {
     ) {
         let mut opened: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
-            match tree.split_pane_with_file(path, target_pane_id, drop_zone) {
-                Some(result) => {
-                    opened = Some(result);
-                    true
-                }
-                None => false,
-            }
+            let path = path.clone();
+            opened = tree
+                .split_pane_with_new_tab(target_pane_id, drop_zone, |id| file_editor_tab(id, path));
+            opened.is_some()
         });
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
@@ -361,7 +413,7 @@ impl SettingsDelegate for KosmosApp {
     }
 }
 
-impl PaneTreeContext for KosmosApp {
+impl PaneTreeActionDelegate for KosmosApp {
     fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool) {
         self.mutate_active_tree(cx, f);
     }

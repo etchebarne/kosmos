@@ -55,8 +55,8 @@ fn replace_tab_kind_swaps_in_place_keeping_id_and_position() {
     assert!(tree.replace_tab_kind(0, 1, &registry::TERMINAL));
     let pane = leaf(tree.root());
     assert_eq!(tab_ids(pane), vec![0, 1, 2]);
-    assert_eq!(pane.tabs()[1].kind.as_ref(), "terminal");
-    assert_eq!(pane.tabs()[0].kind.as_ref(), "blank");
+    assert_eq!(pane.tabs()[1].kind.as_str(), "terminal");
+    assert_eq!(pane.tabs()[0].kind.as_str(), "blank");
 }
 
 #[test]

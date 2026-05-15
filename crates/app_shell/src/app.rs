@@ -9,11 +9,12 @@ use gpui::{
 use file_editor::BufferStore;
 use file_tree::{FileTree, FileTreeEvent, FileTreeState};
 use gpui::BorrowAppContext;
-use pane_tree::{PaneTree, WirePaneTreeActions};
+use pane_tree::PaneTree;
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
 use ui::delegate::{HeaderMenu, SettingsUiState, TabScrollHandles, WorkspaceMenuState};
 use ui::layout;
+use ui::pane_tree_actions::WirePaneTreeActions;
 use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
 use zoom::WireZoomActions;
@@ -33,7 +34,7 @@ fn apply_theme(cx: &mut App) {
     cx.set_global(Theme::by_id(id));
 }
 
-pub struct KosmosApp {
+pub(crate) struct KosmosApp {
     pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspace_menu: Option<WorkspaceMenuState>,
     pub(crate) workspaces: WorkspaceManager,
@@ -49,7 +50,7 @@ pub struct KosmosApp {
 }
 
 impl KosmosApp {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         SettingsInputs::install(cx);
         let workspaces = persistence::load();
         let file_tree = cx.new(FileTree::new);
@@ -153,7 +154,7 @@ impl KosmosApp {
         }
     }
 
-    pub fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window);
         cx.observe_window_bounds(window, |_, window, _| {
             persistence::save_window_bounds(window.window_bounds());
@@ -232,7 +233,7 @@ impl KosmosApp {
             .active_pane_tree()
             .and_then(|tree| tree.active_pane())
             .and_then(|pane| pane.tabs().iter().find(|tab| tab.id == pane.active_tab()))
-            .filter(|tab| tab.kind.as_ref() == tabs::registry::FILE_EDITOR.id)
+            .filter(|tab| tab.kind.as_str() == tabs::registry::FILE_EDITOR.id)
             .and_then(|tab| tab.path.clone());
         let Some(path) = path else {
             return;

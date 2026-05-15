@@ -3179,7 +3179,7 @@ fn missing_path<T: 'static>(cx: &mut Context<T>) -> AnyElement {
         .gap_2()
         .text_color(theme.text_subtle)
         .child(
-            Icon::new(registry::FILE_EDITOR.icon)
+            Icon::new(super::icon_for_kind(registry::FILE_EDITOR.id))
                 .size(32.0)
                 .color(theme.text_muted),
         )

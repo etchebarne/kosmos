@@ -25,8 +25,8 @@ pub fn render<T: PaneDelegate>(
     let id = tab.id;
     let is_active = pane.active_tab() == id;
     let hover_group = SharedString::from(format!("tab-{pane_id}-{id}"));
-    let title = tab.title();
-    let icon_name = tab.icon();
+    let title = SharedString::from(tab.title());
+    let icon_name = crate::tabs::icon_for_tab(tab);
     let accent = theme.accent;
     let is_dirty = tab
         .path

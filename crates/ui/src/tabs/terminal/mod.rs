@@ -2,8 +2,12 @@ use gpui::{AnyElement, App};
 
 use tabs::registry;
 
-use super::placeholder;
+use super::{icon_for_kind, placeholder};
 
 pub fn render(cx: &mut App) -> AnyElement {
-    placeholder::render(registry::TERMINAL.icon, registry::TERMINAL.name, cx)
+    placeholder::render(
+        icon_for_kind(registry::TERMINAL.id),
+        registry::TERMINAL.name,
+        cx,
+    )
 }

@@ -86,6 +86,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "app_shell"
+version = "1.0.0"
+dependencies = [
+ "file_editor",
+ "file_tree",
+ "gpui",
+ "icons",
+ "installer",
+ "pane_tree",
+ "persistence",
+ "registry",
+ "settings",
+ "shortcuts",
+ "syntax",
+ "tabs",
+ "theme",
+ "ui",
+ "workspace",
+ "zoom",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4084,22 +4106,7 @@ dependencies = [
 name = "kosmos"
 version = "1.0.0"
 dependencies = [
- "file_editor",
- "file_tree",
- "gpui",
- "icons",
- "installer",
- "pane_tree",
- "persistence",
- "registry",
- "settings",
- "shortcuts",
- "syntax",
- "tabs",
- "theme",
- "ui",
- "workspace",
- "zoom",
+ "app_shell",
 ]
 
 [[package]]
@@ -4971,7 +4978,6 @@ dependencies = [
 name = "pane_tree"
 version = "1.0.0"
 dependencies = [
- "gpui",
  "panes",
  "tabs",
 ]
@@ -6732,11 +6738,6 @@ dependencies = [
 [[package]]
 name = "tabs"
 version = "1.0.0"
-dependencies = [
- "gpui",
- "icons",
- "language",
-]
 
 [[package]]
 name = "taffy"
@@ -8694,7 +8695,6 @@ dependencies = [
 name = "workspace"
 version = "1.0.0"
 dependencies = [
- "gpui",
  "pane_tree",
 ]
 

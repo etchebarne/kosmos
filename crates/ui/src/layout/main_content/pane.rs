@@ -47,7 +47,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     let scroll_handle = tab_scrolls.handle(pane_id);
     let accept_file_drops = active_tab
         .as_ref()
-        .map(|t| t.kind.as_ref() != tabs::registry::FILE_TREE.id)
+        .map(|t| t.kind.as_str() != tabs::registry::FILE_TREE.id)
         .unwrap_or(true);
     let body = match active_tab {
         Some(tab) => tab_views::render(pane_id, &tab, cx),

@@ -1,54 +1,8 @@
-pub mod actions;
-
 #[cfg(test)]
 mod tests;
 
-use std::path::{Path, PathBuf};
-
-use gpui::{Context, InteractiveElement};
 use panes::Pane;
 use tabs::{Tab, TabKind, registry};
-
-pub use actions::{CloseTab, NewTab};
-
-/// Implemented by the entity that owns a [`PaneTree`] so action handlers can
-/// reach it. Lives next to the actions so a feature crate is fully responsible
-/// for its own keyboard surface — the binary just provides a tree.
-pub trait PaneTreeContext: Sized + 'static {
-    fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool);
-
-    fn on_tab_appended(&mut self, _pane_id: usize, _new_tab_count: usize, _cx: &mut Context<Self>) {
-    }
-}
-
-/// Extension trait: chain `.wire_pane_tree_actions(cx)` onto a focusable element
-/// to register the pane-tree action handlers in one line.
-pub trait WirePaneTreeActions: Sized {
-    fn wire_pane_tree_actions<T: PaneTreeContext>(self, cx: &mut Context<T>) -> Self;
-}
-
-impl<E: InteractiveElement + 'static> WirePaneTreeActions for E {
-    fn wire_pane_tree_actions<T: PaneTreeContext>(self, cx: &mut Context<T>) -> Self {
-        self.on_action(cx.listener(|this, _: &CloseTab, _, cx| {
-            this.with_active_tree(cx, |tree| tree.close_active_tab());
-        }))
-        .on_action(cx.listener(|this, _: &NewTab, _, cx| {
-            let mut appended: Option<(usize, usize)> = None;
-            this.with_active_tree(cx, |tree| {
-                if !tree.add_tab_to_active(&registry::BLANK) {
-                    return false;
-                }
-                let pane_id = tree.active_pane_id();
-                let count = tree.active_pane().map(|p| p.tabs().len()).unwrap_or(0);
-                appended = Some((pane_id, count));
-                true
-            });
-            if let Some((pane_id, count)) = appended {
-                this.on_tab_appended(pane_id, count, cx);
-            }
-        }))
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SplitAxis {
@@ -142,19 +96,21 @@ impl PaneTree {
         Self::find_pane(&self.root, self.active_pane_id)
     }
 
+    pub fn pane(&self, pane_id: usize) -> Option<&Pane> {
+        Self::find_pane(&self.root, pane_id)
+    }
+
+    pub fn find_tab(&self, mut predicate: impl FnMut(&Tab) -> bool) -> Option<(usize, usize)> {
+        Self::find_tab_in(&self.root, &mut predicate).map(|(pane_id, tab)| (pane_id, tab.id))
+    }
+
     pub fn total_tabs(&self) -> usize {
         Self::total_tabs_in(&self.root)
     }
 
     pub fn add_tab(&mut self, pane_id: usize, kind: &'static TabKind) -> bool {
-        let id = self.next_tab_id;
-        let Some(pane) = Self::find_pane_mut(&mut self.root, pane_id) else {
-            return false;
-        };
-        pane.add_tab(Tab::new(id, kind));
-        self.next_tab_id += 1;
-        self.active_pane_id = pane_id;
-        true
+        self.append_new_tab(pane_id, |id| Tab::new(id, kind))
+            .is_some()
     }
 
     /// Pane id with the largest rendered area, weighted by accumulated split
@@ -165,130 +121,43 @@ impl PaneTree {
             .unwrap_or(self.active_pane_id)
     }
 
-    /// Open `path` in a file_editor tab. If a file_editor tab already exists
-    /// for this path anywhere in the tree, focus it; otherwise add a new tab
-    /// to the biggest pane. Returns `(pane_id, tab_count)` so the caller can
-    /// scroll the tab strip into view.
-    pub fn open_file_editor(&mut self, path: PathBuf) -> Option<(usize, usize)> {
-        if let Some((pane_id, tab_id)) = Self::find_file_editor_tab(&self.root, &path) {
-            self.select_tab(pane_id, tab_id);
-            let count = Self::find_pane(&self.root, pane_id)
-                .map(|p| p.tabs().len())
-                .unwrap_or(0);
-            return Some((pane_id, count));
-        }
-
-        let pane_id = self.biggest_pane_id();
+    pub fn append_new_tab(
+        &mut self,
+        pane_id: usize,
+        build_tab: impl FnOnce(usize) -> Tab,
+    ) -> Option<(usize, usize)> {
         let tab_id = self.next_tab_id;
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
-            .with_title(title)
-            .with_path(path);
-
         let pane = Self::find_pane_mut(&mut self.root, pane_id)?;
-        pane.add_tab(tab);
+        pane.add_tab(build_tab(tab_id));
         self.next_tab_id += 1;
         self.active_pane_id = pane_id;
-        let count = pane.tabs().len();
-        Some((pane_id, count))
+        Some((pane_id, pane.tabs().len()))
     }
 
-    /// Open `path` in a file_editor tab inside `target_pane_id`. If that pane
-    /// already has a file_editor for this path, focus it; otherwise append a
-    /// new tab there. Returns `(pane_id, tab_count)` so the caller can scroll
-    /// the tab strip.
-    pub fn open_file_in_pane(
+    pub fn insert_new_tab_before(
         &mut self,
-        path: PathBuf,
-        target_pane_id: usize,
-    ) -> Option<(usize, usize)> {
-        let pane = Self::find_pane(&self.root, target_pane_id)?;
-        let existing = pane.tabs().iter().find(|t| {
-            t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(&path)
-        });
-        if let Some(tab) = existing {
-            let tab_id = tab.id;
-            self.select_tab(target_pane_id, tab_id);
-            let count = Self::find_pane(&self.root, target_pane_id)
-                .map(|p| p.tabs().len())
-                .unwrap_or(0);
-            return Some((target_pane_id, count));
-        }
-
-        let tab_id = self.next_tab_id;
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
-            .with_title(title)
-            .with_path(path);
-
-        let pane = Self::find_pane_mut(&mut self.root, target_pane_id)?;
-        pane.add_tab(tab);
-        self.next_tab_id += 1;
-        self.active_pane_id = target_pane_id;
-        let count = pane.tabs().len();
-        Some((target_pane_id, count))
-    }
-
-    /// Insert a file_editor tab for `path` immediately before `target_tab_id`
-    /// in `target_pane_id`. If that pane already has a file_editor tab for the
-    /// path, focus it instead.
-    pub fn open_file_before(
-        &mut self,
-        path: PathBuf,
-        target_pane_id: usize,
+        pane_id: usize,
         target_tab_id: usize,
+        build_tab: impl FnOnce(usize) -> Tab,
     ) -> Option<(usize, usize)> {
-        let pane = Self::find_pane(&self.root, target_pane_id)?;
+        let pane = Self::find_pane_mut(&mut self.root, pane_id)?;
         if !pane.has_tab(target_tab_id) {
             return None;
         }
-        let existing = pane.tabs().iter().find(|t| {
-            t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(&path)
-        });
-        if let Some(tab) = existing {
-            let tab_id = tab.id;
-            self.select_tab(target_pane_id, tab_id);
-            let count = Self::find_pane(&self.root, target_pane_id)
-                .map(|p| p.tabs().len())
-                .unwrap_or(0);
-            return Some((target_pane_id, count));
-        }
-
         let tab_id = self.next_tab_id;
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
-            .with_title(title)
-            .with_path(path);
-
-        let pane = Self::find_pane_mut(&mut self.root, target_pane_id)?;
-        if !pane.insert_tab_before(tab, target_tab_id) {
+        if !pane.insert_tab_before(build_tab(tab_id), target_tab_id) {
             return None;
         }
         self.next_tab_id += 1;
-        self.active_pane_id = target_pane_id;
-        let count = pane.tabs().len();
-        Some((target_pane_id, count))
+        self.active_pane_id = pane_id;
+        Some((pane_id, pane.tabs().len()))
     }
 
-    /// Split `target_pane_id` along `drop_zone` and seed the new pane with a
-    /// file_editor tab for `path`. Returns `(new_pane_id, tab_count)`.
-    pub fn split_pane_with_file(
+    pub fn split_pane_with_new_tab(
         &mut self,
-        path: PathBuf,
         target_pane_id: usize,
         drop_zone: DropZone,
+        build_tab: impl FnOnce(usize) -> Tab,
     ) -> Option<(usize, usize)> {
         if drop_zone == DropZone::Center {
             return None;
@@ -300,14 +169,7 @@ impl PaneTree {
         let new_pane_id = self.next_pane_id;
         let new_split_id = self.next_split_id;
         let tab_id = self.next_tab_id;
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let tab = Tab::new(tab_id, &registry::FILE_EDITOR)
-            .with_title(title)
-            .with_path(path);
+        let tab = build_tab(tab_id);
 
         if !Self::split_leaf_with_tab(
             &mut self.root,
@@ -574,17 +436,19 @@ impl PaneTree {
         }
     }
 
-    fn find_file_editor_tab(node: &PaneNode, path: &Path) -> Option<(usize, usize)> {
+    fn find_tab_in<'a>(
+        node: &'a PaneNode,
+        predicate: &mut impl FnMut(&Tab) -> bool,
+    ) -> Option<(usize, &'a Tab)> {
         match node {
             PaneNode::Leaf(pane) => pane
                 .tabs()
                 .iter()
-                .find(|t| {
-                    t.kind.as_ref() == registry::FILE_EDITOR.id && t.path.as_deref() == Some(path)
-                })
-                .map(|t| (pane.id(), t.id)),
-            PaneNode::Split { first, second, .. } => Self::find_file_editor_tab(first, path)
-                .or_else(|| Self::find_file_editor_tab(second, path)),
+                .find(|tab| predicate(tab))
+                .map(|tab| (pane.id(), tab)),
+            PaneNode::Split { first, second, .. } => {
+                Self::find_tab_in(first, predicate).or_else(|| Self::find_tab_in(second, predicate))
+            }
         }
     }
 

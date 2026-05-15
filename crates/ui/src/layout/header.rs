@@ -226,14 +226,14 @@ fn render_workspace_button<T: WorkspaceDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let id = workspace.id;
-    let initial = workspace.initial();
-    let name = workspace.name.clone();
+    let initial = SharedString::from(workspace.initial());
+    let name = SharedString::from(workspace.name.clone());
     let hover_group = SharedString::from(format!("workspace-{id}"));
     let accent = theme.accent;
     let drag_initial = initial.clone();
 
     let inactive_w = 1.75_f32;
-    let active_w = measure_text_rems(window, &name) + 1.25;
+    let active_w = measure_text_rems(window, name.as_ref()) + 1.25;
     let anim_id = SharedString::from(format!("ws-anim-{id}-{}", is_active as u8));
 
     let content = div().relative().h_full().overflow_hidden();

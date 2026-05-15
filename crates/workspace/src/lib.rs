@@ -1,23 +1,21 @@
 use std::path::PathBuf;
 
-use gpui::SharedString;
 use pane_tree::PaneTree;
 
 pub struct Workspace {
     pub id: usize,
     pub path: PathBuf,
-    pub name: SharedString,
+    pub name: String,
     pub pane_tree: PaneTree,
 }
 
 impl Workspace {
-    pub fn initial(&self) -> SharedString {
+    pub fn initial(&self) -> String {
         self.name
             .chars()
             .next()
             .map(|c| c.to_ascii_uppercase().to_string())
             .unwrap_or_else(|| "?".to_string())
-            .into()
     }
 }
 
@@ -82,12 +80,11 @@ impl WorkspaceManager {
         }
         let id = self.next_id;
         self.next_id += 1;
-        let name: SharedString = path
+        let name = path
             .file_name()
             .and_then(|os| os.to_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| path.display().to_string())
-            .into();
+            .unwrap_or_else(|| path.display().to_string());
         self.workspaces.push(Workspace {
             id,
             path,

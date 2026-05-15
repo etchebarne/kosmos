@@ -72,7 +72,11 @@ fn render_button<T: PaneDelegate>(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.replace_tab_kind(pane_id, tab_id, kind_id, cx);
         }))
-        .child(Icon::new(kind.icon).size(16.0).color(theme.text_muted))
+        .child(
+            Icon::new(super::icon_for_kind(kind.id))
+                .size(16.0)
+                .color(theme.text_muted),
+        )
         .child(div().child(kind.name))
         .into_any_element()
 }

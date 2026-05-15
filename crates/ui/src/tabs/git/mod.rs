@@ -2148,7 +2148,11 @@ fn empty_state<T: PaneDelegate + SettingsDelegate>(
     message: &'static str,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    centered_state(registry::GIT.icon, message.to_string(), cx)
+    centered_state(
+        super::icon_for_kind(registry::GIT.id),
+        message.to_string(),
+        cx,
+    )
 }
 
 fn centered_state<T: PaneDelegate + SettingsDelegate>(

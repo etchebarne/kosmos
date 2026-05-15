@@ -1,0 +1,22 @@
+[package]
+name = "app_shell"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+file_editor = { path = "../file_editor" }
+file_tree = { path = "../file_tree" }
+gpui = { workspace = true }
+icons = { path = "../icons" }
+installer = { path = "../installer" }
+pane_tree = { path = "../pane_tree" }
+persistence = { path = "../persistence" }
+registry = { path = "../registry" }
+settings = { path = "../settings" }
+shortcuts = { path = "../shortcuts" }
+syntax = { path = "../syntax" }
+tabs = { path = "../tabs" }
+theme = { path = "../theme" }
+ui = { path = "../ui" }
+workspace = { path = "../workspace" }
+zoom = { path = "../zoom" }

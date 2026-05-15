@@ -2,8 +2,12 @@ use gpui::{AnyElement, App};
 
 use tabs::registry;
 
-use super::placeholder;
+use super::{icon_for_kind, placeholder};
 
 pub fn render(cx: &mut App) -> AnyElement {
-    placeholder::render(registry::FILE_SEARCH.icon, registry::FILE_SEARCH.name, cx)
+    placeholder::render(
+        icon_for_kind(registry::FILE_SEARCH.id),
+        registry::FILE_SEARCH.name,
+        cx,
+    )
 }

@@ -6,9 +6,9 @@ pub const CONTEXT: &str = "Kosmos";
 /// A keystroke -> action mapping prior to resolution against the action registry.
 /// Settings will eventually deserialize into this same shape so the install path is shared.
 ///
-/// Action types and their handlers live in the feature crates that own them
-/// (e.g. `pane_tree::CloseTab`); this crate only stores the keymap that pairs
-/// keystrokes to those action names and drives gpui's binding registration.
+/// Action types and their handlers live at the UI boundary that owns them;
+/// this crate only stores the keymap that pairs keystrokes to action names and
+/// drives gpui's binding registration.
 #[derive(Clone, Debug)]
 pub struct ShortcutBinding {
     pub keystrokes: &'static str,

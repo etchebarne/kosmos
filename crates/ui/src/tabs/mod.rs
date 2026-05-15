@@ -7,9 +7,12 @@ mod placeholder;
 pub mod settings;
 mod terminal;
 
-use gpui::{AnyElement, Context, IntoElement, div};
+use std::path::Path;
 
-use tabs::Tab;
+use gpui::{AnyElement, Context, IntoElement, div};
+use icons::IconName;
+
+use tabs::{Tab, registry};
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
@@ -18,7 +21,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     tab: &Tab,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    match tab.kind.as_ref() {
+    match tab.kind.as_str() {
         "blank" => blank::render(pane_id, tab.id, cx),
         "terminal" => terminal::render(cx),
         "file_tree" => file_tree::render(cx),
@@ -28,4 +31,35 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "file_editor" => file_editor::render(tab, cx),
         _ => div().into_any_element(),
     }
+}
+
+pub fn icon_for_tab(tab: &Tab) -> IconName {
+    if let Some(path) = &tab.path
+        && let Some(icon) = icon_for_path(path)
+    {
+        return icon;
+    }
+    icon_for_kind(&tab.kind)
+}
+
+pub fn icon_for_kind(kind_id: &str) -> IconName {
+    match kind_id {
+        id if id == registry::BLANK.id => IconName::EmptyWindow,
+        id if id == registry::FILE_TREE.id => IconName::ListTree,
+        id if id == registry::FILE_SEARCH.id => IconName::Search,
+        id if id == registry::GIT.id => IconName::SourceControl,
+        id if id == registry::TERMINAL.id => IconName::Terminal,
+        id if id == registry::SETTINGS.id => IconName::SettingsGear,
+        id if id == registry::FILE_EDITOR.id => IconName::File,
+        _ => IconName::File,
+    }
+}
+
+fn icon_for_path(path: &Path) -> Option<IconName> {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str())
+        && let Some(icon) = IconName::for_file_name(name)
+    {
+        return Some(icon);
+    }
+    language::from_path(path).and_then(|id| IconName::for_language(id.as_str()))
 }

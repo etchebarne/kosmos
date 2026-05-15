@@ -4,19 +4,4 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-file_editor = { path = "../file_editor" }
-file_tree = { path = "../file_tree" }
-gpui = { workspace = true }
-icons = { path = "../icons" }
-installer = { path = "../installer" }
-registry = { path = "../registry" }
-settings = { path = "../settings" }
-syntax = { path = "../syntax" }
-ui = { path = "../ui" }
-workspace = { path = "../workspace" }
-pane_tree = { path = "../pane_tree" }
-persistence = { path = "../persistence" }
-shortcuts = { path = "../shortcuts" }
-tabs = { path = "../tabs" }
-theme = { path = "../theme" }
-zoom = { path = "../zoom" }
+app_shell = { path = "../app_shell" }

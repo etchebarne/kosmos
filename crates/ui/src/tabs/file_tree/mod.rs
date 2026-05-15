@@ -375,7 +375,7 @@ fn empty_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEl
         .gap_2()
         .text_color(theme.text_subtle)
         .child(
-            Icon::new(registry::FILE_TREE.icon)
+            Icon::new(super::icon_for_kind(registry::FILE_TREE.id))
                 .size(28.0)
                 .color(theme.text_muted),
         )
