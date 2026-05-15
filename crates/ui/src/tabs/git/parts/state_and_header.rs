@@ -141,16 +141,20 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
 }
 
 pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let Some(state) = cx.try_global::<GitUiState>() else {
-        return div().into_any_element();
-    };
-    let Some(modal_state) = state.modal else {
-        return div().into_any_element();
-    };
-    let Some(root) = state.root.clone() else {
-        return div().into_any_element();
-    };
-    render_git_modal(&root, modal_state, cx)
+    let modal = cx
+        .try_global::<GitUiState>()
+        .and_then(|state| Some((state.root.clone()?, state.modal?)));
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .when_some(modal, |this, (root, modal_state)| {
+            this.child(render_git_modal(&root, modal_state, cx))
+        })
+        .into_any_element()
 }
 
 fn header<T: PaneDelegate + SettingsDelegate>(
