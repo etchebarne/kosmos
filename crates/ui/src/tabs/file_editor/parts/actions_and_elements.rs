@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, CursorStyle, DragMoveEvent,
-    Element, ElementId, ElementInputHandler, Entity, GlobalElementId, HighlightStyle,
+    Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle,
     InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton,
     MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText,
     TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
@@ -27,6 +27,7 @@ use crate::components::input::{
     Backspace, Copy, Cut, Delete, Down, DuplicateLineDown, DuplicateLineUp, End, Enter, Home,
     KEY_CONTEXT, Left, Paste, Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight,
     SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
+    should_paint_text_cursor, text_cursor_bounds,
 };
 use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
 
@@ -101,6 +102,7 @@ struct CursorElement {
     text_layout: TextLayout,
     cursor: usize,
     color: Rgba,
+    focus_handle: FocusHandle,
 }
 
 impl IntoElement for CursorElement {
@@ -157,16 +159,18 @@ impl Element for CursorElement {
         window: &mut Window,
         _cx: &mut App,
     ) {
+        if !self.focus_handle.is_focused(window) || !should_paint_text_cursor(window) {
+            return;
+        }
+
         let Some(position) = self.text_layout.position_for_index(self.cursor) else {
             return;
         };
         window.paint_quad(fill(
-            Bounds::new(
-                point(position.x.round(), position.y.round()),
-                gpui::size(
-                    rems(0.09375).to_pixels(window.rem_size()),
-                    self.text_layout.line_height(),
-                ),
+            text_cursor_bounds(
+                point(position.x, position.y),
+                self.text_layout.line_height(),
+                window,
             ),
             self.color,
         ));
@@ -344,4 +348,3 @@ fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
             duplicate_line_down.update(cx, |view, cx| view.duplicate_line_down(window, cx));
         }))
 }
-

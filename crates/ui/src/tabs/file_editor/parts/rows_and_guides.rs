@@ -40,7 +40,7 @@ fn render_row(
                             this.child(selection)
                         })
                         .child(render_line_text(
-                            line, spans, soft_wrap, edit_state, theme, hover, cx,
+                            line, spans, soft_wrap, view, edit_state, theme, hover, cx,
                         )),
                 ),
         )
@@ -112,6 +112,7 @@ fn render_line_text(
     line: SharedString,
     spans: Vec<(Range<usize>, HighlightId)>,
     soft_wrap: bool,
+    view: &Entity<EditorView>,
     edit_state: EditLineState,
     theme: &Theme,
     hover: Option<LineHover>,
@@ -154,6 +155,7 @@ fn render_line_text(
         StyledText::new(display_line).with_highlights(highlights)
     };
     let text_layout = text.layout().clone();
+    let focus_handle = view.read(cx).focus_handle();
     let cursor = cursor.map(|cursor| {
         div()
             .absolute()
@@ -163,6 +165,7 @@ fn render_line_text(
                 text_layout: text_layout.clone(),
                 cursor,
                 color: theme.text_emphasis,
+                focus_handle: focus_handle.clone(),
             })
             .into_any_element()
     });
@@ -437,4 +440,3 @@ fn indent_guide_x_offsets(max_column: usize, window: &mut Window) -> Option<Vec<
             .collect(),
     )
 }
-

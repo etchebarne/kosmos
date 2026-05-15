@@ -108,12 +108,10 @@ impl Element for TextElement {
             (
                 None,
                 Some(fill(
-                    Bounds::new(
+                    text_cursor_bounds(
                         point(bounds.left() + cursor_pos, bounds.top()),
-                        size(
-                            rems(0.09375).to_pixels(window.rem_size()),
-                            bounds.bottom() - bounds.top(),
-                        ),
+                        bounds.bottom() - bounds.top(),
+                        window,
                     ),
                     theme.text,
                 )),
@@ -166,6 +164,7 @@ impl Element for TextElement {
         line.paint(bounds.origin, window.line_height(), window, cx)
             .ok();
         if focus_handle.is_focused(window)
+            && should_paint_text_cursor(window)
             && let Some(cursor) = prepaint.cursor.take()
         {
             window.paint_quad(cursor);

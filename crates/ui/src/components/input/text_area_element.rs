@@ -145,12 +145,13 @@ impl Element for TextAreaElement {
                 line.position_for_index(cursor.saturating_sub(line_range.start), line_height)
                     .map(|position| {
                         fill(
-                            Bounds::new(
+                            text_cursor_bounds(
                                 point(
                                     bounds.left() + position.x,
                                     bounds.top() + visual_top + position.y,
                                 ),
-                                size(rems(0.09375).to_pixels(window.rem_size()), line_height),
+                                line_height,
+                                window,
                             ),
                             theme.text,
                         )
@@ -208,6 +209,7 @@ impl Element for TextAreaElement {
             visual_line_index += TextArea::wrapped_line_height(line);
         }
         if focus_handle.is_focused(window)
+            && should_paint_text_cursor(window)
             && let Some(cursor) = prepaint.cursor.take()
         {
             window.paint_quad(cursor);
