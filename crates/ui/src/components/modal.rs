@@ -1,4 +1,4 @@
-use gpui::{AnyElement, IntoElement, MouseButton, div, prelude::*, rems};
+use gpui::{AnyElement, ClickEvent, ElementId, IntoElement, MouseButton, div, prelude::*, rems};
 use theme::Theme;
 
 pub fn render(
@@ -7,7 +7,7 @@ pub fn render(
     body: AnyElement,
     footer: AnyElement,
     theme: Theme,
-    on_close: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    on_close: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
     let backdrop = Theme::dark().bg_root;
 
@@ -18,13 +18,20 @@ pub fn render(
         .left_0()
         .right_0()
         .bottom_0()
+        .occlude()
         .flex()
         .items_center()
         .justify_center()
         .bg(gpui::Hsla::from(backdrop).opacity(0.72))
-        .on_mouse_down(MouseButton::Left, on_close)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .on_click(move |event, window, cx| {
+            cx.stop_propagation();
+            on_close(event, window, cx);
+        })
         .child(
             div()
+                .id(ElementId::Name(format!("{id}-surface").into()))
                 .w(rems(30.0))
                 .max_w(rems(40.0))
                 .max_h(rems(34.0))
@@ -36,6 +43,9 @@ pub fn render(
                 .bg(theme.bg_surface)
                 .shadow_lg()
                 .text_color(theme.text)
+                .on_click(|_: &ClickEvent, _: &mut gpui::Window, cx: &mut gpui::App| {
+                    cx.stop_propagation();
+                })
                 .block_mouse_except_scroll()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
