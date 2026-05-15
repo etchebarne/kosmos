@@ -279,5 +279,6 @@ impl Render for KosmosApp {
             )))
             .child(layout::bottom_bar::render(&theme))
             .child(ui::tabs::git::render_modal_overlay(cx))
+            .child(ui::components::toast::render(cx))
     }
 }

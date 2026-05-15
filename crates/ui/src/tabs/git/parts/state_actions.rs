@@ -62,46 +62,6 @@ fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn error_banner<T: PaneDelegate + SettingsDelegate>(
-    message: String,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .px_3()
-        .py_1()
-        .bg(gpui::Hsla::from(theme.danger).opacity(0.15))
-        .text_xs()
-        .text_color(theme.text)
-        .child(div().flex_1().min_w_0().child(message))
-        .child(
-            div()
-                .id("git-error-dismiss")
-                .size(rems(1.25))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .hover(move |s| s.bg(theme.bg_hover))
-                .on_click(cx.listener(|_, _, _, cx| {
-                    clear_error(cx);
-                    cx.notify();
-                }))
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(12.0)
-                        .color(theme.text_muted),
-                ),
-        )
-        .into_any_element()
-}
-
 fn empty_state<T: PaneDelegate + SettingsDelegate>(
     message: &'static str,
     cx: &mut Context<T>,
@@ -272,4 +232,3 @@ enum ModalList {
     Stashes(Vec<Stash>),
     Tags(Vec<Tag>),
 }
-

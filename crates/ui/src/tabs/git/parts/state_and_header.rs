@@ -16,7 +16,7 @@ use kosmos_git::{
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal};
+use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal, toast};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,83 @@ enum GitModal {
     ConfirmDiscard,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GitSyncAction {
+    Fetch,
+    Pull,
+    PullRebase,
+    Push,
+    ForcePush,
+}
+
+impl Default for GitSyncAction {
+    fn default() -> Self {
+        Self::Fetch
+    }
+}
+
+impl GitSyncAction {
+    const ALL: [Self; 5] = [
+        Self::Fetch,
+        Self::Pull,
+        Self::PullRebase,
+        Self::Push,
+        Self::ForcePush,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Fetch => "git-sync-menu-fetch",
+            Self::Pull => "git-sync-menu-pull",
+            Self::PullRebase => "git-sync-menu-pull-rebase",
+            Self::Push => "git-sync-menu-push",
+            Self::ForcePush => "git-sync-menu-force-push",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch",
+            Self::Pull => "Pull",
+            Self::PullRebase => "Pull (Rebase)",
+            Self::Push => "Push",
+            Self::ForcePush => "Push (Force)",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::Fetch => IconName::Refresh,
+            Self::Pull | Self::PullRebase => IconName::ArrowDown,
+            Self::Push | Self::ForcePush => IconName::ArrowUp,
+        }
+    }
+
+    fn success_title(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch completed",
+            Self::Pull => "Pull completed",
+            Self::PullRebase => "Pull with rebase completed",
+            Self::Push => "Push completed",
+            Self::ForcePush => "Force push completed",
+        }
+    }
+
+    fn error_title(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch failed",
+            Self::Pull => "Pull failed",
+            Self::PullRebase => "Pull with rebase failed",
+            Self::Push => "Push failed",
+            Self::ForcePush => "Force push failed",
+        }
+    }
+
+    fn is_danger(self) -> bool {
+        matches!(self, Self::ForcePush)
+    }
+}
+
 #[derive(Default)]
 struct GitUiState {
     root: Option<PathBuf>,
@@ -40,8 +117,10 @@ struct GitUiState {
     watch_generation: u64,
     watch_task: Option<Task<()>>,
     menu_position: Option<Point<Pixels>>,
+    sync_menu_position: Option<Point<Pixels>>,
     modal: Option<GitModal>,
     last_error: Option<String>,
+    last_sync_action: GitSyncAction,
     remotes: Vec<Remote>,
     stashes: Vec<Stash>,
     expanded_stashes: std::collections::HashSet<String>,
@@ -67,7 +146,7 @@ const CHANGE_GUIDE_OFFSET_REM: f32 = 0.625;
 const CHANGE_GUIDE_WIDTH_REM: f32 = 0.0625;
 const CHANGE_ICON_WIDTH_REM: f32 = 1.25;
 const CHANGE_LABEL_PADDING_REM: f32 = 0.25;
-const COMMIT_PANEL_HEIGHT_REM: f32 = 11.0;
+const COMMIT_PANEL_HEIGHT_REM: f32 = 13.25;
 const COMMIT_MESSAGE_HEIGHT_REM: f32 = 8.25;
 const COMMIT_MESSAGE_PADDING_X_REM: f32 = 1.25;
 const COMMIT_MESSAGE_PADDING_TOP_REM: f32 = 1.25;
@@ -87,17 +166,20 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
 
     ensure_summary(&root, cx);
 
-    let (summary, loading, menu_position, last_error) = {
+    let (summary, loading, menu_position, sync_menu_position) = {
         let state = cx.global::<GitUiState>();
         (
             state.summary.clone(),
             state.loading,
             state.menu_position,
-            state.last_error.clone(),
+            state.sync_menu_position,
         )
     };
-    let dismiss_layer = menu_position.map(|_| menu_dismiss_layer::<T>(cx));
+    let dismiss_layer = (menu_position.is_some() || sync_menu_position.is_some())
+        .then(|| menu_dismiss_layer::<T>(cx));
     let menu_overlay = menu_position.map(|position| more_menu::<T>(&root, position, cx));
+    let sync_menu_overlay =
+        sync_menu_position.map(|position| sync_action_menu::<T>(&root, position, cx));
 
     div()
         .relative()
@@ -108,9 +190,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
         .bg(theme.bg_surface)
         .text_color(theme.text)
         .child(header(&root, summary.as_ref(), loading, cx))
-        .when_some(last_error, |this, error| {
-            this.child(error_banner(error, cx))
-        })
         .child(
             div()
                 .flex_1()
@@ -137,6 +216,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
         )
         .when_some(dismiss_layer, |this, layer| this.child(layer))
         .when_some(menu_overlay, |this, menu| this.child(menu))
+        .when_some(sync_menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
 }
 

@@ -242,6 +242,78 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
     .detach();
 }
 
+fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    success_title: &'static str,
+    error_title: &'static str,
+    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
+    cx: &mut Context<T>,
+) {
+    close_menu(cx);
+    clear_error(cx);
+    cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
+    cx.notify();
+
+    cx.spawn(async move |this, cx| {
+        let action_root = root.clone();
+        let result = cx
+            .background_executor()
+            .spawn(async move { action(action_root) })
+            .await;
+        let _ = this.update(cx, |_, cx| match result {
+            Ok(()) => {
+                toast::show_success(cx, success_title);
+                refresh_summary(root, true, true, cx);
+            }
+            Err(error) => {
+                cx.update_global::<GitUiState, _>(|state, _| {
+                    state.loading = false;
+                });
+                toast::show_error(cx, error_title, git_error_message(error));
+                cx.notify();
+            }
+        });
+    })
+    .detach();
+}
+
+fn run_sync_action<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    action: GitSyncAction,
+    remember: bool,
+    cx: &mut Context<T>,
+) {
+    if remember {
+        cx.update_global::<GitUiState, _>(|state, _| {
+            state.last_sync_action = action;
+        });
+    }
+
+    run_git_action_with_toast(
+        root,
+        action.success_title(),
+        action.error_title(),
+        move |root| match action {
+            GitSyncAction::Fetch => kosmos_git::fetch(root),
+            GitSyncAction::Pull => kosmos_git::pull(root),
+            GitSyncAction::PullRebase => kosmos_git::pull_rebase(root),
+            GitSyncAction::Push => kosmos_git::push(root),
+            GitSyncAction::ForcePush => kosmos_git::force_push(root),
+        },
+        cx,
+    );
+}
+
+fn git_error_message(error: kosmos_git::Error) -> String {
+    match error {
+        kosmos_git::Error::Status(message) if message.trim().is_empty() => {
+            "Git command failed".to_string()
+        }
+        kosmos_git::Error::Status(message) => message,
+        error => error.to_string(),
+    }
+}
+
 fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     message: String,
@@ -290,7 +362,10 @@ fn clear_error(cx: &mut App) {
 }
 
 fn close_menu(cx: &mut App) {
-    cx.update_global::<GitUiState, _>(|state, _| state.menu_position = None);
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.menu_position = None;
+        state.sync_menu_position = None;
+    });
 }
 
 fn plural(count: usize) -> &'static str {

@@ -4,11 +4,6 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let root_push = root.clone();
-    let root_force_push = root.clone();
-    let root_pull = root.clone();
-    let root_pull_rebase = root.clone();
-    let root_fetch = root.clone();
     let root_branches = root.clone();
     let root_remotes = root.clone();
     let root_stashes = root.clone();
@@ -38,55 +33,6 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                 .text_color(theme.text)
                 .block_mouse_except_scroll()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(menu_item::<T>(
-                    "git-menu-push",
-                    IconName::ArrowUp,
-                    "Push",
-                    true,
-                    false,
-                    move |_, _, cx| run_git_action(root_push.clone(), kosmos_git::push, cx),
-                    cx,
-                ))
-                .child(menu_item::<T>(
-                    "git-menu-force-push",
-                    IconName::ArrowUp,
-                    "Force Push",
-                    true,
-                    true,
-                    move |_, _, cx| {
-                        run_git_action(root_force_push.clone(), kosmos_git::force_push, cx)
-                    },
-                    cx,
-                ))
-                .child(menu_item::<T>(
-                    "git-menu-pull",
-                    IconName::ArrowDown,
-                    "Pull",
-                    true,
-                    false,
-                    move |_, _, cx| run_git_action(root_pull.clone(), kosmos_git::pull, cx),
-                    cx,
-                ))
-                .child(menu_item::<T>(
-                    "git-menu-pull-rebase",
-                    IconName::ArrowDown,
-                    "Pull (Rebase)",
-                    true,
-                    false,
-                    move |_, _, cx| {
-                        run_git_action(root_pull_rebase.clone(), kosmos_git::pull_rebase, cx)
-                    },
-                    cx,
-                ))
-                .child(menu_item::<T>(
-                    "git-menu-fetch",
-                    IconName::Refresh,
-                    "Fetch",
-                    true,
-                    false,
-                    move |_, _, cx| run_git_action(root_fetch.clone(), kosmos_git::fetch, cx),
-                    cx,
-                ))
                 .child(menu_item::<T>(
                     "git-menu-branches",
                     IconName::SourceControl,
@@ -148,6 +94,48 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
                     move |_, _, cx| open_modal(root_discard.clone(), GitModal::ConfirmDiscard, cx),
                     cx,
                 )),
+        ),
+    )
+    .with_priority(2)
+    .into_any_element()
+}
+
+fn sync_action_menu<T: PaneDelegate + SettingsDelegate>(
+    root: &PathBuf,
+    position: Point<Pixels>,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    deferred(
+        anchored().position(position).snap_to_window().child(
+            div()
+                .id("git-sync-menu")
+                .min_w(rems(11.0))
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .rounded(rems(0.375))
+                .border_1()
+                .border_color(theme.border_strong)
+                .bg(theme.bg_elevated)
+                .shadow_lg()
+                .text_sm()
+                .text_color(theme.text)
+                .block_mouse_except_scroll()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(GitSyncAction::ALL.into_iter().map(|action| {
+                    let root = root.clone();
+                    menu_item::<T>(
+                        action.id(),
+                        action.icon(),
+                        action.label(),
+                        true,
+                        action.is_danger(),
+                        move |_, _, cx| run_sync_action(root.clone(), action, true, cx),
+                        cx,
+                    )
+                })),
         ),
     )
     .with_priority(2)
@@ -229,4 +217,3 @@ fn menu_dismiss_layer<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -
         )
         .into_any_element()
 }
-
