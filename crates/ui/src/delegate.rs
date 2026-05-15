@@ -58,6 +58,7 @@ pub trait PaneDelegate: Sized + 'static {
         cx: &mut Context<Self>,
     );
     fn resize_split(&mut self, split_id: usize, ratio: f32, cx: &mut Context<Self>);
+    fn finish_resize_split(&mut self, _cx: &mut Context<Self>) {}
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>);
     fn open_file_in_pane(&mut self, path: PathBuf, target_pane_id: usize, cx: &mut Context<Self>);
     fn open_file_before(

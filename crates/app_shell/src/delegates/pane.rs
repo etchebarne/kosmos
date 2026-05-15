@@ -105,6 +105,10 @@ impl PaneDelegate for KosmosApp {
         self.mutate_active_tree_transient(cx, |tree| tree.resize_split(split_id, ratio));
     }
 
+    fn finish_resize_split(&mut self, _cx: &mut Context<Self>) {
+        self.flush_pending_persist();
+    }
+
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {

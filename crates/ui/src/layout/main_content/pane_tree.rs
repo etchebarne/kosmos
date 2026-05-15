@@ -1,5 +1,6 @@
 use gpui::{
-    AnyElement, Context, DragMoveEvent, IntoElement, SharedString, div, prelude::*, relative, rems,
+    AnyElement, Context, DragMoveEvent, IntoElement, MouseButton, SharedString, div, prelude::*,
+    relative, rems,
 };
 
 use pane_tree::{PaneNode, PaneTree, SplitAxis};
@@ -70,7 +71,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         })
                         .child(render(tree, first, tab_scrolls, cx)),
                 )
-                .child(render_resize_handle(split_id, axis, &theme))
+                .child(render_resize_handle(split_id, axis, &theme, cx))
                 .child(
                     div()
                         .flex_1()
@@ -85,7 +86,12 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     }
 }
 
-fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyElement {
+fn render_resize_handle<T: PaneDelegate + SettingsDelegate>(
+    split_id: usize,
+    axis: SplitAxis,
+    theme: &Theme,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let hover_bg = theme.accent;
     let group_name = SharedString::from(format!("resize-{split_id}"));
     div()
@@ -119,7 +125,15 @@ fn render_resize_handle(split_id: usize, axis: SplitAxis, theme: &Theme) -> AnyE
                 })
                 .on_drag(SplitResize::new(split_id, axis), |resize, _, _, cx| {
                     cx.new(|_| *resize)
-                }),
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.finish_resize_split(cx)),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.finish_resize_split(cx)),
+                ),
         )
         .into_any_element()
 }
