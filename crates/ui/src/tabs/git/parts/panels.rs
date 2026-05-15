@@ -30,16 +30,19 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
         .bg(theme.bg_surface)
         .child(
             div()
-                .relative()
                 .min_w_0()
                 .w_full()
+                .h(rems(COMMIT_PANEL_HEIGHT_REM))
+                .flex()
+                .flex_col()
+                .justify_between()
+                .pb(rems(COMMIT_CONTROLS_INSET_BOTTOM_REM))
                 .child(commit_message)
                 .child(
                     div()
-                        .absolute()
-                        .left(rems(COMMIT_CONTROLS_INSET_X_REM))
-                        .right(rems(COMMIT_CONTROLS_INSET_X_REM))
-                        .bottom(rems(COMMIT_CONTROLS_INSET_BOTTOM_REM))
+                        .flex_none()
+                        .w_full()
+                        .px(rems(COMMIT_CONTROLS_INSET_X_REM))
                         .flex()
                         .items_center()
                         .justify_between()
@@ -265,4 +268,3 @@ fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEl
         )
         .into_any_element()
 }
-
