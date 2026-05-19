@@ -66,21 +66,21 @@ fn run_modal_action_after_success<T: PaneDelegate + SettingsDelegate>(
     .detach();
 }
 
-fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: &mut Context<T>) {
+fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Context<T>) {
     ensure_summary_watch(root, cx);
 
     let needs_refresh = {
         let state = cx.global::<GitUiState>();
-        state.root.as_ref() != Some(root) || (!state.loading && state.summary.is_none())
+        state.root.as_deref() != Some(root) || (!state.loading && state.summary.is_none())
     };
     if needs_refresh {
-        refresh_summary(root.clone(), false, true, cx);
+        refresh_summary(root.to_path_buf(), false, true, cx);
     }
 }
 
-fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: &mut Context<T>) {
+fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Context<T>) {
     let generation = cx.update_global::<GitUiState, _>(|state, _| {
-        if state.root.as_ref() == Some(root) && state.watch_task.is_some() {
+        if state.root.as_deref() == Some(root) && state.watch_task.is_some() {
             return None;
         }
 
@@ -92,7 +92,7 @@ fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: 
         return;
     };
 
-    let root = root.clone();
+    let root = root.to_path_buf();
     let task = cx.spawn(async move |this, cx| {
         loop {
             cx.background_executor()
@@ -123,14 +123,14 @@ fn ensure_summary_watch<T: PaneDelegate + SettingsDelegate>(root: &PathBuf, cx: 
 }
 
 fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     generation: u64,
     result: Result<RepositorySummary, kosmos_git::Error>,
     cx: &mut Context<T>,
 ) -> bool {
     let mut changed = false;
     let should_continue = cx.update_global::<GitUiState, _>(|state, _| {
-        if state.watch_generation != generation || state.root.as_ref() != Some(root) {
+        if state.watch_generation != generation || state.root.as_deref() != Some(root) {
             return false;
         }
 

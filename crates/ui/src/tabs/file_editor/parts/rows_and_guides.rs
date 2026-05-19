@@ -1,4 +1,4 @@
-fn render_row(
+struct EditorRow {
     line_number: usize,
     line: SharedString,
     spans: Vec<(Range<usize>, HighlightId)>,
@@ -8,20 +8,42 @@ fn render_row(
     folded: bool,
     show_fold_arrow: bool,
     hovered_fold_line: Option<usize>,
-    view: &Entity<EditorView>,
     edit_state: EditLineState,
     hover: Option<LineHover>,
+}
+
+struct LineText {
+    line: SharedString,
+    spans: Vec<(Range<usize>, HighlightId)>,
+    soft_wrap: bool,
+    edit_state: EditLineState,
+    hover: Option<LineHover>,
+}
+
+struct GutterRow {
+    row_index: usize,
+    line_number: Option<usize>,
+    sticky_offset: Pixels,
+    foldable: bool,
+    folded: bool,
+    show_fold_arrow: bool,
+    hovered_fold_line: Option<usize>,
+}
+
+fn render_row(
+    row: EditorRow,
+    view: &Entity<EditorView>,
     theme: &Theme,
     cx: &App,
 ) -> impl IntoElement {
     let selection_background =
-        render_selection_background(line.as_ref(), edit_state.selection.as_ref(), *theme);
+        render_selection_background(row.line.as_ref(), row.edit_state.selection.as_ref(), *theme);
     div()
         .relative()
         .w_full()
         // Soft-wrap mode lets rows grow vertically to fit wrapped lines, so
         // we only fix the row height for the non-wrap path.
-        .when(!soft_wrap, |this| this.h(rems(ROW_HEIGHT_REM)))
+        .when(!row.soft_wrap, |this| this.h(rems(ROW_HEIGHT_REM)))
         .line_height(rems(ROW_HEIGHT_REM))
         .child(
             // Reserve left space for the gutter overlay so the line text
@@ -35,23 +57,34 @@ fn render_row(
                         .relative()
                         .w_full()
                         .min_w_0()
-                        .when(!soft_wrap, |this| this.whitespace_nowrap())
+                        .when(!row.soft_wrap, |this| this.whitespace_nowrap())
                         .when_some(selection_background, |this, selection| {
                             this.child(selection)
                         })
                         .child(render_line_text(
-                            line, spans, soft_wrap, view, edit_state, theme, hover, cx,
+                            LineText {
+                                line: row.line,
+                                spans: row.spans,
+                                soft_wrap: row.soft_wrap,
+                                edit_state: row.edit_state,
+                                hover: row.hover,
+                            },
+                            view,
+                            theme,
+                            cx,
                         )),
                 ),
         )
         .child(render_gutter(
-            line_number - 1,
-            Some(line_number),
-            sticky_offset,
-            foldable,
-            folded,
-            show_fold_arrow,
-            hovered_fold_line,
+            GutterRow {
+                row_index: row.line_number - 1,
+                line_number: Some(row.line_number),
+                sticky_offset: row.sticky_offset,
+                foldable: row.foldable,
+                folded: row.folded,
+                show_fold_arrow: row.show_fold_arrow,
+                hovered_fold_line: row.hovered_fold_line,
+            },
             view,
             *theme,
         ))
@@ -109,35 +142,32 @@ fn visual_column_for_byte(line: &str, byte_offset: usize) -> usize {
 /// Falls back to plain text when there are no spans (no grammar, parse not
 /// finished, or this line has no captures).
 fn render_line_text(
-    line: SharedString,
-    spans: Vec<(Range<usize>, HighlightId)>,
-    soft_wrap: bool,
+    line_text: LineText,
     view: &Entity<EditorView>,
-    edit_state: EditLineState,
     theme: &Theme,
-    hover: Option<LineHover>,
     cx: &App,
 ) -> AnyElement {
-    let (display_byte_offset, indent_columns) = if soft_wrap {
-        leading_indentation(line.as_ref())
+    let (display_byte_offset, indent_columns) = if line_text.soft_wrap {
+        leading_indentation(line_text.line.as_ref())
     } else {
         (0, 0)
     };
     let display_line = if display_byte_offset == 0 {
-        line
+        line_text.line
     } else {
-        SharedString::from(line[display_byte_offset..].to_string())
+        SharedString::from(line_text.line[display_byte_offset..].to_string())
     };
     let display_len = display_line.len();
-    let spans = shift_spans_for_display(spans, display_byte_offset, display_len);
-    let cursor = edit_state.cursor.and_then(|cursor| {
+    let spans = shift_spans_for_display(line_text.spans, display_byte_offset, display_len);
+    let cursor = line_text.edit_state.cursor.and_then(|cursor| {
         if cursor < display_byte_offset || cursor > display_byte_offset + display_len {
             None
         } else {
             Some(cursor - display_byte_offset)
         }
     });
-    let source_highlight = hover
+    let source_highlight = line_text
+        .hover
         .as_ref()
         .and_then(|hover| hover_source_highlight_range(hover, cx))
         .and_then(|range| shift_range_for_display(range, display_byte_offset, display_len));
@@ -171,12 +201,12 @@ fn render_line_text(
     });
     let indent_padding = rems(indent_columns as f32 * MONOSPACE_CHAR_WIDTH_REM);
 
-    let Some(hover) = hover else {
+    let Some(hover) = line_text.hover else {
         return div()
             .relative()
             .w_full()
             .min_w_0()
-            .when(soft_wrap && indent_columns > 0, |this| {
+            .when(line_text.soft_wrap && indent_columns > 0, |this| {
                 this.pl(indent_padding)
             })
             .child(text)
@@ -200,7 +230,7 @@ fn render_line_text(
         .relative()
         .w_full()
         .min_w_0()
-        .when(soft_wrap && indent_columns > 0, |this| {
+        .when(line_text.soft_wrap && indent_columns > 0, |this| {
             this.pl(indent_padding)
         })
         .child(text)
@@ -325,6 +355,13 @@ fn continuous_indent_guide_bounds(
         .ceil();
     let text_left =
         rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM).to_pixels(window.rem_size());
+    let guide_context = IndentGuideContext {
+        bounds,
+        scroll_x,
+        text_left,
+        x_offsets: &x_offsets,
+        guide_width,
+    };
     let mut active: Vec<ActiveIndentGuideRun> = Vec::new();
     let mut guide_bounds = Vec::new();
     let mut last_row_bottom = Pixels::ZERO;
@@ -342,13 +379,9 @@ fn continuous_indent_guide_bounds(
             } else {
                 push_indent_guide_bound(
                     &mut guide_bounds,
-                    bounds,
+                    &guide_context,
                     active[index],
                     row.top,
-                    scroll_x,
-                    text_left,
-                    &x_offsets,
-                    guide_width,
                 );
                 active.remove(index);
             }
@@ -365,47 +398,44 @@ fn continuous_indent_guide_bounds(
     }
 
     for run in active {
-        push_indent_guide_bound(
-            &mut guide_bounds,
-            bounds,
-            run,
-            last_row_bottom,
-            scroll_x,
-            text_left,
-            &x_offsets,
-            guide_width,
-        );
+        push_indent_guide_bound(&mut guide_bounds, &guide_context, run, last_row_bottom);
     }
 
     guide_bounds
 }
 
-fn push_indent_guide_bound(
-    out: &mut Vec<Bounds<Pixels>>,
+struct IndentGuideContext<'a> {
     bounds: Bounds<Pixels>,
-    run: ActiveIndentGuideRun,
-    bottom: Pixels,
     scroll_x: Pixels,
     text_left: Pixels,
-    x_offsets: &[Pixels],
+    x_offsets: &'a [Pixels],
     guide_width: Pixels,
+}
+
+fn push_indent_guide_bound(
+    out: &mut Vec<Bounds<Pixels>>,
+    context: &IndentGuideContext<'_>,
+    run: ActiveIndentGuideRun,
+    bottom: Pixels,
 ) {
     if bottom <= run.top {
         return;
     }
-    let Some(column_x) = x_offsets.get(run.column).copied() else {
+    let Some(column_x) = context.x_offsets.get(run.column).copied() else {
         return;
     };
-    let left = (bounds.left() + scroll_x + text_left + column_x - guide_width / 2.0).round();
-    let top = (bounds.top() + run.top).round();
-    let bottom = (bounds.top() + bottom).round();
+    let left = (context.bounds.left() + context.scroll_x + context.text_left + column_x
+        - context.guide_width / 2.0)
+        .round();
+    let top = (context.bounds.top() + run.top).round();
+    let bottom = (context.bounds.top() + bottom).round();
     if bottom <= top {
         return;
     }
 
     out.push(Bounds::new(
         point(left, top),
-        gpui::size(guide_width, bottom - top),
+        gpui::size(context.guide_width, bottom - top),
     ));
 }
 

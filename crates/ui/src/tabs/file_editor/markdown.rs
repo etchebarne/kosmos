@@ -235,10 +235,11 @@ pub(super) fn parse_markdown(text: &str) -> Vec<MarkdownBlock> {
             _ => {}
         }
 
-        if list_depth == 0 && matches!(active, Some(ActiveMarkdownBlock::ListItem(_))) {
-            if let Some(active) = active.take() {
-                blocks.push(active.finish());
-            }
+        if list_depth == 0
+            && matches!(active, Some(ActiveMarkdownBlock::ListItem(_)))
+            && let Some(active) = active.take()
+        {
+            blocks.push(active.finish());
         }
     }
 

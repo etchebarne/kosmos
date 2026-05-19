@@ -87,5 +87,5 @@ pub fn for_language<'a>(
 ) -> impl Iterator<Item = &'static RegistryEntry> + 'a {
     ENTRIES
         .iter()
-        .filter(move |e| e.kinds.contains(&kind) && e.languages.iter().any(|l| *l == language))
+        .filter(move |e| e.kinds.contains(&kind) && e.languages.contains(&language))
 }

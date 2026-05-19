@@ -32,10 +32,9 @@ fn indent_guide_runs(rows: &[(usize, &[usize])]) -> Vec<(usize, usize, usize)> {
 }
 
 fn indents_for_buffer(buffer: &Buffer) -> Vec<Option<usize>> {
-    let indents = (0..buffer.line_count())
+    (0..buffer.line_count())
         .map(|index| buffer.line(index).and_then(indentation_columns))
-        .collect::<Vec<_>>();
-    indents
+        .collect::<Vec<_>>()
 }
 
 fn foldable_lines_for_indents(indents: &[Option<usize>]) -> Vec<bool> {
@@ -178,4 +177,3 @@ fn indent_guide_columns(columns: usize, indent_width: usize) -> Vec<usize> {
         .map(|column| column.saturating_sub(offset))
         .collect()
 }
-

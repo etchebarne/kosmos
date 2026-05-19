@@ -1,15 +1,15 @@
 fn more_menu<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     position: Point<Pixels>,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let root_branches = root.clone();
-    let root_remotes = root.clone();
-    let root_stashes = root.clone();
-    let root_tags = root.clone();
-    let root_discard_selected = root.clone();
-    let root_discard = root.clone();
+    let root_branches = root.to_path_buf();
+    let root_remotes = root.to_path_buf();
+    let root_stashes = root.to_path_buf();
+    let root_tags = root.to_path_buf();
+    let root_discard_selected = root.to_path_buf();
+    let root_discard = root.to_path_buf();
     let has_selected_changes = cx
         .global::<GitUiState>()
         .summary
@@ -101,7 +101,7 @@ fn more_menu<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn sync_action_menu<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     position: Point<Pixels>,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -125,7 +125,7 @@ fn sync_action_menu<T: PaneDelegate + SettingsDelegate>(
                 .block_mouse_except_scroll()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(GitSyncAction::ALL.into_iter().map(|action| {
-                    let root = root.clone();
+                    let root = root.to_path_buf();
                     menu_item::<T>(
                         action.id(),
                         action.icon(),

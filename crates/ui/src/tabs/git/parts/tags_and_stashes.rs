@@ -1,5 +1,5 @@
 fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let (name, message, sha, tags) = {
@@ -11,7 +11,7 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
             state.tags.clone(),
         )
     };
-    let root_add = root.clone();
+    let root_add = root.to_path_buf();
     let theme = *cx.theme();
 
     div()
@@ -49,12 +49,12 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
             cx,
         )))
         .child(section_label("Existing Tags", theme))
-        .children(tags.into_iter().map(|tag| tag_row(root.clone(), tag, cx)))
+        .children(tags.into_iter().map(|tag| tag_row(root.to_path_buf(), tag, cx)))
         .into_any_element()
 }
 
 fn stashes_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let (stashes, expanded) = {
@@ -79,7 +79,7 @@ fn stashes_modal_body<T: PaneDelegate + SettingsDelegate>(
         body = body.children(
             stashes
                 .into_iter()
-                .map(|stash| stash_row(root.clone(), stash, expanded.clone(), cx)),
+                .map(|stash| stash_row(root.to_path_buf(), stash, expanded.clone(), cx)),
         );
     }
     body.into_any_element()
@@ -249,4 +249,3 @@ fn remote_row<T: PaneDelegate + SettingsDelegate>(
         cx,
     )
 }
-

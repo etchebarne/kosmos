@@ -7,5 +7,5 @@ include!("parts/rows_and_guides.rs");
 include!("parts/folding.rs");
 include!("parts/hover.rs");
 include!("parts/hover_popup.rs");
-include!("parts/tests.rs");
 include!("parts/gutter.rs");
+include!("parts/tests.rs");

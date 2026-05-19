@@ -112,7 +112,7 @@ impl TextArea {
         let max_scroll_top = (content_height - viewport_height).max(Pixels::ZERO);
         let current_scroll_top =
             (-self.scroll_handle.offset().y).clamp(Pixels::ZERO, max_scroll_top);
-        let mut cursor_top = Self::visual_top_for_line(&lines, line_index, line_height);
+        let mut cursor_top = Self::visual_top_for_line(lines, line_index, line_height);
         if let Some(line) = lines.get(line_index)
             && let Some(position) =
                 line.position_for_index(cursor.saturating_sub(line_range.start), line_height)

@@ -70,7 +70,7 @@ fn render_add_button<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
                 .w(rems(0.125))
                 .rounded_full()
                 .hover(|s| s)
-                .group_drag_over::<WorkspaceDrag>(hover_group.clone(), move |s| s.bg(accent)),
+                .group_drag_over::<WorkspaceDrag>(hover_group, move |s| s.bg(accent)),
         )
         .child(Icon::new(IconName::Add).size(16.0).color(theme.text_muted))
         .into_any_element()
@@ -102,8 +102,8 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                 anim_id,
                 Animation::new(Duration::from_millis(180)).with_easing(ease_in_out),
                 move |el, delta| {
-                    let p = if is_active { delta } else { 1.0 - delta };
-                    let width_rem = inactive_w + (active_w - inactive_w) * p;
+                    let animation_progress = if is_active { delta } else { 1.0 - delta };
+                    let width_rem = inactive_w + (active_w - inactive_w) * animation_progress;
                     el.w(rems(width_rem))
                         .child(
                             div()
@@ -114,7 +114,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .opacity(1.0 - p)
+                                .opacity(1.0 - animation_progress)
                                 .child(initial.clone()),
                         )
                         .child(
@@ -126,7 +126,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .opacity(p)
+                                .opacity(animation_progress)
                                 .child(name.clone()),
                         )
                 },
@@ -196,7 +196,7 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                 .w(rems(0.125))
                 .rounded_full()
                 .hover(|s| s)
-                .group_drag_over::<WorkspaceDrag>(hover_group.clone(), move |s| s.bg(accent)),
+                .group_drag_over::<WorkspaceDrag>(hover_group, move |s| s.bg(accent)),
         )
         .child(content)
         .into_any_element()
@@ -212,4 +212,3 @@ fn measure_text_rems(window: &mut Window, text: &str) -> f32 {
         .layout_line(text, font_size, &[run], None);
     f32::from(layout.width) / f32::from(rem_size)
 }
-

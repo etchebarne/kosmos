@@ -14,8 +14,7 @@ impl Workspace {
         self.name
             .chars()
             .next()
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_else(|| "?".to_string())
+            .map_or_else(|| "?".to_string(), |c| c.to_ascii_uppercase().to_string())
     }
 }
 

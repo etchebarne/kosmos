@@ -384,8 +384,7 @@ fn source_hover_highlight_style(theme: Theme) -> HighlightStyle {
 
 fn selection_highlight_style(theme: Theme) -> HighlightStyle {
     HighlightStyle {
-        background_color: Some(gpui::Hsla::from(theme.accent).opacity(0.35).into()),
+        background_color: Some(gpui::Hsla::from(theme.accent).opacity(0.35)),
         ..Default::default()
     }
 }
-

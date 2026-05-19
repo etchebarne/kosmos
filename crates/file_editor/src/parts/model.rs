@@ -409,10 +409,10 @@ fn should_group_edit(content: &str, range: &Range<usize>, new_text: &str) -> boo
     if range.is_empty() {
         return is_single_coalescible_char(new_text);
     }
-    if new_text.is_empty() {
-        if let Some(old_text) = content.get(range.clone()) {
-            return is_single_coalescible_char(old_text);
-        }
+    if new_text.is_empty()
+        && let Some(old_text) = content.get(range.clone())
+    {
+        return is_single_coalescible_char(old_text);
     }
 
     false

@@ -16,7 +16,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let soft_wrap = soft_wrap_enabled(cx);
     let indents = {
         let buf = buffer.read(cx);
-        indents_for_buffer(&buf)
+        indents_for_buffer(buf)
     };
     let indent_guides = indent_guides_for_indents(&indents);
     let foldable_lines = foldable_lines_for_indents(&indents);
@@ -37,7 +37,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
     let row_count = visible_lines.len() + BOTTOM_SPACER_LINES;
     let longest_idx = {
         let buf = buffer.read(cx);
-        longest_visible_row_index(&buf, &visible_lines)
+        longest_visible_row_index(buf, &visible_lines)
     };
     let visible_for_mouse = visible_lines.clone();
     let foldable_for_mouse = foldable_lines.clone();
@@ -69,10 +69,10 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buffer_for_render = buffer.clone();
         let view_for_render = view.clone();
         let snapshot_for_render = snapshot.clone();
-        let root_for_render = file_tree_root.clone();
-        let foldable_for_render = foldable_lines.clone();
-        let folded_for_render = folded_lines.clone();
-        let visible_for_render = visible_lines.clone();
+        let root_for_render = file_tree_root;
+        let foldable_for_render = foldable_lines;
+        let folded_for_render = folded_lines;
+        let visible_for_render = visible_lines;
         virtual_list(
             "file-editor-soft-wrap",
             virtual_state,
@@ -91,26 +91,28 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 // Soft wrap can't scroll horizontally, so the gutter is never
                 // sticky — its offset is always 0.
                 render_row(
-                    line_index + 1,
-                    line,
-                    spans,
-                    soft_wrap,
-                    px(0.0),
-                    foldable_for_render
-                        .get(line_index)
-                        .copied()
-                        .unwrap_or(false),
-                    folded_for_render.contains(&line_index),
-                    show_fold_arrows,
-                    hovered_fold_line,
+                    EditorRow {
+                        line_number: line_index + 1,
+                        line,
+                        spans,
+                        soft_wrap,
+                        sticky_offset: px(0.0),
+                        foldable: foldable_for_render
+                            .get(line_index)
+                            .copied()
+                            .unwrap_or(false),
+                        folded: folded_for_render.contains(&line_index),
+                        show_fold_arrow: show_fold_arrows,
+                        hovered_fold_line,
+                        edit_state,
+                        hover: Some(LineHover {
+                            line_index,
+                            buffer: buffer_for_render.clone(),
+                            view: view_for_render.clone(),
+                            root: root_for_render.clone(),
+                        }),
+                    },
                     &view_for_render,
-                    edit_state,
-                    Some(LineHover {
-                        line_index,
-                        buffer: buffer_for_render.clone(),
-                        view: view_for_render.clone(),
-                        root: root_for_render.clone(),
-                    }),
                     &theme,
                     cx,
                 )
@@ -124,7 +126,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         let buffer_for_render = buffer.clone();
         let view_for_render = view.clone();
         let snapshot_for_render = snapshot.clone();
-        let root_for_render = file_tree_root.clone();
+        let root_for_render = file_tree_root;
         let foldable_for_render = foldable_lines;
         let folded_for_render = folded_lines;
         let visible_for_render = visible_lines;
@@ -175,26 +177,28 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                     let edit_state =
                         edit_state_for_line(&buffer_for_render, &view_for_render, line_index, cx);
                     render_row(
-                        line_index + 1,
-                        line,
-                        spans,
-                        soft_wrap,
-                        sticky_offset,
-                        foldable_for_render
-                            .get(line_index)
-                            .copied()
-                            .unwrap_or(false),
-                        folded_for_render.contains(&line_index),
-                        show_fold_arrows,
-                        hovered_fold_line,
+                        EditorRow {
+                            line_number: line_index + 1,
+                            line,
+                            spans,
+                            soft_wrap,
+                            sticky_offset,
+                            foldable: foldable_for_render
+                                .get(line_index)
+                                .copied()
+                                .unwrap_or(false),
+                            folded: folded_for_render.contains(&line_index),
+                            show_fold_arrow: show_fold_arrows,
+                            hovered_fold_line,
+                            edit_state,
+                            hover: Some(LineHover {
+                                line_index,
+                                buffer: buffer_for_render.clone(),
+                                view: view_for_render.clone(),
+                                root: root_for_render.clone(),
+                            }),
+                        },
                         &view_for_render,
-                        edit_state,
-                        Some(LineHover {
-                            line_index,
-                            buffer: buffer_for_render.clone(),
-                            view: view_for_render.clone(),
-                            root: root_for_render.clone(),
-                        }),
                         &theme,
                         cx,
                     )
@@ -379,20 +383,20 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
 }
 
 fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
-    let v = view.read(cx);
+    let editor_view = view.read(cx);
     if soft_wrap {
-        EditorScrollMetrics::from_virtual(&v.virtual_scroll())
+        EditorScrollMetrics::from_virtual(&editor_view.virtual_scroll())
     } else {
-        EditorScrollMetrics::from_uniform(&v.uniform_scroll())
+        EditorScrollMetrics::from_uniform(&editor_view.uniform_scroll())
     }
 }
 
 fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
-    let v = view.read(cx);
+    let editor_view = view.read(cx);
     if soft_wrap {
-        v.virtual_scroll().set_scroll_y(scrolled);
+        editor_view.virtual_scroll().set_scroll_y(scrolled);
     } else {
-        let handle = v.uniform_scroll();
+        let handle = editor_view.uniform_scroll();
         let state = handle.0.borrow();
         let current = state.base_handle.offset();
         state
@@ -402,8 +406,8 @@ fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx
 }
 
 fn set_scroll_x(view: &Entity<EditorView>, scrolled: Pixels, cx: &App) {
-    let v = view.read(cx);
-    let handle = v.uniform_scroll();
+    let editor_view = view.read(cx);
+    let handle = editor_view.uniform_scroll();
     let state = handle.0.borrow();
     let current = state.base_handle.offset();
     state
@@ -437,4 +441,3 @@ fn editor_input_layout(
         char_width: monospace_char_width(window.rem_size()),
     }
 }
-

@@ -34,11 +34,13 @@ impl PaneTree {
                 second,
                 ..
             } => {
-                let a = Self::biggest_pane_in(first, weight * ratio);
-                let b = Self::biggest_pane_in(second, weight * (1.0 - ratio));
-                match (a, b) {
-                    (Some(a), Some(b)) => Some(if a.1 >= b.1 { a } else { b }),
-                    (a, b) => a.or(b),
+                let first_candidate = Self::biggest_pane_in(first, weight * ratio);
+                let second_candidate = Self::biggest_pane_in(second, weight * (1.0 - ratio));
+                match (first_candidate, second_candidate) {
+                    (Some(first), Some(second)) => {
+                        Some(if first.1 >= second.1 { first } else { second })
+                    }
+                    (first, second) => first.or(second),
                 }
             }
         }

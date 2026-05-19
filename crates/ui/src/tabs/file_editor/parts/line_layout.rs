@@ -211,13 +211,15 @@ fn render_spacer_row(
         .w_full()
         .h(rems(ROW_HEIGHT_REM))
         .child(render_gutter(
-            row_index,
-            None,
-            sticky_offset,
-            false,
-            false,
-            false,
-            None,
+            GutterRow {
+                row_index,
+                line_number: None,
+                sticky_offset,
+                foldable: false,
+                folded: false,
+                show_fold_arrow: false,
+                hovered_fold_line: None,
+            },
             view,
             theme,
         ))
@@ -237,8 +239,7 @@ fn soft_wrap_row_height(
     } else {
         80
     };
-    let wraps =
-        ((metrics.content_chars.max(1) + chars_per_line - 1) / chars_per_line).max(1) as f32;
+    let wraps = metrics.content_chars.max(1).div_ceil(chars_per_line) as f32;
     line_height * wraps
 }
 
@@ -324,4 +325,3 @@ fn shift_range_for_display(
 fn render_longest_stub(width: Pixels, _theme: Theme) -> impl IntoElement {
     div().w(width).h(rems(ROW_HEIGHT_REM))
 }
-

@@ -63,8 +63,6 @@ impl Render for TextArea {
             .when(!framed, |this| this.bg(theme.bg_surface))
             .text_sm()
             .text_color(theme.text)
-            .child(TextAreaElement {
-                input: cx.entity().clone(),
-            })
+            .child(TextAreaElement { input: cx.entity() })
     }
 }

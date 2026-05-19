@@ -33,19 +33,14 @@ enum GitModal {
     ConfirmDiscard,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum GitSyncAction {
+    #[default]
     Fetch,
     Pull,
     PullRebase,
     Push,
     ForcePush,
-}
-
-impl Default for GitSyncAction {
-    fn default() -> Self {
-        Self::Fetch
-    }
 }
 
 impl GitSyncAction {
@@ -243,16 +238,16 @@ pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(cx: &mut Context
 }
 
 fn header<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     summary: Option<&RepositorySummary>,
     loading: bool,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let root_refresh = root.clone();
-    let root_stage = root.clone();
-    let root_unstage = root.clone();
-    let root_stash = root.clone();
+    let root_refresh = root.to_path_buf();
+    let root_stage = root.to_path_buf();
+    let root_unstage = root.to_path_buf();
+    let root_stash = root.to_path_buf();
 
     div()
         .flex_none()

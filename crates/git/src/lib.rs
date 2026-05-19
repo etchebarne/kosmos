@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Output;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositorySummary {
@@ -120,19 +121,15 @@ struct DiffStats {
 }
 
 fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
-    let repo = gix::discover(path).map_err(|source| Error::Discover {
-        path: path.to_path_buf(),
-        source: source.to_string(),
-    })?;
-    let work_dir = repo.workdir().unwrap_or(path);
+    let work_dir = git_work_dir(path)?;
     let mut stats_by_path = std::collections::HashMap::new();
-    for line in git_output(work_dir, &["diff", "--numstat", "HEAD"])?.lines() {
+    for line in git_output(&work_dir, &["diff", "--numstat", "HEAD"])?.lines() {
         let mut parts = line.split('\t');
         let insertions = parts.next().unwrap_or_default();
         let deletions = parts.next().unwrap_or_default();
-        if let Some(path) = parts.last().filter(|path| !path.is_empty()) {
+        if let Some(changed_path) = parts.next_back().filter(|path| !path.is_empty()) {
             stats_by_path.insert(
-                normalize_numstat_path(path),
+                normalize_numstat_path(changed_path),
                 DiffStats {
                     insertions: insertions.parse::<usize>().unwrap_or(0),
                     deletions: deletions.parse::<usize>().unwrap_or(0),
@@ -141,7 +138,7 @@ fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
         }
     }
 
-    let status = git_output(work_dir, &["status", "--porcelain=v1", "-z"])?;
+    let status = git_output(&work_dir, &["status", "--porcelain=v1", "-z"])?;
     let mut changes = Vec::new();
     let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
     while let Some(entry) = entries.next() {
@@ -198,15 +195,14 @@ fn read_latest_commit(path: &Path) -> Result<Option<CommitInfo>, Error> {
         return Ok(None);
     }
     let mut parts = trimmed.splitn(4, '\x1f');
-    let short_sha = parts.next().unwrap_or("").to_string();
+    let Some(short_sha) = parts.next().filter(|short_sha| !short_sha.is_empty()) else {
+        return Ok(None);
+    };
     let subject = parts.next().unwrap_or("").to_string();
     let author = parts.next().unwrap_or("").to_string();
     let relative_time = parts.next().unwrap_or("").to_string();
-    if short_sha.is_empty() {
-        return Ok(None);
-    }
     Ok(Some(CommitInfo {
-        short_sha,
+        short_sha: short_sha.to_string(),
         subject,
         author,
         relative_time,
@@ -408,16 +404,20 @@ pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
     output
         .lines()
         .filter_map(|line| {
-            let (id, message) = line.split_once(':')?;
-            Some((id.to_string(), message.trim().to_string()))
+            let (stash_id, message) = line.split_once(':')?;
+            Some((stash_id.to_string(), message.trim().to_string()))
         })
-        .map(|(id, message)| {
-            let files = git_output(path, &["stash", "show", "--name-only", &id])?
+        .map(|(stash_id, message)| {
+            let files = git_output(path, &["stash", "show", "--name-only", &stash_id])?
                 .lines()
                 .filter(|line| !line.trim().is_empty())
                 .map(ToString::to_string)
                 .collect();
-            Ok(Stash { id, message, files })
+            Ok(Stash {
+                id: stash_id,
+                message,
+                files,
+            })
         })
         .collect()
 }
@@ -431,18 +431,23 @@ pub fn delete_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
 }
 
 fn git_output(path: &Path, args: &[&str]) -> Result<String, Error> {
-    let repo = gix::discover(path).map_err(|source| Error::Discover {
-        path: path.to_path_buf(),
-        source: source.to_string(),
-    })?;
-    let work_dir = repo.workdir().unwrap_or(path);
+    let output = run_git_command(path, args)?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn run_git(path: &Path, args: &[&str]) -> Result<(), Error> {
+    run_git_command(path, args).map(|_| ())
+}
+
+fn run_git_command(path: &Path, args: &[&str]) -> Result<Output, Error> {
+    let work_dir = git_work_dir(path)?;
     let output = std::process::Command::new("git")
         .args(args)
         .current_dir(work_dir)
         .output()
         .map_err(|source| Error::Status(source.to_string()))?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(output)
     } else {
         Err(Error::Status(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
@@ -450,24 +455,15 @@ fn git_output(path: &Path, args: &[&str]) -> Result<String, Error> {
     }
 }
 
-fn run_git(path: &Path, args: &[&str]) -> Result<(), Error> {
+fn git_work_dir(path: &Path) -> Result<PathBuf, Error> {
     let repo = gix::discover(path).map_err(|source| Error::Discover {
         path: path.to_path_buf(),
         source: source.to_string(),
     })?;
-    let work_dir = repo.workdir().unwrap_or(path);
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(work_dir)
-        .output()
-        .map_err(|source| Error::Status(source.to_string()))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(Error::Status(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ))
-    }
+    Ok(repo
+        .workdir()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.to_path_buf()))
 }
 
 #[derive(Debug, Clone)]

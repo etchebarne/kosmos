@@ -72,23 +72,18 @@ impl RenderOnce for MultiSelect {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
 
-        let labels: Vec<SharedString> = self
-            .selected
-            .iter()
-            .map(|id| {
-                self.options
-                    .iter()
-                    .find(|o| o.id == *id)
-                    .map(|o| o.label.clone())
-                    .unwrap_or_else(|| id.clone())
-            })
-            .collect();
-        let summary: SharedString = if labels.is_empty() {
+        let summary: SharedString = if self.selected.is_empty() {
             "None".into()
         } else {
-            labels
+            self.selected
                 .iter()
-                .map(|l| l.as_ref())
+                .map(|id| {
+                    self.options
+                        .iter()
+                        .find(|option| option.id == *id)
+                        .map(|option| option.label.as_ref())
+                        .unwrap_or(id.as_ref())
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
                 .into()
@@ -146,35 +141,49 @@ struct MultiSelectMenu {
     on_change: Option<ChangeHandler>,
 }
 
+struct MultiSelectRow {
+    option_id: SharedString,
+    option_label: SharedString,
+    is_selected: bool,
+    selected_index: Option<usize>,
+}
+
 impl RenderOnce for MultiSelectMenu {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
 
         let selected_set: HashSet<SharedString> = self.selected.iter().cloned().collect();
-        let mut rows: Vec<(SharedString, SharedString, bool, Option<usize>)> =
-            Vec::with_capacity(self.options.len());
-        for (sel_idx, sel_id) in self.selected.iter().enumerate() {
-            if let Some(opt) = self.options.iter().find(|o| o.id == *sel_id) {
-                rows.push((opt.id.clone(), opt.label.clone(), true, Some(sel_idx)));
+        let mut rows = Vec::with_capacity(self.options.len());
+        for (selected_index, selected_id) in self.selected.iter().enumerate() {
+            if let Some(option) = self.options.iter().find(|option| option.id == *selected_id) {
+                rows.push(MultiSelectRow {
+                    option_id: option.id.clone(),
+                    option_label: option.label.clone(),
+                    is_selected: true,
+                    selected_index: Some(selected_index),
+                });
             }
         }
-        for opt in self.options.iter() {
-            if !selected_set.contains(&opt.id) {
-                rows.push((opt.id.clone(), opt.label.clone(), false, None));
+        for option in self.options.iter() {
+            if !selected_set.contains(&option.id) {
+                rows.push(MultiSelectRow {
+                    option_id: option.id.clone(),
+                    option_label: option.label.clone(),
+                    is_selected: false,
+                    selected_index: None,
+                });
             }
         }
 
         let last_selected_idx = self.selected.len().saturating_sub(1);
 
         let mut items: Vec<AnyElement> = Vec::with_capacity(rows.len());
-        for (row_idx, (option_id, option_label, is_selected, sel_idx)) in
-            rows.into_iter().enumerate()
-        {
+        for (row_idx, row_data) in rows.into_iter().enumerate() {
             let item_id = ElementId::Name(format!("{}-item-{}", self.id, row_idx).into());
 
             let on_change_row = self.on_change.clone();
             let selected_for_row = self.selected.clone();
-            let opt_id_for_row = option_id.clone();
+            let opt_id_for_row = row_data.option_id.clone();
 
             let mut row = div()
                 .id(item_id)
@@ -186,7 +195,7 @@ impl RenderOnce for MultiSelectMenu {
                 .gap_2()
                 .rounded(rems(0.25))
                 .text_sm()
-                .text_color(if is_selected {
+                .text_color(if row_data.is_selected {
                     theme.text_emphasis
                 } else {
                     theme.text
@@ -206,12 +215,14 @@ impl RenderOnce for MultiSelectMenu {
                     }
                 });
 
-            row = row.child(div().flex_1().child(option_label));
+            row = row.child(div().flex_1().child(row_data.option_label));
 
-            if self.ordered && is_selected {
-                let sel_idx = sel_idx.expect("selected row carries its position");
-                let is_first = sel_idx == 0;
-                let is_last = sel_idx == last_selected_idx;
+            if self.ordered && row_data.is_selected {
+                let selected_index = row_data
+                    .selected_index
+                    .expect("selected row carries its position");
+                let is_first = selected_index == 0;
+                let is_last = selected_index == last_selected_idx;
 
                 if !is_first {
                     let on_change_up = self.on_change.clone();
@@ -229,7 +240,7 @@ impl RenderOnce for MultiSelectMenu {
                                 cx.stop_propagation();
                                 if let Some(handler) = &on_change_up {
                                     let mut next = selected_up.clone();
-                                    next.swap(sel_idx, sel_idx - 1);
+                                    next.swap(selected_index, selected_index - 1);
                                     handler(&next, window, cx);
                                 }
                             })
@@ -253,7 +264,7 @@ impl RenderOnce for MultiSelectMenu {
                                 cx.stop_propagation();
                                 if let Some(handler) = &on_change_down {
                                     let mut next = selected_down.clone();
-                                    next.swap(sel_idx, sel_idx + 1);
+                                    next.swap(selected_index, selected_index + 1);
                                     handler(&next, window, cx);
                                 }
                             })
@@ -262,7 +273,7 @@ impl RenderOnce for MultiSelectMenu {
                 }
             }
 
-            if is_selected {
+            if row_data.is_selected {
                 row = row.child(div().text_color(theme.accent).child("✓"));
             }
 

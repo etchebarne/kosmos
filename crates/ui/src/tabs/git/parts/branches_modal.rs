@@ -1,5 +1,5 @@
 fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     modal_state: GitModal,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -46,7 +46,7 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             cx.listener(|_, _, _, cx| close_modal(cx)),
         ),
         GitModal::ConfirmDiscardSelected => {
-            let root = root.clone();
+            let root = root.to_path_buf();
             let selected_paths = selected_change_paths(cx);
             let selected_count = selected_paths.len();
             modal::render(
@@ -90,7 +90,7 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             )
         }
         GitModal::ConfirmDiscard => {
-            let root = root.clone();
+            let root = root.to_path_buf();
             modal::render(
                 "git-discard-modal",
                 "Discard All Changes",
@@ -125,7 +125,7 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let (branch_search, branches, last_error) = {
@@ -174,7 +174,7 @@ fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(create_branch_row(root.clone(), cx))
+                .child(create_branch_row(root.to_path_buf(), cx))
                 .when(branches.is_empty(), |this| {
                     this.child(
                         div()
@@ -195,7 +195,7 @@ fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
                     this.children(
                         branches
                             .into_iter()
-                            .map(|branch| branch_row(root.clone(), branch, cx)),
+                            .map(|branch| branch_row(root.to_path_buf(), branch, cx)),
                     )
                 }),
         )
@@ -256,4 +256,3 @@ fn create_branch_row<T: PaneDelegate + SettingsDelegate>(
         )
         .into_any_element()
 }
-

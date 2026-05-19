@@ -78,17 +78,17 @@ fn decode(kind: &str, raw: &str) -> Option<SettingValue> {
         "string" => Some(SettingValue::String(SharedString::from(raw.to_string()))),
         "int" => raw.parse::<i64>().ok().map(SettingValue::Int),
         "list" => {
-            let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-            let arr = v.as_array()?;
-            let items: Option<Vec<_>> = arr.iter().map(value_from_json).collect();
+            let json_value: serde_json::Value = serde_json::from_str(raw).ok()?;
+            let json_items = json_value.as_array()?;
+            let items: Option<Vec<_>> = json_items.iter().map(value_from_json).collect();
             Some(SettingValue::List(items?))
         }
         _ => None,
     }
 }
 
-fn value_to_json(v: &SettingValue) -> serde_json::Value {
-    match v {
+fn value_to_json(value: &SettingValue) -> serde_json::Value {
+    match value {
         SettingValue::Bool(b) => serde_json::json!({ "type": "bool", "value": *b }),
         SettingValue::String(s) => serde_json::json!({ "type": "string", "value": s.as_ref() }),
         SettingValue::Int(i) => serde_json::json!({ "type": "int", "value": *i }),
@@ -99,9 +99,9 @@ fn value_to_json(v: &SettingValue) -> serde_json::Value {
     }
 }
 
-fn value_from_json(v: &serde_json::Value) -> Option<SettingValue> {
-    let kind = v.get("type")?.as_str()?;
-    let inner = v.get("value")?;
+fn value_from_json(json_value: &serde_json::Value) -> Option<SettingValue> {
+    let kind = json_value.get("type")?.as_str()?;
+    let inner = json_value.get("value")?;
     match kind {
         "bool" => Some(SettingValue::Bool(inner.as_bool()?)),
         "string" => Some(SettingValue::String(SharedString::from(

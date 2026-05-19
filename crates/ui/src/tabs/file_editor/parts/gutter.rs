@@ -1,26 +1,20 @@
 fn render_gutter(
-    row_index: usize,
-    line_number: Option<usize>,
-    sticky_offset: Pixels,
-    foldable: bool,
-    folded: bool,
-    show_fold_arrow: bool,
-    hovered_fold_line: Option<usize>,
+    row: GutterRow,
     view: &Entity<EditorView>,
     theme: Theme,
 ) -> impl IntoElement {
-    let label: SharedString = match line_number {
+    let label: SharedString = match row.line_number {
         Some(n) => format!("{n}").into(),
         None => SharedString::default(),
     };
     let mut gutter = div()
         .id(gpui::ElementId::Name(
-            format!("file-editor-gutter:{:?}:{row_index}", view.entity_id()).into(),
+            format!("file-editor-gutter:{:?}:{}", view.entity_id(), row.row_index).into(),
         ))
         .absolute()
         .top_0()
         .bottom_0()
-        .left(sticky_offset)
+        .left(row.sticky_offset)
         .w(rems(GUTTER_TOTAL_WIDTH_REM))
         .pr(rems(GUTTER_PADDING_REM + GUTTER_FOLD_COLUMN_REM))
         .text_right()
@@ -28,18 +22,19 @@ fn render_gutter(
         .bg(theme.bg_surface)
         .child(label);
 
-    if foldable {
-        let arrow_color = if hovered_fold_line == Some(row_index) {
+    if row.foldable {
+        let arrow_color = if row.hovered_fold_line == Some(row.row_index) {
             theme.text_emphasis
         } else {
             theme.text_subtle
         };
-        let icon_name = if folded {
+        let icon_name = if row.folded {
             IconName::ChevronRight
         } else {
             IconName::ChevronDown
         };
         let view_for_click = view.clone();
+        let row_index = row.row_index;
         let mut arrow = div()
             .id(gpui::ElementId::Name(
                 format!("file-editor-fold-arrow:{:?}:{row_index}", view.entity_id()).into(),
@@ -59,7 +54,7 @@ fn render_gutter(
                 window.refresh();
             });
 
-        if show_fold_arrow {
+        if row.show_fold_arrow {
             arrow = arrow.child(Icon::new(icon_name).size(12.0).color(arrow_color));
         }
 
@@ -91,7 +86,7 @@ fn update_gutter_hover_from_mouse(
         };
         match bounds.localize(&position) {
             Some(local) if local.x >= Pixels::ZERO && local.x <= gutter_hover_width => {
-                let line = hovered_row_index(&view_ref, soft_wrap, local.y, window)
+                let line = hovered_row_index(view_ref, soft_wrap, local.y, window)
                     .and_then(|row| visible_lines.get(row).copied());
                 let in_fold_hover_zone = local.x >= fold_hover_left && local.x <= fold_hover_right;
                 let hovered_fold_line = line.filter(|line| {

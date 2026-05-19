@@ -20,9 +20,9 @@ pub fn with_connection<F, R>(
 where
     F: FnOnce(&mut Connection) -> Result<R>,
 {
-    let mu = slot.get_or_init(|| open(database)).as_ref()?;
-    let mut conn = mu.lock().unwrap();
-    match f(&mut conn) {
+    let connection_mutex = slot.get_or_init(|| open(database)).as_ref()?;
+    let mut connection = connection_mutex.lock().unwrap();
+    match f(&mut connection) {
         Ok(value) => Some(value),
         Err(err) => {
             eprintln!("kosmos: {} db error: {err}", database.label);

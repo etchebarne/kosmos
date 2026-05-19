@@ -115,9 +115,7 @@ impl PaneTree {
         if drop_zone == DropZone::Center {
             return None;
         }
-        if Self::find_pane(&self.root, target_pane_id).is_none() {
-            return None;
-        }
+        Self::find_pane(&self.root, target_pane_id)?;
 
         let new_pane_id = self.next_pane_id;
         let new_split_id = self.next_split_id;

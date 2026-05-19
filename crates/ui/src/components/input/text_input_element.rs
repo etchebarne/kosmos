@@ -218,8 +218,6 @@ impl Render for TextInput {
             })
             .text_sm()
             .text_color(theme.text)
-            .child(TextElement {
-                input: cx.entity().clone(),
-            })
+            .child(TextElement { input: cx.entity() })
     }
 }

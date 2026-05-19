@@ -38,7 +38,7 @@ impl SyntaxStore {
         let language = buffer.read(cx).language().cloned();
         let grammar = language.as_ref().and_then(|l| SyntaxRegistry::load(l, cx));
         let buffer_for_sub = buffer.clone();
-        let language_for_snapshot = language.clone();
+        let language_for_snapshot = language;
         let grammar_for_snapshot = grammar.clone();
         let snapshot = cx.new(move |cx_inner| {
             cx_inner
@@ -169,9 +169,9 @@ fn resolve_injections(
             let name = names[cap.index as usize];
             match name {
                 "injection.content" => {
-                    let r = cap.node.range();
-                    if r.start_byte < r.end_byte {
-                        content_ranges.push(r);
+                    let range = cap.node.range();
+                    if range.start_byte < range.end_byte {
+                        content_ranges.push(range);
                     }
                 }
                 "injection.language" => {

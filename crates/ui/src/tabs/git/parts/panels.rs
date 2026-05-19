@@ -3,7 +3,7 @@ fn loading_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> Any
 }
 
 fn commit_panel<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     summary: Option<&RepositorySummary>,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -15,7 +15,7 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
         .unwrap()
         .clone();
     let has_staged = summary.is_some_and(|summary| summary.files.iter().any(|file| file.staged));
-    let root_commit = root.clone();
+    let root_commit = root.to_path_buf();
     let message_input = commit_message.clone();
 
     div()
@@ -60,7 +60,7 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     summary: Option<&RepositorySummary>,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -70,8 +70,8 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
         .and_then(|summary| summary.branch.as_deref())
         .unwrap_or("Detached HEAD")
         .to_string();
-    let root_branch = root.clone();
-    let root_action = root.clone();
+    let root_branch = root.to_path_buf();
+    let root_action = root.to_path_buf();
 
     div()
         .id("git-sync-panel")
@@ -227,10 +227,7 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> 
                     MouseButton::Left,
                     cx.listener(move |_, event: &MouseDownEvent, _, cx| {
                         cx.stop_propagation();
-                        let position = click_anchor
-                            .borrow()
-                            .clone()
-                            .unwrap_or_else(|| event.position.clone());
+                        let position = (*click_anchor.borrow()).unwrap_or(event.position);
                         cx.update_global::<GitUiState, _>(|state, _| {
                             state.menu_position = None;
                             state.sync_menu_position = match state.sync_menu_position {

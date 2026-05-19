@@ -21,6 +21,9 @@ use gpui::{
     size,
 };
 
+type RowHeightFn = dyn Fn(usize, Pixels, Pixels) -> Pixels;
+type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement;
+
 /// Custom virtualized list with per-row heights driven by a closure.
 ///
 /// `height_fn` is `(index, viewport_width, rem_size) -> Pixels`. It runs
@@ -32,8 +35,8 @@ pub struct VirtualList {
     style: StyleRefinement,
     state: VirtualListState,
     item_count: usize,
-    height_fn: Rc<dyn Fn(usize, Pixels, Pixels) -> Pixels>,
-    render_item: Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>,
+    height_fn: Rc<RowHeightFn>,
+    render_item: Box<RenderItemFn>,
 }
 
 /// Cheaply cloneable handle to a [`VirtualList`]'s scroll + cumulative

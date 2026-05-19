@@ -1,5 +1,5 @@
 fn change_list<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     summary: &RepositorySummary,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -37,12 +37,12 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
         .children(
             tree.dirs
                 .into_values()
-                .map(|node| change_dir_row(root.clone(), node, 0, true, cx)),
+                .map(|node| change_dir_row(root.to_path_buf(), node, 0, true, cx)),
         )
         .children(
             tree.files
                 .into_iter()
-                .map(|change| change_file_row(root.clone(), change, 0, cx)),
+                .map(|change| change_file_row(root.to_path_buf(), change, 0, cx)),
         )
         .into_any_element()
 }
@@ -58,25 +58,27 @@ struct ChangeTreeNode {
 fn build_change_tree(files: &[FileChange]) -> ChangeTreeNode {
     let mut root = ChangeTreeNode::default();
     for change in files {
-        let mut parts = change.path.split('/').collect::<Vec<_>>();
-        let Some(file_name) = parts.pop() else {
-            continue;
-        };
+        let (dir_path, file_name) = change
+            .path
+            .rsplit_once('/')
+            .unwrap_or(("", change.path.as_str()));
         let mut node = &mut root;
-        let mut path = String::new();
-        for part in parts {
-            if !path.is_empty() {
-                path.push('/');
+        let mut current_path = String::new();
+        if !dir_path.is_empty() {
+            for dir_name in dir_path.split('/') {
+                if !current_path.is_empty() {
+                    current_path.push('/');
+                }
+                current_path.push_str(dir_name);
+                node = node
+                    .dirs
+                    .entry(dir_name.to_string())
+                    .or_insert_with(|| ChangeTreeNode {
+                        name: dir_name.to_string(),
+                        path: current_path.clone(),
+                        ..Default::default()
+                    });
             }
-            path.push_str(part);
-            node = node
-                .dirs
-                .entry(part.to_string())
-                .or_insert_with(|| ChangeTreeNode {
-                    name: part.to_string(),
-                    path: path.clone(),
-                    ..Default::default()
-                });
         }
         let mut file = change.clone();
         file.path = if node.path.is_empty() {
@@ -277,19 +279,20 @@ struct ChangeNodeStats {
 }
 
 fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
-    let mut stats = ChangeNodeStats::default();
-    for file in &node.files {
+    let stats = node.files.iter().fold(ChangeNodeStats::default(), |mut stats, file| {
         stats.total += 1;
         if file.staged {
             stats.staged += 1;
         }
-    }
-    for child in node.dirs.values() {
+        stats
+    });
+
+    node.dirs.values().fold(stats, |mut stats, child| {
         let child_stats = node_stats(child);
         stats.total += child_stats.total;
         stats.staged += child_stats.staged;
-    }
-    stats
+        stats
+    })
 }
 
 fn change_indent_guides(depth: usize, theme: theme::Theme) -> AnyElement {
@@ -357,4 +360,3 @@ fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
         })
         .into_any_element()
 }
-

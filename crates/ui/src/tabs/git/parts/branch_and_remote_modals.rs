@@ -139,7 +139,7 @@ fn create_branch_modal_body<T: PaneDelegate + SettingsDelegate>(cx: &mut Context
 }
 
 fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let branch_name = cx
@@ -148,8 +148,8 @@ fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
         .as_ref()
         .unwrap()
         .clone();
-    let root_cancel = root.clone();
-    let root_create = root.clone();
+    let root_cancel = root.to_path_buf();
+    let root_create = root.to_path_buf();
     let cancel_input = branch_name.clone();
     let create_input = branch_name.clone();
 
@@ -196,7 +196,7 @@ fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &PathBuf,
+    root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let (name, url, remotes) = {
@@ -207,7 +207,7 @@ fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
             state.remotes.clone(),
         )
     };
-    let root_add = root.clone();
+    let root_add = root.to_path_buf();
     let theme = *cx.theme();
 
     div()
@@ -239,8 +239,7 @@ fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
         .children(
             remotes
                 .into_iter()
-                .map(|remote| remote_row(root.clone(), remote, cx)),
+                .map(|remote| remote_row(root.to_path_buf(), remote, cx)),
         )
         .into_any_element()
 }
-
