@@ -1,11 +1,14 @@
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
+    rc::Rc,
     time::Duration,
 };
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, MouseDownEvent,
-    Pixels, Point, SharedString, Task, Window, anchored, deferred, div, prelude::*, rems, rgb,
+    AnyElement, App, ClickEvent, Context, Corner, Entity, Global, IntoElement, MouseButton,
+    MouseDownEvent, Pixels, Point, SharedString, Task, Window, anchored, deferred, div, prelude::*,
+    rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
@@ -152,6 +155,8 @@ const COMMIT_MESSAGE_PADDING_X_REM: f32 = 1.25;
 const COMMIT_MESSAGE_PADDING_TOP_REM: f32 = 1.25;
 const COMMIT_MESSAGE_PADDING_BOTTOM_REM: f32 = 0.5;
 const COMMIT_CONTROLS_INSET_X_REM: f32 = 1.0;
+const SYNC_PANEL_INSET_X_REM: f32 = 0.5;
+const SYNC_MENU_GAP_REM: f32 = 0.5;
 const COMMIT_CONTROLS_INSET_BOTTOM_REM: f32 = 1.0;
 
 pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {

@@ -79,7 +79,7 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
         .w_full()
         .border_b_1()
         .border_color(theme.border_subtle)
-        .px(rems(COMMIT_CONTROLS_INSET_X_REM))
+        .px(rems(SYNC_PANEL_INSET_X_REM))
         .py_1p5()
         .flex()
         .items_center()
@@ -197,38 +197,55 @@ fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
 
 fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
+    let menu_anchor = Rc::new(RefCell::new(None::<Point<Pixels>>));
+    let paint_anchor = menu_anchor.clone();
+    let click_anchor = menu_anchor.clone();
+
     div()
-        .id("git-sync-more")
-        .size(rems(1.875))
         .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.3125))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.bg_elevated)
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|_, event: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                let position = event.position;
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.menu_position = None;
-                    state.sync_menu_position = match state.sync_menu_position {
-                        Some(_) => None,
-                        None => Some(position),
-                    };
-                });
-                cx.notify();
-            }),
-        )
+        .on_children_prepainted(move |bounds, window, _| {
+            let gap = rems(SYNC_MENU_GAP_REM).to_pixels(window.rem_size());
+            *paint_anchor.borrow_mut() = bounds.first().map(|bounds| {
+                Point::new(bounds.right(), bounds.top() - gap)
+            });
+        })
         .child(
-            Icon::new(IconName::Ellipsis)
-                .size(14.0)
-                .color(theme.text_muted),
+            div()
+                .id("git-sync-more")
+                .size(rems(1.875))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(rems(0.3125))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.bg_elevated)
+                .text_color(theme.text_muted)
+                .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        let position = click_anchor
+                            .borrow()
+                            .clone()
+                            .unwrap_or_else(|| event.position.clone());
+                        cx.update_global::<GitUiState, _>(|state, _| {
+                            state.menu_position = None;
+                            state.sync_menu_position = match state.sync_menu_position {
+                                Some(_) => None,
+                                None => Some(position),
+                            };
+                        });
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    Icon::new(IconName::Ellipsis)
+                        .size(14.0)
+                        .color(theme.text_muted),
+                ),
         )
         .into_any_element()
 }
