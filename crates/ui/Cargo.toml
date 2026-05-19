@@ -15,6 +15,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 registry = { path = "../registry" }
 settings = { path = "../settings" }
+shortcuts = { path = "../shortcuts" }
 syntax = { path = "../syntax" }
 theme = { path = "../theme" }
 unicode-segmentation = "1.12"

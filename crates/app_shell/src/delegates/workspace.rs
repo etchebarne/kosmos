@@ -9,7 +9,7 @@ impl WorkspaceDelegate for KosmosApp {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Open Workspace".into()),
+            prompt: Some("Open Folder".into()),
         });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = receiver.await else {

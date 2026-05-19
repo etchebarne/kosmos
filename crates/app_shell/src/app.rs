@@ -12,7 +12,10 @@ use gpui::BorrowAppContext;
 use pane_tree::PaneTree;
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
-use ui::delegate::{HeaderMenu, SettingsUiState, TabScrollHandles, WorkspaceMenuState};
+use ui::delegate::{
+    HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles,
+    WorkspaceMenuState,
+};
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
 use ui::tabs::settings::SettingsInputs;
@@ -236,15 +239,70 @@ impl KosmosApp {
         self.pending_persist = true;
     }
 
-    fn save_active_file(&mut self, _: &file_editor::Save, _: &mut Window, cx: &mut Context<Self>) {
-        let path = self
-            .workspaces
+    fn active_tab(&self) -> Option<&tabs::Tab> {
+        self.workspaces
             .active_pane_tree()
             .and_then(|tree| tree.active_pane())
             .and_then(|pane| pane.tabs().iter().find(|tab| tab.id == pane.active_tab()))
+    }
+
+    fn active_editor_tab(&self) -> Option<&tabs::Tab> {
+        self.active_tab()
             .filter(|tab| tab.kind.as_str() == tabs::registry::FILE_EDITOR.id)
-            .and_then(|tab| tab.path.clone());
-        let Some(path) = path else {
+            .filter(|tab| tab.path.is_some())
+    }
+
+    fn active_editor_tab_parts(&self) -> Option<(usize, PathBuf)> {
+        let tab = self.active_editor_tab()?;
+        Some((tab.id, tab.path.clone()?))
+    }
+
+    pub(crate) fn header_menu_availability(&self, cx: &Context<Self>) -> HeaderMenuAvailability {
+        let mut availability = HeaderMenuAvailability {
+            any_dirty_file: BufferStore::has_dirty_buffers(cx),
+            ..Default::default()
+        };
+
+        let Some(tab) = self.active_editor_tab() else {
+            return availability;
+        };
+
+        availability.active_editor = true;
+        availability.can_cut = true;
+        availability.can_copy = true;
+        availability.can_paste = true;
+        availability.can_select_all = true;
+
+        if let Some(path) = tab.path.as_deref() {
+            availability.active_editor_dirty = BufferStore::is_path_dirty(path, cx);
+        }
+
+        if let Some(view) = file_editor::EditorViewStore::get(tab.id, cx) {
+            let view = view.read(cx);
+            availability.can_undo = view.can_undo(cx);
+            availability.can_redo = view.can_redo(cx);
+            availability.can_cut = view.can_cut(cx);
+            availability.can_copy = view.can_copy(cx);
+            availability.can_paste = view.can_paste();
+            availability.can_select_all = view.can_select_all(cx);
+        }
+
+        availability
+    }
+
+    fn active_editor_view(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<file_editor::EditorView>> {
+        let (tab_id, path) = self.active_editor_tab_parts()?;
+        let buffer = BufferStore::open(path, cx);
+        let view = file_editor::EditorViewStore::for_tab(tab_id, &buffer, cx);
+        view.update(cx, |view, cx| view.set_buffer(buffer, cx));
+        Some(view)
+    }
+
+    pub(crate) fn save_active_editor(&mut self, cx: &mut Context<Self>) {
+        let Some((_, path)) = self.active_editor_tab_parts() else {
             return;
         };
         if let Err(err) = BufferStore::save_path(&path, cx) {
@@ -252,12 +310,51 @@ impl KosmosApp {
         }
         cx.notify();
     }
+
+    pub(crate) fn save_all_files(&mut self, cx: &mut Context<Self>) {
+        if let Err(err) = BufferStore::save_all(cx) {
+            eprintln!("failed to save all files: {err}");
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn run_header_editor_action(
+        &mut self,
+        action: HeaderMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.active_editor_view(cx) else {
+            return;
+        };
+        let focus_handle = view.read(cx).focus_handle();
+        window.focus(&focus_handle);
+        view.update(cx, |view, cx| match action {
+            HeaderMenuAction::Undo => view.undo(window, cx),
+            HeaderMenuAction::Redo => view.redo(window, cx),
+            HeaderMenuAction::Cut => view.cut(window, cx),
+            HeaderMenuAction::Copy => view.copy(window, cx),
+            HeaderMenuAction::Paste => view.paste(window, cx),
+            HeaderMenuAction::SelectAll => view.select_all(window, cx),
+            HeaderMenuAction::OpenFolder
+            | HeaderMenuAction::Save
+            | HeaderMenuAction::SaveAll
+            | HeaderMenuAction::ExpandSelection
+            | HeaderMenuAction::ShrinkSelection => {}
+        });
+        cx.notify();
+    }
+
+    fn save_active_file(&mut self, _: &file_editor::Save, _: &mut Window, cx: &mut Context<Self>) {
+        self.save_active_editor(cx);
+    }
 }
 
 impl Render for KosmosApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         apply_theme(cx);
         let theme = *cx.theme();
+        let header_menu_availability = self.header_menu_availability(cx);
         zoom::apply(window, cx);
         div()
             .id("app-root")
@@ -278,6 +375,7 @@ impl Render for KosmosApp {
                 self.active_menu,
                 &self.workspaces,
                 self.workspace_menu,
+                header_menu_availability,
                 window,
                 cx,
             ))

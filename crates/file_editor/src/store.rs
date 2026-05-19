@@ -60,6 +60,15 @@ impl BufferStore {
             .is_some_and(|buffer| buffer.read(cx).is_dirty())
     }
 
+    pub fn has_dirty_buffers(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|store| {
+            store
+                .by_id
+                .values()
+                .any(|buffer| buffer.read(cx).is_dirty())
+        })
+    }
+
     pub fn save_path(path: &Path, cx: &mut App) -> std::io::Result<bool> {
         let buffer = cx.try_global::<Self>().and_then(|store| {
             store
@@ -73,6 +82,22 @@ impl BufferStore {
         };
         buffer.update(cx, |buffer, cx| buffer.save(cx))?;
         Ok(true)
+    }
+
+    pub fn save_all(cx: &mut App) -> std::io::Result<usize> {
+        let buffers = cx
+            .try_global::<Self>()
+            .map(|store| store.by_id.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut saved = 0;
+        for buffer in buffers {
+            if !buffer.read(cx).is_dirty() {
+                continue;
+            }
+            buffer.update(cx, |buffer, cx| buffer.save(cx))?;
+            saved += 1;
+        }
+        Ok(saved)
     }
 
     pub fn reload_paths(paths: impl IntoIterator<Item = PathBuf>, cx: &mut App) {
@@ -128,6 +153,11 @@ impl EditorViewStore {
             store.views.insert(tab_id, entity.clone());
         });
         entity
+    }
+
+    pub fn get(tab_id: usize, cx: &App) -> Option<Entity<EditorView>> {
+        cx.try_global::<Self>()
+            .and_then(|store| store.views.get(&tab_id).cloned())
     }
 
     /// Drop the cached view for `tab_id`. Call when a tab is closed so its

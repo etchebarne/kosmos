@@ -1,3 +1,35 @@
+#[derive(Clone, Copy)]
+struct HeaderMenuItem {
+    action: HeaderMenuAction,
+    label: &'static str,
+}
+
+impl HeaderMenuItem {
+    const fn new(action: HeaderMenuAction, label: &'static str) -> Self {
+        Self { action, label }
+    }
+}
+
+const FILE_MENU_ITEMS: &[HeaderMenuItem] = &[
+    HeaderMenuItem::new(HeaderMenuAction::OpenFolder, "Open Folder..."),
+    HeaderMenuItem::new(HeaderMenuAction::Save, "Save"),
+    HeaderMenuItem::new(HeaderMenuAction::SaveAll, "Save All"),
+];
+
+const EDIT_MENU_ITEMS: &[HeaderMenuItem] = &[
+    HeaderMenuItem::new(HeaderMenuAction::Undo, "Undo"),
+    HeaderMenuItem::new(HeaderMenuAction::Redo, "Redo"),
+    HeaderMenuItem::new(HeaderMenuAction::Cut, "Cut"),
+    HeaderMenuItem::new(HeaderMenuAction::Copy, "Copy"),
+    HeaderMenuItem::new(HeaderMenuAction::Paste, "Paste"),
+];
+
+const SELECTION_MENU_ITEMS: &[HeaderMenuItem] = &[
+    HeaderMenuItem::new(HeaderMenuAction::SelectAll, "Select All"),
+    HeaderMenuItem::new(HeaderMenuAction::ExpandSelection, "Expand Selection"),
+    HeaderMenuItem::new(HeaderMenuAction::ShrinkSelection, "Shrink Selection"),
+];
+
 fn render_workspace_menu<T: WorkspaceDelegate>(
     state: WorkspaceMenuState,
     cx: &mut Context<T>,
@@ -96,12 +128,13 @@ fn render_menu_button<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
     menu: HeaderMenu,
     label: &'static str,
-    items: &'static [&'static str],
+    availability: HeaderMenuAvailability,
     cx: &mut Context<T>,
 ) -> impl IntoElement + 'static {
     let theme = *cx.theme();
-    let is_active = active_menu == Some(menu);
-    let dropdown = is_active.then(|| render_menu_dropdown(menu, items, &theme));
+    let is_enabled = availability.menu_enabled(menu);
+    let is_active = is_enabled && active_menu == Some(menu);
+    let dropdown = is_active.then(|| render_menu_dropdown::<T>(menu, availability, &theme, cx));
 
     div()
         .id(("menu-button", menu.id()))
@@ -112,42 +145,52 @@ fn render_menu_button<T: HeaderDelegate>(
         .items_center()
         .rounded(rems(0.3125))
         .text_sm()
+        .text_color(if is_enabled {
+            theme.text_header
+        } else {
+            theme.text_muted
+        })
         .bg(if is_active {
             theme.bg_selected
         } else {
             theme.bg_surface
         })
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _, _, cx| {
-            cx.stop_propagation();
-            this.toggle_header_menu(menu, cx);
-        }))
+        .when(is_enabled, |this| {
+            this.hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_header_menu(menu, cx);
+                }))
+        })
+        .when(!is_enabled, |this| {
+            this.opacity(0.45)
+                .on_click(|_, _, cx| cx.stop_propagation())
+        })
         .child(label)
         .children(dropdown)
 }
 
-fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str], theme: &Theme) -> AnyElement {
-    let item_text = theme.text_header;
-    let item_hover_bg = theme.bg_selected;
-    let item_hover_text = theme.text_emphasis;
-
-    let mut item_elements = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        item_elements.push(
-            div()
-                .id(("menu-item", menu.id() * 100 + index))
-                .h(rems(1.75))
-                .px_3()
-                .flex()
-                .items_center()
-                .rounded(rems(0.25))
-                .text_sm()
-                .text_color(item_text)
-                .hover(move |this| this.bg(item_hover_bg).text_color(item_hover_text))
-                .child(*item),
-        );
-    }
+fn render_menu_dropdown<T: HeaderDelegate>(
+    menu: HeaderMenu,
+    availability: HeaderMenuAvailability,
+    theme: &Theme,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let item_elements = menu_items(menu)
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            render_menu_item::<T>(
+                menu,
+                index,
+                *item,
+                availability.action_enabled(item.action),
+                theme,
+                cx,
+            )
+        })
+        .collect::<Vec<_>>();
 
     deferred(
         div()
@@ -155,7 +198,7 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str], theme: &Theme)
             .absolute()
             .top(rems(2.0))
             .left(rems(0.0))
-            .w(rems(11.5))
+            .w(rems(17.0))
             .p_1()
             .flex()
             .flex_col()
@@ -169,6 +212,70 @@ fn render_menu_dropdown(menu: HeaderMenu, items: &[&'static str], theme: &Theme)
             .children(item_elements),
     )
     .into_any_element()
+}
+
+fn render_menu_item<T: HeaderDelegate>(
+    menu: HeaderMenu,
+    index: usize,
+    item: HeaderMenuItem,
+    is_enabled: bool,
+    theme: &Theme,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let item_hover_bg = theme.bg_selected;
+    let item_hover_text = theme.text_emphasis;
+    let action = item.action;
+    let shortcut = item
+        .action
+        .shortcut_action_name()
+        .and_then(|action| shortcuts::primary_label_for_action(action, cx))
+        .map(SharedString::from);
+
+    div()
+        .id(("menu-item", menu.id() * 100 + index))
+        .h(rems(1.75))
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .rounded(rems(0.25))
+        .text_sm()
+        .text_color(if is_enabled {
+            theme.text_header
+        } else {
+            theme.text_muted
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(is_enabled, |this| {
+            this.hover(move |this| this.bg(item_hover_bg).text_color(item_hover_text))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.activate_header_menu_action(action, window, cx);
+                }))
+        })
+        .when(!is_enabled, |this| {
+            this.opacity(0.45)
+                .on_click(|_, _, cx| cx.stop_propagation())
+        })
+        .child(div().flex_1().min_w_0().child(item.label))
+        .when_some(shortcut, |this, shortcut| {
+            this.child(
+                div()
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .child(shortcut),
+            )
+        })
+        .into_any_element()
+}
+
+fn menu_items(menu: HeaderMenu) -> &'static [HeaderMenuItem] {
+    match menu {
+        HeaderMenu::File => FILE_MENU_ITEMS,
+        HeaderMenu::Edit => EDIT_MENU_ITEMS,
+        HeaderMenu::Selection => SELECTION_MENU_ITEMS,
+    }
 }
 
 fn render_window_button(

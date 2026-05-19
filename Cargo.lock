@@ -7452,6 +7452,7 @@ dependencies = [
  "pulldown-cmark",
  "registry",
  "settings",
+ "shortcuts",
  "syntax",
  "tabs",
  "theme",

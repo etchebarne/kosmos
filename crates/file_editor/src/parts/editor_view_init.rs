@@ -63,6 +63,34 @@ impl EditorView {
         self.selected_range.clone()
     }
 
+    pub fn can_undo(&self, cx: &App) -> bool {
+        self.buffer
+            .as_ref()
+            .is_some_and(|buffer| buffer.read(cx).can_undo())
+    }
+
+    pub fn can_redo(&self, cx: &App) -> bool {
+        self.buffer
+            .as_ref()
+            .is_some_and(|buffer| buffer.read(cx).can_redo())
+    }
+
+    pub fn can_cut(&self, cx: &App) -> bool {
+        self.has_text(cx)
+    }
+
+    pub fn can_copy(&self, cx: &App) -> bool {
+        self.has_text(cx)
+    }
+
+    pub fn can_paste(&self) -> bool {
+        self.buffer.is_some()
+    }
+
+    pub fn can_select_all(&self, cx: &App) -> bool {
+        self.has_text(cx)
+    }
+
     pub fn cursor_offset(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start
@@ -158,6 +186,14 @@ impl EditorView {
         cx.notify();
     }
 
+}
+
+impl EditorView {
+    fn has_text(&self, cx: &App) -> bool {
+        self.buffer
+            .as_ref()
+            .is_some_and(|buffer| !buffer.read(cx).is_empty())
+    }
 }
 
 fn bounds_vertically_overlap(a: Bounds<Pixels>, b: Bounds<Pixels>) -> bool {

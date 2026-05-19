@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{App, Context, Global, Pixels, Point, ScrollHandle};
+use gpui::{App, Context, Global, Pixels, Point, ScrollHandle, Window};
 use pane_tree::DropZone;
 use settings::SettingValue;
 
@@ -90,6 +90,12 @@ pub trait WorkspaceDelegate: Sized + 'static {
 
 pub trait HeaderDelegate: WorkspaceDelegate {
     fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
+    fn activate_header_menu_action(
+        &mut self,
+        action: HeaderMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
 }
 
 pub trait PaneDelegate: Sized + 'static {
@@ -221,6 +227,78 @@ impl HeaderMenu {
             Self::File => 0,
             Self::Edit => 1,
             Self::Selection => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HeaderMenuAction {
+    OpenFolder,
+    Save,
+    SaveAll,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    ExpandSelection,
+    ShrinkSelection,
+}
+
+impl HeaderMenuAction {
+    pub fn shortcut_action_name(self) -> Option<&'static str> {
+        match self {
+            Self::Save => Some("file_editor::Save"),
+            Self::Undo => Some("text_input::Undo"),
+            Self::Redo => Some("text_input::Redo"),
+            Self::Cut => Some("text_input::Cut"),
+            Self::Copy => Some("text_input::Copy"),
+            Self::Paste => Some("text_input::Paste"),
+            Self::SelectAll => Some("text_input::SelectAll"),
+            Self::OpenFolder | Self::SaveAll | Self::ExpandSelection | Self::ShrinkSelection => {
+                None
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HeaderMenuAvailability {
+    pub active_editor: bool,
+    pub active_editor_dirty: bool,
+    pub any_dirty_file: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub can_cut: bool,
+    pub can_copy: bool,
+    pub can_paste: bool,
+    pub can_select_all: bool,
+    pub can_expand_selection: bool,
+    pub can_shrink_selection: bool,
+}
+
+impl HeaderMenuAvailability {
+    pub fn menu_enabled(self, menu: HeaderMenu) -> bool {
+        match menu {
+            HeaderMenu::File => true,
+            HeaderMenu::Edit | HeaderMenu::Selection => self.active_editor,
+        }
+    }
+
+    pub fn action_enabled(self, action: HeaderMenuAction) -> bool {
+        match action {
+            HeaderMenuAction::OpenFolder => true,
+            HeaderMenuAction::Save => self.active_editor_dirty,
+            HeaderMenuAction::SaveAll => self.any_dirty_file,
+            HeaderMenuAction::Undo => self.can_undo,
+            HeaderMenuAction::Redo => self.can_redo,
+            HeaderMenuAction::Cut => self.can_cut,
+            HeaderMenuAction::Copy => self.can_copy,
+            HeaderMenuAction::Paste => self.can_paste,
+            HeaderMenuAction::SelectAll => self.can_select_all,
+            HeaderMenuAction::ExpandSelection => self.can_expand_selection,
+            HeaderMenuAction::ShrinkSelection => self.can_shrink_selection,
         }
     }
 }

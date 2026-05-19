@@ -10,13 +10,17 @@ use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
 use workspace::{Workspace, WorkspaceManager};
 
-use crate::delegate::{HeaderDelegate, HeaderMenu, WorkspaceDelegate, WorkspaceMenuState};
+use crate::delegate::{
+    HeaderDelegate, HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, WorkspaceDelegate,
+    WorkspaceMenuState,
+};
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
     active_menu: Option<HeaderMenu>,
     workspace_manager: &WorkspaceManager,
     workspace_menu: Option<WorkspaceMenuState>,
+    menu_availability: HeaderMenuAvailability,
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -67,21 +71,21 @@ pub fn render<T: HeaderDelegate>(
                     active_menu,
                     HeaderMenu::File,
                     "File",
-                    &["New File", "Open...", "Save", "Save As..."],
+                    menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::Edit,
                     "Edit",
-                    &["Undo", "Redo", "Cut", "Copy", "Paste"],
+                    menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
                     active_menu,
                     HeaderMenu::Selection,
                     "Selection",
-                    &["Select All", "Expand Selection", "Shrink Selection"],
+                    menu_availability,
                     cx,
                 )),
         )
@@ -138,4 +142,3 @@ pub fn render<T: HeaderDelegate>(
         )
         .into_any_element()
 }
-
