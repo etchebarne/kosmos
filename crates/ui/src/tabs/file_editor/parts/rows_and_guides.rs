@@ -36,8 +36,11 @@ fn render_row(
     theme: &Theme,
     cx: &App,
 ) -> impl IntoElement {
-    let selection_background =
-        render_selection_background(row.line.as_ref(), row.edit_state.selection.as_ref(), *theme);
+    let selection_background = if row.soft_wrap {
+        None
+    } else {
+        render_selection_background(row.line.as_ref(), row.edit_state.selection.as_ref(), *theme)
+    };
     div()
         .relative()
         .w_full()
@@ -152,10 +155,11 @@ fn render_line_text(
     } else {
         (0, 0)
     };
+    let original_line = line_text.line.clone();
     let display_line = if display_byte_offset == 0 {
         line_text.line
     } else {
-        SharedString::from(line_text.line[display_byte_offset..].to_string())
+        SharedString::from(original_line[display_byte_offset..].to_string())
     };
     let display_len = display_line.len();
     let spans = shift_spans_for_display(line_text.spans, display_byte_offset, display_len);
@@ -171,12 +175,23 @@ fn render_line_text(
         .as_ref()
         .and_then(|hover| hover_source_highlight_range(hover, cx))
         .and_then(|range| shift_range_for_display(range, display_byte_offset, display_len));
+    let selection_highlight = if line_text.soft_wrap {
+        line_text
+            .edit_state
+            .selection
+            .as_ref()
+            .and_then(|selection| {
+                shift_range_for_display(selection.range.clone(), display_byte_offset, display_len)
+            })
+    } else {
+        None
+    };
     let highlights = line_highlights(
         display_line.len(),
         spans,
         &theme.syntax,
         source_highlight,
-        None,
+        selection_highlight,
         *theme,
     );
     let text = if highlights.is_empty() {
@@ -186,6 +201,24 @@ fn render_line_text(
     };
     let text_layout = text.layout().clone();
     let focus_handle = view.read(cx).focus_handle();
+    let selection = if line_text.soft_wrap {
+        line_text.edit_state.selection.clone().map(|selection| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .child(SoftWrapSelectionElement {
+                    line: original_line.clone(),
+                    text_layout: text_layout.clone(),
+                    display_byte_offset,
+                    selection,
+                    color: gpui::Hsla::from(theme.accent).opacity(0.35),
+                })
+                .into_any_element()
+        })
+    } else {
+        None
+    };
     let cursor = cursor.map(|cursor| {
         div()
             .absolute()
@@ -209,6 +242,7 @@ fn render_line_text(
             .when(line_text.soft_wrap && indent_columns > 0, |this| {
                 this.pl(indent_padding)
             })
+            .when_some(selection, |this, selection| this.child(selection))
             .child(text)
             .when_some(cursor, |this, cursor| this.child(cursor))
             .into_any_element();
@@ -233,6 +267,7 @@ fn render_line_text(
         .when(line_text.soft_wrap && indent_columns > 0, |this| {
             this.pl(indent_padding)
         })
+        .when_some(selection, |this, selection| this.child(selection))
         .child(text)
         .when_some(cursor, |this, cursor| this.child(cursor))
         .on_children_prepainted(move |bounds, window, cx| {
@@ -254,6 +289,99 @@ fn render_line_text(
         })
         .id(("file-editor-line-hover", hover.line_index))
         .into_any_element()
+}
+
+fn soft_wrap_selection_extra_bounds(
+    line: &str,
+    text_layout: &TextLayout,
+    display_byte_offset: usize,
+    selection: &LineSelection,
+    window: &Window,
+) -> Vec<Bounds<Pixels>> {
+    let line_len = line.len();
+    let selection_start = selection.range.start.min(line_len);
+    let selection_end = selection.range.end.min(line_len);
+    let display_byte_offset = display_byte_offset.min(line_len);
+    let mut bounds = Vec::new();
+
+    push_soft_wrap_indent_selection_bound(
+        &mut bounds,
+        line,
+        text_layout,
+        display_byte_offset,
+        selection_start,
+        selection_end,
+        window,
+    );
+
+    if selection.includes_line_break {
+        let display_len = line_len.saturating_sub(display_byte_offset);
+        push_soft_wrap_line_break_selection_bound(&mut bounds, text_layout, display_len, window);
+    }
+
+    bounds
+}
+
+fn push_soft_wrap_indent_selection_bound(
+    bounds: &mut Vec<Bounds<Pixels>>,
+    line: &str,
+    text_layout: &TextLayout,
+    display_byte_offset: usize,
+    selection_start: usize,
+    selection_end: usize,
+    window: &Window,
+) {
+    let indent_selection_start = selection_start.min(display_byte_offset);
+    let indent_selection_end = selection_end.min(display_byte_offset);
+    if indent_selection_start >= indent_selection_end {
+        return;
+    }
+
+    let char_width = monospace_char_width(window.rem_size());
+    let indent_columns = visual_column_for_byte(line, display_byte_offset);
+    let text_bounds = text_layout.bounds();
+    let indent_left = text_bounds.left() - char_width * indent_columns;
+    let left = indent_left + char_width * visual_column_for_byte(line, indent_selection_start);
+    let right = indent_left + char_width * visual_column_for_byte(line, indent_selection_end);
+    push_selection_bound(
+        bounds,
+        left,
+        text_bounds.top(),
+        right,
+        text_bounds.top() + text_layout.line_height(),
+    );
+}
+
+fn push_soft_wrap_line_break_selection_bound(
+    bounds: &mut Vec<Bounds<Pixels>>,
+    text_layout: &TextLayout,
+    display_len: usize,
+    window: &Window,
+) {
+    let Some(position) = text_layout.position_for_index(display_len) else {
+        return;
+    };
+    let char_width = monospace_char_width(window.rem_size());
+    push_selection_bound(
+        bounds,
+        position.x,
+        position.y,
+        position.x + char_width,
+        position.y + text_layout.line_height(),
+    );
+}
+
+fn push_selection_bound(
+    bounds: &mut Vec<Bounds<Pixels>>,
+    left: Pixels,
+    top: Pixels,
+    right: Pixels,
+    bottom: Pixels,
+) {
+    if right <= left || bottom <= top {
+        return;
+    }
+    bounds.push(Bounds::from_corners(point(left, top), point(right, bottom)));
 }
 
 fn render_indent_guides_overlay(

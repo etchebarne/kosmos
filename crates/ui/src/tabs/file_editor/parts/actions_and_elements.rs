@@ -105,6 +105,14 @@ struct CursorElement {
     focus_handle: FocusHandle,
 }
 
+struct SoftWrapSelectionElement {
+    line: SharedString,
+    text_layout: TextLayout,
+    display_byte_offset: usize,
+    selection: LineSelection,
+    color: gpui::Hsla,
+}
+
 impl IntoElement for CursorElement {
     type Element = Self;
 
@@ -174,6 +182,72 @@ impl Element for CursorElement {
             ),
             self.color,
         ));
+    }
+}
+
+impl IntoElement for SoftWrapSelectionElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for SoftWrapSelectionElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = Pixels::ZERO.into();
+        style.size.height = Pixels::ZERO.into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        for bounds in soft_wrap_selection_extra_bounds(
+            self.line.as_ref(),
+            &self.text_layout,
+            self.display_byte_offset,
+            &self.selection,
+            window,
+        ) {
+            window.paint_quad(fill(bounds, self.color));
+        }
     }
 }
 

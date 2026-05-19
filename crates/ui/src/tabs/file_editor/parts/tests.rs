@@ -154,6 +154,19 @@ mod tests {
     }
 
     #[test]
+    fn line_highlights_supports_selection_without_syntax() {
+        let theme = Theme::dark();
+        let highlights = line_highlights(10, Vec::new(), &theme.syntax, None, Some(2..5), theme);
+
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].0, 2..5);
+        assert_eq!(
+            highlights[0].1.background_color,
+            Some(gpui::Hsla::from(theme.accent).opacity(0.35))
+        );
+    }
+
+    #[test]
     fn hover_popup_only_renders_after_lsp_result() {
         assert!(!hover_status_has_popup(&EditorHoverStatus::Loading));
         assert!(!hover_status_has_popup(&EditorHoverStatus::Empty));
