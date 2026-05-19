@@ -49,79 +49,97 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             let root = root.to_path_buf();
             let selected_paths = selected_change_paths(cx);
             let selected_count = selected_paths.len();
-            modal::render(
-                "git-discard-selected-modal",
-                "Discard Selected Changes",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .text_sm()
-                    .child(format!(
+            confirm_git_action_modal(
+                ConfirmGitActionModal {
+                    modal_id: "git-discard-selected-modal",
+                    title: "Discard Selected Changes",
+                    message: format!(
                         "This will permanently discard {selected_count} selected working tree change{}. This action cannot be undone.",
                         plural(selected_count)
-                    ))
-                    .into_any_element(),
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(close_modal_button(cx))
-                    .child(action_button(
-                        "git-confirm-discard-selected",
-                        "Discard Selected",
-                        true,
-                        cx.listener(move |_, _, _, cx| {
-                            close_modal(cx);
-                            run_git_action(
-                                root.clone(),
-                                {
-                                    let selected_paths = selected_paths.clone();
-                                    move |root| kosmos_git::discard_files(root, &selected_paths)
-                                },
-                                cx,
-                            );
-                        }),
-                        cx,
-                    ))
-                    .into_any_element(),
+                    ),
+                    button_id: "git-confirm-discard-selected",
+                    button_label: "Discard Selected",
+                    confirm: cx.listener(move |_, _, _, cx| {
+                        close_modal(cx);
+                        run_git_action(
+                            root.clone(),
+                            {
+                                let selected_paths = selected_paths.clone();
+                                move |root| kosmos_git::discard_files(root, &selected_paths)
+                            },
+                            cx,
+                        );
+                    }),
+                },
                 theme,
-                cx.listener(|_, _, _, cx| close_modal(cx)),
+                cx,
             )
         }
         GitModal::ConfirmDiscard => {
             let root = root.to_path_buf();
-            modal::render(
-                "git-discard-modal",
-                "Discard All Changes",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .text_sm()
-                    .child("This will permanently discard all tracked and untracked working tree changes. This action cannot be undone.")
-                    .into_any_element(),
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(close_modal_button(cx))
-                    .child(action_button(
-                        "git-confirm-discard",
-                        "Discard All",
-                        true,
-                        cx.listener(move |_, _, _, cx| {
-                            close_modal(cx);
-                            run_git_action(root.clone(), kosmos_git::discard_all_changes, cx);
-                        }),
-                        cx,
-                    ))
-                    .into_any_element(),
+            confirm_git_action_modal(
+                ConfirmGitActionModal {
+                    modal_id: "git-discard-modal",
+                    title: "Discard All Changes",
+                    message: "This will permanently discard all tracked and untracked working tree changes. This action cannot be undone.".to_string(),
+                    button_id: "git-confirm-discard",
+                    button_label: "Discard All",
+                    confirm: cx.listener(move |_, _, _, cx| {
+                        close_modal(cx);
+                        run_git_action(root.clone(), kosmos_git::discard_all_changes, cx);
+                    }),
+                },
                 theme,
-                cx.listener(|_, _, _, cx| close_modal(cx)),
+                cx,
             )
         }
     }
+}
+
+struct ConfirmGitActionModal<C> {
+    modal_id: &'static str,
+    title: &'static str,
+    message: String,
+    button_id: &'static str,
+    button_label: &'static str,
+    confirm: C,
+}
+
+fn confirm_git_action_modal<T, C>(
+    config: ConfirmGitActionModal<C>,
+    theme: theme::Theme,
+    cx: &mut Context<T>,
+) -> AnyElement
+where
+    T: PaneDelegate + SettingsDelegate,
+    C: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+{
+    modal::render(
+        config.modal_id,
+        config.title,
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_sm()
+            .child(config.message)
+            .into_any_element(),
+        div()
+            .flex()
+            .justify_end()
+            .gap_2()
+            .child(close_modal_button(cx))
+            .child(action_button(
+                config.button_id,
+                config.button_label,
+                true,
+                config.confirm,
+                cx,
+            ))
+            .into_any_element(),
+        theme,
+        cx.listener(|_, _, _, cx| close_modal(cx)),
+    )
 }
 
 fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(

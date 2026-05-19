@@ -43,6 +43,31 @@ fn run_modal_action_after_success<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) {
     clear_error(cx);
+    spawn_git_action(
+        root,
+        action,
+        move |root, cx| {
+            on_success(cx);
+            refresh_modal_data(root.clone(), modal, cx);
+            refresh_summary(root, true, false, cx);
+        },
+        |error, cx| {
+            cx.update_global::<GitUiState, _>(|state, _| {
+                state.last_error = Some(error.to_string())
+            });
+            cx.notify();
+        },
+        cx,
+    );
+}
+
+fn spawn_git_action<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
+    on_success: impl FnOnce(PathBuf, &mut Context<T>) + 'static,
+    on_error: impl FnOnce(kosmos_git::Error, &mut Context<T>) + 'static,
+    cx: &mut Context<T>,
+) {
     cx.spawn(async move |this, cx| {
         let action_root = root.clone();
         let result = cx
@@ -50,20 +75,22 @@ fn run_modal_action_after_success<T: PaneDelegate + SettingsDelegate>(
             .spawn(async move { action(action_root) })
             .await;
         let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => {
-                on_success(cx);
-                refresh_modal_data(root.clone(), modal, cx);
-                refresh_summary(root, true, false, cx);
-            }
-            Err(error) => {
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.last_error = Some(error.to_string())
-                });
-                cx.notify();
-            }
+            Ok(()) => on_success(root, cx),
+            Err(error) => on_error(error, cx),
         });
     })
     .detach();
+}
+
+fn apply_git_action_error<T: PaneDelegate + SettingsDelegate>(
+    error: kosmos_git::Error,
+    cx: &mut Context<T>,
+) {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.loading = false;
+        state.last_error = Some(error.to_string());
+    });
+    cx.notify();
 }
 
 fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Context<T>) {
@@ -222,24 +249,13 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
 
-    cx.spawn(async move |this, cx| {
-        let action_root = root.clone();
-        let result = cx
-            .background_executor()
-            .spawn(async move { action(action_root) })
-            .await;
-        let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => refresh_summary(root, true, true, cx),
-            Err(error) => {
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.loading = false;
-                    state.last_error = Some(error.to_string());
-                });
-                cx.notify();
-            }
-        });
-    })
-    .detach();
+    spawn_git_action(
+        root,
+        action,
+        |root, cx| refresh_summary(root, true, true, cx),
+        apply_git_action_error,
+        cx,
+    );
 }
 
 fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
@@ -254,27 +270,22 @@ fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
 
-    cx.spawn(async move |this, cx| {
-        let action_root = root.clone();
-        let result = cx
-            .background_executor()
-            .spawn(async move { action(action_root) })
-            .await;
-        let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => {
-                toast::show_success(cx, success_title);
-                refresh_summary(root, true, true, cx);
-            }
-            Err(error) => {
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.loading = false;
-                });
-                toast::show_error(cx, error_title, git_error_message(error));
-                cx.notify();
-            }
-        });
-    })
-    .detach();
+    spawn_git_action(
+        root,
+        action,
+        move |root, cx| {
+            toast::show_success(cx, success_title);
+            refresh_summary(root, true, true, cx);
+        },
+        move |error, cx| {
+            cx.update_global::<GitUiState, _>(|state, _| {
+                state.loading = false;
+            });
+            toast::show_error(cx, error_title, git_error_message(error));
+            cx.notify();
+        },
+        cx,
+    );
 }
 
 fn run_sync_action<T: PaneDelegate + SettingsDelegate>(
@@ -334,27 +345,16 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
 
-    cx.spawn(async move |this, cx| {
-        let action_root = root.clone();
-        let result = cx
-            .background_executor()
-            .spawn(async move { kosmos_git::commit_staged(action_root, &message) })
-            .await;
-        let _ = this.update(cx, |_, cx| match result {
-            Ok(()) => {
-                input.update(cx, |input, cx| input.set_value("", cx));
-                refresh_summary(root, true, true, cx);
-            }
-            Err(error) => {
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.loading = false;
-                    state.last_error = Some(error.to_string());
-                });
-                cx.notify();
-            }
-        });
-    })
-    .detach();
+    spawn_git_action(
+        root,
+        move |root| kosmos_git::commit_staged(root, &message),
+        move |root, cx| {
+            input.update(cx, |input, cx| input.set_value("", cx));
+            refresh_summary(root, true, true, cx);
+        },
+        apply_git_action_error,
+        cx,
+    );
 }
 
 fn clear_error(cx: &mut App) {

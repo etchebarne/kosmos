@@ -53,16 +53,7 @@ impl KosmosApp {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         SettingsInputs::install(cx);
         let workspaces = persistence::load();
-        let file_tree = cx.new(FileTree::new);
-        cx.observe(&file_tree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&file_tree, |_, _, event, cx| match event {
-            FileTreeEvent::FsChanged { paths } => BufferStore::reload_paths(paths.clone(), cx),
-        })
-        .detach();
-        cx.set_global(FileTreeState::new());
-        cx.update_global::<FileTreeState, _>(|state, _| {
-            state.set_active(Some(file_tree.clone()));
-        });
+        let file_tree = Self::create_file_tree(cx);
         let mut app = Self {
             active_menu: None,
             workspace_menu: None,
@@ -75,6 +66,25 @@ impl KosmosApp {
         };
         app.sync_file_tree_root(cx);
         app.start_workspace_watch_task(cx);
+        app.flush_pending_persist_on_quit(cx);
+        app
+    }
+
+    fn create_file_tree(cx: &mut Context<Self>) -> Entity<FileTree> {
+        let file_tree = cx.new(FileTree::new);
+        cx.observe(&file_tree, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&file_tree, |_, _, event, cx| match event {
+            FileTreeEvent::FsChanged { paths } => BufferStore::reload_paths(paths.clone(), cx),
+        })
+        .detach();
+        cx.set_global(FileTreeState::new());
+        cx.update_global::<FileTreeState, _>(|state, _| {
+            state.set_active(Some(file_tree.clone()));
+        });
+        file_tree
+    }
+
+    fn flush_pending_persist_on_quit(&mut self, cx: &mut Context<Self>) {
         cx.on_app_quit(|this, _cx| {
             // Flush any resize-drag mutations that bypassed persistence so
             // the last ratio lands on disk before the process exits.
@@ -82,7 +92,6 @@ impl KosmosApp {
             async {}
         })
         .detach();
-        app
     }
 
     /// Periodically verify that every open workspace's backing directory

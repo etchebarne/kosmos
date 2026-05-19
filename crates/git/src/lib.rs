@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -114,7 +115,7 @@ impl RepositorySummary {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct DiffStats {
     insertions: usize,
     deletions: usize,
@@ -122,52 +123,79 @@ struct DiffStats {
 
 fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
     let work_dir = git_work_dir(path)?;
-    let mut stats_by_path = std::collections::HashMap::new();
-    for line in git_output(&work_dir, &["diff", "--numstat", "HEAD"])?.lines() {
-        let mut parts = line.split('\t');
-        let insertions = parts.next().unwrap_or_default();
-        let deletions = parts.next().unwrap_or_default();
-        if let Some(changed_path) = parts.next_back().filter(|path| !path.is_empty()) {
-            stats_by_path.insert(
+    let numstat = git_output(&work_dir, &["diff", "--numstat", "HEAD"])?;
+    let mut stats_by_path = parse_numstat(&numstat);
+    let status = git_output(&work_dir, &["status", "--porcelain=v1", "-z"])?;
+    Ok(parse_status_changes(&status, &work_dir, &mut stats_by_path))
+}
+
+fn parse_numstat(output: &str) -> HashMap<String, DiffStats> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let insertions = parts.next().unwrap_or_default();
+            let deletions = parts.next().unwrap_or_default();
+            let changed_path = parts.next_back().filter(|path| !path.is_empty())?;
+            Some((
                 normalize_numstat_path(changed_path),
                 DiffStats {
                     insertions: insertions.parse::<usize>().unwrap_or(0),
                     deletions: deletions.parse::<usize>().unwrap_or(0),
                 },
-            );
-        }
-    }
+            ))
+        })
+        .collect()
+}
 
-    let status = git_output(&work_dir, &["status", "--porcelain=v1", "-z"])?;
+struct StatusEntry {
+    index_status: char,
+    worktree_status: char,
+    path: String,
+}
+
+fn parse_status_changes(
+    status: &str,
+    work_dir: &Path,
+    stats_by_path: &mut HashMap<String, DiffStats>,
+) -> Vec<FileChange> {
     let mut changes = Vec::new();
     let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
-    while let Some(entry) = entries.next() {
-        if entry.len() < 4 {
+    while let Some(raw_entry) = entries.next() {
+        let Some(entry) = parse_status_entry(raw_entry) else {
             continue;
-        }
-        let bytes = entry.as_bytes();
-        let index_status = bytes[0] as char;
-        let worktree_status = bytes[1] as char;
-        let path = entry[3..].to_string();
-        if matches!(index_status, 'R' | 'C') {
+        };
+        if matches!(entry.index_status, 'R' | 'C') {
             let _ = entries.next();
         }
 
-        let kind = change_kind(index_status, worktree_status);
-        let staged = index_status != ' ' && index_status != '?';
-        let mut stats = stats_by_path.remove(&path).unwrap_or_default();
-        if index_status == '?' && stats.insertions == 0 && stats.deletions == 0 {
-            stats.insertions = count_text_lines(work_dir.join(&path));
+        let kind = change_kind(entry.index_status, entry.worktree_status);
+        let staged = entry.index_status != ' ' && entry.index_status != '?';
+        let mut stats = stats_by_path.remove(&entry.path).unwrap_or_default();
+        if entry.index_status == '?' && stats.insertions == 0 && stats.deletions == 0 {
+            stats.insertions = count_text_lines(work_dir.join(&entry.path));
         }
         changes.push(FileChange {
-            path,
+            path: entry.path,
             kind,
             staged,
             insertions: stats.insertions,
             deletions: stats.deletions,
         });
     }
-    Ok(changes)
+    changes
+}
+
+fn parse_status_entry(entry: &str) -> Option<StatusEntry> {
+    if entry.len() < 4 {
+        return None;
+    }
+    let bytes = entry.as_bytes();
+    Some(StatusEntry {
+        index_status: bytes[0] as char,
+        worktree_status: bytes[1] as char,
+        path: entry[3..].to_string(),
+    })
 }
 
 fn change_kind(index_status: char, worktree_status: char) -> FileChangeKind {
@@ -254,34 +282,38 @@ pub fn list_branches(path: impl AsRef<Path>) -> Result<Vec<Branch>, Error> {
     )?;
     let mut branches = local_output
         .lines()
-        .filter_map(|line| {
-            let (head, name) = line.split_once('\t')?;
-            let name = name.trim();
-            if name.is_empty() {
-                return None;
-            }
-            Some(Branch {
-                name: name.to_string(),
-                current: head.trim() == "*",
-                remote: false,
-            })
-        })
+        .filter_map(parse_local_branch)
         .collect::<Vec<_>>();
 
-    branches.extend(remote_output.lines().filter_map(|line| {
-        let (name, symref) = line.split_once('\t').unwrap_or((line, ""));
-        let name = name.trim();
-        if name.is_empty() || !symref.trim().is_empty() {
-            return None;
-        }
-        Some(Branch {
-            name: name.to_string(),
-            current: false,
-            remote: true,
-        })
-    }));
+    branches.extend(remote_output.lines().filter_map(parse_remote_branch));
 
     Ok(branches)
+}
+
+fn parse_local_branch(line: &str) -> Option<Branch> {
+    let (head, name) = line.split_once('\t')?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(Branch {
+        name: name.to_string(),
+        current: head.trim() == "*",
+        remote: false,
+    })
+}
+
+fn parse_remote_branch(line: &str) -> Option<Branch> {
+    let (name, symref) = line.split_once('\t').unwrap_or((line, ""));
+    let name = name.trim();
+    if name.is_empty() || !symref.trim().is_empty() {
+        return None;
+    }
+    Some(Branch {
+        name: name.to_string(),
+        current: false,
+        remote: true,
+    })
 }
 
 pub fn switch_branch(path: impl AsRef<Path>, branch: &str) -> Result<(), Error> {
@@ -337,17 +369,20 @@ pub fn discard_files(path: impl AsRef<Path>, files: &[String]) -> Result<(), Err
 
 pub fn list_remotes(path: impl AsRef<Path>) -> Result<Vec<Remote>, Error> {
     let output = git_output(path.as_ref(), &["remote", "-v"])?;
-    let mut remotes = Vec::new();
-    for line in output.lines().filter(|line| line.ends_with("(fetch)")) {
-        let mut parts = line.split_whitespace();
-        let Some(name) = parts.next() else { continue };
-        let Some(url) = parts.next() else { continue };
-        remotes.push(Remote {
-            name: name.to_string(),
-            url: url.to_string(),
-        });
+    Ok(output.lines().filter_map(parse_remote).collect())
+}
+
+fn parse_remote(line: &str) -> Option<Remote> {
+    if !line.ends_with("(fetch)") {
+        return None;
     }
-    Ok(remotes)
+    let mut parts = line.split_whitespace();
+    let name = parts.next()?;
+    let url = parts.next()?;
+    Some(Remote {
+        name: name.to_string(),
+        url: url.to_string(),
+    })
 }
 
 pub fn add_remote(path: impl AsRef<Path>, name: &str, url: &str) -> Result<(), Error> {
@@ -360,20 +395,19 @@ pub fn delete_remote(path: impl AsRef<Path>, name: &str) -> Result<(), Error> {
 
 pub fn list_tags(path: impl AsRef<Path>) -> Result<Vec<Tag>, Error> {
     let output = git_output(path.as_ref(), &["tag", "-n99"])?;
-    Ok(output
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(2, char::is_whitespace);
-            let name = parts.next()?.trim();
-            if name.is_empty() {
-                return None;
-            }
-            Some(Tag {
-                name: name.to_string(),
-                message: parts.next().unwrap_or_default().trim().to_string(),
-            })
-        })
-        .collect())
+    Ok(output.lines().filter_map(parse_tag).collect())
+}
+
+fn parse_tag(line: &str) -> Option<Tag> {
+    let mut parts = line.splitn(2, char::is_whitespace);
+    let name = parts.next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(Tag {
+        name: name.to_string(),
+        message: parts.next().unwrap_or_default().trim().to_string(),
+    })
 }
 
 pub fn add_tag(
@@ -403,10 +437,7 @@ pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
     let output = git_output(path, &["stash", "list"])?;
     output
         .lines()
-        .filter_map(|line| {
-            let (stash_id, message) = line.split_once(':')?;
-            Some((stash_id.to_string(), message.trim().to_string()))
-        })
+        .filter_map(parse_stash_line)
         .map(|(stash_id, message)| {
             let files = git_output(path, &["stash", "show", "--name-only", &stash_id])?
                 .lines()
@@ -420,6 +451,11 @@ pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
             })
         })
         .collect()
+}
+
+fn parse_stash_line(line: &str) -> Option<(String, String)> {
+    let (stash_id, message) = line.split_once(':')?;
+    Some((stash_id.to_string(), message.trim().to_string()))
 }
 
 pub fn apply_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
@@ -490,3 +526,84 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_numstat_by_normalized_path() {
+        let stats = parse_numstat("3\t1\tsrc/lib.rs\n-\t-\tassets/logo.png\n2\t0\told => new.rs\n");
+
+        assert_eq!(
+            stats.get("src/lib.rs"),
+            Some(&DiffStats {
+                insertions: 3,
+                deletions: 1,
+            })
+        );
+        assert_eq!(
+            stats.get("assets/logo.png"),
+            Some(&DiffStats {
+                insertions: 0,
+                deletions: 0,
+            })
+        );
+        assert!(stats.contains_key("new.rs"));
+    }
+
+    #[test]
+    fn parses_status_entries_with_stats_and_renames() {
+        let mut stats = HashMap::from([(
+            "src/lib.rs".to_string(),
+            DiffStats {
+                insertions: 4,
+                deletions: 2,
+            },
+        )]);
+        let changes = parse_status_changes(
+            " M src/lib.rs\0?? scratch.txt\0R  renamed.rs\0old.rs\0bad\0",
+            Path::new("/tmp"),
+            &mut stats,
+        );
+
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].path, "src/lib.rs");
+        assert_eq!(changes[0].kind, FileChangeKind::Modified);
+        assert!(!changes[0].staged);
+        assert_eq!(changes[0].insertions, 4);
+        assert_eq!(changes[0].deletions, 2);
+
+        assert_eq!(changes[1].kind, FileChangeKind::Created);
+        assert!(!changes[1].staged);
+
+        assert_eq!(changes[2].path, "renamed.rs");
+        assert_eq!(changes[2].kind, FileChangeKind::Renamed);
+        assert!(changes[2].staged);
+    }
+
+    #[test]
+    fn parses_git_listing_rows() {
+        let local = parse_local_branch("*\tmain").unwrap();
+        assert_eq!(local.name, "main");
+        assert!(local.current);
+        assert!(!local.remote);
+
+        let remote = parse_remote_branch("origin/main\t").unwrap();
+        assert_eq!(remote.name, "origin/main");
+        assert!(remote.remote);
+        assert!(parse_remote_branch("origin/HEAD\trefs/remotes/origin/main").is_none());
+
+        let parsed_remote = parse_remote("origin\tgit@example.com:repo.git (fetch)").unwrap();
+        assert_eq!(parsed_remote.name, "origin");
+        assert_eq!(parsed_remote.url, "git@example.com:repo.git");
+
+        let tag = parse_tag("v1.0.0    First release").unwrap();
+        assert_eq!(tag.name, "v1.0.0");
+        assert_eq!(tag.message, "First release");
+
+        let stash = parse_stash_line("stash@{0}: WIP on main").unwrap();
+        assert_eq!(stash.0, "stash@{0}");
+        assert_eq!(stash.1, "WIP on main");
+    }
+}

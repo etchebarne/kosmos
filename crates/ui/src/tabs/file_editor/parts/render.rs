@@ -84,39 +84,25 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         .into_any_element();
                 };
                 let theme = *cx.theme();
-                let (line, spans) =
-                    line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
-                let edit_state =
-                    edit_state_for_line(&buffer_for_render, &view_for_render, line_index, cx);
                 // Soft wrap can't scroll horizontally, so the gutter is never
                 // sticky — its offset is always 0.
-                render_row(
-                    EditorRow {
-                        line_number: line_index + 1,
-                        line,
-                        spans,
+                render_editor_line_row(
+                    &EditorLineRowContext {
+                        buffer: &buffer_for_render,
+                        view: &view_for_render,
+                        snapshot: &snapshot_for_render,
+                        root: &root_for_render,
+                        foldable_lines: &foldable_for_render,
+                        folded_lines: &folded_for_render,
                         soft_wrap,
-                        sticky_offset: px(0.0),
-                        foldable: foldable_for_render
-                            .get(line_index)
-                            .copied()
-                            .unwrap_or(false),
-                        folded: folded_for_render.contains(&line_index),
-                        show_fold_arrow: show_fold_arrows,
+                        show_fold_arrows,
                         hovered_fold_line,
-                        edit_state,
-                        hover: Some(LineHover {
-                            line_index,
-                            buffer: buffer_for_render.clone(),
-                            view: view_for_render.clone(),
-                            root: root_for_render.clone(),
-                        }),
                     },
-                    &view_for_render,
+                    line_index,
+                    px(0.0),
                     &theme,
                     cx,
                 )
-                .into_any_element()
             },
         )
         .size_full()
@@ -172,37 +158,23 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                         return render_spacer_row(i, sticky_offset, &view_for_render, theme)
                             .into_any_element();
                     };
-                    let (line, spans) =
-                        line_with_spans(&buffer_for_render, &snapshot_for_render, line_index, cx);
-                    let edit_state =
-                        edit_state_for_line(&buffer_for_render, &view_for_render, line_index, cx);
-                    render_row(
-                        EditorRow {
-                            line_number: line_index + 1,
-                            line,
-                            spans,
+                    render_editor_line_row(
+                        &EditorLineRowContext {
+                            buffer: &buffer_for_render,
+                            view: &view_for_render,
+                            snapshot: &snapshot_for_render,
+                            root: &root_for_render,
+                            foldable_lines: &foldable_for_render,
+                            folded_lines: &folded_for_render,
                             soft_wrap,
-                            sticky_offset,
-                            foldable: foldable_for_render
-                                .get(line_index)
-                                .copied()
-                                .unwrap_or(false),
-                            folded: folded_for_render.contains(&line_index),
-                            show_fold_arrow: show_fold_arrows,
+                            show_fold_arrows,
                             hovered_fold_line,
-                            edit_state,
-                            hover: Some(LineHover {
-                                line_index,
-                                buffer: buffer_for_render.clone(),
-                                view: view_for_render.clone(),
-                                root: root_for_render.clone(),
-                            }),
                         },
-                        &view_for_render,
+                        line_index,
+                        sticky_offset,
                         &theme,
                         cx,
                     )
-                    .into_any_element()
                 })
                 .collect()
         })
@@ -380,6 +352,57 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .child(breadcrumb)
         .child(editor_area)
         .into_any_element()
+}
+
+struct EditorLineRowContext<'a> {
+    buffer: &'a Entity<Buffer>,
+    view: &'a Entity<EditorView>,
+    snapshot: &'a Entity<SyntaxSnapshot>,
+    root: &'a Option<PathBuf>,
+    foldable_lines: &'a [bool],
+    folded_lines: &'a HashSet<usize>,
+    soft_wrap: bool,
+    show_fold_arrows: bool,
+    hovered_fold_line: Option<usize>,
+}
+
+fn render_editor_line_row(
+    context: &EditorLineRowContext<'_>,
+    line_index: usize,
+    sticky_offset: Pixels,
+    theme: &Theme,
+    cx: &App,
+) -> AnyElement {
+    let (line, spans) = line_with_spans(context.buffer, context.snapshot, line_index, cx);
+    let edit_state = edit_state_for_line(context.buffer, context.view, line_index, cx);
+    render_row(
+        EditorRow {
+            line_number: line_index + 1,
+            line,
+            spans,
+            soft_wrap: context.soft_wrap,
+            sticky_offset,
+            foldable: context
+                .foldable_lines
+                .get(line_index)
+                .copied()
+                .unwrap_or(false),
+            folded: context.folded_lines.contains(&line_index),
+            show_fold_arrow: context.show_fold_arrows,
+            hovered_fold_line: context.hovered_fold_line,
+            edit_state,
+            hover: Some(LineHover {
+                line_index,
+                buffer: context.buffer.clone(),
+                view: context.view.clone(),
+                root: context.root.clone(),
+            }),
+        },
+        context.view,
+        theme,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
