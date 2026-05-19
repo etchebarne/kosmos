@@ -21,13 +21,19 @@ impl PaneDelegate for KosmosApp {
             return;
         };
         let mut new_count: Option<usize> = None;
+        let mut new_tab_id: Option<usize> = None;
         self.mutate_active_tree(cx, |tree| {
+            let tab_id = tree.next_tab_id();
             if !tree.add_tab(pane_id, kind) {
                 return false;
             }
+            new_tab_id = Some(tab_id);
             new_count = tree.active_pane().map(|p| p.tabs().len());
             true
         });
+        if let Some(tab_id) = new_tab_id {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
         if let Some(count) = new_count {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
@@ -51,18 +57,7 @@ impl PaneDelegate for KosmosApp {
     }
 
     fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
-        let mut closed = false;
-        self.mutate_active_tree(cx, |tree| {
-            if tree.close_tab(pane_id, tab_id) {
-                closed = true;
-                true
-            } else {
-                false
-            }
-        });
-        if closed {
-            file_editor::EditorViewStore::drop_tab(tab_id, cx);
-        }
+        self.start_tab_close_animation(pane_id, tab_id, cx);
     }
 
     fn move_tab_before(
@@ -111,6 +106,7 @@ impl PaneDelegate for KosmosApp {
 
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
+        let mut new_tab: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
             if let Some((pane_id, tab_id)) = tree.find_tab(|tab| is_file_editor_tab(tab, &path)) {
                 if !tree.select_tab(pane_id, tab_id) {
@@ -121,10 +117,17 @@ impl PaneDelegate for KosmosApp {
             }
 
             let pane_id = tree.biggest_pane_id();
+            let tab_id = tree.next_tab_id();
             let path = path.clone();
             opened = tree.append_new_tab(pane_id, |id| file_editor_tab(id, path));
+            if opened.is_some() {
+                new_tab = Some((pane_id, tab_id));
+            }
             opened.is_some()
         });
+        if let Some((pane_id, tab_id)) = new_tab {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
@@ -132,6 +135,7 @@ impl PaneDelegate for KosmosApp {
 
     fn open_file_in_pane(&mut self, path: PathBuf, target_pane_id: usize, cx: &mut Context<Self>) {
         let mut opened: Option<(usize, usize)> = None;
+        let mut new_tab: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
             let existing = tree.pane(target_pane_id).and_then(|pane| {
                 pane.tabs()
@@ -147,10 +151,17 @@ impl PaneDelegate for KosmosApp {
                 return true;
             }
 
+            let tab_id = tree.next_tab_id();
             let path = path.clone();
             opened = tree.append_new_tab(target_pane_id, |id| file_editor_tab(id, path));
+            if opened.is_some() {
+                new_tab = Some((target_pane_id, tab_id));
+            }
             opened.is_some()
         });
+        if let Some((pane_id, tab_id)) = new_tab {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
@@ -164,6 +175,7 @@ impl PaneDelegate for KosmosApp {
         cx: &mut Context<Self>,
     ) {
         let mut opened: Option<(usize, usize)> = None;
+        let mut new_tab: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
             let Some(pane) = tree.pane(target_pane_id) else {
                 return false;
@@ -184,12 +196,19 @@ impl PaneDelegate for KosmosApp {
                 return true;
             }
 
+            let tab_id = tree.next_tab_id();
             let path = path.clone();
             opened = tree.insert_new_tab_before(target_pane_id, target_tab_id, |id| {
                 file_editor_tab(id, path)
             });
+            if opened.is_some() {
+                new_tab = Some((target_pane_id, tab_id));
+            }
             opened.is_some()
         });
+        if let Some((pane_id, tab_id)) = new_tab {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
@@ -203,12 +222,20 @@ impl PaneDelegate for KosmosApp {
         cx: &mut Context<Self>,
     ) {
         let mut opened: Option<(usize, usize)> = None;
+        let mut new_tab: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
+            let tab_id = tree.next_tab_id();
             let path = path.clone();
             opened = tree
                 .split_pane_with_new_tab(target_pane_id, drop_zone, |id| file_editor_tab(id, path));
+            if let Some((pane_id, _)) = opened {
+                new_tab = Some((pane_id, tab_id));
+            }
             opened.is_some()
         });
+        if let Some((pane_id, tab_id)) = new_tab {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
         if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }

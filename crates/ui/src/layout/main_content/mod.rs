@@ -2,7 +2,7 @@ mod pane;
 mod pane_tree;
 mod tab;
 
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
+use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
 use theme::ActiveTheme;
 use workspace::WorkspaceManager;
 
@@ -12,6 +12,7 @@ use crate::layout::landing;
 pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
     workspaces: &WorkspaceManager,
     tab_scrolls: &TabScrollHandles,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -22,7 +23,13 @@ pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
             .border_1()
             .border_color(theme.border)
             .overflow_hidden()
-            .child(pane_tree::render(tree, tree.root(), tab_scrolls, cx))
+            .child(pane_tree::render(
+                tree,
+                tree.root(),
+                tab_scrolls,
+                window,
+                cx,
+            ))
             .into_any_element(),
         None => landing::render(cx),
     }

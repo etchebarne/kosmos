@@ -7,7 +7,17 @@ actions!(pane_tree, [CloseTab, NewTab]);
 pub trait PaneTreeActionDelegate: Sized + 'static {
     fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool);
 
-    fn on_tab_appended(&mut self, _pane_id: usize, _new_tab_count: usize, _cx: &mut Context<Self>) {
+    fn close_active_tab(&mut self, cx: &mut Context<Self>) {
+        self.with_active_tree(cx, |tree| tree.close_active_tab());
+    }
+
+    fn on_tab_appended(
+        &mut self,
+        _pane_id: usize,
+        _tab_id: usize,
+        _new_tab_count: usize,
+        _cx: &mut Context<Self>,
+    ) {
     }
 }
 
@@ -18,18 +28,19 @@ pub trait WirePaneTreeActions: Sized {
 impl<E: InteractiveElement + 'static> WirePaneTreeActions for E {
     fn wire_pane_tree_actions<T: PaneTreeActionDelegate>(self, cx: &mut Context<T>) -> Self {
         self.on_action(cx.listener(|this, _: &CloseTab, _, cx| {
-            this.with_active_tree(cx, |tree| tree.close_active_tab());
+            this.close_active_tab(cx);
         }))
         .on_action(cx.listener(|this, _: &NewTab, _, cx| {
             let mut appended = None;
             this.with_active_tree(cx, |tree| {
                 let pane_id = tree.active_pane_id();
+                let tab_id = tree.next_tab_id();
                 let result = tree.append_new_tab(pane_id, |id| Tab::new(id, &registry::BLANK));
-                appended = result;
+                appended = result.map(|(pane_id, count)| (pane_id, tab_id, count));
                 result.is_some()
             });
-            if let Some((pane_id, count)) = appended {
-                this.on_tab_appended(pane_id, count, cx);
+            if let Some((pane_id, tab_id, count)) = appended {
+                this.on_tab_appended(pane_id, tab_id, count, cx);
             }
         }))
     }

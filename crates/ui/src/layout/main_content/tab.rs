@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use file_tree::NodeKind;
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, SharedString, div, prelude::*, rems, rgb,
+    Animation, AnimationExt, AnyElement, Context, IntoElement, MouseButton, SharedString, Window,
+    div, ease_in_out, prelude::*, rems, rgb,
 };
 
 use file_editor::BufferStore;
@@ -9,15 +12,22 @@ use panes::Pane;
 use tabs::Tab;
 use theme::ActiveTheme;
 
-use crate::delegate::PaneDelegate;
+use crate::delegate::{PaneDelegate, TabAnimationState};
 use crate::drag::TabDrag;
-use crate::metrics::{TAB_HEIGHT, TAB_RADIUS};
+use crate::metrics::{TAB_ANIMATION_DURATION_MS, TAB_HEIGHT, TAB_RADIUS};
 use crate::tabs::file_tree::drag::FileNodeDrag;
+
+const TAB_HORIZONTAL_PADDING_REM: f32 = 1.0;
+const TAB_ICON_WIDTH_REM: f32 = 1.0;
+const TAB_CLOSE_BUTTON_WIDTH_REM: f32 = 1.25;
+const TAB_CONTENT_GAP_REM: f32 = 0.5;
+const TAB_DIRTY_DOT_WIDTH_REM: f32 = 0.375;
 
 pub fn render<T: PaneDelegate>(
     pane: &Pane,
     tab: &Tab,
     can_close: bool,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -32,17 +42,88 @@ pub fn render<T: PaneDelegate>(
         .path
         .as_deref()
         .is_some_and(|path| BufferStore::is_path_dirty(path, cx));
+    let animation_phase = cx
+        .try_global::<TabAnimationState>()
+        .and_then(|state| state.phase(pane_id, id));
+    let target_width = tab_width_rems(window, title.as_ref(), is_dirty);
 
-    div()
+    let content = div()
+        .h_full()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .child(
+            Icon::new(icon_name)
+                .size(16.0)
+                .color(if is_active {
+                    theme.text
+                } else {
+                    theme.text_subtle
+                })
+                .into_any_element(),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(title.clone()),
+        )
+        .when(is_dirty, |this| {
+            this.child(
+                div()
+                    .size(rems(0.375))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(rgb(0xffffff)),
+            )
+        })
+        .child(
+            div()
+                .id(("close-tab", id))
+                .size(rems(1.25))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(rems(0.25))
+                .text_color(theme.text)
+                .invisible()
+                .when(can_close, |this| {
+                    let close_hover_bg = theme.bg_close_hover;
+                    this.group_hover(hover_group.clone(), |this| this.visible())
+                        .hover(move |this| this.bg(close_hover_bg))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(pane_id, id, cx);
+                        }))
+                })
+                .child(Icon::new(IconName::Close).size(14.0).color(theme.text)),
+        );
+    let content = if let Some(phase) = animation_phase {
+        let animation_id =
+            SharedString::from(format!("tab-content-{pane_id}-{id}-{}", phase.key()));
+        content
+            .with_animation(animation_id, tab_animation(), move |this, delta| {
+                this.opacity(phase.progress(delta))
+            })
+            .into_any_element()
+    } else {
+        content.into_any_element()
+    };
+
+    let tab = div()
         .id(("tab", id))
         .group(hover_group.clone())
         .relative()
         .flex()
         .flex_none()
         .items_center()
-        .gap_2()
         .h(TAB_HEIGHT)
-        .px_2()
+        .w(rems(target_width))
+        .overflow_hidden()
         .rounded(TAB_RADIUS)
         .when(is_active, |this| this.bg(theme.bg_selected))
         .text_color(if is_active {
@@ -106,53 +187,43 @@ pub fn render<T: PaneDelegate>(
                 .group_drag_over::<TabDrag>(hover_group.clone(), move |s| s.bg(accent))
                 .group_drag_over::<FileNodeDrag>(hover_group.clone(), move |s| s.bg(accent)),
         )
-        .child(
-            Icon::new(icon_name)
-                .size(16.0)
-                .color(if is_active {
-                    theme.text
-                } else {
-                    theme.text_subtle
-                })
-                .into_any_element(),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(title),
-        )
-        .when(is_dirty, |this| {
-            this.child(
-                div()
-                    .size(rems(0.375))
-                    .flex_none()
-                    .rounded_full()
-                    .bg(rgb(0xffffff)),
-            )
+        .child(content);
+
+    if let Some(phase) = animation_phase {
+        let animation_id = SharedString::from(format!("tab-width-{pane_id}-{id}-{}", phase.key()));
+        tab.with_animation(animation_id, tab_animation(), move |this, delta| {
+            this.w(rems(target_width * phase.progress(delta)))
         })
-        .child(
-            div()
-                .id(("close-tab", id))
-                .size(rems(1.25))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .text_color(theme.text)
-                .invisible()
-                .when(can_close, |this| {
-                    let close_hover_bg = theme.bg_close_hover;
-                    this.group_hover(hover_group, |this| this.visible())
-                        .hover(move |this| this.bg(close_hover_bg))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.close_tab(pane_id, id, cx);
-                        }))
-                })
-                .child(Icon::new(IconName::Close).size(14.0).color(theme.text)),
-        )
         .into_any_element()
+    } else {
+        tab.into_any_element()
+    }
+}
+
+fn tab_animation() -> Animation {
+    Animation::new(Duration::from_millis(TAB_ANIMATION_DURATION_MS)).with_easing(ease_in_out)
+}
+
+fn tab_width_rems(window: &mut Window, title: &str, is_dirty: bool) -> f32 {
+    let fixed_content_width = TAB_HORIZONTAL_PADDING_REM
+        + TAB_ICON_WIDTH_REM
+        + TAB_CLOSE_BUTTON_WIDTH_REM
+        + (2.0 * TAB_CONTENT_GAP_REM);
+    let dirty_indicator_width = if is_dirty {
+        TAB_DIRTY_DOT_WIDTH_REM + TAB_CONTENT_GAP_REM
+    } else {
+        0.0
+    };
+    fixed_content_width + dirty_indicator_width + measure_text_rems(window, title)
+}
+
+fn measure_text_rems(window: &mut Window, text: &str) -> f32 {
+    let style = window.text_style();
+    let run = style.to_run(text.len());
+    let rem_size = window.rem_size();
+    let font_size = rem_size * 0.875_f32;
+    let layout = window
+        .text_system()
+        .layout_line(text, font_size, &[run], None);
+    f32::from(layout.width) / f32::from(rem_size)
 }

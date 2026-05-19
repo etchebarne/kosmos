@@ -24,6 +24,7 @@ fn install_globals(cx: &mut App) {
     cx.set_global(theme::Theme::dark());
     cx.set_global(settings::Settings::load());
     cx.set_global(ui::delegate::SettingsUiState::new());
+    cx.set_global(ui::delegate::TabAnimationState::default());
 }
 
 fn install_feature_state(cx: &mut App) {

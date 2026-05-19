@@ -284,6 +284,7 @@ impl Render for KosmosApp {
             .child(div().flex_1().min_h_0().child(layout::main_content::render(
                 &self.workspaces,
                 &self.tab_scrolls,
+                window,
                 cx,
             )))
             .child(layout::bottom_bar::render(&theme))

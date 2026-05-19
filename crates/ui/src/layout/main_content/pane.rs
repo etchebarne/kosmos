@@ -1,5 +1,5 @@
 use file_tree::NodeKind;
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
+use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
 
 use icons::{Icon, IconName};
 use pane_tree::{DropZone, PaneTree};
@@ -18,6 +18,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     tree: &PaneTree,
     pane: &Pane,
     tab_scrolls: &TabScrollHandles,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -40,7 +41,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                     .into_any_element(),
             );
         }
-        tab_elements.push(tab::render(pane, t, can_close, cx));
+        tab_elements.push(tab::render(pane, t, can_close, window, cx));
     }
 
     let pane_id = pane.id();

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -14,6 +14,69 @@ pub struct WorkspaceMenuState {
     pub id: usize,
     pub position: Point<Pixels>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabAnimationPhase {
+    Opening,
+    Closing,
+}
+
+impl TabAnimationPhase {
+    pub fn progress(self, delta: f32) -> f32 {
+        match self {
+            Self::Opening => delta,
+            Self::Closing => 1.0 - delta,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Opening => "opening",
+            Self::Closing => "closing",
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct TabAnimationState {
+    opening: HashSet<(usize, usize)>,
+    closing: HashSet<(usize, usize)>,
+}
+
+impl TabAnimationState {
+    pub fn phase(&self, pane_id: usize, tab_id: usize) -> Option<TabAnimationPhase> {
+        let key = (pane_id, tab_id);
+        if self.closing.contains(&key) {
+            return Some(TabAnimationPhase::Closing);
+        }
+        if self.opening.contains(&key) {
+            return Some(TabAnimationPhase::Opening);
+        }
+        None
+    }
+
+    pub fn start_opening(&mut self, pane_id: usize, tab_id: usize) -> bool {
+        let key = (pane_id, tab_id);
+        self.closing.remove(&key);
+        self.opening.insert(key)
+    }
+
+    pub fn finish_opening(&mut self, pane_id: usize, tab_id: usize) -> bool {
+        self.opening.remove(&(pane_id, tab_id))
+    }
+
+    pub fn start_closing(&mut self, pane_id: usize, tab_id: usize) -> bool {
+        let key = (pane_id, tab_id);
+        self.opening.remove(&key);
+        self.closing.insert(key)
+    }
+
+    pub fn finish_closing(&mut self, pane_id: usize, tab_id: usize) -> bool {
+        self.closing.remove(&(pane_id, tab_id))
+    }
+}
+
+impl Global for TabAnimationState {}
 
 pub trait WorkspaceDelegate: Sized + 'static {
     fn open_workspace_picker(&mut self, cx: &mut Context<Self>);

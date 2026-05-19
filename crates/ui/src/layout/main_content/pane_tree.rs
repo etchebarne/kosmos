@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, DragMoveEvent, IntoElement, MouseButton, SharedString, div, prelude::*,
-    relative, rems,
+    AnyElement, Context, DragMoveEvent, IntoElement, MouseButton, SharedString, Window, div,
+    prelude::*, relative, rems,
 };
 
 use pane_tree::{PaneNode, PaneTree, SplitAxis};
@@ -15,11 +15,12 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     tree: &PaneTree,
     node: &PaneNode,
     tab_scrolls: &TabScrollHandles,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     match node {
-        PaneNode::Leaf(p) => pane::render(tree, p, tab_scrolls, cx),
+        PaneNode::Leaf(p) => pane::render(tree, p, tab_scrolls, window, cx),
         PaneNode::Split {
             id,
             axis,
@@ -69,7 +70,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         .when(axis == SplitAxis::Column, |this| {
                             this.h(relative(ratio)).w_full()
                         })
-                        .child(render(tree, first, tab_scrolls, cx)),
+                        .child(render(tree, first, tab_scrolls, window, cx)),
                 )
                 .child(render_resize_handle(split_id, axis, &theme, cx))
                 .child(
@@ -79,7 +80,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                         .min_h_0()
                         .when(axis == SplitAxis::Row, |this| this.h_full())
                         .when(axis == SplitAxis::Column, |this| this.w_full())
-                        .child(render(tree, second, tab_scrolls, cx)),
+                        .child(render(tree, second, tab_scrolls, window, cx)),
                 )
                 .into_any_element()
         }
