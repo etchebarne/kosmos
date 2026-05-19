@@ -47,6 +47,11 @@ impl EditorView {
     }
 
     pub fn set_line_input_layout(&mut self, layout: EditorLineInputLayout) {
+        let bounds = layout.text_layout.bounds();
+        self.line_layouts.retain(|line_index, existing| {
+            *line_index == layout.line_index
+                || !bounds_vertically_overlap(bounds, existing.text_layout.bounds())
+        });
         self.line_layouts.insert(layout.line_index, layout);
     }
 
@@ -153,4 +158,8 @@ impl EditorView {
         cx.notify();
     }
 
+}
+
+fn bounds_vertically_overlap(a: Bounds<Pixels>, b: Bounds<Pixels>) -> bool {
+    a.top() < b.bottom() && b.top() < a.bottom()
 }

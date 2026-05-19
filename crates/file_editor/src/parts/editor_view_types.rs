@@ -43,6 +43,7 @@ pub struct EditorView {
 pub struct EditorInputLayout {
     pub bounds: Bounds<Pixels>,
     pub visible_lines: Vec<usize>,
+    pub soft_wrap: bool,
     pub row_height: Pixels,
     pub scroll_x: Pixels,
     pub scroll_y: Pixels,

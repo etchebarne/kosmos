@@ -450,6 +450,7 @@ fn editor_input_layout(
     EditorInputLayout {
         bounds,
         visible_lines,
+        soft_wrap,
         row_height: rems(ROW_HEIGHT_REM).to_pixels(window.rem_size()),
         scroll_x: metrics
             .horizontal

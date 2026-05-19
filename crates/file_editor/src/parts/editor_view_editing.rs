@@ -197,24 +197,26 @@ impl EditorView {
     fn offset_for_point(&self, position: gpui::Point<Pixels>, cx: &Context<Self>) -> Option<usize> {
         let layout = self.input_layout.as_ref()?;
         let buffer = self.buffer.as_ref()?.read(cx);
-        for line_layout in self.line_layouts.values() {
-            let bounds = line_layout.text_layout.bounds();
-            if position.y < bounds.top() || position.y > bounds.bottom() {
-                continue;
-            }
-            let Some(line_range) = buffer.line_range(line_layout.line_index) else {
-                continue;
-            };
-            let line = &buffer.content()[line_range.clone()];
-            let display = &line[line_layout.display_byte_offset.min(line.len())..];
-            let display_offset = line_layout
-                .text_layout
-                .index_for_position(position)
-                .unwrap_or_else(|offset| offset);
-            let display_offset = clamp_to_char_boundary(display, display_offset.min(display.len()));
-            return Some(line_range.start + line_layout.display_byte_offset + display_offset);
+
+        if !layout.soft_wrap {
+            return self.offset_for_uniform_point(position, layout, &buffer);
         }
 
+        for line_layout in self.line_layouts.values() {
+            if let Some(offset) = offset_for_line_layout(position, line_layout, &buffer) {
+                return Some(offset);
+            }
+        }
+
+        self.offset_for_uniform_point(position, layout, &buffer)
+    }
+
+    fn offset_for_uniform_point(
+        &self,
+        position: gpui::Point<Pixels>,
+        layout: &EditorInputLayout,
+        buffer: &Buffer,
+    ) -> Option<usize> {
         if layout.row_height <= Pixels::ZERO || layout.char_width <= Pixels::ZERO {
             return Some(buffer.content().len());
         }
@@ -227,6 +229,13 @@ impl EditorView {
         let Some(line_range) = buffer.line_range(line_index) else {
             return Some(buffer.content().len());
         };
+
+        if let Some(line_layout) = self.line_layouts.get(&line_index)
+            && let Some(offset) = offset_for_line_layout(position, line_layout, buffer)
+        {
+            return Some(offset);
+        }
+
         let x = (position.x - layout.bounds.left() - layout.text_left + layout.scroll_x)
             .max(Pixels::ZERO);
         let column = (x / layout.char_width).round() as usize;
@@ -234,4 +243,24 @@ impl EditorView {
         Some(line_range.start + byte_for_visual_column(line, column))
     }
 
+}
+
+fn offset_for_line_layout(
+    position: gpui::Point<Pixels>,
+    line_layout: &EditorLineInputLayout,
+    buffer: &Buffer,
+) -> Option<usize> {
+    let bounds = line_layout.text_layout.bounds();
+    if position.y < bounds.top() || position.y > bounds.bottom() {
+        return None;
+    }
+    let line_range = buffer.line_range(line_layout.line_index)?;
+    let line = &buffer.content()[line_range.clone()];
+    let display = &line[line_layout.display_byte_offset.min(line.len())..];
+    let display_offset = line_layout
+        .text_layout
+        .index_for_position(position)
+        .unwrap_or_else(|offset| offset);
+    let display_offset = clamp_to_char_boundary(display, display_offset.min(display.len()));
+    Some(line_range.start + line_layout.display_byte_offset + display_offset)
 }
