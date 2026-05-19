@@ -312,7 +312,7 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
         .child(Icon::new(icon).size(14.0).color(theme.text_muted));
 
     Tooltip::new(format!("{id}-tooltip"), tooltip, button)
-        .position(TooltipPosition::Top)
+        .position(TooltipPosition::Bottom)
         .into_any_element()
 }
 
