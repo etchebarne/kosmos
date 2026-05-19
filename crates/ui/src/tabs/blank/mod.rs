@@ -1,9 +1,9 @@
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
 
-use icons::Icon;
 use tabs::{TabKind, registry};
 use theme::ActiveTheme;
 
+use crate::components::action_button;
 use crate::delegate::PaneDelegate;
 
 pub fn render<T: PaneDelegate>(pane_id: usize, tab_id: usize, cx: &mut Context<T>) -> AnyElement {
@@ -51,32 +51,10 @@ fn render_button<T: PaneDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let kind_id = kind.id;
-    div()
+    action_button::render(super::icon_for_kind(kind.id), kind.name, theme)
         .id(SharedString::new_static(kind_id))
-        .flex()
-        .items_center()
-        .gap_2()
-        .h(rems(2.25))
-        .px_3()
-        .rounded(rems(0.375))
-        .border_1()
-        .border_color(theme.border_subtle)
-        .bg(theme.bg_surface)
-        .text_color(theme.text)
-        .text_sm()
-        .hover(move |this| {
-            this.bg(theme.bg_hover)
-                .border_color(theme.border_strong)
-                .text_color(theme.text_emphasis)
-        })
         .on_click(cx.listener(move |this, _, _, cx| {
             this.replace_tab_kind(pane_id, tab_id, kind_id, cx);
         }))
-        .child(
-            Icon::new(super::icon_for_kind(kind.id))
-                .size(16.0)
-                .color(theme.text_muted),
-        )
-        .child(div().child(kind.name))
         .into_any_element()
 }

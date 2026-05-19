@@ -1,3 +1,5 @@
+pub(crate) mod action_button;
+
 pub mod dropdown;
 pub mod input;
 pub mod modal;
