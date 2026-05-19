@@ -89,6 +89,7 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
             div()
                 .min_w_0()
                 .flex_1()
+                .flex()
                 .child(branch_button(root_branch, branch, cx)),
         )
         .child(
@@ -205,9 +206,9 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> 
         .flex_none()
         .on_children_prepainted(move |bounds, window, _| {
             let gap = rems(SYNC_MENU_GAP_REM).to_pixels(window.rem_size());
-            *paint_anchor.borrow_mut() = bounds.first().map(|bounds| {
-                Point::new(bounds.right(), bounds.top() - gap)
-            });
+            *paint_anchor.borrow_mut() = bounds
+                .first()
+                .map(|bounds| Point::new(bounds.right(), bounds.top() - gap));
         })
         .child(
             div()
