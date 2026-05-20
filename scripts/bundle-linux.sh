@@ -32,9 +32,16 @@ cp "$TARGET_DIR/release/kosmos" "$APP_DIR/bin/kosmos"
 
 # Bundle non-system .so dependencies. Skip core glibc / GPU / compositor libs
 # that must come from the host (driver-specific or ABI-tied to the kernel).
-SKIP_LIBS='libc\.so\|libstdc++\.so\|libgcc_s\.so\|libm\.so\|libpthread\.so\|libdl\.so\|librt\.so\|libresolv\.so\|libnsl\.so\|libutil\.so\|ld-linux.*\.so\|libGL\.so\|libGLX\.so\|libEGL\.so\|libvulkan\.so\|libwayland-.*\.so\|libxkbcommon\.so\|libX11.*\.so\|libxcb.*\.so\|libdrm\.so\|libgbm\.so\|libasound\.so'
-ldd "$APP_DIR/bin/kosmos" | awk '{print $3}' | grep -v '^$' | grep -v -E "$SKIP_LIBS" | while read -r lib; do
+SKIP_LIBS='(^|/)lib(c|stdc\+\+|gcc_s|m|pthread|dl|rt|resolv|nsl|util)\.so|(^|/)ld-linux.*\.so|(^|/)lib(GL|GLX|EGL|vulkan)\.so|(^|/)libwayland-.*\.so|(^|/)libxkbcommon.*\.so|(^|/)libX.*\.so|(^|/)libxcb.*\.so|(^|/)lib(drm|gbm|asound|bsd|md)\.so'
+while read -r lib; do
     [ -f "$lib" ] && cp -L "$lib" "$APP_DIR/lib/"
+done < <(ldd "$APP_DIR/bin/kosmos" | awk '{print $3}' | grep -v '^$' | grep -v -E "$SKIP_LIBS" || true)
+
+for forbidden_lib in libc.so* libm.so* libpthread.so* libdl.so* librt.so* libresolv.so* libnsl.so* libutil.so* ld-linux*.so*; do
+    if compgen -G "$APP_DIR/lib/$forbidden_lib" >/dev/null; then
+        echo "Refusing to bundle host ABI library: $forbidden_lib" >&2
+        exit 1
+    fi
 done
 
 # Icons
