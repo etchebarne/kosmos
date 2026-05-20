@@ -771,9 +771,11 @@ fn round_to_device_pixels(value: Pixels, window: &Window) -> Pixels {
 }
 
 fn terminal_cell_width_pixels(metrics: TerminalMetrics, window: &mut Window) -> Pixels {
-    rems(metrics.cell_width_rem)
-        .to_pixels(window.rem_size())
-        .max(px(1.0))
+    round_to_device_pixels(
+        rems(metrics.cell_width_rem).to_pixels(window.rem_size()),
+        window,
+    )
+    .max(px(1.0))
 }
 
 fn terminal_row_height_pixels(metrics: TerminalMetrics, window: &mut Window) -> Pixels {
