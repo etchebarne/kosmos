@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{
     Arc,
     mpsc::{Receiver, Sender, channel},
@@ -25,6 +26,7 @@ const DEFAULT_CELL_WIDTH_PX: u16 = 8;
 const DEFAULT_CELL_HEIGHT_PX: u16 = 18;
 const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const CWD_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+const BELL_COOLDOWN: Duration = Duration::from_millis(80);
 const READ_BUFFER_SIZE: usize = 8192;
 const MIN_ZOOM_PERCENT: i64 = 50;
 const MAX_ZOOM_PERCENT: i64 = 200;
@@ -346,6 +348,7 @@ pub struct TerminalSession {
     last_cwd_refresh: Instant,
     snapshot_cache: Option<Arc<TerminalSnapshot>>,
     snapshot_dirty: bool,
+    last_bell: Option<Instant>,
 }
 
 impl TerminalSession {
@@ -383,6 +386,7 @@ impl TerminalSession {
             last_cwd_refresh: Instant::now(),
             snapshot_cache: None,
             snapshot_dirty: true,
+            last_bell: None,
         };
         session.start_process();
         session.start_poll_task(cx);
@@ -732,6 +736,7 @@ impl TerminalSession {
         self.start_process();
         self.start_poll_task(cx);
         self.invalidate_snapshot();
+        self.last_bell = None;
         cx.notify();
     }
 
@@ -946,16 +951,26 @@ impl TerminalSession {
                     self.invalidate_snapshot();
                     changed = true;
                 }
-                Event::MouseCursorDirty
-                | Event::CursorBlinkingChange
-                | Event::Wakeup
-                | Event::Bell => {
+                Event::Bell => self.ring_bell(),
+                Event::MouseCursorDirty | Event::CursorBlinkingChange | Event::Wakeup => {
                     self.invalidate_snapshot();
                     changed = true;
                 }
             }
         }
         changed
+    }
+
+    fn ring_bell(&mut self) {
+        let now = Instant::now();
+        if self
+            .last_bell
+            .is_some_and(|last_bell| now.duration_since(last_bell) < BELL_COOLDOWN)
+        {
+            return;
+        }
+        self.last_bell = Some(now);
+        play_terminal_bell();
     }
 
     fn write_to_pty(&mut self, bytes: &[u8]) {
@@ -1316,6 +1331,87 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, output_tx: Sender<Vec<u8>>) {
         }
         let _ = output_tx.send(Vec::new());
     });
+}
+
+struct TerminalBellCommand {
+    program: &'static str,
+    args: &'static [&'static str],
+}
+
+fn play_terminal_bell() {
+    let _ = std::thread::Builder::new()
+        .name("terminal-bell".to_string())
+        .spawn(|| {
+            for command in terminal_bell_commands() {
+                let Ok(status) = ProcessCommand::new(command.program)
+                    .args(command.args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                else {
+                    continue;
+                };
+                if status.success() {
+                    return;
+                }
+            }
+        });
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn terminal_bell_commands() -> &'static [TerminalBellCommand] {
+    &[
+        TerminalBellCommand {
+            program: "canberra-gtk-play",
+            args: &["-i", "bell", "-d", "kosmos"],
+        },
+        TerminalBellCommand {
+            program: "paplay",
+            args: &["/usr/share/sounds/freedesktop/stereo/bell.oga"],
+        },
+        TerminalBellCommand {
+            program: "pw-play",
+            args: &["/usr/share/sounds/freedesktop/stereo/bell.oga"],
+        },
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn terminal_bell_commands() -> &'static [TerminalBellCommand] {
+    &[
+        TerminalBellCommand {
+            program: "afplay",
+            args: &["/System/Library/Sounds/Tink.aiff"],
+        },
+        TerminalBellCommand {
+            program: "osascript",
+            args: &["-e", "beep"],
+        },
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn terminal_bell_commands() -> &'static [TerminalBellCommand] {
+    &[TerminalBellCommand {
+        program: "powershell",
+        args: &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[console]::beep(880,120)",
+        ],
+    }]
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "windows"
+)))]
+fn terminal_bell_commands() -> &'static [TerminalBellCommand] {
+    &[]
 }
 
 pub fn discover_shells() -> Vec<ShellProfile> {
