@@ -6,7 +6,16 @@ pkgdesc="A modern code editor."
 arch=('x86_64')
 url="https://github.com/etchebarne/kosmos"
 license=('MIT')
-makedepends=('rust' 'cargo')
+depends=(
+    'fontconfig'
+    'hicolor-icon-theme'
+    'libxcb'
+    'libxkbcommon'
+    'libxkbcommon-x11'
+    'vulkan-icd-loader'
+    'wayland'
+)
+makedepends=('cargo' 'pkgconf' 'rust' 'vulkan-headers')
 provides=('kosmos')
 conflicts=('kosmos-bin')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/etchebarne/kosmos/archive/refs/tags/v${pkgver}.tar.gz")
