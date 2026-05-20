@@ -90,6 +90,14 @@ If you installed via the AUR:
 sudo pacman -R kosmos-bin   # or: sudo pacman -R kosmos
 ```
 
+If you ran the AppImage and want to remove its desktop entry and icon:
+
+```bash
+./Kosmos-<version>-x86_64.AppImage --uninstall
+```
+
+Then delete the AppImage file itself.
+
 ## Building from source
 
 **Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) (stable) and the GPUI system dependencies.
