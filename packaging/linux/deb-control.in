@@ -1,0 +1,10 @@
+Package: kosmos
+Version: ${KOSMOS_VERSION}
+Section: editors
+Priority: optional
+Architecture: ${DEB_ARCH}
+Maintainer: Martin Etchebarne <martin@etchebarne.net>
+Homepage: https://github.com/etchebarne/kosmos
+Depends: libfontconfig1, libfreetype6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libvulkan1
+Description: A tab-based code editor.
+ A highly customizable and versatile tab-based code editor.

@@ -44,6 +44,31 @@ KOSMOS_BUNDLE_PATH=./kosmos-linux-x86_64.tar.gz \
     sh <(curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh)
 ```
 
+**Debian / Ubuntu**
+
+Download `kosmos_<version>_amd64.deb` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+
+```bash
+sudo apt install ./kosmos_<version>_amd64.deb
+```
+
+**Fedora / RPM distros**
+
+Download `kosmos-<version>-1.x86_64.rpm` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+
+```bash
+sudo dnf install ./kosmos-<version>-1.x86_64.rpm
+```
+
+**AppImage**
+
+Download `Kosmos-<version>-x86_64.AppImage` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+
+```bash
+chmod +x ./Kosmos-<version>-x86_64.AppImage
+./Kosmos-<version>-x86_64.AppImage
+```
+
 **Arch Linux (AUR)**
 
 ```bash
@@ -74,7 +99,8 @@ sudo pacman -R kosmos-bin   # or: sudo pacman -R kosmos
 
 ```bash
 sudo pacman -S --needed base-devel pkgconf openssl fontconfig \
-    libxkbcommon wayland vulkan-icd-loader vulkan-headers
+    libxcb libxkbcommon libxkbcommon-x11 wayland \
+    vulkan-icd-loader vulkan-headers
 ```
 
 </details>
@@ -84,7 +110,8 @@ sudo pacman -S --needed base-devel pkgconf openssl fontconfig \
 
 ```bash
 sudo apt install build-essential pkg-config libssl-dev libfontconfig-dev \
-    libxkbcommon-dev libwayland-dev libvulkan-dev
+    libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    libwayland-dev libvulkan-dev
 ```
 
 </details>
@@ -94,7 +121,8 @@ sudo apt install build-essential pkg-config libssl-dev libfontconfig-dev \
 
 ```bash
 sudo dnf install gcc pkgconf openssl-devel fontconfig-devel \
-    libxkbcommon-devel wayland-devel vulkan-loader-devel
+    libxcb-devel libxkbcommon-devel libxkbcommon-x11-devel \
+    wayland-devel vulkan-loader-devel
 ```
 
 </details>

@@ -1,0 +1,40 @@
+Name: kosmos
+Version: ${KOSMOS_VERSION}
+Release: 1%{?dist}
+Summary: A tab-based code editor.
+License: MIT
+URL: https://github.com/etchebarne/kosmos
+BuildArch: ${RPM_ARCH}
+Requires: fontconfig
+Requires: freetype
+Requires: libxcb
+Requires: libxkbcommon
+Requires: libxkbcommon-x11
+Requires: wayland
+Requires: vulkan-loader
+
+%global debug_package %{nil}
+
+%description
+A highly customizable and versatile tab-based code editor.
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}/opt
+cp -a "${KOSMOS_APP_DIR}" %{buildroot}/opt/Kosmos.app
+mkdir -p %{buildroot}/usr/bin
+ln -s /opt/Kosmos.app/bin/kosmos %{buildroot}/usr/bin/kosmos
+mkdir -p %{buildroot}/usr/share/applications
+cp -a "${KOSMOS_APP_DIR}/share/applications/net.etchebarne.Kosmos.desktop" %{buildroot}/usr/share/applications/net.etchebarne.Kosmos.desktop
+mkdir -p %{buildroot}/usr/share/icons
+cp -a "${KOSMOS_APP_DIR}/share/icons/hicolor" %{buildroot}/usr/share/icons/
+mkdir -p %{buildroot}/usr/share/licenses/kosmos
+cp -a "${KOSMOS_APP_DIR}/LICENSE" %{buildroot}/usr/share/licenses/kosmos/LICENSE
+
+%files
+/opt/Kosmos.app
+/usr/bin/kosmos
+/usr/share/applications/net.etchebarne.Kosmos.desktop
+/usr/share/icons/hicolor/*/apps/kosmos.png
+/usr/share/icons/hicolor/scalable/apps/kosmos.svg
+%license /usr/share/licenses/kosmos/LICENSE

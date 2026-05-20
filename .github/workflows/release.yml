@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Resolve tag
         id: tag
@@ -29,10 +29,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config gettext-base llvm \
+            build-essential pkg-config gettext-base llvm curl rpm desktop-file-utils \
             libssl-dev libfontconfig-dev libxkbcommon-dev \
             libxcb1-dev libxkbcommon-x11-dev \
             libwayland-dev libvulkan-dev
+
+      - name: Install AppImage tooling
+        run: |
+          curl -fsSL \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -o /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -41,20 +49,46 @@ jobs:
       - name: Bundle
         run: ./scripts/bundle-linux.sh
 
+      - name: Package deb and rpm
+        run: ./scripts/package-linux-deb-rpm.sh
+
+      - name: Package AppImage
+        run: ./scripts/package-linux-appimage.sh
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
+          version="${tag#v}"
           arch="$(uname -m)"
-          tarball="target/release/kosmos-linux-${arch}.tar.gz"
+          case "$arch" in
+            x86_64|amd64)
+              bundle_arch="x86_64"
+              deb_arch="amd64"
+              rpm_arch="x86_64"
+              appimage_arch="x86_64"
+              ;;
+            *)
+              echo "Unsupported release architecture: $arch" >&2
+              exit 1
+              ;;
+          esac
+          artifacts=(
+            "target/release/kosmos-linux-${bundle_arch}.tar.gz"
+            "target/release/kosmos_${version}_${deb_arch}.deb"
+            "target/release/kosmos-${version}-1.${rpm_arch}.rpm"
+            "target/release/Kosmos-${version}-${appimage_arch}.AppImage"
+            scripts/install.sh
+            scripts/uninstall.sh
+          )
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$tarball" scripts/install.sh scripts/uninstall.sh --clobber
+            gh release upload "$tag" "${artifacts[@]}" --clobber
           else
             gh release create "$tag" \
               --title "Kosmos $tag" \
               --draft \
               --generate-notes \
-              "$tarball" scripts/install.sh scripts/uninstall.sh
+              "${artifacts[@]}"
           fi
