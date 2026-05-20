@@ -13,9 +13,10 @@ use gpui::{
 };
 use icons::{Icon, IconName};
 use terminal::{
-    ShellProfile, TerminalCell, TerminalColor, TerminalCursorShape, TerminalKey, TerminalKeyInput,
-    TerminalMouseButton, TerminalMouseModifiers, TerminalPalette, TerminalSelectionRange,
-    TerminalSession, TerminalSnapshot, TerminalStatus, TerminalStore, TerminalStyle, TerminalTheme,
+    ShellProfile, TerminalCell, TerminalCellRun, TerminalColor, TerminalCursorShape, TerminalKey,
+    TerminalKeyInput, TerminalMouseButton, TerminalMouseModifiers, TerminalPalette,
+    TerminalSelectionRange, TerminalSession, TerminalSnapshot, TerminalStatus, TerminalStore,
+    TerminalStyle, TerminalTheme,
 };
 use theme::{ActiveTheme, Theme};
 
@@ -92,16 +93,16 @@ pub fn render<T: 'static>(
     let focus_handle = session.read(cx).focus_handle();
     let is_focused = focus_handle.is_focused(window);
 
+    let bottom_bar = render_bottom_bar(&session, &snapshot, cx);
     let screen = render_screen(
         &session,
-        &snapshot,
+        snapshot,
         metrics,
         focus_handle,
         is_focused,
         window,
         cx,
     );
-    let bottom_bar = render_bottom_bar(&session, &snapshot, cx);
 
     div()
         .size_full()
@@ -232,16 +233,24 @@ fn terminal_metrics(
     let font_family = terminal_font_family(window);
     let scale = zoom_percent as f32 / 100.0;
     let font_size_rem = BASE_FONT_SIZE_REM * scale;
+    let cell_width_rem = terminal_base_cell_width_rem(font_family, window) * scale;
     TerminalMetrics {
         font_family,
         font_size_rem,
         row_height_rem: BASE_ROW_HEIGHT_REM * scale,
-        cell_width_rem: measure_terminal_cell_width_rem(font_family, font_size_rem, window)
-            .unwrap_or(BASE_CELL_WIDTH_REM * scale),
+        cell_width_rem,
         screen_background,
         cursor_color,
         selection_color,
     }
+}
+
+fn terminal_base_cell_width_rem(font_family: &str, window: &mut Window) -> f32 {
+    static TERMINAL_BASE_CELL_WIDTH_REM: OnceLock<f32> = OnceLock::new();
+    *TERMINAL_BASE_CELL_WIDTH_REM.get_or_init(|| {
+        measure_terminal_cell_width_rem(font_family, BASE_FONT_SIZE_REM, window)
+            .unwrap_or(BASE_CELL_WIDTH_REM)
+    })
 }
 
 fn terminal_font_family(window: &mut Window) -> &'static str {
@@ -368,7 +377,7 @@ fn dominant_background_color(
 
 fn render_screen<T: 'static>(
     session: &Entity<TerminalSession>,
-    snapshot: &TerminalSnapshot,
+    snapshot: TerminalSnapshot,
     metrics: TerminalMetrics,
     focus_handle: FocusHandle,
     is_focused: bool,
@@ -398,7 +407,8 @@ fn render_screen<T: 'static>(
     let bounds_for_resize = terminal_bounds.clone();
     let columns = snapshot.columns;
     let rows = snapshot.screen_rows;
-    let surface = render_terminal_surface(snapshot.clone(), metrics);
+    let cursor = snapshot.cursor;
+    let surface = render_terminal_surface(snapshot, metrics);
 
     div()
         .relative()
@@ -640,7 +650,7 @@ fn render_screen<T: 'static>(
                 .min_h_0()
                 .relative()
                 .child(surface)
-                .when_some(snapshot.cursor, |this, cursor| {
+                .when_some(cursor, |this, cursor| {
                     this.child(render_cursor(cursor, metrics, is_focused))
                 })
                 .child(
@@ -681,32 +691,18 @@ fn render_terminal_surface(snapshot: TerminalSnapshot, metrics: TerminalMetrics)
             let mut text_runs = Vec::new();
             let mut custom_glyph_rects = Vec::new();
             for (row_index, row) in snapshot.rows.iter().enumerate() {
-                let mut text_builder: Option<TerminalTextRunBuilder> = None;
-                for cell in &row.cells {
-                    let cell_bounds =
-                        terminal_cell_bounds(row_index, cell.column, 1, cell.width, grid);
-                    if let Some(glyph_rects) = terminal_custom_glyph_rects(cell, cell_bounds) {
-                        flush_terminal_text_run(
-                            &mut text_builder,
-                            grid,
-                            metrics,
-                            window,
-                            &mut text_runs,
-                        );
-                        custom_glyph_rects.extend(glyph_rects);
-                    } else {
-                        push_terminal_text_cell(
-                            &mut text_builder,
-                            row_index,
-                            cell,
-                            grid,
-                            metrics,
-                            window,
-                            &mut text_runs,
-                        );
-                    }
+                for run in &row.cell_runs {
+                    push_terminal_cell_run(
+                        row_index,
+                        run,
+                        &row.cells,
+                        grid,
+                        metrics,
+                        window,
+                        &mut text_runs,
+                        &mut custom_glyph_rects,
+                    );
                 }
-                flush_terminal_text_run(&mut text_builder, grid, metrics, window, &mut text_runs);
             }
 
             TerminalSurfacePaintState {
@@ -817,6 +813,86 @@ fn shape_terminal_text_run(
     Some(TerminalPaintTextRun { origin, line })
 }
 
+fn push_terminal_cell_run(
+    row: usize,
+    run: &TerminalCellRun,
+    cells: &[TerminalCell],
+    grid: TerminalGridPixels,
+    metrics: TerminalMetrics,
+    window: &mut Window,
+    text_runs: &mut Vec<TerminalPaintTextRun>,
+    custom_glyph_rects: &mut Vec<TerminalPaintCustomGlyphRect>,
+) {
+    if !terminal_text_has_visible_content(&run.text, run.style) {
+        return;
+    }
+
+    if terminal_text_contains_custom_glyph_candidate(&run.text) {
+        push_terminal_mixed_cell_run(
+            row,
+            run,
+            cells,
+            grid,
+            metrics,
+            window,
+            text_runs,
+            custom_glyph_rects,
+        );
+        return;
+    }
+
+    let origin = point(
+        grid.origin.x + grid.cell_width * run.column,
+        grid.origin.y + grid.row_height * row,
+    );
+    if let Some(text_run) =
+        shape_terminal_text_run(run.text.clone(), run.style, origin, grid, metrics, window)
+    {
+        text_runs.push(text_run);
+    }
+}
+
+fn push_terminal_mixed_cell_run(
+    row: usize,
+    run: &TerminalCellRun,
+    cells: &[TerminalCell],
+    grid: TerminalGridPixels,
+    metrics: TerminalMetrics,
+    window: &mut Window,
+    text_runs: &mut Vec<TerminalPaintTextRun>,
+    custom_glyph_rects: &mut Vec<TerminalPaintCustomGlyphRect>,
+) {
+    let mut text_builder: Option<TerminalTextRunBuilder> = None;
+    let run_end = run.column + run.width;
+
+    for cell in cells {
+        if cell.column >= run_end {
+            break;
+        }
+        if cell.column + cell.width <= run.column {
+            continue;
+        }
+
+        let cell_bounds = terminal_cell_bounds(row, cell.column, 1, cell.width, grid);
+        if let Some(glyph_rects) = terminal_custom_glyph_rects(cell, cell_bounds) {
+            flush_terminal_text_run(&mut text_builder, grid, metrics, window, text_runs);
+            custom_glyph_rects.extend(glyph_rects);
+        } else {
+            push_terminal_text_cell(
+                &mut text_builder,
+                row,
+                cell,
+                grid,
+                metrics,
+                window,
+                text_runs,
+            );
+        }
+    }
+
+    flush_terminal_text_run(&mut text_builder, grid, metrics, window, text_runs);
+}
+
 fn push_terminal_text_cell(
     builder: &mut Option<TerminalTextRunBuilder>,
     row: usize,
@@ -880,6 +956,17 @@ fn terminal_cell_has_visible_text(cell: &TerminalCell) -> bool {
 
 fn terminal_text_has_visible_content(text: &str, style: TerminalStyle) -> bool {
     style.underline || style.strikeout || text.chars().any(|character| !character.is_whitespace())
+}
+
+fn terminal_text_contains_custom_glyph_candidate(text: &str) -> bool {
+    text.chars().any(is_terminal_custom_glyph_candidate)
+}
+
+fn is_terminal_custom_glyph_candidate(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x2500..=0x259f | 0x2800..=0x28ff | 0x1fb00..=0x1fbff
+    )
 }
 
 fn terminal_custom_glyph_rects(

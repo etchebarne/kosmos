@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -21,6 +21,7 @@ const DEFAULT_ROWS: usize = 24;
 const DEFAULT_CELL_WIDTH_PX: u16 = 8;
 const DEFAULT_CELL_HEIGHT_PX: u16 = 18;
 const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const CWD_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 const READ_BUFFER_SIZE: usize = 8192;
 const MIN_ZOOM_PERCENT: i64 = 50;
 const MAX_ZOOM_PERCENT: i64 = 200;
@@ -339,6 +340,7 @@ pub struct TerminalSession {
     zoom_percent: i64,
     status: TerminalStatus,
     title: Option<String>,
+    last_cwd_refresh: Instant,
 }
 
 impl TerminalSession {
@@ -373,6 +375,7 @@ impl TerminalSession {
             zoom_percent: 100,
             status: TerminalStatus::Restarting,
             title: None,
+            last_cwd_refresh: Instant::now(),
         };
         session.start_process();
         session.start_poll_task(cx);
@@ -695,6 +698,7 @@ impl TerminalSession {
         self.poll_task = None;
         self.parser = Processor::new();
         self.term = new_term(self.size, self.event_tx.clone());
+        self.last_cwd_refresh = Instant::now();
         self.start_process();
         self.start_poll_task(cx);
         cx.notify();
@@ -780,7 +784,7 @@ impl TerminalSession {
     fn poll(&mut self, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
         let mut disconnected = false;
-        let mut chunks = Vec::new();
+        let mut output: Option<Vec<u8>> = None;
 
         if let Some(rx) = &self.output_rx {
             loop {
@@ -789,7 +793,10 @@ impl TerminalSession {
                         disconnected = true;
                         break;
                     }
-                    Ok(chunk) => chunks.push(chunk),
+                    Ok(chunk) => match output.as_mut() {
+                        Some(bytes) => bytes.extend_from_slice(&chunk),
+                        None => output = Some(chunk),
+                    },
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         disconnected = true;
@@ -798,11 +805,11 @@ impl TerminalSession {
                 }
             }
         }
-        for chunk in chunks {
-            self.feed_bytes(&chunk);
+        if let Some(output) = output {
+            self.feed_bytes(&output);
             changed = true;
         }
-        if self.refresh_current_directory() {
+        if self.refresh_current_directory_if_due() {
             changed = true;
         }
         if disconnected {
@@ -849,6 +856,14 @@ impl TerminalSession {
         }
         self.cwd = cwd;
         true
+    }
+
+    fn refresh_current_directory_if_due(&mut self) -> bool {
+        if self.last_cwd_refresh.elapsed() < CWD_REFRESH_INTERVAL {
+            return false;
+        }
+        self.last_cwd_refresh = Instant::now();
+        self.refresh_current_directory()
     }
 
     fn drain_events(&mut self) -> bool {
