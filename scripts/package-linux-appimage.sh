@@ -81,11 +81,11 @@ install_desktop_metadata() {
     desktop_dir="$data_home/applications"
     icon_dir="$data_home/icons/hicolor/512x512/apps"
     desktop_file="$desktop_dir/$KOSMOS_APP_ID.desktop"
-    icon_name="$KOSMOS_APP_ID"
+    icon_file="$icon_dir/kosmos-appimage.png"
     escaped_appimage="$(escape_desktop_exec_path "$APPIMAGE")"
 
     mkdir -p "$desktop_dir" "$icon_dir"
-    cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/kosmos.png" "$icon_dir/$icon_name.png"
+    cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/kosmos.png" "$icon_file"
     cat > "$desktop_file" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -94,7 +94,7 @@ Name=Kosmos
 GenericName=Code Editor
 Comment=A highly customizable and versatile tab-based code editor.
 Exec="$escaped_appimage" %U
-Icon=$icon_name
+Icon=$icon_file
 Terminal=false
 Categories=Development;TextEditor;IDE;
 Keywords=kosmos;editor;code;
@@ -102,8 +102,16 @@ StartupNotify=true
 StartupWMClass=$KOSMOS_APP_ID
 EOF
 
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+    fi
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
+    fi
+    if command -v kbuildsycoca6 >/dev/null 2>&1; then
+        kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
+    elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+        kbuildsycoca5 --noincremental >/dev/null 2>&1 || true
     fi
 }
 
