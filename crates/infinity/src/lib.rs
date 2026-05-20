@@ -41,6 +41,49 @@ pub struct CanvasPanel {
     pub z_index: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelResizeHandle {
+    Top,
+    Right,
+    Bottom,
+    Left,
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+
+impl PanelResizeHandle {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Right => "right",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+            Self::TopLeft => "top-left",
+            Self::TopRight => "top-right",
+            Self::BottomRight => "bottom-right",
+            Self::BottomLeft => "bottom-left",
+        }
+    }
+
+    const fn resizes_left(self) -> bool {
+        matches!(self, Self::Left | Self::TopLeft | Self::BottomLeft)
+    }
+
+    const fn resizes_right(self) -> bool {
+        matches!(self, Self::Right | Self::TopRight | Self::BottomRight)
+    }
+
+    const fn resizes_top(self) -> bool {
+        matches!(self, Self::Top | Self::TopLeft | Self::TopRight)
+    }
+
+    const fn resizes_bottom(self) -> bool {
+        matches!(self, Self::Bottom | Self::BottomLeft | Self::BottomRight)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Viewport {
     pub pan: CanvasPoint,
@@ -85,7 +128,9 @@ pub enum CanvasInteraction {
     },
     ResizingPanel {
         panel_id: usize,
+        handle: PanelResizeHandle,
         pointer_start: CanvasPoint,
+        position_start: CanvasPoint,
         size_start: CanvasSize,
     },
 }
@@ -113,6 +158,18 @@ impl InfinityCanvas {
     }
 
     pub fn add_panel(&mut self, kind: impl Into<String>, center: CanvasPoint) -> usize {
+        let size = CanvasSize::new(DEFAULT_PANEL_WIDTH_REM, DEFAULT_PANEL_HEIGHT_REM);
+        self.add_panel_at_position(
+            kind,
+            CanvasPoint::new(center.x - size.width / 2.0, center.y - size.height / 2.0),
+        )
+    }
+
+    pub fn add_panel_at_position(
+        &mut self,
+        kind: impl Into<String>,
+        position: CanvasPoint,
+    ) -> usize {
         let id = self.next_panel_id;
         self.next_panel_id += 1;
 
@@ -120,10 +177,7 @@ impl InfinityCanvas {
         let panel = CanvasPanel {
             id,
             kind: kind.into(),
-            position: snap_point(CanvasPoint::new(
-                center.x - size.width / 2.0,
-                center.y - size.height / 2.0,
-            )),
+            position: snap_point(position),
             size,
             z_index: self.next_panel_z_index(),
         };
@@ -168,14 +222,24 @@ impl InfinityCanvas {
         true
     }
 
-    pub fn begin_resize_panel(&mut self, panel_id: usize, pointer_screen: CanvasPoint) -> bool {
-        let Some(size_start) = self.panel(panel_id).map(|panel| panel.size) else {
+    pub fn begin_resize_panel(
+        &mut self,
+        panel_id: usize,
+        handle: PanelResizeHandle,
+        pointer_screen: CanvasPoint,
+    ) -> bool {
+        let Some((position_start, size_start)) = self
+            .panel(panel_id)
+            .map(|panel| (panel.position, panel.size))
+        else {
             return false;
         };
         self.bring_panel_to_front(panel_id);
         self.active_interaction = Some(CanvasInteraction::ResizingPanel {
             panel_id,
+            handle,
             pointer_start: pointer_screen,
+            position_start,
             size_start,
         });
         true
@@ -213,19 +277,23 @@ impl InfinityCanvas {
             }
             CanvasInteraction::ResizingPanel {
                 panel_id,
+                handle,
                 pointer_start,
+                position_start,
                 size_start,
             } => {
                 let zoom = self.viewport.zoom;
+                let delta = CanvasPoint::new(
+                    (pointer_screen.x - pointer_start.x) / zoom,
+                    (pointer_screen.y - pointer_start.y) / zoom,
+                );
                 let Some(panel) = self.panel_mut(panel_id) else {
                     return false;
                 };
-                panel.size = snap_size(CanvasSize::new(
-                    (size_start.width + (pointer_screen.x - pointer_start.x) / zoom)
-                        .max(MIN_PANEL_WIDTH_REM),
-                    (size_start.height + (pointer_screen.y - pointer_start.y) / zoom)
-                        .max(MIN_PANEL_HEIGHT_REM),
-                ));
+                let (position, size) =
+                    resized_panel_geometry(position_start, size_start, handle, delta);
+                panel.position = position;
+                panel.size = size;
                 true
             }
         }
@@ -336,10 +404,38 @@ fn snap_point(point: CanvasPoint) -> CanvasPoint {
     CanvasPoint::new(snap_value(point.x), snap_value(point.y))
 }
 
-fn snap_size(size: CanvasSize) -> CanvasSize {
-    CanvasSize::new(
-        snap_value(size.width).max(MIN_PANEL_WIDTH_REM),
-        snap_value(size.height).max(MIN_PANEL_HEIGHT_REM),
+fn resized_panel_geometry(
+    position_start: CanvasPoint,
+    size_start: CanvasSize,
+    handle: PanelResizeHandle,
+    delta: CanvasPoint,
+) -> (CanvasPoint, CanvasSize) {
+    let start_left = position_start.x;
+    let start_top = position_start.y;
+    let start_right = position_start.x + size_start.width;
+    let start_bottom = position_start.y + size_start.height;
+
+    let mut left = start_left;
+    let mut right = start_right;
+    let mut top = start_top;
+    let mut bottom = start_bottom;
+
+    if handle.resizes_left() {
+        left = snap_value(start_left + delta.x).min(start_right - MIN_PANEL_WIDTH_REM);
+    }
+    if handle.resizes_right() {
+        right = snap_value(start_right + delta.x).max(start_left + MIN_PANEL_WIDTH_REM);
+    }
+    if handle.resizes_top() {
+        top = snap_value(start_top + delta.y).min(start_bottom - MIN_PANEL_HEIGHT_REM);
+    }
+    if handle.resizes_bottom() {
+        bottom = snap_value(start_bottom + delta.y).max(start_top + MIN_PANEL_HEIGHT_REM);
+    }
+
+    (
+        CanvasPoint::new(left, top),
+        CanvasSize::new(right - left, bottom - top),
     )
 }
 
@@ -396,7 +492,11 @@ mod tests {
         let mut canvas = InfinityCanvas::default();
         let panel_id = canvas.add_panel("terminal", CanvasPoint::new(0.0, 0.0));
 
-        assert!(canvas.begin_resize_panel(panel_id, CanvasPoint::new(10.0, 10.0)));
+        assert!(canvas.begin_resize_panel(
+            panel_id,
+            PanelResizeHandle::BottomRight,
+            CanvasPoint::new(10.0, 10.0)
+        ));
         assert!(canvas.drag_to(CanvasPoint::new(-100.0, -100.0)));
 
         let size = canvas.panels()[0].size;
@@ -404,5 +504,24 @@ mod tests {
             size,
             CanvasSize::new(MIN_PANEL_WIDTH_REM, MIN_PANEL_HEIGHT_REM)
         );
+    }
+
+    #[test]
+    fn resizing_from_left_moves_position_and_preserves_right_edge() {
+        let mut canvas = InfinityCanvas::default();
+        let panel_id = canvas.add_panel("terminal", CanvasPoint::new(0.0, 0.0));
+        let initial = canvas.panels()[0].clone();
+        let initial_right = initial.position.x + initial.size.width;
+
+        assert!(canvas.begin_resize_panel(
+            panel_id,
+            PanelResizeHandle::Left,
+            CanvasPoint::new(0.0, 0.0)
+        ));
+        assert!(canvas.drag_to(CanvasPoint::new(4.0, 0.0)));
+
+        let resized = &canvas.panels()[0];
+        assert_eq!(resized.position.x, initial.position.x + 4.0);
+        assert_eq!(resized.position.x + resized.size.width, initial_right);
     }
 }

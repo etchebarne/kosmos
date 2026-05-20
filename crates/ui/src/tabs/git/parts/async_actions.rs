@@ -368,7 +368,9 @@ pub fn close_menu(cx: &mut App) -> bool {
     cx.update_global::<GitUiState, _>(|state, _| {
         let had_menu = state.menu_position.is_some() || state.sync_menu_position.is_some();
         state.menu_position = None;
+        state.menu_namespace = None;
         state.sync_menu_position = None;
+        state.sync_menu_namespace = None;
         had_menu
     })
 }

@@ -22,6 +22,42 @@ use theme::ActiveTheme;
 use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal, toast};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
+thread_local! {
+    static GIT_UI_NAMESPACE: RefCell<Vec<SharedString>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn with_git_ui_namespace<R>(namespace: impl Into<SharedString>, f: impl FnOnce() -> R) -> R {
+    let _guard = GitUiNamespaceGuard::new(namespace.into());
+    f()
+}
+
+struct GitUiNamespaceGuard;
+
+impl GitUiNamespaceGuard {
+    fn new(namespace: SharedString) -> Self {
+        GIT_UI_NAMESPACE.with(|stack| stack.borrow_mut().push(namespace));
+        Self
+    }
+}
+
+impl Drop for GitUiNamespaceGuard {
+    fn drop(&mut self) {
+        GIT_UI_NAMESPACE.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+fn current_git_ui_namespace() -> SharedString {
+    GIT_UI_NAMESPACE.with(|stack| {
+        stack
+            .borrow()
+            .last()
+            .cloned()
+            .unwrap_or_else(|| SharedString::new_static("git"))
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GitModal {
     Branches,
@@ -115,7 +151,9 @@ struct GitUiState {
     watch_generation: u64,
     watch_task: Option<Task<()>>,
     menu_position: Option<Point<Pixels>>,
+    menu_namespace: Option<SharedString>,
     sync_menu_position: Option<Point<Pixels>>,
+    sync_menu_namespace: Option<SharedString>,
     modal: Option<GitModal>,
     last_error: Option<String>,
     last_sync_action: GitSyncAction,
@@ -165,14 +203,23 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
     };
 
     ensure_summary(&root, cx);
+    let namespace = current_git_ui_namespace();
 
     let (summary, loading, menu_position, sync_menu_position) = {
         let state = cx.global::<GitUiState>();
         (
             state.summary.clone(),
             state.loading,
-            state.menu_position,
-            state.sync_menu_position,
+            state
+                .menu_namespace
+                .as_ref()
+                .filter(|active| *active == &namespace)
+                .and(state.menu_position),
+            state
+                .sync_menu_namespace
+                .as_ref()
+                .filter(|active| *active == &namespace)
+                .and(state.sync_menu_position),
         )
     };
     let dismiss_layer = (menu_position.is_some() || sync_menu_position.is_some())

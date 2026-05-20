@@ -12,7 +12,7 @@ use gpui::{
 };
 use icons::{Icon, IconName};
 use infinity::{
-    CanvasPanel, CanvasPoint, InfinityCanvasKey, InfinityCanvasStore, Viewport,
+    CanvasPanel, CanvasPoint, InfinityCanvasKey, InfinityCanvasStore, PanelResizeHandle, Viewport,
     virtual_panel_tab_id,
 };
 use tabs::{Tab, TabKind, registry};
@@ -21,7 +21,7 @@ use theme::ActiveTheme;
 use crate::components::tooltip::with_tooltip_namespace;
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
-const PANEL_HEADER_HEIGHT_REM: f32 = 2.25;
+const PANEL_HEADER_HEIGHT_REM: f32 = 2.75;
 const PANEL_RESIZE_HANDLE_REM: f32 = 1.0;
 const MENU_MIN_WIDTH_REM: f32 = 12.0;
 const SCROLL_ZOOM_RATE: f32 = 0.12;
@@ -74,7 +74,7 @@ struct InfinityContextMenu {
 enum InfinityDragKind {
     Pan,
     MovePanel(usize),
-    ResizePanel(usize),
+    ResizePanel(usize, PanelResizeHandle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,10 +98,14 @@ impl InfinityDrag {
         }
     }
 
-    const fn resize_panel(key: InfinityCanvasKey, panel_id: usize) -> Self {
+    const fn resize_panel(
+        key: InfinityCanvasKey,
+        panel_id: usize,
+        handle: PanelResizeHandle,
+    ) -> Self {
         Self {
             key,
-            kind: InfinityDragKind::ResizePanel(panel_id),
+            kind: InfinityDragKind::ResizePanel(panel_id, handle),
         }
     }
 }
@@ -474,7 +478,6 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
     let title = panel_title(&panel);
     let icon_name = super::icon_for_kind(&panel.kind);
     let bounds_for_move = canvas_bounds.clone();
-    let bounds_for_resize = canvas_bounds.clone();
     let tab = embedded_tab(owner_tab_id, workspace_path, &panel);
     let file_tree_scroll = (panel.kind == registry::FILE_TREE.id)
         .then(|| cx.update_global::<InfinityUi, _>(|ui, _| ui.file_tree_scroll(key, panel_id)));
@@ -596,43 +599,124 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
                 .overflow_hidden()
                 .child(panel_body),
         )
-        .child(
-            div()
-                .id(("infinity-panel-resize", panel_id))
-                .absolute()
-                .right_0()
-                .bottom_0()
-                .size(rems((PANEL_RESIZE_HANDLE_REM * viewport.zoom).max(0.75)))
+        .children(render_resize_handles(
+            key,
+            panel_id,
+            viewport.zoom,
+            canvas_bounds,
+            cx,
+        ))
+        .into_any_element()
+}
+
+fn render_resize_handles<T: PaneDelegate + SettingsDelegate>(
+    key: InfinityCanvasKey,
+    panel_id: usize,
+    zoom: f32,
+    canvas_bounds: CanvasBounds,
+    cx: &mut Context<T>,
+) -> Vec<AnyElement> {
+    [
+        PanelResizeHandle::Top,
+        PanelResizeHandle::Right,
+        PanelResizeHandle::Bottom,
+        PanelResizeHandle::Left,
+        PanelResizeHandle::TopLeft,
+        PanelResizeHandle::TopRight,
+        PanelResizeHandle::BottomRight,
+        PanelResizeHandle::BottomLeft,
+    ]
+    .into_iter()
+    .map(|handle| render_resize_handle(key, panel_id, handle, zoom, canvas_bounds.clone(), cx))
+    .collect()
+}
+
+fn render_resize_handle<T: PaneDelegate + SettingsDelegate>(
+    key: InfinityCanvasKey,
+    panel_id: usize,
+    handle: PanelResizeHandle,
+    zoom: f32,
+    canvas_bounds: CanvasBounds,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let hit_size = (PANEL_RESIZE_HANDLE_REM * zoom).max(0.75);
+    div()
+        .id(SharedString::from(format!(
+            "infinity-panel-resize-{panel_id}-{}",
+            handle.id()
+        )))
+        .absolute()
+        .when(handle == PanelResizeHandle::Top, |this| {
+            this.top_0()
+                .left(rems(hit_size))
+                .right(rems(hit_size))
+                .h(rems(hit_size))
+                .cursor_n_resize()
+        })
+        .when(handle == PanelResizeHandle::Right, |this| {
+            this.right_0()
+                .top(rems(hit_size))
+                .bottom(rems(hit_size))
+                .w(rems(hit_size))
+                .cursor_e_resize()
+        })
+        .when(handle == PanelResizeHandle::Bottom, |this| {
+            this.bottom_0()
+                .left(rems(hit_size))
+                .right(rems(hit_size))
+                .h(rems(hit_size))
+                .cursor_s_resize()
+        })
+        .when(handle == PanelResizeHandle::Left, |this| {
+            this.left_0()
+                .top(rems(hit_size))
+                .bottom(rems(hit_size))
+                .w(rems(hit_size))
+                .cursor_w_resize()
+        })
+        .when(handle == PanelResizeHandle::TopLeft, |this| {
+            this.top_0()
+                .left_0()
+                .size(rems(hit_size))
                 .cursor_nwse_resize()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |_, event: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        let Some(pointer) =
-                            pointer_from_stored_bounds(&bounds_for_resize, event.position, window)
-                        else {
-                            return;
-                        };
-                        if mutate_canvas(key, cx, |canvas| {
-                            canvas.begin_resize_panel(panel_id, pointer)
-                        }) {
-                            cx.notify();
-                        }
-                    }),
-                )
-                .on_drag(
-                    InfinityDrag::resize_panel(key, panel_id),
-                    |drag, _, _, cx| cx.new(|_| *drag),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .right(rems(0.25 * zoom))
-                        .bottom(rems(0.25 * zoom))
-                        .size(rems(0.375 * zoom))
-                        .rounded_full()
-                        .bg(theme.text_muted),
-                ),
+        })
+        .when(handle == PanelResizeHandle::TopRight, |this| {
+            this.top_0()
+                .right_0()
+                .size(rems(hit_size))
+                .cursor_nesw_resize()
+        })
+        .when(handle == PanelResizeHandle::BottomRight, |this| {
+            this.bottom_0()
+                .right_0()
+                .size(rems(hit_size))
+                .cursor_nwse_resize()
+        })
+        .when(handle == PanelResizeHandle::BottomLeft, |this| {
+            this.bottom_0()
+                .left_0()
+                .size(rems(hit_size))
+                .cursor_nesw_resize()
+        })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |_, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                let Some(pointer) =
+                    pointer_from_stored_bounds(&canvas_bounds, event.position, window)
+                else {
+                    return;
+                };
+                if mutate_canvas(key, cx, |canvas| {
+                    canvas.begin_resize_panel(panel_id, handle, pointer)
+                }) {
+                    cx.notify();
+                }
+            }),
+        )
+        .on_drag(
+            InfinityDrag::resize_panel(key, panel_id, handle),
+            |drag, _, _, cx| cx.new(|_| *drag),
         )
         .into_any_element()
 }
@@ -649,15 +733,17 @@ fn render_scaled_panel_body<T: PaneDelegate + SettingsDelegate>(
 ) -> AnyElement {
     let base_rem = window.rem_size();
     window.set_rem_size(scaled_rem(base_rem, scale));
-    let namespace = format!("infinity:{workspace_id}:{panel_id}:{}", tab.id);
-    let child = with_tooltip_namespace(namespace, || {
-        if tab.kind == registry::FILE_TREE.id
-            && let Some(scroll_handle) = file_tree_scroll
-        {
-            super::file_tree::render_with_scroll(scroll_handle, cx)
-        } else {
-            super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
-        }
+    let namespace = SharedString::from(format!("infinity:{workspace_id}:{panel_id}:{}", tab.id));
+    let child = with_tooltip_namespace(namespace.clone(), || {
+        super::git::with_git_ui_namespace(namespace, || {
+            if tab.kind == registry::FILE_TREE.id
+                && let Some(scroll_handle) = file_tree_scroll
+            {
+                super::file_tree::render_with_scroll(scroll_handle, cx)
+            } else {
+                super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
+            }
+        })
     });
     window.set_rem_size(base_rem);
     ScaledRemElement { child, scale }.into_any_element()
@@ -849,7 +935,7 @@ fn add_panel_at<T: PaneDelegate + SettingsDelegate>(
 ) {
     cx.update_global::<InfinityUi, _>(|ui, _| {
         let canvas = ui.store.canvas(key);
-        canvas.add_panel(kind_id, canvas_position);
+        canvas.add_panel_at_position(kind_id, canvas_position);
         ui.context_menu = None;
     });
     cx.notify();

@@ -201,6 +201,7 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> 
     let menu_anchor = Rc::new(RefCell::new(None::<Point<Pixels>>));
     let paint_anchor = menu_anchor.clone();
     let click_anchor = menu_anchor.clone();
+    let namespace = current_git_ui_namespace();
 
     div()
         .flex_none()
@@ -231,10 +232,16 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> 
                         let position = (*click_anchor.borrow()).unwrap_or(event.position);
                         cx.update_global::<GitUiState, _>(|state, _| {
                             state.menu_position = None;
-                            state.sync_menu_position = match state.sync_menu_position {
-                                Some(_) => None,
-                                None => Some(position),
-                            };
+                            state.menu_namespace = None;
+                            let is_open = state.sync_menu_position.is_some()
+                                && state.sync_menu_namespace.as_ref() == Some(&namespace);
+                            if is_open {
+                                state.sync_menu_position = None;
+                                state.sync_menu_namespace = None;
+                            } else {
+                                state.sync_menu_position = Some(position);
+                                state.sync_menu_namespace = Some(namespace.clone());
+                            }
                         });
                         cx.notify();
                     }),
@@ -382,6 +389,7 @@ fn icon_button<T: PaneDelegate + SettingsDelegate>(
 
 fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
+    let namespace = current_git_ui_namespace();
     div()
         .id("git-more")
         .size(rems(1.375))
@@ -394,15 +402,21 @@ fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEl
         .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|_, event: &MouseDownEvent, _, cx| {
+            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 let position = event.position;
                 cx.update_global::<GitUiState, _>(|state, _| {
                     state.sync_menu_position = None;
-                    state.menu_position = match state.menu_position {
-                        Some(_) => None,
-                        None => Some(position),
-                    };
+                    state.sync_menu_namespace = None;
+                    let is_open = state.menu_position.is_some()
+                        && state.menu_namespace.as_ref() == Some(&namespace);
+                    if is_open {
+                        state.menu_position = None;
+                        state.menu_namespace = None;
+                    } else {
+                        state.menu_position = Some(position);
+                        state.menu_namespace = Some(namespace.clone());
+                    }
                 });
                 cx.notify();
             }),
