@@ -1263,12 +1263,49 @@ pub fn discover_shells() -> Vec<ShellProfile> {
     candidates.extend(platform_shell_candidates());
     candidates.push(fallback_shell_profile().path);
 
-    let mut seen = HashSet::new();
-    candidates
+    let mut shells = candidates
         .into_iter()
         .filter_map(ShellProfile::new)
-        .filter(|shell| seen.insert(shell.id.clone()))
-        .collect()
+        .filter(is_selectable_shell_profile)
+        .collect::<Vec<_>>();
+    dedupe_shell_profiles_by_label(&mut shells);
+    hide_redundant_sh_profile(&mut shells);
+    shells
+}
+
+fn dedupe_shell_profiles_by_label(shells: &mut Vec<ShellProfile>) {
+    let mut seen_labels = HashSet::new();
+    shells.retain(|shell| seen_labels.insert(shell.label.clone()));
+}
+
+fn hide_redundant_sh_profile(shells: &mut Vec<ShellProfile>) {
+    if shells.iter().any(|shell| shell.label != "sh") {
+        shells.retain(|shell| shell.label != "sh");
+    }
+}
+
+fn is_selectable_shell_profile(shell: &ShellProfile) -> bool {
+    is_selectable_shell_name(&shell.label)
+}
+
+#[cfg(unix)]
+fn is_selectable_shell_name(name: &str) -> bool {
+    !matches!(
+        name,
+        "false"
+            | "git-shell"
+            | "nologin"
+            | "rbash"
+            | "rksh"
+            | "rsh"
+            | "rzsh"
+            | "systemd-home-fallback-shell"
+    )
+}
+
+#[cfg(not(unix))]
+fn is_selectable_shell_name(_name: &str) -> bool {
+    true
 }
 
 fn environment_shell_candidates() -> Vec<PathBuf> {
@@ -2039,6 +2076,18 @@ mod tests {
     use super::*;
     use alacritty_terminal::event::VoidListener;
 
+    fn test_shell_profile(path: &str, label: &str) -> ShellProfile {
+        ShellProfile {
+            id: path.to_string(),
+            label: label.to_string(),
+            path: PathBuf::from(path),
+        }
+    }
+
+    fn shell_labels(shells: &[ShellProfile]) -> Vec<String> {
+        shells.iter().map(|shell| shell.label.clone()).collect()
+    }
+
     #[test]
     fn encodes_common_control_keys() {
         let input = TerminalKeyInput {
@@ -2070,9 +2119,46 @@ mod tests {
     fn dedupes_shell_profiles() {
         let shells = discover_shells();
         let mut ids = HashSet::new();
+        let mut labels = HashSet::new();
         for shell in shells {
             assert!(ids.insert(shell.id));
+            assert!(labels.insert(shell.label));
         }
+    }
+
+    #[test]
+    fn dedupes_shell_profiles_by_display_label() {
+        let mut shells = vec![
+            test_shell_profile("/usr/bin/bash", "bash"),
+            test_shell_profile("/bin/bash", "bash"),
+            test_shell_profile("/usr/bin/fish", "fish"),
+        ];
+
+        dedupe_shell_profiles_by_label(&mut shells);
+
+        assert_eq!(shell_labels(&shells), ["bash", "fish"]);
+    }
+
+    #[test]
+    fn hides_sh_when_named_shells_exist() {
+        let mut shells = vec![
+            test_shell_profile("/bin/sh", "sh"),
+            test_shell_profile("/usr/bin/bash", "bash"),
+        ];
+
+        hide_redundant_sh_profile(&mut shells);
+
+        assert_eq!(shell_labels(&shells), ["bash"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filters_non_interactive_unix_shell_names() {
+        assert!(!is_selectable_shell_name("rbash"));
+        assert!(!is_selectable_shell_name("git-shell"));
+        assert!(!is_selectable_shell_name("systemd-home-fallback-shell"));
+        assert!(is_selectable_shell_name("bash"));
+        assert!(is_selectable_shell_name("fish"));
     }
 
     #[test]
