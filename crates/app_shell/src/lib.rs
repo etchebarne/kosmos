@@ -32,6 +32,7 @@ fn install_globals(cx: &mut App) {
 
 fn install_feature_state(cx: &mut App) {
     ui::tabs::file_tree::FileTreeUi::install(cx);
+    ui::tabs::infinity::InfinityUi::install(cx);
     ui::tabs::terminal::TerminalUi::install(cx);
     file_editor::BufferStore::install(cx);
     file_editor::EditorViewStore::install(cx);

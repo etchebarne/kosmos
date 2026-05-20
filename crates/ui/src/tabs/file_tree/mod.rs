@@ -5,13 +5,13 @@ mod row;
 mod state;
 
 pub use actions::begin_rename;
-pub use state::FileTreeUi;
+pub use state::{ActiveFileTreeUi, FileTreeUi};
 
 use std::path::Path;
 
 use gpui::{
-    AnyElement, ClickEvent, Context, Entity, IntoElement, MouseButton, SharedString, div,
-    prelude::*, rems,
+    AnyElement, ClickEvent, Context, Entity, IntoElement, MouseButton, ScrollHandle, SharedString,
+    div, prelude::*, rems,
 };
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
@@ -21,9 +21,16 @@ use theme::ActiveTheme;
 
 use crate::components::{Tooltip, TooltipPosition};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
-use crate::tabs::file_tree::state::ActiveFileTreeUi;
 
 pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+    let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
+    render_with_scroll(scroll_handle, cx)
+}
+
+pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
+    scroll_handle: ScrollHandle,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let theme = *cx.theme();
     let entity = match cx.file_tree().cloned() {
         Some(e) => e,
@@ -65,8 +72,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
     if root_expanded {
         collect_rows::<T>(&entity, &root, 0, &mut rows, &new_entry, cx);
     }
-
-    let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
 
     let entity_for_dismiss = entity.clone();
 

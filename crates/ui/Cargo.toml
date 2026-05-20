@@ -9,6 +9,7 @@ file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
 highlight = { path = "../highlight" }
 icons = { path = "../icons" }
+infinity = { path = "../infinity" }
 installer = { path = "../installer" }
 kosmos_git = { package = "git", path = "../git" }
 language = { path = "../language" }

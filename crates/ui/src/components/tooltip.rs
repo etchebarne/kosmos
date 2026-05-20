@@ -2,7 +2,12 @@ use gpui::{
     AnchoredPositionMode, AnyElement, App, Corner, ElementId, Global, IntoElement, RenderOnce,
     SharedString, Window, anchored, deferred, div, prelude::*, rems,
 };
+use std::cell::RefCell;
 use theme::ActiveTheme;
+
+thread_local! {
+    static TOOLTIP_NAMESPACE: RefCell<Vec<SharedString>> = const { RefCell::new(Vec::new()) };
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum TooltipPosition {
@@ -35,8 +40,9 @@ impl Tooltip {
         label: impl Into<SharedString>,
         child: impl IntoElement,
     ) -> Self {
+        let id = scoped_tooltip_id(id.into());
         Self {
-            id: id.into(),
+            id,
             label: label.into(),
             child: child.into_any_element(),
             position: TooltipPosition::default(),
@@ -53,6 +59,38 @@ impl Tooltip {
         self.disabled = disabled;
         self
     }
+}
+
+pub fn with_tooltip_namespace<R>(namespace: impl Into<SharedString>, f: impl FnOnce() -> R) -> R {
+    let _guard = TooltipNamespaceGuard::new(namespace.into());
+    f()
+}
+
+struct TooltipNamespaceGuard;
+
+impl TooltipNamespaceGuard {
+    fn new(namespace: SharedString) -> Self {
+        TOOLTIP_NAMESPACE.with(|stack| stack.borrow_mut().push(namespace));
+        Self
+    }
+}
+
+impl Drop for TooltipNamespaceGuard {
+    fn drop(&mut self) {
+        TOOLTIP_NAMESPACE.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+fn scoped_tooltip_id(id: SharedString) -> SharedString {
+    TOOLTIP_NAMESPACE.with(|stack| {
+        stack
+            .borrow()
+            .last()
+            .map(|namespace| SharedString::from(format!("{namespace}:{id}")))
+            .unwrap_or(id)
+    })
 }
 
 impl RenderOnce for Tooltip {

@@ -210,10 +210,17 @@ fn menu_dismiss_layer<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -
         .left_0()
         .right_0()
         .bottom_0()
-        .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| close_menu(cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _, _, cx| {
+                close_menu(cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(|_, _, _, cx| close_menu(cx)),
+            cx.listener(|_, _, _, cx| {
+                close_menu(cx);
+            }),
         )
         .into_any_element()
 }

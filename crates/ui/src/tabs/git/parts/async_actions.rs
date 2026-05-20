@@ -361,11 +361,16 @@ fn clear_error(cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| state.last_error = None);
 }
 
-fn close_menu(cx: &mut App) {
+pub fn close_menu(cx: &mut App) -> bool {
+    if cx.try_global::<GitUiState>().is_none() {
+        return false;
+    }
     cx.update_global::<GitUiState, _>(|state, _| {
+        let had_menu = state.menu_position.is_some() || state.sync_menu_position.is_some();
         state.menu_position = None;
         state.sync_menu_position = None;
-    });
+        had_menu
+    })
 }
 
 fn plural(count: usize) -> &'static str {
