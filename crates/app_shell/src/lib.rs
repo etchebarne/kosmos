@@ -8,6 +8,9 @@ use icons::AppAssets;
 
 use crate::app::KosmosApp;
 
+const APP_NAME: &str = "Kosmos";
+const DEFAULT_APP_ID: &str = "net.etchebarne.Kosmos";
+
 pub fn run() {
     Application::new()
         .with_assets(AppAssets)
@@ -54,14 +57,22 @@ fn open_main_window(cx: &mut App) {
             titlebar: None,
             window_decorations: Some(WindowDecorations::Client),
             window_min_size: Some(size(px(800.0), px(600.0))),
-            app_id: Some("net.etchebarne.Kosmos".into()),
+            app_id: Some(runtime_app_id()),
             ..Default::default()
         },
         |window, cx| {
+            window.set_window_title(APP_NAME);
             let entity = cx.new(KosmosApp::new);
             entity.update(cx, |app, cx| app.start_observing_window(window, cx));
             entity
         },
     )
     .unwrap();
+}
+
+fn runtime_app_id() -> String {
+    std::env::var("KOSMOS_APP_ID")
+        .ok()
+        .filter(|app_id| !app_id.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_APP_ID.to_string())
 }

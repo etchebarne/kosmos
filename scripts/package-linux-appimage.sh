@@ -65,7 +65,49 @@ write_app_run() {
 set -eu
 
 APPDIR="$(dirname "$(readlink -f "$0")")"
+export KOSMOS_APP_ID="${KOSMOS_APP_ID:-net.etchebarne.Kosmos.AppImage}"
 export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+escape_desktop_exec_path() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g'
+}
+
+install_desktop_metadata() {
+    [ -n "${APPIMAGE:-}" ] || return 0
+    [ -f "$APPIMAGE" ] || return 0
+    [ -n "${HOME:-}" ] || return 0
+
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    desktop_dir="$data_home/applications"
+    icon_dir="$data_home/icons/hicolor/512x512/apps"
+    desktop_file="$desktop_dir/$KOSMOS_APP_ID.desktop"
+    icon_name="$KOSMOS_APP_ID"
+    escaped_appimage="$(escape_desktop_exec_path "$APPIMAGE")"
+
+    mkdir -p "$desktop_dir" "$icon_dir"
+    cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/kosmos.png" "$icon_dir/$icon_name.png"
+    cat > "$desktop_file" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Kosmos
+GenericName=Code Editor
+Comment=A highly customizable and versatile tab-based code editor.
+Exec="$escaped_appimage" %U
+Icon=$icon_name
+Terminal=false
+Categories=Development;TextEditor;IDE;
+Keywords=kosmos;editor;code;
+StartupNotify=true
+StartupWMClass=$KOSMOS_APP_ID
+EOF
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
+    fi
+}
+
+install_desktop_metadata || true
 exec "$APPDIR/usr/bin/kosmos" "$@"
 SH
     chmod +x "$app_dir/AppRun"
@@ -82,13 +124,15 @@ prepare_app_dir() {
     cp -a "$bundle_dir/LICENSE" "$app_dir/usr/share/licenses/kosmos/LICENSE"
 
     export APP_NAME="Kosmos"
+    appimage_app_id="net.etchebarne.Kosmos.AppImage"
+
     export APP_CLI="AppRun"
     export APP_ICON="kosmos"
     export APP_ARGS="%U"
-    export APP_ID="net.etchebarne.Kosmos"
+    export APP_ID="$appimage_app_id"
     export DO_STARTUP_NOTIFY="true"
     envsubst < "$ROOT/packaging/linux/Kosmos.desktop.in" \
-        > "$app_dir/net.etchebarne.Kosmos.desktop"
+        > "$app_dir/${appimage_app_id}.desktop"
 
     cp "$bundle_dir/share/icons/hicolor/512x512/apps/kosmos.png" "$app_dir/kosmos.png"
     cp "$app_dir/kosmos.png" "$app_dir/.DirIcon"
