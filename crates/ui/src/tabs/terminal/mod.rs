@@ -184,6 +184,11 @@ struct TerminalPaintTextRun {
     line: ShapedLine,
 }
 
+struct TerminalPaintBuffers<'a> {
+    text_runs: &'a mut Vec<TerminalPaintTextRun>,
+    custom_glyph_rects: &'a mut Vec<TerminalPaintCustomGlyphRect>,
+}
+
 struct TerminalTextRunBuilder {
     row: usize,
     column: usize,
@@ -695,18 +700,23 @@ fn render_terminal_surface(
                 terminal_selection_rects(&snapshot.selection_ranges, grid, metrics);
             let mut text_runs = Vec::new();
             let mut custom_glyph_rects = Vec::new();
-            for (row_index, row) in snapshot.rows.iter().enumerate() {
-                for run in &row.cell_runs {
-                    push_terminal_cell_run(
-                        row_index,
-                        run,
-                        &row.cells,
-                        grid,
-                        metrics,
-                        window,
-                        &mut text_runs,
-                        &mut custom_glyph_rects,
-                    );
+            {
+                let mut paint_buffers = TerminalPaintBuffers {
+                    text_runs: &mut text_runs,
+                    custom_glyph_rects: &mut custom_glyph_rects,
+                };
+                for (row_index, row) in snapshot.rows.iter().enumerate() {
+                    for run in &row.cell_runs {
+                        push_terminal_cell_run(
+                            row_index,
+                            run,
+                            &row.cells,
+                            grid,
+                            metrics,
+                            window,
+                            &mut paint_buffers,
+                        );
+                    }
                 }
             }
 
@@ -827,24 +837,14 @@ fn push_terminal_cell_run(
     grid: TerminalGridPixels,
     metrics: TerminalMetrics,
     window: &mut Window,
-    text_runs: &mut Vec<TerminalPaintTextRun>,
-    custom_glyph_rects: &mut Vec<TerminalPaintCustomGlyphRect>,
+    paint_buffers: &mut TerminalPaintBuffers<'_>,
 ) {
     if !terminal_text_has_visible_content(&run.text, run.style) {
         return;
     }
 
     if terminal_text_contains_custom_glyph_candidate(&run.text) {
-        push_terminal_mixed_cell_run(
-            row,
-            run,
-            cells,
-            grid,
-            metrics,
-            window,
-            text_runs,
-            custom_glyph_rects,
-        );
+        push_terminal_mixed_cell_run(row, run, cells, grid, metrics, window, paint_buffers);
         return;
     }
 
@@ -855,7 +855,7 @@ fn push_terminal_cell_run(
     if let Some(text_run) =
         shape_terminal_text_run(run.text.clone(), run.style, origin, grid, metrics, window)
     {
-        text_runs.push(text_run);
+        paint_buffers.text_runs.push(text_run);
     }
 }
 
@@ -866,8 +866,7 @@ fn push_terminal_mixed_cell_run(
     grid: TerminalGridPixels,
     metrics: TerminalMetrics,
     window: &mut Window,
-    text_runs: &mut Vec<TerminalPaintTextRun>,
-    custom_glyph_rects: &mut Vec<TerminalPaintCustomGlyphRect>,
+    paint_buffers: &mut TerminalPaintBuffers<'_>,
 ) {
     let mut text_builder: Option<TerminalTextRunBuilder> = None;
     let run_end = run.column + run.width;
@@ -882,8 +881,14 @@ fn push_terminal_mixed_cell_run(
 
         let cell_bounds = terminal_cell_bounds(row, cell.column, 1, cell.width, grid);
         if let Some(glyph_rects) = terminal_custom_glyph_rects(cell, cell_bounds) {
-            flush_terminal_text_run(&mut text_builder, grid, metrics, window, text_runs);
-            custom_glyph_rects.extend(glyph_rects);
+            flush_terminal_text_run(
+                &mut text_builder,
+                grid,
+                metrics,
+                window,
+                paint_buffers.text_runs,
+            );
+            paint_buffers.custom_glyph_rects.extend(glyph_rects);
         } else {
             push_terminal_text_cell(
                 &mut text_builder,
@@ -892,12 +897,18 @@ fn push_terminal_mixed_cell_run(
                 grid,
                 metrics,
                 window,
-                text_runs,
+                paint_buffers.text_runs,
             );
         }
     }
 
-    flush_terminal_text_run(&mut text_builder, grid, metrics, window, text_runs);
+    flush_terminal_text_run(
+        &mut text_builder,
+        grid,
+        metrics,
+        window,
+        paint_buffers.text_runs,
+    );
 }
 
 fn push_terminal_text_cell(
