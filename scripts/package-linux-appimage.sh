@@ -68,24 +68,38 @@ APPDIR="$(dirname "$(readlink -f "$0")")"
 export KOSMOS_APP_ID="${KOSMOS_APP_ID:-net.etchebarne.Kosmos.AppImage}"
 export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-escape_desktop_exec_path() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g'
-}
-
-install_desktop_metadata() {
-    [ -n "${APPIMAGE:-}" ] || return 0
-    [ -f "$APPIMAGE" ] || return 0
-    [ -n "${HOME:-}" ] || return 0
-
+desktop_paths() {
     data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
     desktop_dir="$data_home/applications"
     icon_dir="$data_home/icons/hicolor/512x512/apps"
     desktop_file="$desktop_dir/$KOSMOS_APP_ID.desktop"
     icon_file="$icon_dir/kosmos-appimage.png"
+}
+
+escape_desktop_exec_path() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g'
+}
+
+refresh_desktop_metadata() {
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    desktop_dir="$data_home/applications"
+
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
+    fi
+    if command -v kbuildsycoca6 >/dev/null 2>&1; then
+        kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
+    elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+        kbuildsycoca5 --noincremental >/dev/null 2>&1 || true
+    fi
+}
+
+write_desktop_file() {
     escaped_appimage="$(escape_desktop_exec_path "$APPIMAGE")"
 
-    mkdir -p "$desktop_dir" "$icon_dir"
-    cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/kosmos.png" "$icon_file"
     cat > "$desktop_file" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -101,19 +115,35 @@ Keywords=kosmos;editor;code;
 StartupNotify=true
 StartupWMClass=$KOSMOS_APP_ID
 EOF
-
-    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-        gtk-update-icon-cache -q -t -f "$data_home/icons/hicolor" >/dev/null 2>&1 || true
-    fi
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
-    fi
-    if command -v kbuildsycoca6 >/dev/null 2>&1; then
-        kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
-    elif command -v kbuildsycoca5 >/dev/null 2>&1; then
-        kbuildsycoca5 --noincremental >/dev/null 2>&1 || true
-    fi
 }
+
+install_desktop_metadata() {
+    [ -n "${APPIMAGE:-}" ] || return 0
+    [ -f "$APPIMAGE" ] || return 0
+    [ -n "${HOME:-}" ] || return 0
+
+    desktop_paths
+    mkdir -p "$desktop_dir" "$icon_dir"
+    cp "$APPDIR/usr/share/icons/hicolor/512x512/apps/kosmos.png" "$icon_file"
+    write_desktop_file
+    refresh_desktop_metadata
+}
+
+uninstall_desktop_metadata() {
+    [ -n "${HOME:-}" ] || return 0
+
+    desktop_paths
+    rm -f "$desktop_file" "$icon_file"
+    refresh_desktop_metadata
+    echo "Removed Kosmos AppImage desktop integration."
+}
+
+case "${1:-}" in
+    --uninstall|--remove-desktop-integration)
+        uninstall_desktop_metadata || true
+        exit 0
+        ;;
+esac
 
 install_desktop_metadata || true
 exec "$APPDIR/usr/bin/kosmos" "$@"
