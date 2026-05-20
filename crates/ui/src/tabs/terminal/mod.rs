@@ -1,7 +1,7 @@
 use std::cell::Cell as StdCell;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, Element, ElementId, ElementInputHandler,
@@ -79,7 +79,7 @@ pub fn render<T: 'static>(
     let terminal_theme = terminal_theme(theme);
     session.update(cx, |session, _| session.set_theme(terminal_theme));
 
-    let snapshot = session.read(cx).snapshot();
+    let snapshot = session.update(cx, |session, _| session.snapshot());
     let screen_background = dominant_background_color(&snapshot, terminal_theme.background);
     let selection_color =
         gpui::Hsla::from(theme.accent).opacity(if theme.is_dark { 0.35 } else { 0.25 });
@@ -377,7 +377,7 @@ fn dominant_background_color(
 
 fn render_screen<T: 'static>(
     session: &Entity<TerminalSession>,
-    snapshot: TerminalSnapshot,
+    snapshot: Arc<TerminalSnapshot>,
     metrics: TerminalMetrics,
     focus_handle: FocusHandle,
     is_focused: bool,
@@ -579,7 +579,9 @@ fn render_screen<T: 'static>(
         )
         .capture_key_down(cx.listener(move |_, event: &KeyDownEvent, _window, cx| {
             if is_terminal_copy(event) {
-                if let Some(text) = session_for_copy.read(cx).selected_text() {
+                if let Some(text) =
+                    session_for_copy.update(cx, |session, _| session.selected_text())
+                {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
                 cx.stop_propagation();
@@ -675,7 +677,10 @@ fn render_screen<T: 'static>(
         .into_any_element()
 }
 
-fn render_terminal_surface(snapshot: TerminalSnapshot, metrics: TerminalMetrics) -> AnyElement {
+fn render_terminal_surface(
+    snapshot: Arc<TerminalSnapshot>,
+    metrics: TerminalMetrics,
+) -> AnyElement {
     canvas(
         move |bounds, window, _cx| {
             let grid = terminal_grid_pixels(bounds, metrics, window);

@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{
+    Arc,
+    mpsc::{Receiver, Sender, channel},
+};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -341,6 +344,8 @@ pub struct TerminalSession {
     status: TerminalStatus,
     title: Option<String>,
     last_cwd_refresh: Instant,
+    snapshot_cache: Option<Arc<TerminalSnapshot>>,
+    snapshot_dirty: bool,
 }
 
 impl TerminalSession {
@@ -376,6 +381,8 @@ impl TerminalSession {
             status: TerminalStatus::Restarting,
             title: None,
             last_cwd_refresh: Instant::now(),
+            snapshot_cache: None,
+            snapshot_dirty: true,
         };
         session.start_process();
         session.start_poll_task(cx);
@@ -403,10 +410,27 @@ impl TerminalSession {
     }
 
     pub fn set_theme(&mut self, theme: TerminalTheme) {
+        if self.theme == theme {
+            return;
+        }
         self.theme = theme;
+        self.invalidate_snapshot();
     }
 
-    pub fn snapshot(&self) -> TerminalSnapshot {
+    pub fn snapshot(&mut self) -> Arc<TerminalSnapshot> {
+        if !self.snapshot_dirty
+            && let Some(snapshot) = &self.snapshot_cache
+        {
+            return snapshot.clone();
+        }
+
+        let snapshot = Arc::new(self.build_snapshot());
+        self.snapshot_cache = Some(snapshot.clone());
+        self.snapshot_dirty = false;
+        snapshot
+    }
+
+    fn build_snapshot(&self) -> TerminalSnapshot {
         let content = self.term.renderable_content();
         let display_offset = content.display_offset;
         let cursor_color = snapshot_cursor_color(content.colors, self.theme);
@@ -443,6 +467,7 @@ impl TerminalSession {
         }
         self.size = next;
         self.term.resize(next);
+        self.invalidate_snapshot();
         if let Some(process) = &mut self.process {
             process.resize(next);
         }
@@ -527,6 +552,7 @@ impl TerminalSession {
             return;
         }
         self.term.scroll_display(Scroll::Delta(lines));
+        self.invalidate_snapshot();
         cx.notify();
     }
 
@@ -552,6 +578,7 @@ impl TerminalSession {
 
         self.selection = Some(TerminalSelection::new(position));
         self.selecting = true;
+        self.invalidate_snapshot();
         cx.notify();
         true
     }
@@ -579,6 +606,7 @@ impl TerminalSession {
             return false;
         };
         if selection.update_active(position) {
+            self.invalidate_snapshot();
             cx.notify();
         }
         true
@@ -609,6 +637,7 @@ impl TerminalSession {
         if selection.is_empty() {
             self.selection = None;
         }
+        self.invalidate_snapshot();
         cx.notify();
         true
     }
@@ -645,14 +674,13 @@ impl TerminalSession {
         true
     }
 
-    pub fn selected_text(&self) -> Option<String> {
+    pub fn selected_text(&mut self) -> Option<String> {
         let selection = self.selection?.normalized(self.size)?;
-        let content = self.term.renderable_content();
-        let rows = snapshot_rows(content, self.size, self.theme);
+        let snapshot = self.snapshot();
         let mut lines = Vec::new();
 
         for row_index in selection.start.row..=selection.end.row {
-            let row = rows.get(row_index)?;
+            let row = snapshot.rows.get(row_index)?;
             let start_column = if row_index == selection.start.row {
                 selection.start.column
             } else {
@@ -679,6 +707,7 @@ impl TerminalSession {
         self.output_rx = None;
         self.poll_task = None;
         self.status = TerminalStatus::Exited;
+        self.invalidate_snapshot();
     }
 
     fn set_zoom(&mut self, percent: i64, cx: &mut Context<Self>) {
@@ -687,6 +716,7 @@ impl TerminalSession {
             return;
         }
         self.zoom_percent = clamped;
+        self.invalidate_snapshot();
         cx.notify();
     }
 
@@ -701,6 +731,7 @@ impl TerminalSession {
         self.last_cwd_refresh = Instant::now();
         self.start_process();
         self.start_poll_task(cx);
+        self.invalidate_snapshot();
         cx.notify();
     }
 
@@ -820,6 +851,7 @@ impl TerminalSession {
                 TerminalStatus::Running | TerminalStatus::Restarting
             ) {
                 self.status = TerminalStatus::Exited;
+                self.invalidate_snapshot();
                 changed = true;
             }
         }
@@ -827,6 +859,7 @@ impl TerminalSession {
             self.process = None;
             if !matches!(self.status, TerminalStatus::Exited) {
                 self.status = TerminalStatus::Exited;
+                self.invalidate_snapshot();
                 changed = true;
             }
         }
@@ -840,7 +873,15 @@ impl TerminalSession {
     }
 
     fn feed_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
         self.parser.advance(&mut self.term, bytes);
+        self.invalidate_snapshot();
+    }
+
+    fn invalidate_snapshot(&mut self) {
+        self.snapshot_dirty = true;
     }
 
     fn refresh_current_directory(&mut self) -> bool {
@@ -873,10 +914,12 @@ impl TerminalSession {
                 Event::PtyWrite(text) => self.write_text(&text),
                 Event::Title(title) => {
                     self.title = Some(title);
+                    self.invalidate_snapshot();
                     changed = true;
                 }
                 Event::ResetTitle => {
                     self.title = None;
+                    self.invalidate_snapshot();
                     changed = true;
                 }
                 Event::ColorRequest(index, formatter) => {
@@ -895,16 +938,19 @@ impl TerminalSession {
                 Event::ClipboardStore(_, _) | Event::ClipboardLoad(_, _) => {}
                 Event::ChildExit(_) => {
                     self.status = TerminalStatus::Exited;
+                    self.invalidate_snapshot();
                     changed = true;
                 }
                 Event::Exit => {
                     self.status = TerminalStatus::Exited;
+                    self.invalidate_snapshot();
                     changed = true;
                 }
                 Event::MouseCursorDirty
                 | Event::CursorBlinkingChange
                 | Event::Wakeup
                 | Event::Bell => {
+                    self.invalidate_snapshot();
                     changed = true;
                 }
             }
