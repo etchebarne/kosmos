@@ -16,16 +16,18 @@ pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    match workspaces.active_pane_tree() {
-        Some(tree) => div()
+    match workspaces.active_workspace() {
+        Some(workspace) => div()
             .size_full()
             .rounded(rems(0.5))
             .border_1()
             .border_color(theme.border)
             .overflow_hidden()
             .child(pane_tree::render(
-                tree,
-                tree.root(),
+                &workspace.pane_tree,
+                workspace.pane_tree.root(),
+                workspace.id,
+                &workspace.path,
                 tab_scrolls,
                 window,
                 cx,

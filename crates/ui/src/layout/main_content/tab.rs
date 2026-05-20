@@ -24,6 +24,7 @@ const TAB_CONTENT_GAP_REM: f32 = 0.5;
 const TAB_DIRTY_DOT_WIDTH_REM: f32 = 0.375;
 
 pub fn render<T: PaneDelegate>(
+    workspace_id: usize,
     pane: &Pane,
     tab: &Tab,
     can_close: bool,
@@ -44,7 +45,7 @@ pub fn render<T: PaneDelegate>(
         .is_some_and(|path| BufferStore::is_path_dirty(path, cx));
     let animation_phase = cx
         .try_global::<TabAnimationState>()
-        .and_then(|state| state.phase(pane_id, id));
+        .and_then(|state| state.phase(workspace_id, pane_id, id));
     let target_width = tab_width_rems(window, title.as_ref(), is_dirty);
 
     let content = div()
@@ -103,8 +104,10 @@ pub fn render<T: PaneDelegate>(
                 .child(Icon::new(IconName::Close).size(14.0).color(theme.text)),
         );
     let content = if let Some(phase) = animation_phase {
-        let animation_id =
-            SharedString::from(format!("tab-content-{pane_id}-{id}-{}", phase.key()));
+        let animation_id = SharedString::from(format!(
+            "tab-content-{workspace_id}-{pane_id}-{id}-{}",
+            phase.key()
+        ));
         content
             .with_animation(animation_id, tab_animation(), move |this, delta| {
                 this.opacity(phase.progress(delta))
@@ -190,7 +193,10 @@ pub fn render<T: PaneDelegate>(
         .child(content);
 
     if let Some(phase) = animation_phase {
-        let animation_id = SharedString::from(format!("tab-width-{pane_id}-{id}-{}", phase.key()));
+        let animation_id = SharedString::from(format!(
+            "tab-width-{workspace_id}-{pane_id}-{id}-{}",
+            phase.key()
+        ));
         tab.with_animation(animation_id, tab_animation(), move |this, delta| {
             this.w(rems(target_width * phase.progress(delta)))
         })

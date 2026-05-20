@@ -394,6 +394,11 @@ impl Icon {
         self
     }
 
+    pub fn size_rem(mut self, size_rem: f32) -> Self {
+        self.size = size_rem * 16.0;
+        self
+    }
+
     pub fn color(mut self, color: Rgba) -> Self {
         self.color = Some(color);
         self

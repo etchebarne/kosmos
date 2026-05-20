@@ -62,6 +62,16 @@ impl PaneTree {
         }
     }
 
+    fn find_tab_mut_in(node: &mut PaneNode, tab_id: usize) -> Option<&mut Tab> {
+        match node {
+            PaneNode::Leaf(pane) => pane.tab_mut(tab_id),
+            PaneNode::Split { first, second, .. } => {
+                Self::find_tab_mut_in(first, tab_id)
+                    .or_else(|| Self::find_tab_mut_in(second, tab_id))
+            }
+        }
+    }
+
     fn find_pane(node: &PaneNode, pane_id: usize) -> Option<&Pane> {
         match node {
             PaneNode::Leaf(pane) if pane.id() == pane_id => Some(pane),

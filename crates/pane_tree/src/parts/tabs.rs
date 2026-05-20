@@ -57,6 +57,17 @@ impl PaneTree {
         Self::find_tab_in(&self.root, &mut predicate).map(|(pane_id, tab)| (pane_id, tab.id))
     }
 
+    pub fn set_tab_path(&mut self, tab_id: usize, path: Option<std::path::PathBuf>) -> bool {
+        let Some(tab) = Self::find_tab_mut_in(&mut self.root, tab_id) else {
+            return false;
+        };
+        if tab.path == path {
+            return false;
+        }
+        tab.path = path;
+        true
+    }
+
     pub fn total_tabs(&self) -> usize {
         Self::total_tabs_in(&self.root)
     }

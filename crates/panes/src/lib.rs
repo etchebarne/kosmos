@@ -32,6 +32,10 @@ impl Pane {
         &self.tabs
     }
 
+    pub fn tab_mut(&mut self, tab_id: usize) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|tab| tab.id == tab_id)
+    }
+
     pub fn active_tab(&self) -> usize {
         self.active_tab
     }

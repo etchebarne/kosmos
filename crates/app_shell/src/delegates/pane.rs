@@ -7,7 +7,10 @@ use ui::drag::TabDrag;
 
 use crate::app::KosmosApp;
 
-use super::{file_editor_tab, is_file_editor_tab, scroll_tabs_to_end, tab_count};
+use super::{
+    file_editor_tab, is_file_editor_tab, scroll_tabs_to_end, tab_count, terminal_tab,
+    terminal_tab_key,
+};
 
 impl PaneDelegate for KosmosApp {
     fn focus_pane(&mut self, pane_id: usize, _cx: &mut Context<Self>) {
@@ -22,9 +25,19 @@ impl PaneDelegate for KosmosApp {
         };
         let mut new_count: Option<usize> = None;
         let mut new_tab_id: Option<usize> = None;
+        let terminal_cwd = self.workspaces.active_workspace().map(|w| w.path.clone());
         self.mutate_active_tree(cx, |tree| {
             let tab_id = tree.next_tab_id();
-            if !tree.add_tab(pane_id, kind) {
+            let added = if kind_id == tabs::registry::TERMINAL.id {
+                let Some(cwd) = terminal_cwd.clone() else {
+                    return false;
+                };
+                tree.append_new_tab(pane_id, |id| terminal_tab(id, cwd))
+                    .is_some()
+            } else {
+                tree.add_tab(pane_id, kind)
+            };
+            if !added {
                 return false;
             }
             new_tab_id = Some(tab_id);
@@ -49,7 +62,24 @@ impl PaneDelegate for KosmosApp {
         let Some(kind) = tabs::registry::get(kind_id) else {
             return;
         };
-        self.mutate_active_tree(cx, |tree| tree.replace_tab_kind(pane_id, tab_id, kind));
+        let old_terminal_key = (kind_id != tabs::registry::TERMINAL.id)
+            .then(|| terminal_tab_key(&self.workspaces, pane_id, tab_id))
+            .flatten();
+        let terminal_cwd = self.workspaces.active_workspace().map(|w| w.path.clone());
+        self.mutate_active_tree(cx, |tree| {
+            if !tree.replace_tab_kind(pane_id, tab_id, kind) {
+                return false;
+            }
+            if kind_id == tabs::registry::TERMINAL.id
+                && let Some(cwd) = terminal_cwd.clone()
+            {
+                tree.set_tab_path(tab_id, Some(cwd));
+            }
+            true
+        });
+        if let Some(key) = old_terminal_key {
+            terminal::TerminalStore::drop_tab(key, cx);
+        }
     }
 
     fn select_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
@@ -100,8 +130,8 @@ impl PaneDelegate for KosmosApp {
         self.mutate_active_tree_transient(cx, |tree| tree.resize_split(split_id, ratio));
     }
 
-    fn finish_resize_split(&mut self, _cx: &mut Context<Self>) {
-        self.flush_pending_persist();
+    fn finish_resize_split(&mut self, cx: &mut Context<Self>) {
+        self.flush_pending_persist(cx);
     }
 
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {

@@ -199,16 +199,16 @@ impl EditorView {
         let buffer = self.buffer.as_ref()?.read(cx);
 
         if !layout.soft_wrap {
-            return self.offset_for_uniform_point(position, layout, &buffer);
+            return self.offset_for_uniform_point(position, layout, buffer);
         }
 
         for line_layout in self.line_layouts.values() {
-            if let Some(offset) = offset_for_line_layout(position, line_layout, &buffer) {
+            if let Some(offset) = offset_for_line_layout(position, line_layout, buffer) {
                 return Some(offset);
             }
         }
 
-        self.offset_for_uniform_point(position, layout, &buffer)
+        self.offset_for_uniform_point(position, layout, buffer)
     }
 
     fn offset_for_uniform_point(

@@ -22,9 +22,12 @@ impl KosmosApp {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace_id) = self.workspaces.active_id() else {
+            return;
+        };
         if !cx
             .default_global::<TabAnimationState>()
-            .start_opening(pane_id, tab_id)
+            .start_opening(workspace_id, pane_id, tab_id)
         {
             return;
         }
@@ -35,10 +38,11 @@ impl KosmosApp {
                 .timer(Duration::from_millis(TAB_ANIMATION_DURATION_MS))
                 .await;
             let _ = this.update(cx, move |_, cx| {
-                if cx
-                    .default_global::<TabAnimationState>()
-                    .finish_opening(pane_id, tab_id)
-                {
+                if cx.default_global::<TabAnimationState>().finish_opening(
+                    workspace_id,
+                    pane_id,
+                    tab_id,
+                ) {
                     cx.notify();
                 }
             });
@@ -52,16 +56,24 @@ impl KosmosApp {
         tab_id: usize,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace_id) = self.workspaces.active_id() else {
+            return;
+        };
         let can_close = self.workspaces.active_pane_tree().is_some_and(|tree| {
             tree.total_tabs() > 1 && tree.pane(pane_id).is_some_and(|pane| pane.has_tab(tab_id))
         });
         if !can_close {
             return;
         }
+        let terminal_key = terminal_tab_key(&self.workspaces, pane_id, tab_id);
+        let is_editor_tab = self
+            .workspaces
+            .active_pane_tree()
+            .is_some_and(|tree| is_file_editor_tree_tab(tree, pane_id, tab_id));
 
         if !cx
             .default_global::<TabAnimationState>()
-            .start_closing(pane_id, tab_id)
+            .start_closing(workspace_id, pane_id, tab_id)
         {
             return;
         }
@@ -72,10 +84,21 @@ impl KosmosApp {
                 .timer(Duration::from_millis(TAB_ANIMATION_DURATION_MS))
                 .await;
             let _ = this.update(cx, move |this, cx| {
-                let should_close = cx
-                    .default_global::<TabAnimationState>()
-                    .finish_closing(pane_id, tab_id);
-                if should_close && !this.finish_tab_close(pane_id, tab_id, cx) {
+                let should_close = cx.default_global::<TabAnimationState>().finish_closing(
+                    workspace_id,
+                    pane_id,
+                    tab_id,
+                );
+                if should_close
+                    && !this.finish_tab_close(
+                        workspace_id,
+                        pane_id,
+                        tab_id,
+                        terminal_key,
+                        is_editor_tab,
+                        cx,
+                    )
+                {
                     cx.notify();
                 }
             });
@@ -83,14 +106,28 @@ impl KosmosApp {
         .detach();
     }
 
-    fn finish_tab_close(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) -> bool {
+    fn finish_tab_close(
+        &mut self,
+        workspace_id: usize,
+        pane_id: usize,
+        tab_id: usize,
+        terminal_key: Option<terminal::TerminalKey>,
+        is_editor_tab: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let mut closed = false;
-        self.mutate_active_tree(cx, |tree| {
+        if let Some(tree) = self.workspaces.pane_tree_mut(workspace_id) {
             closed = tree.close_tab(pane_id, tab_id);
-            closed
-        });
+        }
         if closed {
-            file_editor::EditorViewStore::drop_tab(tab_id, cx);
+            cx.notify();
+            self.persist_workspace(workspace_id, cx);
+            if is_editor_tab {
+                file_editor::EditorViewStore::drop_tab(tab_id, cx);
+            }
+            if let Some(key) = terminal_key {
+                terminal::TerminalStore::drop_tab(key, cx);
+            }
         }
         closed
     }
@@ -105,6 +142,28 @@ fn scroll_tabs_to_end(tab_scrolls: &TabScrollHandles, pane_id: usize, tab_count:
     tab_scrolls.scroll_to_index(pane_id, 2 * tab_count - 1);
 }
 
+fn terminal_tab_key(
+    workspaces: &::workspace::WorkspaceManager,
+    pane_id: usize,
+    tab_id: usize,
+) -> Option<terminal::TerminalKey> {
+    let workspace_id = workspaces.active_id()?;
+    let tree = workspaces.active_pane_tree()?;
+    let tab = tree
+        .pane(pane_id)?
+        .tabs()
+        .iter()
+        .find(|tab| tab.id == tab_id)?;
+    (tab.kind.as_str() == tabs::registry::TERMINAL.id)
+        .then_some(terminal::TerminalKey::new(workspace_id, tab_id))
+}
+
+fn is_file_editor_tree_tab(tree: &PaneTree, pane_id: usize, tab_id: usize) -> bool {
+    tree.pane(pane_id)
+        .and_then(|pane| pane.tabs().iter().find(|tab| tab.id == tab_id))
+        .is_some_and(|tab| tab.kind.as_str() == tabs::registry::FILE_EDITOR.id)
+}
+
 fn file_editor_tab(tab_id: usize, path: PathBuf) -> Tab {
     let title = path
         .file_name()
@@ -114,6 +173,10 @@ fn file_editor_tab(tab_id: usize, path: PathBuf) -> Tab {
     Tab::new(tab_id, &tabs::registry::FILE_EDITOR)
         .with_title(title)
         .with_path(path)
+}
+
+fn terminal_tab(tab_id: usize, cwd: PathBuf) -> Tab {
+    Tab::new(tab_id, &tabs::registry::TERMINAL).with_path(cwd)
 }
 
 fn is_file_editor_tab(tab: &Tab, path: &Path) -> bool {

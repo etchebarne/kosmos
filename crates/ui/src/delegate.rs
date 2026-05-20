@@ -39,13 +39,18 @@ impl TabAnimationPhase {
 
 #[derive(Default)]
 pub struct TabAnimationState {
-    opening: HashSet<(usize, usize)>,
-    closing: HashSet<(usize, usize)>,
+    opening: HashSet<(usize, usize, usize)>,
+    closing: HashSet<(usize, usize, usize)>,
 }
 
 impl TabAnimationState {
-    pub fn phase(&self, pane_id: usize, tab_id: usize) -> Option<TabAnimationPhase> {
-        let key = (pane_id, tab_id);
+    pub fn phase(
+        &self,
+        workspace_id: usize,
+        pane_id: usize,
+        tab_id: usize,
+    ) -> Option<TabAnimationPhase> {
+        let key = (workspace_id, pane_id, tab_id);
         if self.closing.contains(&key) {
             return Some(TabAnimationPhase::Closing);
         }
@@ -55,24 +60,24 @@ impl TabAnimationState {
         None
     }
 
-    pub fn start_opening(&mut self, pane_id: usize, tab_id: usize) -> bool {
-        let key = (pane_id, tab_id);
+    pub fn start_opening(&mut self, workspace_id: usize, pane_id: usize, tab_id: usize) -> bool {
+        let key = (workspace_id, pane_id, tab_id);
         self.closing.remove(&key);
         self.opening.insert(key)
     }
 
-    pub fn finish_opening(&mut self, pane_id: usize, tab_id: usize) -> bool {
-        self.opening.remove(&(pane_id, tab_id))
+    pub fn finish_opening(&mut self, workspace_id: usize, pane_id: usize, tab_id: usize) -> bool {
+        self.opening.remove(&(workspace_id, pane_id, tab_id))
     }
 
-    pub fn start_closing(&mut self, pane_id: usize, tab_id: usize) -> bool {
-        let key = (pane_id, tab_id);
+    pub fn start_closing(&mut self, workspace_id: usize, pane_id: usize, tab_id: usize) -> bool {
+        let key = (workspace_id, pane_id, tab_id);
         self.opening.remove(&key);
         self.closing.insert(key)
     }
 
-    pub fn finish_closing(&mut self, pane_id: usize, tab_id: usize) -> bool {
-        self.closing.remove(&(pane_id, tab_id))
+    pub fn finish_closing(&mut self, workspace_id: usize, pane_id: usize, tab_id: usize) -> bool {
+        self.closing.remove(&(workspace_id, pane_id, tab_id))
     }
 }
 

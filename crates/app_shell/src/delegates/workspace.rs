@@ -22,7 +22,7 @@ impl WorkspaceDelegate for KosmosApp {
                 this.workspaces.add(path);
                 this.sync_file_tree_root(cx);
                 cx.notify();
-                this.persist_active_workspace();
+                this.persist_active_workspace(cx);
                 persistence::save_session(&this.workspaces);
             });
         })
@@ -66,6 +66,7 @@ impl WorkspaceDelegate for KosmosApp {
         if !self.workspaces.close(id) {
             return;
         }
+        terminal::TerminalStore::drop_workspace(id, cx);
         self.sync_file_tree_root(cx);
         cx.notify();
         persistence::save_session(&self.workspaces);

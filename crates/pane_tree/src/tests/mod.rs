@@ -67,6 +67,17 @@ fn replace_tab_kind_unknown_pane_or_tab_returns_false() {
 }
 
 #[test]
+fn set_tab_path_updates_existing_tab() {
+    let mut tree = PaneTree::new();
+    let path = std::path::PathBuf::from("/tmp");
+
+    assert!(tree.set_tab_path(0, Some(path.clone())));
+    assert!(!tree.set_tab_path(0, Some(path.clone())));
+    assert!(!tree.set_tab_path(99, Some(path.clone())));
+    assert_eq!(leaf(tree.root()).tabs()[0].path.as_ref(), Some(&path));
+}
+
+#[test]
 fn select_tab_validates_membership() {
     let mut tree = PaneTree::new();
     tree.add_tab(0, &registry::BLANK);

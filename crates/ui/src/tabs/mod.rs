@@ -5,11 +5,11 @@ pub mod file_tree;
 pub mod git;
 mod placeholder;
 pub mod settings;
-mod terminal;
+pub mod terminal;
 
 use std::path::Path;
 
-use gpui::{AnyElement, Context, IntoElement, div};
+use gpui::{AnyElement, Context, IntoElement, Window, div};
 use icons::IconName;
 
 use tabs::{Tab, registry};
@@ -17,13 +17,22 @@ use tabs::{Tab, registry};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 pub fn render<T: PaneDelegate + SettingsDelegate>(
+    workspace_id: usize,
+    workspace_path: &Path,
     pane_id: usize,
     tab: &Tab,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     match tab.kind.as_str() {
         "blank" => blank::render(pane_id, tab.id, cx),
-        "terminal" => terminal::render(cx),
+        "terminal" => terminal::render(
+            workspace_id,
+            terminal_cwd_for_tab(workspace_path, tab),
+            tab.id,
+            window,
+            cx,
+        ),
         "file_tree" => file_tree::render(cx),
         "file_search" => file_search::render(cx),
         "git" => git::render(cx),
@@ -34,7 +43,8 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {
-    if let Some(path) = &tab.path
+    if tab.kind.as_str() == registry::FILE_EDITOR.id
+        && let Some(path) = &tab.path
         && let Some(icon) = icon_for_path(path)
     {
         return icon;
@@ -53,6 +63,13 @@ pub fn icon_for_kind(kind_id: &str) -> IconName {
         id if id == registry::FILE_EDITOR.id => IconName::File,
         _ => IconName::File,
     }
+}
+
+fn terminal_cwd_for_tab<'a>(workspace_path: &'a Path, tab: &'a Tab) -> &'a Path {
+    tab.path
+        .as_deref()
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .unwrap_or(workspace_path)
 }
 
 fn icon_for_path(path: &Path) -> Option<IconName> {

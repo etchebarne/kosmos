@@ -18,6 +18,7 @@ settings = { path = "../settings" }
 shortcuts = { path = "../shortcuts" }
 syntax = { path = "../syntax" }
 theme = { path = "../theme" }
+terminal = { path = "../terminal" }
 unicode-segmentation = "1.12"
 workspace = { path = "../workspace" }
 pane_tree = { path = "../pane_tree" }

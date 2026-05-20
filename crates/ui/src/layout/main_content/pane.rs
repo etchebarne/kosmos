@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use file_tree::NodeKind;
 use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
 
@@ -17,6 +19,8 @@ use super::tab;
 pub fn render<T: PaneDelegate + SettingsDelegate>(
     tree: &PaneTree,
     pane: &Pane,
+    workspace_id: usize,
+    workspace_path: &Path,
     tab_scrolls: &TabScrollHandles,
     window: &mut Window,
     cx: &mut Context<T>,
@@ -41,7 +45,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                     .into_any_element(),
             );
         }
-        tab_elements.push(tab::render(pane, t, can_close, window, cx));
+        tab_elements.push(tab::render(workspace_id, pane, t, can_close, window, cx));
     }
 
     let pane_id = pane.id();
@@ -51,7 +55,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         .map(|t| t.kind.as_str() != tabs::registry::FILE_TREE.id)
         .unwrap_or(true);
     let body = match active_tab {
-        Some(tab) => tab_views::render(pane_id, &tab, cx),
+        Some(tab) => tab_views::render(workspace_id, workspace_path, pane_id, &tab, window, cx),
         None => div().flex_1().min_h_0().into_any_element(),
     };
     div()

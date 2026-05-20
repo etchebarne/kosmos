@@ -9,7 +9,7 @@ use gpui::{
 use file_editor::BufferStore;
 use file_tree::{FileTree, FileTreeEvent, FileTreeState};
 use gpui::BorrowAppContext;
-use pane_tree::PaneTree;
+use pane_tree::{PaneNode, PaneTree};
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
 use ui::delegate::{
@@ -21,6 +21,8 @@ use ui::pane_tree_actions::WirePaneTreeActions;
 use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
 use zoom::WireZoomActions;
+
+const TERMINAL_CWD_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Sync the global `Theme` with the user's chosen theme setting.
 fn apply_theme(cx: &mut App) {
@@ -45,6 +47,7 @@ pub(crate) struct KosmosApp {
     pub(crate) file_tree: Entity<FileTree>,
     focus_handle: FocusHandle,
     workspace_watch_task: Option<Task<()>>,
+    terminal_cwd_persist_task: Option<Task<()>>,
     /// Set whenever a transient mutation (e.g. a pane resize drag-move) has
     /// changed workspace state without writing to disk. Drained by the next
     /// non-transient mutation or on app quit, so the user's last resize ratio
@@ -65,10 +68,12 @@ impl KosmosApp {
             file_tree,
             focus_handle: cx.focus_handle(),
             workspace_watch_task: None,
+            terminal_cwd_persist_task: None,
             pending_persist: false,
         };
         app.sync_file_tree_root(cx);
         app.start_workspace_watch_task(cx);
+        app.start_terminal_cwd_persist_task(cx);
         app.flush_pending_persist_on_quit(cx);
         app
     }
@@ -88,10 +93,10 @@ impl KosmosApp {
     }
 
     fn flush_pending_persist_on_quit(&mut self, cx: &mut Context<Self>) {
-        cx.on_app_quit(|this, _cx| {
-            // Flush any resize-drag mutations that bypassed persistence so
-            // the last ratio lands on disk before the process exits.
-            this.flush_pending_persist();
+        cx.on_app_quit(|this, cx| {
+            // Flush workspace state on quit so live terminal cwd changes land
+            // on disk even if no pane-tree mutation happened after `cd`.
+            this.persist_all_workspaces(cx);
             async {}
         })
         .detach();
@@ -139,6 +144,7 @@ impl KosmosApp {
                         let mut closed = false;
                         for id in missing {
                             if this.workspaces.close(id) {
+                                terminal::TerminalStore::drop_workspace(id, cx);
                                 closed = true;
                             }
                         }
@@ -155,6 +161,23 @@ impl KosmosApp {
             }
         });
         self.workspace_watch_task = Some(task);
+    }
+
+    fn start_terminal_cwd_persist_task(&mut self, cx: &mut Context<Self>) {
+        let task = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(TERMINAL_CWD_PERSIST_INTERVAL)
+                    .await;
+                if this
+                    .update(cx, |this, cx| this.persist_changed_terminal_directories(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        self.terminal_cwd_persist_task = Some(task);
     }
 
     pub(crate) fn sync_file_tree_root(&mut self, cx: &mut Context<Self>) {
@@ -174,18 +197,89 @@ impl KosmosApp {
         .detach();
     }
 
-    pub(crate) fn persist_active_workspace(&mut self) {
-        if let Some(workspace) = self.workspaces.active_workspace() {
+    pub(crate) fn persist_active_workspace(&mut self, cx: &mut App) {
+        if let Some(workspace_id) = self.workspaces.active_id() {
+            self.persist_workspace(workspace_id, cx);
+        } else {
+            self.pending_persist = false;
+        }
+    }
+
+    pub(crate) fn persist_workspace(&mut self, workspace_id: usize, cx: &mut App) {
+        self.sync_terminal_paths_for_workspace(workspace_id, cx);
+        if let Some(workspace) = self.workspaces.workspace(workspace_id) {
             persistence::save_workspace(workspace);
         }
+        if self.workspaces.active_id() == Some(workspace_id) {
+            self.pending_persist = false;
+        }
+    }
+
+    pub(crate) fn persist_all_workspaces(&mut self, cx: &mut App) {
+        let workspace_ids = self
+            .workspaces
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>();
+        for workspace_id in workspace_ids {
+            self.persist_workspace(workspace_id, cx);
+        }
+        persistence::save_session(&self.workspaces);
         self.pending_persist = false;
+    }
+
+    fn persist_changed_terminal_directories(&mut self, cx: &mut App) {
+        let workspace_ids = self
+            .workspaces
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>();
+        for workspace_id in workspace_ids {
+            if !self.sync_terminal_paths_for_workspace(workspace_id, cx) {
+                continue;
+            }
+            if let Some(workspace) = self.workspaces.workspace(workspace_id) {
+                persistence::save_workspace(workspace);
+            }
+            if self.workspaces.active_id() == Some(workspace_id) {
+                self.pending_persist = false;
+            }
+        }
+    }
+
+    fn sync_terminal_paths_for_workspace(&mut self, workspace_id: usize, cx: &mut App) -> bool {
+        let tab_ids = self
+            .workspaces
+            .pane_tree(workspace_id)
+            .map(|tree| terminal_tab_ids(tree.root()))
+            .unwrap_or_default();
+        let updates = tab_ids
+            .into_iter()
+            .filter_map(|tab_id| {
+                let key = terminal::TerminalKey::new(workspace_id, tab_id);
+                let cwd = terminal::TerminalStore::cwd(key, cx)?;
+                (cwd.is_absolute() && cwd.is_dir()).then_some((tab_id, cwd))
+            })
+            .collect::<Vec<_>>();
+        if updates.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(tree) = self.workspaces.pane_tree_mut(workspace_id) {
+            for (tab_id, cwd) in updates {
+                changed |= tree.set_tab_path(tab_id, Some(cwd));
+            }
+        }
+        changed
     }
 
     /// Write any deferred state to disk if a transient mutation left a
     /// pending change behind. No-op when the cache is clean.
-    pub(crate) fn flush_pending_persist(&mut self) {
+    pub(crate) fn flush_pending_persist(&mut self, cx: &mut App) {
         if self.pending_persist {
-            self.persist_active_workspace();
+            self.persist_active_workspace(cx);
         }
     }
 
@@ -196,6 +290,11 @@ impl KosmosApp {
         }
         cx.update_global::<SettingsUiState, _>(|state, _| {
             if state.open_dropdown.take().is_some() {
+                changed = true;
+            }
+        });
+        cx.update_global::<ui::tabs::terminal::TerminalUi, _>(|state, _| {
+            if state.close_shell_picker() {
                 changed = true;
             }
         });
@@ -216,7 +315,7 @@ impl KosmosApp {
             return;
         }
         cx.notify();
-        self.persist_active_workspace();
+        self.persist_active_workspace(cx);
     }
 
     /// Mutate the active pane tree without writing to disk. Use for high-rate
@@ -388,5 +487,21 @@ impl Render for KosmosApp {
             .child(layout::bottom_bar::render(&theme))
             .child(ui::tabs::git::render_modal_overlay(cx))
             .child(ui::components::toast::render(cx))
+    }
+}
+
+fn terminal_tab_ids(node: &PaneNode) -> Vec<usize> {
+    match node {
+        PaneNode::Leaf(pane) => pane
+            .tabs()
+            .iter()
+            .filter(|tab| tab.kind.as_str() == tabs::registry::TERMINAL.id)
+            .map(|tab| tab.id)
+            .collect(),
+        PaneNode::Split { first, second, .. } => {
+            let mut ids = terminal_tab_ids(first);
+            ids.extend(terminal_tab_ids(second));
+            ids
+        }
     }
 }

@@ -68,6 +68,10 @@ impl WorkspaceManager {
 
     pub fn active_workspace(&self) -> Option<&Workspace> {
         let id = self.active?;
+        self.workspace(id)
+    }
+
+    pub fn workspace(&self, id: usize) -> Option<&Workspace> {
         self.workspaces.iter().find(|w| w.id == id)
     }
 
@@ -103,14 +107,22 @@ impl WorkspaceManager {
 
     pub fn active_pane_tree(&self) -> Option<&PaneTree> {
         let id = self.active?;
+        self.pane_tree(id)
+    }
+
+    pub fn active_pane_tree_mut(&mut self) -> Option<&mut PaneTree> {
+        let id = self.active?;
+        self.pane_tree_mut(id)
+    }
+
+    pub fn pane_tree(&self, id: usize) -> Option<&PaneTree> {
         self.workspaces
             .iter()
             .find(|w| w.id == id)
             .map(|w| &w.pane_tree)
     }
 
-    pub fn active_pane_tree_mut(&mut self) -> Option<&mut PaneTree> {
-        let id = self.active?;
+    pub fn pane_tree_mut(&mut self, id: usize) -> Option<&mut PaneTree> {
         self.workspaces
             .iter_mut()
             .find(|w| w.id == id)
