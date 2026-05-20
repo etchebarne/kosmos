@@ -2,6 +2,7 @@ use gpui::{App, Global, KeyBinding};
 
 /// Keymap context that activates the global Kosmos shortcuts.
 pub const CONTEXT: &str = "Kosmos";
+const GLOBAL_SHORTCUT_CONTEXT: &str = "Kosmos && !Terminal";
 
 /// A keystroke -> action mapping prior to resolution against the action registry.
 /// Settings will eventually deserialize into this same shape so the install path is shared.
@@ -35,7 +36,7 @@ impl Global for ShortcutRegistry {}
 
 impl ShortcutBinding {
     pub const fn new(keystrokes: &'static str, action: &'static str) -> Self {
-        Self::in_context(keystrokes, action, CONTEXT)
+        Self::in_context(keystrokes, action, GLOBAL_SHORTCUT_CONTEXT)
     }
 
     pub const fn in_context(
@@ -203,5 +204,12 @@ mod tests {
             primary_label_for_action_in(DEFAULTS, "text_input::Redo"),
             Some("Ctrl+Y".to_string())
         );
+    }
+
+    #[test]
+    fn global_shortcuts_skip_terminal_context() {
+        let global_binding = ShortcutBinding::new("ctrl-t", "pane_tree::NewTab");
+        assert_eq!(global_binding.context, "Kosmos && !Terminal");
+        assert_eq!(CONTEXT, "Kosmos");
     }
 }
