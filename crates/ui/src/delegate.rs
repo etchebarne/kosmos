@@ -94,7 +94,6 @@ pub trait WorkspaceDelegate: Sized + 'static {
 }
 
 pub trait HeaderDelegate: WorkspaceDelegate {
-    fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
     fn activate_header_menu_action(
         &mut self,
         action: HeaderMenuAction,

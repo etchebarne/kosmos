@@ -13,8 +13,7 @@ use pane_tree::{PaneNode, PaneTree};
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
 use ui::delegate::{
-    HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles,
-    WorkspaceMenuState,
+    HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles, WorkspaceMenuState,
 };
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
@@ -47,7 +46,6 @@ fn apply_theme(cx: &mut App) {
 }
 
 pub(crate) struct KosmosApp {
-    pub(crate) active_menu: Option<HeaderMenu>,
     pub(crate) workspace_menu: Option<WorkspaceMenuState>,
     pub(crate) workspaces: WorkspaceManager,
     pub(crate) tab_scrolls: TabScrollHandles,
@@ -68,7 +66,6 @@ impl KosmosApp {
         let workspaces = persistence::load();
         let file_tree = Self::create_file_tree(cx);
         let mut app = Self {
-            active_menu: None,
             workspace_menu: None,
             workspaces,
             tab_scrolls: TabScrollHandles::new(),
@@ -291,7 +288,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
-        let mut changed = self.active_menu.take().is_some();
+        let mut changed = false;
         if self.workspace_menu.take().is_some() {
             changed = true;
         }
@@ -478,7 +475,6 @@ impl Render for KosmosApp {
             .bg(theme.bg_root)
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
             .child(layout::header::render(
-                self.active_menu,
                 &self.workspaces,
                 self.workspace_menu,
                 header_menu_availability,

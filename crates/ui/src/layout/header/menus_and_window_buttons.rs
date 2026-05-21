@@ -4,6 +4,16 @@ struct HeaderMenuItem {
     label: &'static str,
 }
 
+#[derive(Clone)]
+struct HeaderPopupMenuItem {
+    label: &'static str,
+    shortcut: Option<SharedString>,
+    is_enabled: bool,
+    listener: HeaderMenuHandler,
+}
+
+type HeaderMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
 impl HeaderMenuItem {
     const fn new(action: HeaderMenuAction, label: &'static str) -> Self {
         Self { action, label }
@@ -106,139 +116,106 @@ fn render_workspace_menu_dismiss<T: WorkspaceDelegate>(cx: &mut Context<T>) -> A
 }
 
 fn render_menu_button<T: HeaderDelegate>(
-    active_menu: Option<HeaderMenu>,
     menu: HeaderMenu,
     label: &'static str,
     availability: HeaderMenuAvailability,
     cx: &mut Context<T>,
-) -> impl IntoElement + 'static {
+) -> AnyElement {
     let theme = *cx.theme();
     let is_enabled = availability.menu_enabled(menu);
-    let is_active = is_enabled && active_menu == Some(menu);
-    let dropdown = is_active.then(|| render_menu_dropdown::<T>(menu, availability, &theme, cx));
 
-    div()
-        .id(("menu-button", menu.id()))
-        .relative()
+    let button = Button::new(("menu-button", menu.id()))
+        .ghost()
+        .tab_stop(false)
+        .disabled(!is_enabled)
         .h(rems(1.75))
         .px_3()
-        .flex()
-        .items_center()
-        .rounded(rems(0.3125))
         .text_sm()
         .text_color(if is_enabled {
             theme.text_header
         } else {
             theme.text_muted
         })
-        .bg(if is_active {
-            theme.bg_selected
-        } else {
-            theme.bg_surface
-        })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .when(is_enabled, |this| {
-            this.hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_header_menu(menu, cx);
-                }))
-        })
-        .when(!is_enabled, |this| {
-            this.opacity(0.45)
-                .on_click(|_, _, cx| cx.stop_propagation())
-        })
-        .child(label)
-        .children(dropdown)
-}
+        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .when(!is_enabled, |this| this.opacity(0.45))
+        .child(label);
 
-fn render_menu_dropdown<T: HeaderDelegate>(
-    menu: HeaderMenu,
-    availability: HeaderMenuAvailability,
-    theme: &Theme,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let item_elements = menu_items(menu)
+    if !is_enabled {
+        return button.into_any_element();
+    }
+
+    let items = menu_items(menu)
         .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            render_menu_item::<T>(
-                menu,
-                index,
-                *item,
-                availability.action_enabled(item.action),
-                theme,
-                cx,
-            )
+        .map(|item| {
+            let action = item.action;
+            let listener: HeaderMenuHandler = Rc::new(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.activate_header_menu_action(action, window, cx);
+            }));
+
+            HeaderPopupMenuItem {
+                label: item.label,
+                shortcut: action
+                    .shortcut_action_name()
+                    .and_then(|action| shortcuts::primary_label_for_action(action, cx))
+                    .map(SharedString::from),
+                is_enabled: availability.action_enabled(action),
+                listener,
+            }
         })
         .collect::<Vec<_>>();
 
-    deferred(
-        div()
-            .id(("menu-dropdown", menu.id()))
-            .absolute()
-            .top(rems(2.0))
-            .left(rems(0.0))
-            .w(rems(17.0))
-            .p_1()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .rounded(rems(0.375))
-            .border_1()
-            .border_color(theme.border_strong)
-            .bg(theme.bg_elevated)
-            .shadow_lg()
-            .block_mouse_except_scroll()
-            .children(item_elements),
-    )
-    .into_any_element()
+    button
+        .dropdown_menu(move |popup_menu, window, _| {
+            let menu_width = rems(17.0).to_pixels(window.rem_size());
+            items.iter().cloned().fold(
+                popup_menu.min_w(menu_width).max_w(menu_width),
+                |popup_menu, item| popup_menu.item(render_menu_item(item)),
+            )
+        })
+        .into_any_element()
 }
 
-fn render_menu_item<T: HeaderDelegate>(
-    menu: HeaderMenu,
-    index: usize,
-    item: HeaderMenuItem,
-    is_enabled: bool,
-    theme: &Theme,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let action = item.action;
-    let shortcut = item
-        .action
-        .shortcut_action_name()
-        .and_then(|action| shortcuts::primary_label_for_action(action, cx))
-        .map(SharedString::from);
+fn render_menu_item(item: HeaderPopupMenuItem) -> PopupMenuItem {
+    let HeaderPopupMenuItem {
+        label,
+        shortcut,
+        is_enabled,
+        listener,
+    } = item;
 
-    Button::new(("menu-item", menu.id() * 100 + index))
-        .ghost()
-        .tab_stop(false)
-        .disabled(!is_enabled)
-        .h(rems(1.75))
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_4()
-                .child(div().flex_1().min_w_0().child(item.label))
-                .when_some(shortcut, |this, shortcut| {
-                    this.child(
-                        div()
-                            .flex_none()
-                            .text_color(theme.text_muted)
-                            .child(shortcut),
-                    )
-                }),
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            cx.stop_propagation();
-            if is_enabled {
-                this.activate_header_menu_action(action, window, cx);
-            }
-        }))
-        .into_any_element()
+    PopupMenuItem::element(move |_, cx| {
+        let theme = *cx.theme();
+        let text_color = if is_enabled {
+            theme.text
+        } else {
+            theme.text_subtle
+        };
+        let shortcut_color = if is_enabled {
+            theme.text_muted
+        } else {
+            theme.text_subtle
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .text_color(text_color)
+            .child(div().flex_1().min_w_0().child(label))
+            .when_some(shortcut.clone(), |this, shortcut| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .text_color(shortcut_color)
+                        .child(shortcut),
+                )
+            })
+    })
+    .disabled(!is_enabled)
+    .on_click(move |event, window, cx| listener(event, window, cx))
 }
 
 fn menu_items(menu: HeaderMenu) -> &'static [HeaderMenuItem] {

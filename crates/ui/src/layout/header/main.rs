@@ -1,28 +1,28 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, IntoElement, MouseButton, MouseDownEvent,
-    SharedString, Window, WindowControlArea, anchored, deferred, div, ease_in_out, prelude::*,
-    rems, svg,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, IntoElement, MouseButton,
+    MouseDownEvent, SharedString, Window, WindowControlArea, anchored, deferred, div, ease_in_out,
+    prelude::*, rems, svg,
 };
 use gpui_component::{
     Disableable, Icon as ComponentIcon,
     button::{Button, ButtonVariants},
+    menu::{DropdownMenu, PopupMenuItem},
 };
 
 use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
 use workspace::{Workspace, WorkspaceManager};
 
+use crate::components::left_aligned_button_label;
 use crate::delegate::{
     HeaderDelegate, HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, WorkspaceDelegate,
     WorkspaceMenuState,
 };
-use crate::components::left_aligned_button_label;
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
-    active_menu: Option<HeaderMenu>,
     workspace_manager: &WorkspaceManager,
     workspace_menu: Option<WorkspaceMenuState>,
     menu_availability: HeaderMenuAvailability,
@@ -73,21 +73,18 @@ pub fn render<T: HeaderDelegate>(
                         ),
                 )
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::File,
                     "File",
                     menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::Edit,
                     "Edit",
                     menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::Selection,
                     "Selection",
                     menu_availability,
