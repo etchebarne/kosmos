@@ -17,8 +17,9 @@ use kosmos_git::{
     Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
 };
 use gpui_component::{
-    Disableable, Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+    Disableable, Icon as ComponentIcon, Sizable,
     dialog::Dialog,
 };
 use tabs::registry;

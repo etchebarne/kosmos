@@ -36,38 +36,19 @@ fn render_workspace_menu<T: WorkspaceDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let id = state.id;
-    let hover_bg = theme.bg_selected;
-    let hover_text = theme.text_emphasis;
 
-    let item = div()
-        .id("workspace-menu-close")
-        .flex()
-        .items_center()
-        .gap_2()
+    let item = Button::new("workspace-menu-close")
+        .ghost()
+        .tab_stop(false)
+        .w_full()
         .h(rems(1.625))
-        .px_2()
-        .rounded(rems(0.25))
-        .text_color(theme.text)
-        .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .icon(ComponentIcon::empty().path(IconName::Close.path()))
+        .child(left_aligned_button_label("Close"))
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             this.close_workspace(id, cx);
             this.close_workspace_menu(cx);
-        }))
-        .child(
-            div()
-                .w(rems(1.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(14.0)
-                        .color(theme.text_muted),
-                ),
-        )
-        .child("Close");
+        }));
 
     deferred(
         anchored().position(state.position).snap_to_window().child(

@@ -6,7 +6,7 @@ use gpui::{
     rems, svg,
 };
 use gpui_component::{
-    Disableable,
+    Disableable, Icon as ComponentIcon,
     button::{Button, ButtonVariants},
 };
 
@@ -18,6 +18,7 @@ use crate::delegate::{
     HeaderDelegate, HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, WorkspaceDelegate,
     WorkspaceMenuState,
 };
+use crate::components::left_aligned_button_label;
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(

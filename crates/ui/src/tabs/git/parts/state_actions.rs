@@ -6,37 +6,13 @@ fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
     path: String,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    let unselected_color = gpui::Hsla::from(if theme.is_dark {
-        rgb(0xffffff)
-    } else {
-        rgb(0x000000)
-    })
-    .opacity(0.28);
-    div()
-        .id(id)
-        .size(rems(1.125))
+    Checkbox::new(id)
+        .large()
         .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.0625))
-        .border_1()
-        .border_color(if staged {
-            gpui::Hsla::from(theme.accent)
-        } else {
-            unselected_color
-        })
-        .bg(gpui::Hsla::from(theme.bg_surface).opacity(0.0))
-        .hover(move |this| {
-            this.border_color(if staged {
-                gpui::Hsla::from(theme.accent)
-            } else {
-                gpui::Hsla::from(theme.text_subtle)
-            })
-        })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |_, _, _, cx| {
+        .tab_stop(false)
+        .checked(staged)
+        .on_click(cx.listener(move |_, _: &bool, _, cx| {
+            cx.stop_propagation();
             let path = path.clone();
             if staged {
                 run_git_action(
@@ -54,14 +30,6 @@ fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
                 );
             }
         }))
-        .when(staged, |this| {
-            this.child(
-                div()
-                    .size(rems(0.625))
-                    .rounded(rems(0.03125))
-                    .bg(theme.accent),
-            )
-        })
         .into_any_element()
 }
 
