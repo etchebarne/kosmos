@@ -38,7 +38,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "file_search" => file_search::render(cx),
         "git" => git::render(cx),
         "infinity" => infinity::render(workspace_id, workspace_path, tab.id, window, cx),
-        "settings" => settings::render(cx),
+        "settings" => settings::render(window, cx),
         "file_editor" => file_editor::render(tab, cx),
         _ => div().into_any_element(),
     }

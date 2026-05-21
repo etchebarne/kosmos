@@ -1,6 +1,10 @@
-use gpui::{Anchor, AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui::{
+    Anchor, AnyElement, Context, Entity, IntoElement, SharedString, Subscription, Window, div,
+    prelude::*, rems,
+};
 use gpui_component::{
     button::Button,
+    input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     menu::{DropdownMenu, PopupMenuItem},
     switch::Switch,
 };
@@ -8,16 +12,24 @@ use gpui_component::{
 use settings::{Setting, SettingControl, SettingValue, Settings};
 use theme::ActiveTheme;
 
-use crate::components::{DropdownOption, MultiSelect, NumericInput, left_aligned_button_label};
+use crate::components::{DropdownOption, MultiSelect, left_aligned_button_label};
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
 
 const SETTING_DROPDOWN_WIDTH_REM: f32 = 11.25;
+const SETTING_NUMBER_WIDTH_REM: f32 = 7.5;
+
+struct NumberSettingState {
+    input: Entity<InputState>,
+    committed_value: i64,
+    _subscriptions: Vec<Subscription>,
+}
 
 pub fn render<T: SettingsDelegate>(
     setting: &'static Setting,
     value: &SettingValue,
     open_dropdown: Option<&'static str>,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let setting_id = setting.id;
@@ -30,21 +42,18 @@ pub fn render<T: SettingsDelegate>(
             .into_any_element(),
 
         SettingControl::Number { min, max, step, .. } => {
-            let mut input = NumericInput::new(
-                format!("setting-num:{setting_id}"),
+            let input = number_setting_input(
+                setting_id,
                 value.as_int().unwrap_or(0),
-            )
-            .step(*step)
-            .on_change(cx.listener(move |this, new_value: &i64, _, cx| {
-                this.set_setting_value(setting_id, SettingValue::Int(*new_value), cx);
-            }));
-            if let Some(min) = min {
-                input = input.min(*min);
-            }
-            if let Some(max) = max {
-                input = input.max(*max);
-            }
-            input.into_any_element()
+                *min,
+                *max,
+                *step,
+                window,
+                cx,
+            );
+            NumberInput::new(&input)
+                .w(rems(SETTING_NUMBER_WIDTH_REM))
+                .into_any_element()
         }
 
         SettingControl::Dropdown { options, .. } => {
@@ -143,4 +152,158 @@ pub fn render<T: SettingsDelegate>(
 
 fn make_id(prefix: &str, id: &str) -> SharedString {
     SharedString::from(format!("{prefix}:{id}"))
+}
+
+fn number_setting_input<T: SettingsDelegate>(
+    setting_id: &'static str,
+    value: i64,
+    min: Option<i64>,
+    max: Option<i64>,
+    step: i64,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> Entity<InputState> {
+    let value = clamp_number_value(value, min, max);
+    let step = step.max(1);
+    let state = window.use_keyed_state(
+        make_id("setting-number-state", setting_id),
+        cx,
+        |window, cx| {
+            let input = cx.new(|cx| InputState::new(window, cx).default_value(value.to_string()));
+            let _subscriptions = vec![
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    move |state: &mut NumberSettingState,
+                          input,
+                          event: &NumberInputEvent,
+                          window,
+                          cx| {
+                        match event {
+                            NumberInputEvent::Step(action) => {
+                                let current_value = input
+                                    .read(cx)
+                                    .value()
+                                    .parse::<i64>()
+                                    .unwrap_or(state.committed_value);
+                                let next_value = match *action {
+                                    StepAction::Decrement => current_value.saturating_sub(step),
+                                    StepAction::Increment => current_value.saturating_add(step),
+                                };
+                                state.commit(
+                                    input,
+                                    setting_id,
+                                    clamp_number_value(next_value, min, max),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    },
+                ),
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    move |state: &mut NumberSettingState, input, event: &InputEvent, window, cx| {
+                        match event {
+                            InputEvent::Change => {
+                                let Some(value) = input.read(cx).value().parse::<i64>().ok() else {
+                                    return;
+                                };
+                                if number_value_in_range(value, min, max) {
+                                    state.set_committed_value(setting_id, value, cx);
+                                }
+                            }
+                            InputEvent::Blur | InputEvent::PressEnter { .. } => {
+                                let value = input
+                                    .read(cx)
+                                    .value()
+                                    .parse::<i64>()
+                                    .map(|value| clamp_number_value(value, min, max))
+                                    .unwrap_or(state.committed_value);
+                                state.commit(input, setting_id, value, window, cx);
+                            }
+                            InputEvent::Focus => {}
+                        }
+                    },
+                ),
+            ];
+
+            NumberSettingState {
+                input,
+                committed_value: value,
+                _subscriptions,
+            }
+        },
+    );
+
+    sync_number_setting_input(&state, value, window, cx);
+    state.read(cx).input.clone()
+}
+
+impl NumberSettingState {
+    fn commit(
+        &mut self,
+        input: &Entity<InputState>,
+        setting_id: &'static str,
+        value: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_committed_value(setting_id, value, cx);
+        set_input_value_if_needed(input, value, window, cx);
+    }
+
+    fn set_committed_value(
+        &mut self,
+        setting_id: &'static str,
+        value: i64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.committed_value == value {
+            return;
+        }
+        self.committed_value = value;
+        cx.update_global::<Settings, _>(|settings, _| {
+            settings.set(setting_id, SettingValue::Int(value));
+        });
+        cx.refresh_windows();
+    }
+}
+
+fn sync_number_setting_input<T>(
+    state: &Entity<NumberSettingState>,
+    value: i64,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) {
+    state.update(cx, |state, cx| {
+        if state.committed_value == value {
+            return;
+        }
+        state.committed_value = value;
+        set_input_value_if_needed(&state.input, value, window, cx);
+    });
+}
+
+fn set_input_value_if_needed<T>(
+    input: &Entity<InputState>,
+    value: i64,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) {
+    let value = value.to_string();
+    input.update(cx, |input, cx| {
+        if input.value().as_ref() != value {
+            input.set_value(value, window, cx);
+        }
+    });
+}
+
+fn clamp_number_value(value: i64, min: Option<i64>, max: Option<i64>) -> i64 {
+    value.clamp(min.unwrap_or(i64::MIN), max.unwrap_or(i64::MAX))
+}
+
+fn number_value_in_range(value: i64, min: Option<i64>, max: Option<i64>) -> bool {
+    min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max)
 }
