@@ -255,7 +255,6 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
     action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
     cx: &mut Context<T>,
 ) {
-    close_menu(cx);
     clear_error(cx);
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
@@ -276,7 +275,6 @@ fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
     action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
     cx: &mut Context<T>,
 ) {
-    close_menu(cx);
     clear_error(cx);
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
@@ -355,7 +353,6 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
         return;
     }
 
-    close_menu(cx);
     clear_error(cx);
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
@@ -374,20 +371,6 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
 
 fn clear_error(cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| state.last_error = None);
-}
-
-pub fn close_menu(cx: &mut App) -> bool {
-    if cx.try_global::<GitUiState>().is_none() {
-        return false;
-    }
-    cx.update_global::<GitUiState, _>(|state, _| {
-        let had_menu = state.menu_position.is_some() || state.sync_menu_position.is_some();
-        state.menu_position = None;
-        state.menu_namespace = None;
-        state.sync_menu_position = None;
-        state.sync_menu_namespace = None;
-        had_menu
-    })
 }
 
 fn plural(count: usize) -> &'static str {

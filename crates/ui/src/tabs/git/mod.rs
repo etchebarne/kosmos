@@ -1,6 +1,5 @@
 include!("parts/state_and_header.rs");
 include!("parts/panels.rs");
-include!("parts/menu.rs");
 include!("parts/branches_modal.rs");
 include!("parts/branch_and_remote_modals.rs");
 include!("parts/tags_and_stashes.rs");

@@ -103,7 +103,6 @@ fn open_modal<T: PaneDelegate + SettingsDelegate>(
     modal: GitModal,
     cx: &mut Context<T>,
 ) {
-    close_menu(cx);
     cx.update_global::<GitUiState, _>(|state, _| {
         state.root = Some(root.clone());
         state.modal = Some(modal);
@@ -146,7 +145,6 @@ fn open_resolve_conflicts_modal<T: PaneDelegate + SettingsDelegate>(
     if conflict_paths.is_empty() {
         return;
     }
-    close_menu(cx);
     cx.update_global::<GitUiState, _>(|state, _| {
         state.root = Some(root);
         state.pending_conflict_paths = conflict_paths;

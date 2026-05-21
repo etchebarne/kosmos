@@ -72,6 +72,7 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
         .to_string();
     let root_branch = root.to_path_buf();
     let root_action = root.to_path_buf();
+    let root_more = root.to_path_buf();
 
     div()
         .id("git-sync-panel")
@@ -104,7 +105,7 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
                     move |_, _, cx| run_sync_action(root_action.clone(), action, false, cx),
                     cx,
                 ))
-                .child(sync_more_button(cx)),
+                .child(sync_more_button(root_more, cx)),
         )
         .into_any_element()
 }
@@ -158,44 +159,40 @@ fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let menu_anchor = Rc::new(RefCell::new(None::<Point<Pixels>>));
-    let paint_anchor = menu_anchor.clone();
-    let click_anchor = menu_anchor.clone();
-    let namespace = current_git_ui_namespace();
-
-    div()
-        .flex_none()
-        .on_children_prepainted(move |bounds, window, _| {
-            let gap = rems(SYNC_MENU_GAP_REM).to_pixels(window.rem_size());
-            *paint_anchor.borrow_mut() = bounds
-                .first()
-                .map(|bounds| Point::new(bounds.right(), bounds.top() - gap));
+fn sync_more_button<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let actions = GitSyncAction::ALL
+        .into_iter()
+        .map(|action| {
+            let root = root.clone();
+            let listener: PopupMenuHandler = Rc::new(cx.listener(move |_, _, _, cx| {
+                run_sync_action(root.clone(), action, true, cx)
+            }));
+            (action.icon(), action.label(), true, action.is_danger(), listener)
         })
-        .child(
-            Button::new("git-sync-more")
-                .outline()
-                .tab_stop(false)
-                .icon(component_icon(IconName::Ellipsis))
-                .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    let position = (*click_anchor.borrow()).unwrap_or_else(|| event.position());
-                    cx.update_global::<GitUiState, _>(|state, _| {
-                        state.menu_position = None;
-                        state.menu_namespace = None;
-                        let is_open = state.sync_menu_position.is_some()
-                            && state.sync_menu_namespace.as_ref() == Some(&namespace);
-                        if is_open {
-                            state.sync_menu_position = None;
-                            state.sync_menu_namespace = None;
-                        } else {
-                            state.sync_menu_position = Some(position);
-                            state.sync_menu_namespace = Some(namespace.clone());
-                        }
-                    });
-                    cx.notify();
-                })),
-        )
+        .collect::<Vec<_>>();
+
+    Button::new("git-sync-more")
+        .outline()
+        .tab_stop(false)
+        .icon(component_icon(IconName::Ellipsis))
+        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
+            let menu_width = rems(11.0).to_pixels(window.rem_size());
+            actions.iter().fold(
+                menu.min_w(menu_width),
+                |menu, (icon, label, enabled, danger, listener)| {
+                    menu.item(popup_menu_item(
+                        *icon,
+                        label,
+                        *enabled,
+                        *danger,
+                        listener.clone(),
+                    ))
+                },
+            )
+        })
         .into_any_element()
 }
 
@@ -340,44 +337,162 @@ fn icon_button<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let theme = *cx.theme();
-    let namespace = current_git_ui_namespace();
-    div()
-        .id("git-more")
+fn more_button<T: PaneDelegate + SettingsDelegate>(
+    root: &Path,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let root_branches = root.to_path_buf();
+    let root_remotes = root.to_path_buf();
+    let root_stashes = root.to_path_buf();
+    let root_tags = root.to_path_buf();
+    let root_discard_selected = root.to_path_buf();
+    let root_discard = root.to_path_buf();
+    let has_selected_changes = cx
+        .global::<GitUiState>()
+        .summary
+        .as_ref()
+        .is_some_and(|summary| summary.files.iter().any(|file| file.staged));
+
+    let items = vec![
+        (
+            IconName::SourceControl,
+            "Branches",
+            true,
+            false,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(root_branches.clone(), GitModal::Branches, cx)
+            })) as PopupMenuHandler,
+        ),
+        (
+            IconName::Server,
+            "Remotes",
+            true,
+            false,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(root_remotes.clone(), GitModal::Remotes, cx)
+            })) as PopupMenuHandler,
+        ),
+        (
+            IconName::Archive,
+            "Stashes",
+            true,
+            false,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(root_stashes.clone(), GitModal::Stashes, cx)
+            })) as PopupMenuHandler,
+        ),
+        (
+            IconName::Tag,
+            "Tags",
+            true,
+            false,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(root_tags.clone(), GitModal::Tags, cx)
+            })) as PopupMenuHandler,
+        ),
+    ];
+    let danger_items = vec![
+        (
+            IconName::Trash,
+            "Discard Selected Changes",
+            has_selected_changes,
+            true,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(
+                    root_discard_selected.clone(),
+                    GitModal::ConfirmDiscardSelected,
+                    cx,
+                )
+            })) as PopupMenuHandler,
+        ),
+        (
+            IconName::Trash,
+            "Discard All Changes",
+            true,
+            true,
+            Rc::new(cx.listener(move |_, _, _, cx| {
+                open_modal(root_discard.clone(), GitModal::ConfirmDiscard, cx)
+            })) as PopupMenuHandler,
+        ),
+    ];
+
+    Button::new("git-more")
+        .ghost()
+        .small()
+        .tab_stop(false)
         .size(rems(1.375))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                let position = event.position;
-                cx.update_global::<GitUiState, _>(|state, _| {
-                    state.sync_menu_position = None;
-                    state.sync_menu_namespace = None;
-                    let is_open = state.menu_position.is_some()
-                        && state.menu_namespace.as_ref() == Some(&namespace);
-                    if is_open {
-                        state.menu_position = None;
-                        state.menu_namespace = None;
-                    } else {
-                        state.menu_position = Some(position);
-                        state.menu_namespace = Some(namespace.clone());
-                    }
-                });
-                cx.notify();
-            }),
-        )
-        .child(
-            Icon::new(IconName::Ellipsis)
-                .size(14.0)
-                .color(theme.text_muted),
-        )
+        .icon(component_icon(IconName::Ellipsis))
+        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
+            let menu_width = rems(11.0).to_pixels(window.rem_size());
+            let menu = items.iter().fold(
+                menu.min_w(menu_width),
+                |menu, (icon, label, enabled, danger, listener)| {
+                    menu.item(popup_menu_item(
+                        *icon,
+                        label,
+                        *enabled,
+                        *danger,
+                        listener.clone(),
+                    ))
+                },
+            );
+            danger_items.iter().fold(
+                menu.separator(),
+                |menu, (icon, label, enabled, danger, listener)| {
+                    menu.item(popup_menu_item(
+                        *icon,
+                        label,
+                        *enabled,
+                        *danger,
+                        listener.clone(),
+                    ))
+                },
+            )
+        })
         .into_any_element()
+}
+
+fn popup_menu_item(
+    icon: IconName,
+    label: &'static str,
+    enabled: bool,
+    danger: bool,
+    listener: PopupMenuHandler,
+) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| {
+        let theme = *cx.theme();
+        let text_color = if !enabled {
+            theme.text_subtle
+        } else if danger {
+            theme.danger
+        } else {
+            theme.text
+        };
+        let icon_color = if !enabled {
+            theme.text_subtle
+        } else if danger {
+            theme.danger
+        } else {
+            theme.text_muted
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_color(text_color)
+            .child(
+                div()
+                    .w(rems(1.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(icon_color)
+                    .child(component_icon(icon).small()),
+            )
+            .child(label)
+    })
+    .disabled(!enabled)
+    .on_click(move |event, window, cx| listener(event, window, cx))
 }

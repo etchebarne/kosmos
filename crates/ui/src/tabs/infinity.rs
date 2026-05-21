@@ -713,16 +713,13 @@ fn render_scaled_panel_body<T: PaneDelegate + SettingsDelegate>(
 ) -> AnyElement {
     let base_rem = window.rem_size();
     window.set_rem_size(scaled_rem(base_rem, scale));
-    let namespace = SharedString::from(format!("infinity:{workspace_id}:{panel_id}:{}", tab.id));
-    let child = super::git::with_git_ui_namespace(namespace, || {
-        if tab.kind == registry::FILE_TREE.id
-            && let Some(scroll_handle) = file_tree_scroll
-        {
-            super::file_tree::render_with_scroll(scroll_handle, cx)
-        } else {
-            super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
-        }
-    });
+    let child = if tab.kind == registry::FILE_TREE.id
+        && let Some(scroll_handle) = file_tree_scroll
+    {
+        super::file_tree::render_with_scroll(scroll_handle, cx)
+    } else {
+        super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
+    };
     window.set_rem_size(base_rem);
     ScaledRemElement { child, scale }.into_any_element()
 }
@@ -851,7 +848,6 @@ fn close_all_context_menus_app(cx: &mut App) -> bool {
 }
 
 fn close_embedded_context_menus(cx: &mut App) -> bool {
-    let closed_git_menu = super::git::close_menu(cx);
     let closed_file_tree_menu = cx.file_tree().cloned().is_some_and(|file_tree| {
         file_tree.update(cx, |tree, cx| {
             let had_context_menu = tree.context_menu().is_some();
@@ -859,7 +855,7 @@ fn close_embedded_context_menus(cx: &mut App) -> bool {
             had_context_menu
         })
     });
-    closed_git_menu || closed_file_tree_menu
+    closed_file_tree_menu
 }
 
 fn update_canvas_drag(key: InfinityCanvasKey, pointer: CanvasPoint, cx: &mut App) -> bool {
