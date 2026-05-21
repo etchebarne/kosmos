@@ -12,9 +12,7 @@ use gpui::BorrowAppContext;
 use pane_tree::{PaneNode, PaneTree};
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
-use ui::delegate::{
-    HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles, WorkspaceMenuState,
-};
+use ui::delegate::{HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
 use ui::tabs::settings::SettingsInputs;
@@ -46,7 +44,6 @@ fn apply_theme(cx: &mut App) {
 }
 
 pub(crate) struct KosmosApp {
-    pub(crate) workspace_menu: Option<WorkspaceMenuState>,
     pub(crate) workspaces: WorkspaceManager,
     pub(crate) tab_scrolls: TabScrollHandles,
     pub(crate) file_tree: Entity<FileTree>,
@@ -66,7 +63,6 @@ impl KosmosApp {
         let workspaces = persistence::load();
         let file_tree = Self::create_file_tree(cx);
         let mut app = Self {
-            workspace_menu: None,
             workspaces,
             tab_scrolls: TabScrollHandles::new(),
             file_tree,
@@ -289,9 +285,6 @@ impl KosmosApp {
 
     pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
-        if self.workspace_menu.take().is_some() {
-            changed = true;
-        }
         cx.update_global::<SettingsUiState, _>(|state, _| {
             if state.open_dropdown.take().is_some() {
                 changed = true;
@@ -476,7 +469,6 @@ impl Render for KosmosApp {
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
             .child(layout::header::render(
                 &self.workspaces,
-                self.workspace_menu,
                 header_menu_availability,
                 window,
                 cx,

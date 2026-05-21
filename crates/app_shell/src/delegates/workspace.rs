@@ -1,5 +1,5 @@
-use gpui::{Context, PathPromptOptions, Pixels, Point};
-use ui::delegate::{WorkspaceDelegate, WorkspaceMenuState};
+use gpui::{Context, PathPromptOptions};
+use ui::delegate::WorkspaceDelegate;
 
 use crate::app::KosmosApp;
 
@@ -48,17 +48,6 @@ impl WorkspaceDelegate for KosmosApp {
         if self.workspaces.move_to_end(drag_id) {
             cx.notify();
             persistence::save_session(&self.workspaces);
-        }
-    }
-
-    fn open_workspace_menu(&mut self, id: usize, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.workspace_menu = Some(WorkspaceMenuState { id, position });
-        cx.notify();
-    }
-
-    fn close_workspace_menu(&mut self, cx: &mut Context<Self>) {
-        if self.workspace_menu.take().is_some() {
-            cx.notify();
         }
     }
 

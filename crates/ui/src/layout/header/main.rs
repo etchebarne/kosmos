@@ -2,29 +2,25 @@ use std::{rc::Rc, time::Duration};
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, IntoElement, MouseButton,
-    MouseDownEvent, SharedString, Window, WindowControlArea, anchored, deferred, div, ease_in_out,
-    prelude::*, rems, svg,
+    SharedString, Window, WindowControlArea, div, ease_in_out, prelude::*, rems, svg,
 };
 use gpui_component::{
-    Disableable, Icon as ComponentIcon,
+    Disableable, Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
 };
 
 use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
 use workspace::{Workspace, WorkspaceManager};
 
-use crate::components::left_aligned_button_label;
 use crate::delegate::{
     HeaderDelegate, HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, WorkspaceDelegate,
-    WorkspaceMenuState,
 };
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
     workspace_manager: &WorkspaceManager,
-    workspace_menu: Option<WorkspaceMenuState>,
     menu_availability: HeaderMenuAvailability,
     window: &mut Window,
     cx: &mut Context<T>,
@@ -97,12 +93,7 @@ pub fn render<T: HeaderDelegate>(
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
-        .child(render_workspace_bar(
-            workspace_manager,
-            workspace_menu,
-            window,
-            cx,
-        ))
+        .child(render_workspace_bar(workspace_manager, window, cx))
         .child(
             div()
                 .flex_1()

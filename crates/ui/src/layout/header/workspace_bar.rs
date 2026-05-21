@@ -1,6 +1,5 @@
 fn render_workspace_bar<T: WorkspaceDelegate>(
     manager: &WorkspaceManager,
-    workspace_menu: Option<WorkspaceMenuState>,
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -21,10 +20,6 @@ fn render_workspace_bar<T: WorkspaceDelegate>(
         ));
     }
     elements.push(render_add_button(cx));
-    if let Some(state) = workspace_menu {
-        elements.push(render_workspace_menu(state, cx));
-        elements.push(render_workspace_menu_dismiss(cx));
-    }
 
     div()
         .flex()
@@ -90,6 +85,9 @@ fn render_workspace_button<T: WorkspaceDelegate>(
     let hover_group = SharedString::from(format!("workspace-{id}"));
     let accent = theme.accent;
     let drag_initial = initial.clone();
+    let close_listener: HeaderMenuHandler = Rc::new(cx.listener(move |this, _, _, cx| {
+        this.close_workspace(id, cx);
+    }));
 
     let inactive_w = 1.75_f32;
     let active_w = measure_text_rems(window, name.as_ref()) + 1.25;
@@ -176,13 +174,6 @@ fn render_workspace_button<T: WorkspaceDelegate>(
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                this.open_workspace_menu(id, event.position, cx);
-            }),
-        )
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             this.select_workspace(id, cx);
@@ -199,7 +190,42 @@ fn render_workspace_button<T: WorkspaceDelegate>(
                 .group_drag_over::<WorkspaceDrag>(hover_group, move |s| s.bg(accent)),
         )
         .child(content)
+        .context_menu(move |menu, window, _| {
+            let menu_width = rems(10.0).to_pixels(window.rem_size());
+            menu.min_w(menu_width).item(workspace_menu_item(
+                "Close",
+                ComponentIcon::empty().path(IconName::Close.path()),
+                close_listener.clone(),
+            ))
+        })
         .into_any_element()
+}
+
+fn workspace_menu_item(
+    label: &'static str,
+    icon: ComponentIcon,
+    listener: HeaderMenuHandler,
+) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| {
+        let theme = *cx.theme();
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_color(theme.text)
+            .child(
+                div()
+                    .w(rems(1.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(theme.text_muted)
+                    .child(icon.clone().small()),
+            )
+            .child(label)
+    })
+    .on_click(move |event, window, cx| listener(event, window, cx))
 }
 
 fn measure_text_rems(window: &mut Window, text: &str) -> f32 {
