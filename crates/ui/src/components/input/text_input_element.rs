@@ -161,7 +161,14 @@ impl Element for TextElement {
             window.paint_quad(selection);
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
+        line.paint(
+            bounds.origin,
+            window.line_height(),
+            TextAlign::default(),
+            None,
+            window,
+            cx,
+        )
             .ok();
         if focus_handle.is_focused(window)
             && should_paint_text_cursor(window)

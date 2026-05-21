@@ -15,11 +15,14 @@ use gpui::{
 };
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+};
 use icons::{Icon, IconName};
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{Tooltip, TooltipPosition};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
@@ -297,27 +300,18 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let _ = cx;
-    let button = div()
-        .id(id)
+    Button::new(id)
+        .ghost()
+        .small()
+        .tab_stop(false)
         .size(rems(1.375))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .icon(ComponentIcon::empty().path(icon.path()))
+        .tooltip(tooltip)
         .on_click(move |event, window, cx| {
             cx.stop_propagation();
             listener(event, window, cx);
         })
-        .child(Icon::new(icon).size(14.0).color(theme.text_muted));
-
-    Tooltip::new(format!("{id}-tooltip"), tooltip, button)
-        .position(TooltipPosition::Bottom)
         .into_any_element()
 }
 

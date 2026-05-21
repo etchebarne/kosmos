@@ -2,7 +2,7 @@ mod app;
 mod delegates;
 
 use gpui::{
-    App, AppContext, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
+    App, AppContext, Bounds, Pixels, WindowBounds, WindowDecorations, WindowOptions, px, size,
 };
 use icons::AppAssets;
 
@@ -12,7 +12,7 @@ const APP_NAME: &str = "Kosmos";
 const DEFAULT_APP_ID: &str = "net.etchebarne.Kosmos";
 
 pub fn run() {
-    Application::new()
+    gpui_platform::application()
         .with_assets(AppAssets)
         .run(|cx: &mut App| {
             install_globals(cx);
@@ -24,6 +24,7 @@ pub fn run() {
 }
 
 fn install_globals(cx: &mut App) {
+    gpui_component::init(cx);
     cx.set_global(theme::Theme::dark());
     cx.set_global(settings::Settings::load());
     cx.set_global(ui::delegate::SettingsUiState::new());
@@ -65,7 +66,9 @@ fn open_main_window(cx: &mut App) {
             window.set_window_title(APP_NAME);
             let entity = cx.new(KosmosApp::new);
             entity.update(cx, |app, cx| app.start_observing_window(window, cx));
-            entity
+            cx.new(|cx| {
+                gpui_component::Root::new(entity, window, cx).window_shadow_size(Pixels::ZERO)
+            })
         },
     )
     .unwrap();

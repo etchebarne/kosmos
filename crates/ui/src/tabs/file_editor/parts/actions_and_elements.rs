@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
-    AnchoredPositionMode, AnyElement, App, Bounds, Context, Corner, CursorStyle, DragMoveEvent,
+    Anchor, AnchoredPositionMode, AnyElement, App, Bounds, Context, CursorStyle, DragMoveEvent,
     Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle,
     InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton,
     MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText,

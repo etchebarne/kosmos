@@ -1,9 +1,10 @@
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui_component::switch::Switch;
 
 use settings::{Setting, SettingControl, SettingValue};
 use theme::ActiveTheme;
 
-use crate::components::{Dropdown, DropdownOption, MultiSelect, NumericInput, Switch};
+use crate::components::{Dropdown, DropdownOption, MultiSelect, NumericInput};
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
 
@@ -15,14 +16,12 @@ pub fn render<T: SettingsDelegate>(
 ) -> AnyElement {
     let setting_id = setting.id;
     match &setting.control {
-        SettingControl::Switch { .. } => Switch::new(
-            make_id("setting-switch", setting_id),
-            value.as_bool().unwrap_or(false),
-        )
-        .on_change(cx.listener(move |this, new_value: &bool, _, cx| {
-            this.set_setting_value(setting_id, SettingValue::Bool(*new_value), cx);
-        }))
-        .into_any_element(),
+        SettingControl::Switch { .. } => Switch::new(make_id("setting-switch", setting_id))
+            .checked(value.as_bool().unwrap_or(false))
+            .on_click(cx.listener(move |this, new_value: &bool, _, cx| {
+                this.set_setting_value(setting_id, SettingValue::Bool(*new_value), cx);
+            }))
+            .into_any_element(),
 
         SettingControl::Number { min, max, step, .. } => {
             let mut input = NumericInput::new(

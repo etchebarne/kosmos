@@ -26,7 +26,7 @@ pub fn begin_rename(
         input.update(cx, |input, cx| {
             input.set_value(original, cx);
         });
-        input.focus_handle(cx).focus(window);
+        input.focus_handle(cx).focus(window, cx);
     }
 }
 
@@ -35,6 +35,6 @@ pub fn focus_new_entry_input(window: &mut Window, cx: &mut App) {
         input.update(cx, |input, cx| {
             input.set_value("", cx);
         });
-        input.focus_handle(cx).focus(window);
+        input.focus_handle(cx).focus(window, cx);
     }
 }

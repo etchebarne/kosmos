@@ -88,7 +88,7 @@ fn render_hover_overlay(view: &Entity<EditorView>, cx: &mut App) -> AnyElement {
         anchored()
             .position(anchor)
             .position_mode(AnchoredPositionMode::Window)
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .snap_to_window()
             .child(
                 div()

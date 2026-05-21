@@ -36,7 +36,14 @@ fn apply_theme(cx: &mut App) {
         .find(|c| c.id == raw)
         .map(|c| c.id)
         .unwrap_or(theme::DEFAULT_ID);
-    cx.set_global(Theme::by_id(id));
+    let theme = Theme::by_id(id);
+    let component_theme_mode = if theme.is_dark {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    };
+    cx.set_global(theme);
+    gpui_component::Theme::change(component_theme_mode, None, cx);
 }
 
 pub(crate) struct KosmosApp {
@@ -190,7 +197,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.observe_window_bounds(window, |_, window, _| {
             persistence::save_window_bounds(window.window_bounds());
         })
@@ -427,7 +434,7 @@ impl KosmosApp {
             return;
         };
         let focus_handle = view.read(cx).focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         view.update(cx, |view, cx| match action {
             HeaderMenuAction::Undo => view.undo(window, cx),
             HeaderMenuAction::Redo => view.redo(window, cx),
@@ -486,7 +493,9 @@ impl Render for KosmosApp {
             )))
             .child(layout::bottom_bar::render(&theme))
             .child(ui::tabs::git::render_modal_overlay(cx))
-            .child(ui::components::toast::render(cx))
+            .children(gpui_component::Root::render_sheet_layer(window, cx))
+            .children(gpui_component::Root::render_dialog_layer(window, cx))
+            .children(gpui_component::Root::render_notification_layer(window, cx))
     }
 }
 

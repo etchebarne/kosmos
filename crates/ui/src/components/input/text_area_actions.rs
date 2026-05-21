@@ -165,7 +165,7 @@ impl TextArea {
     ) {
         cx.stop_propagation();
         self.is_selecting = true;
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         if event.modifiers.shift {
             self.select_to(self.index_for_mouse_position(event.position, window), cx);
         } else {

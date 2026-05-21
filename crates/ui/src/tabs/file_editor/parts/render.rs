@@ -179,7 +179,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 .collect()
         })
         .size_full()
-        .track_scroll(scroll)
+        .track_scroll(&scroll)
         // Let the longest line drive the horizontal extent so shift+wheel
         // scrolls past the widest content, not just past line 0's width.
         .with_width_from_item(Some(longest_idx))
@@ -262,7 +262,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             MouseButton::Left,
             cx.listener(move |_, event: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();
-                window.focus(&focus_for_click);
+                window.focus(&focus_for_click, cx);
                 view_for_click.update(cx, |view, cx| {
                     view.begin_selection_at_point(
                         event.position,

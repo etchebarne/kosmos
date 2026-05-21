@@ -18,7 +18,6 @@ use infinity::{
 use tabs::{Tab, TabKind, registry};
 use theme::ActiveTheme;
 
-use crate::components::tooltip::with_tooltip_namespace;
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 const PANEL_HEADER_HEIGHT_REM: f32 = 2.75;
@@ -734,16 +733,14 @@ fn render_scaled_panel_body<T: PaneDelegate + SettingsDelegate>(
     let base_rem = window.rem_size();
     window.set_rem_size(scaled_rem(base_rem, scale));
     let namespace = SharedString::from(format!("infinity:{workspace_id}:{panel_id}:{}", tab.id));
-    let child = with_tooltip_namespace(namespace.clone(), || {
-        super::git::with_git_ui_namespace(namespace, || {
-            if tab.kind == registry::FILE_TREE.id
-                && let Some(scroll_handle) = file_tree_scroll
-            {
-                super::file_tree::render_with_scroll(scroll_handle, cx)
-            } else {
-                super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
-            }
-        })
+    let child = super::git::with_git_ui_namespace(namespace, || {
+        if tab.kind == registry::FILE_TREE.id
+            && let Some(scroll_handle) = file_tree_scroll
+        {
+            super::file_tree::render_with_scroll(scroll_handle, cx)
+        } else {
+            super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
+        }
     });
     window.set_rem_size(base_rem);
     ScaledRemElement { child, scale }.into_any_element()
@@ -1039,9 +1036,7 @@ fn scroll_file_tree(
         cx.update_global::<InfinityUi, _>(|ui, _| ui.file_tree_scroll(key, panel_id));
     let offset = scroll_handle.offset();
     let max_offset = scroll_handle.max_offset();
-    let next_y = (offset.y + delta_y)
-        .max(-max_offset.height)
-        .min(Pixels::ZERO);
+    let next_y = (offset.y + delta_y).max(-max_offset.y).min(Pixels::ZERO);
     if next_y == offset.y {
         return false;
     }

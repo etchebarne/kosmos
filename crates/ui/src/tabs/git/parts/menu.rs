@@ -107,7 +107,7 @@ fn sync_action_menu<T: PaneDelegate + SettingsDelegate>(
 ) -> AnyElement {
     let theme = *cx.theme();
     deferred(
-        anchored().position(position).anchor(Corner::BottomRight).snap_to_window().child(
+        anchored().position(position).anchor(gpui::Anchor::BottomRight).snap_to_window().child(
             div()
                 .id("git-sync-menu")
                 .min_w(rems(11.0))

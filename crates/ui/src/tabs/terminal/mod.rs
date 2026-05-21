@@ -429,7 +429,7 @@ fn render_screen<T: 'static>(
         .bg(rgba_for_terminal_color(metrics.screen_background))
         .text_color(rgba_for_terminal_color(metrics.cursor_color))
         .on_any_mouse_down(cx.listener(move |_, event: &MouseDownEvent, window, cx| {
-            window.focus(&focus_for_click);
+            window.focus(&focus_for_click, cx);
             let Some(button) = terminal_mouse_button(event.button) else {
                 return;
             };
@@ -743,7 +743,14 @@ fn render_terminal_surface(
             }
             let row_height = terminal_grid_pixels(bounds, metrics, window).row_height;
             for run in paint_state.text_runs {
-                let _ = run.line.paint(run.origin, row_height, window, cx);
+                let _ = run.line.paint(
+                    run.origin,
+                    row_height,
+                    gpui::TextAlign::default(),
+                    None,
+                    window,
+                    cx,
+                );
             }
         },
     )

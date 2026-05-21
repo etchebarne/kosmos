@@ -6,7 +6,7 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Corner, Entity, Global, IntoElement, MouseButton,
+    AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton,
     MouseDownEvent, Pixels, Point, SharedString, Task, Window, anchored, deferred, div, prelude::*,
     rems, rgb,
 };
@@ -16,10 +16,14 @@ use icons::{Icon, IconName};
 use kosmos_git::{
     Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
 };
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+};
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal, toast};
+use crate::components::{TextArea, TextInput, ValueChanged, modal, toast};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 thread_local! {
