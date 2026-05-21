@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use file_tree::ActiveFileTree;
 use gpui::{
     AnyElement, App, Bounds, Context, DragMoveEvent, Element, ElementId, Global, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, Render,
@@ -220,7 +219,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 else {
                     return;
                 };
-                close_embedded_context_menus(cx);
+                close_context_menu(cx);
                 open_context_menu(key, event.position, pointer, cx);
                 cx.stop_propagation();
             }),
@@ -835,27 +834,11 @@ fn mutate_canvas<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn close_all_context_menus<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> bool {
-    let closed_infinity_menu = close_context_menu(cx);
-    let closed_embedded_menu = close_embedded_context_menus(cx);
-    if closed_embedded_menu {
-        cx.notify();
-    }
-    closed_infinity_menu || closed_embedded_menu
+    close_context_menu(cx)
 }
 
 fn close_all_context_menus_app(cx: &mut App) -> bool {
-    close_context_menu_app(cx) || close_embedded_context_menus(cx)
-}
-
-fn close_embedded_context_menus(cx: &mut App) -> bool {
-    let closed_file_tree_menu = cx.file_tree().cloned().is_some_and(|file_tree| {
-        file_tree.update(cx, |tree, cx| {
-            let had_context_menu = tree.context_menu().is_some();
-            tree.close_context_menu(cx);
-            had_context_menu
-        })
-    });
-    closed_file_tree_menu
+    close_context_menu_app(cx)
 }
 
 fn update_canvas_drag(key: InfinityCanvasKey, pointer: CanvasPoint, cx: &mut App) -> bool {

@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, SharedString, Window, div, prelude::*, rems,
+    SharedString, Window, div, prelude::*, rems,
 };
+use gpui_component::menu::ContextMenuExt;
 
 use file_tree::{FileTree, NewEntryDraft, NodeKind};
 use icons::{Icon, IconName};
@@ -42,12 +43,12 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
     };
 
     let entity_click = entity.clone();
-    let entity_secondary = entity.clone();
     let entity_drop = entity.clone();
+    let menu_entity = entity.clone();
     let click_path = path.clone();
-    let secondary_path = path.clone();
     let drop_path = path.clone();
     let drop_filter_path = path.clone();
+    let menu_target = path.clone();
     let drop_highlight = drop_highlight_color(theme);
 
     let label = node_label(0, icon_name, name, state.is_selected, theme);
@@ -69,20 +70,6 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
         .when(state.is_selected, |s| s.bg(theme.bg_selected))
         .drag_over::<FileNodeDrag>(move |style, _, _, _| style.bg(drop_highlight))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                let position = event.position;
-                let target = secondary_path.clone();
-                entity_secondary.update(cx, |t, cx| {
-                    if !t.is_selected(&target) {
-                        t.select(target.clone(), cx);
-                    }
-                    t.open_context_menu(Some(target), position, cx);
-                });
-            }),
-        )
         .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
             let shift = event.modifiers().shift;
@@ -107,6 +94,9 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
         }))
         .child(div().flex_1().min_w_0().child(label))
         .child(actions_cluster)
+        .context_menu(move |popup_menu, window, cx| {
+            super::menu::build(menu_entity.clone(), menu_target.clone(), popup_menu, window, cx)
+        })
         .into_any_element()
 }
 
@@ -132,13 +122,13 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
     };
 
     let entity_click = entity.clone();
-    let entity_secondary = entity.clone();
     let entity_drop = entity.clone();
+    let menu_entity = entity.clone();
     let click_path = path.clone();
-    let secondary_path = path.clone();
     let drop_path = path.clone();
     let drop_filter_path = path.clone();
     let drag_path = path.clone();
+    let menu_target = path.clone();
     let drag_name = name.clone();
     let drop_highlight = drop_highlight_color(theme);
 
@@ -161,20 +151,6 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
                 .drag_over::<FileNodeDrag>(move |style, _, _, _| style.bg(drop_highlight))
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                let position = event.position;
-                let target = secondary_path.clone();
-                entity_secondary.update(cx, |t, cx| {
-                    if !t.is_selected(&target) {
-                        t.select(target.clone(), cx);
-                    }
-                    t.open_context_menu(Some(target), position, cx);
-                });
-            }),
-        )
         .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
             let target = click_path.clone();
             let shift = event.modifiers().shift;
@@ -207,6 +183,8 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
         );
     }
 
-    row.into_any_element()
+    row.context_menu(move |popup_menu, window, cx| {
+        super::menu::build(menu_entity.clone(), menu_target.clone(), popup_menu, window, cx)
+    })
+    .into_any_element()
 }
-

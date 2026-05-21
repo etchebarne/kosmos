@@ -40,7 +40,7 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         None => return empty_state(cx),
     };
 
-    let (root, error, new_entry, context_menu, clipboard, root_expanded) = {
+    let (root, error, new_entry, root_expanded) = {
         let tree = entity.read(cx);
         let Some(root) = tree.root().map(Path::to_path_buf) else {
             return empty_state(cx);
@@ -49,8 +49,6 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
             root.clone(),
             tree.error().cloned(),
             tree.new_entry_draft().cloned(),
-            tree.context_menu().cloned(),
-            tree.clipboard().map(|(op, _)| op),
             tree.is_expanded(&root),
         )
     };
@@ -76,49 +74,6 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         collect_rows::<T>(&entity, &root, 0, &mut rows, &new_entry, cx);
     }
 
-    let entity_for_dismiss = entity.clone();
-
-    let menu_overlay = context_menu.as_ref().map(|state| {
-        let has_clipboard = clipboard.is_some();
-        let cut_active = matches!(clipboard, Some(file_tree::ClipboardOp::Cut));
-        menu::render::<T>(
-            &entity,
-            state.target.clone(),
-            state.position,
-            has_clipboard,
-            cut_active,
-            cx,
-        )
-    });
-
-    let dismiss_layer = context_menu.as_ref().map(|_| {
-        div()
-            .id("file-tree-menu-dismiss")
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |_, _, _, cx| {
-                    let entity = entity_for_dismiss.clone();
-                    entity.update(cx, |t, cx| t.close_context_menu(cx));
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener({
-                    let entity = entity.clone();
-                    move |_, _, _, cx| {
-                        let entity = entity.clone();
-                        entity.update(cx, |t, cx| t.close_context_menu(cx));
-                    }
-                }),
-            )
-            .into_any_element()
-    });
-
     div()
         .relative()
         .flex_1()
@@ -138,8 +93,6 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
                 .track_scroll(&scroll_handle)
                 .children(rows),
         )
-        .when_some(dismiss_layer, |this, layer| this.child(layer))
-        .when_some(menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
 }
 

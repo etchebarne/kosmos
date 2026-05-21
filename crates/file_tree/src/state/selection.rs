@@ -112,20 +112,4 @@ impl FileTree {
         }
     }
 
-    pub fn open_context_menu(
-        &mut self,
-        target: Option<PathBuf>,
-        position: Point<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        self.context_menu = Some(ContextMenuState { target, position });
-        cx.notify();
-    }
-
-    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
-        if self.context_menu.take().is_some() {
-            cx.notify();
-        }
-    }
-
 }
