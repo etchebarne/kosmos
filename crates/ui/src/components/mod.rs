@@ -1,6 +1,5 @@
 mod button_label;
 pub mod input;
-pub mod modal;
 pub mod multi_select;
 pub mod numeric_input;
 pub mod scrollbar;

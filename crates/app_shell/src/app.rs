@@ -492,7 +492,7 @@ impl Render for KosmosApp {
                 cx,
             )))
             .child(layout::bottom_bar::render(&theme))
-            .child(ui::tabs::git::render_modal_overlay(cx))
+            .child(ui::tabs::git::render_modal_overlay(window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .children(gpui_component::Root::render_dialog_layer(window, cx))
             .children(gpui_component::Root::render_notification_layer(window, cx))
