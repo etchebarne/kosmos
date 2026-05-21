@@ -222,8 +222,6 @@ fn render_menu_item<T: HeaderDelegate>(
     theme: &Theme,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let item_hover_bg = theme.bg_selected;
-    let item_hover_text = theme.text_emphasis;
     let action = item.action;
     let shortcut = item
         .action
@@ -231,42 +229,34 @@ fn render_menu_item<T: HeaderDelegate>(
         .and_then(|action| shortcuts::primary_label_for_action(action, cx))
         .map(SharedString::from);
 
-    div()
-        .id(("menu-item", menu.id() * 100 + index))
+    Button::new(("menu-item", menu.id() * 100 + index))
+        .ghost()
+        .tab_stop(false)
+        .disabled(!is_enabled)
         .h(rems(1.75))
-        .px_3()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_4()
-        .rounded(rems(0.25))
-        .text_sm()
-        .text_color(if is_enabled {
-            theme.text_header
-        } else {
-            theme.text_muted
-        })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .when(is_enabled, |this| {
-            this.hover(move |this| this.bg(item_hover_bg).text_color(item_hover_text))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.activate_header_menu_action(action, window, cx);
-                }))
-        })
-        .when(!is_enabled, |this| {
-            this.opacity(0.45)
-                .on_click(|_, _, cx| cx.stop_propagation())
-        })
-        .child(div().flex_1().min_w_0().child(item.label))
-        .when_some(shortcut, |this, shortcut| {
-            this.child(
-                div()
-                    .flex_none()
-                    .text_color(theme.text_muted)
-                    .child(shortcut),
-            )
-        })
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_4()
+                .child(div().flex_1().min_w_0().child(item.label))
+                .when_some(shortcut, |this, shortcut| {
+                    this.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_muted)
+                            .child(shortcut),
+                    )
+                }),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            if is_enabled {
+                this.activate_header_menu_action(action, window, cx);
+            }
+        }))
         .into_any_element()
 }
 

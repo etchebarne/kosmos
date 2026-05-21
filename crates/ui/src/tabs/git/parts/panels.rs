@@ -114,21 +114,10 @@ fn branch_button<T: PaneDelegate + SettingsDelegate>(
     branch: String,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id("git-current-branch")
+    Button::new("git-current-branch")
+        .outline()
         .min_w_0()
-        .max_w_full()
         .max_w(rems(12.0))
-        .rounded(rems(0.3125))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.bg_elevated)
-        .px_2()
-        .py_1()
-        .text_sm()
-        .text_color(theme.text)
-        .hover(move |this| this.bg(theme.bg_hover))
         .on_click(cx.listener(move |_, _, _, cx| {
             open_modal(root.clone(), GitModal::Branches, cx);
         }))
@@ -138,11 +127,7 @@ fn branch_button<T: PaneDelegate + SettingsDelegate>(
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .child(
-                    Icon::new(IconName::SourceControl)
-                        .size(14.0)
-                        .color(theme.text_muted),
-                )
+                .child(component_icon(IconName::SourceControl).small())
                 .child(
                     div()
                         .min_w_0()
@@ -161,43 +146,19 @@ fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    let color = if action.is_danger() {
-        theme.danger
-    } else {
-        theme.text
-    };
-
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_1p5()
-        .rounded(rems(0.3125))
-        .border_1()
-        .border_color(if action.is_danger() {
-            theme.danger
-        } else {
-            theme.border
-        })
-        .bg(theme.bg_elevated)
-        .px_2()
-        .py_1()
-        .text_sm()
-        .text_color(color)
-        .hover(move |this| this.bg(theme.bg_hover))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    Button::new(id)
+        .outline()
+        .when(action.is_danger(), |this| this.danger())
+        .icon(component_icon(action.icon()))
+        .label(action.label())
         .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
             cx.stop_propagation();
             listener(event, window, cx);
         }))
-        .child(Icon::new(action.icon()).size(14.0).color(color))
-        .child(action.label())
         .into_any_element()
 }
 
 fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let theme = *cx.theme();
     let menu_anchor = Rc::new(RefCell::new(None::<Point<Pixels>>));
     let paint_anchor = menu_anchor.clone();
     let click_anchor = menu_anchor.clone();
@@ -212,45 +173,28 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> 
                 .map(|bounds| Point::new(bounds.right(), bounds.top() - gap));
         })
         .child(
-            div()
-                .id("git-sync-more")
-                .size(rems(1.875))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.3125))
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.bg_elevated)
-                .text_color(theme.text_muted)
-                .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |_, event: &MouseDownEvent, _, cx| {
-                        cx.stop_propagation();
-                        let position = (*click_anchor.borrow()).unwrap_or(event.position);
-                        cx.update_global::<GitUiState, _>(|state, _| {
-                            state.menu_position = None;
-                            state.menu_namespace = None;
-                            let is_open = state.sync_menu_position.is_some()
-                                && state.sync_menu_namespace.as_ref() == Some(&namespace);
-                            if is_open {
-                                state.sync_menu_position = None;
-                                state.sync_menu_namespace = None;
-                            } else {
-                                state.sync_menu_position = Some(position);
-                                state.sync_menu_namespace = Some(namespace.clone());
-                            }
-                        });
-                        cx.notify();
-                    }),
-                )
-                .child(
-                    Icon::new(IconName::Ellipsis)
-                        .size(14.0)
-                        .color(theme.text_muted),
-                ),
+            Button::new("git-sync-more")
+                .outline()
+                .tab_stop(false)
+                .icon(component_icon(IconName::Ellipsis))
+                .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    let position = (*click_anchor.borrow()).unwrap_or_else(|| event.position());
+                    cx.update_global::<GitUiState, _>(|state, _| {
+                        state.menu_position = None;
+                        state.menu_namespace = None;
+                        let is_open = state.sync_menu_position.is_some()
+                            && state.sync_menu_namespace.as_ref() == Some(&namespace);
+                        if is_open {
+                            state.sync_menu_position = None;
+                            state.sync_menu_namespace = None;
+                        } else {
+                            state.sync_menu_position = Some(position);
+                            state.sync_menu_namespace = Some(namespace.clone());
+                        }
+                    });
+                    cx.notify();
+                })),
         )
         .into_any_element()
 }
@@ -321,7 +265,6 @@ fn init_repository_panel<T: PaneDelegate + SettingsDelegate>(
     root: &Path,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let root = root.to_path_buf();
     div()
         .flex_1()
@@ -330,23 +273,12 @@ fn init_repository_panel<T: PaneDelegate + SettingsDelegate>(
         .items_center()
         .justify_center()
         .child(
-            div()
-                .id("git-init-repository")
-                .flex_none()
-                .rounded(rems(0.3125))
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.bg_elevated)
-                .px_2()
-                .py_1()
-                .text_sm()
-                .text_color(theme.text)
-                .hover(move |this| this.bg(theme.bg_hover))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            Button::new("git-init-repository")
+                .outline()
+                .label("Initialize Repository")
                 .on_click(cx.listener(move |_, _, _, cx| {
                     run_git_action(root.clone(), kosmos_git::init, cx);
-                }))
-                .child("Initialize Repository"),
+                })),
         )
         .into_any_element()
 }

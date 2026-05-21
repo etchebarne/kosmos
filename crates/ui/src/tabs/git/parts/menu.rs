@@ -151,46 +151,19 @@ fn menu_item<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    let text_color = if enabled {
-        if danger { theme.danger } else { theme.text }
-    } else {
-        theme.text_subtle
-    };
-    let icon_color = if enabled {
-        if danger {
-            theme.danger
-        } else {
-            theme.text_muted
-        }
-    } else {
-        theme.text_subtle
-    };
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_2()
+    Button::new(id)
+        .ghost()
+        .tab_stop(false)
+        .disabled(!enabled)
+        .when(danger, |this| this.danger())
+        .w_full()
         .h(rems(1.625))
-        .px_2()
-        .rounded(rems(0.25))
-        .text_color(text_color)
-        .when(enabled, |this| {
-            this.hover(move |this| this.bg(theme.bg_selected).text_color(theme.text_emphasis))
-                .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    listener(event, window, cx);
-                }))
-        })
-        .child(
-            div()
-                .w(rems(1.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(icon).size(14.0).color(icon_color)),
-        )
-        .child(label)
+        .icon(component_icon(icon))
+        .child(left_aligned_button_label(label))
+        .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            listener(event, window, cx);
+        }))
         .into_any_element()
 }
 

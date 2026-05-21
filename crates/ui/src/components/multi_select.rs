@@ -8,10 +8,23 @@ use gpui::{
 
 use theme::ActiveTheme;
 
-use crate::components::DropdownOption;
-
 type ToggleHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type ChangeHandler = Rc<dyn Fn(&Vec<SharedString>, &mut Window, &mut App) + 'static>;
+
+#[derive(Clone)]
+pub struct DropdownOption {
+    pub id: SharedString,
+    pub label: SharedString,
+}
+
+impl DropdownOption {
+    pub fn new(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+        }
+    }
+}
 
 #[derive(IntoElement)]
 pub struct MultiSelect {

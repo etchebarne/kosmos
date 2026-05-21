@@ -70,23 +70,18 @@ fn icon_action_button<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id(id)
+    let _ = cx;
+    Button::new(id)
+        .ghost()
+        .small()
+        .tab_stop(false)
         .size(rems(1.375))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
         .text_color(color)
-        .hover(move |this| this.bg(theme.bg_hover))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .icon(component_icon(icon))
         .on_click(move |event, window, cx| {
             cx.stop_propagation();
             listener(event, window, cx);
         })
-        .child(Icon::new(icon).size(14.0).color(color))
         .into_any_element()
 }
 
@@ -114,20 +109,12 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id(id)
-        .rounded(rems(0.3125))
-        .border_1()
-        .border_color(if danger { theme.danger } else { theme.border })
-        .bg(theme.bg_elevated)
-        .px_3()
-        .py_1()
-        .text_sm()
-        .text_color(if danger { theme.danger } else { theme.text })
-        .hover(move |this| this.bg(theme.bg_hover))
+    let _ = cx;
+    Button::new(id)
+        .outline()
+        .when(danger, |this| this.danger())
+        .label(label)
         .on_click(listener)
-        .child(label)
         .into_any_element()
 }
 
@@ -136,34 +123,11 @@ fn commit_button<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id("git-commit-tracked")
-        .rounded(rems(0.3125))
-        .border_1()
-        .border_color(if enabled {
-            gpui::Hsla::from(theme.accent)
-        } else {
-            gpui::Hsla::from(theme.border)
-        })
-        .bg(if enabled {
-            theme.accent
-        } else {
-            theme.bg_elevated
-        })
-        .px_3()
-        .py_1()
-        .text_sm()
-        .text_color(if enabled {
-            theme.bg_surface
-        } else {
-            theme.text_subtle
-        })
-        .when(enabled, |this| {
-            this.hover(move |this| this.bg(gpui::Hsla::from(theme.accent).opacity(0.85)))
-                .on_click(listener)
-        })
-        .child("Commit Tracked")
+    let _ = cx;
+    Button::new("git-commit-tracked")
+        .primary()
+        .disabled(!enabled)
+        .label("Commit Tracked")
+        .on_click(listener)
         .into_any_element()
 }
-

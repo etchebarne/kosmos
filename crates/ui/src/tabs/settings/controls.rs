@@ -1,12 +1,18 @@
-use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
-use gpui_component::switch::Switch;
+use gpui::{Anchor, AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui_component::{
+    button::Button,
+    menu::{DropdownMenu, PopupMenuItem},
+    switch::Switch,
+};
 
-use settings::{Setting, SettingControl, SettingValue};
+use settings::{Setting, SettingControl, SettingValue, Settings};
 use theme::ActiveTheme;
 
-use crate::components::{Dropdown, DropdownOption, MultiSelect, NumericInput};
+use crate::components::{DropdownOption, MultiSelect, NumericInput, left_aligned_button_label};
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
+
+const SETTING_DROPDOWN_WIDTH_REM: f32 = 11.25;
 
 pub fn render<T: SettingsDelegate>(
     setting: &'static Setting,
@@ -42,19 +48,37 @@ pub fn render<T: SettingsDelegate>(
         }
 
         SettingControl::Dropdown { options, .. } => {
-            let opts: Vec<DropdownOption> = options
+            let current = SharedString::from(value.as_str().unwrap_or(""));
+            let label = options
                 .iter()
-                .map(|o| DropdownOption::new(o.id, o.label))
-                .collect();
-            let current = value.as_str().unwrap_or("").to_string();
-            Dropdown::new(format!("setting-dropdown:{setting_id}"), current, opts)
-                .open(open_dropdown == Some(setting_id))
-                .on_toggle(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    this.toggle_settings_dropdown(setting_id, cx);
-                }))
-                .on_select(cx.listener(move |this, value: &SharedString, _, cx| {
-                    this.set_setting_value(setting_id, SettingValue::String(value.clone()), cx);
-                }))
+                .find(|option| option.id == current.as_ref())
+                .map(|option| option.label)
+                .unwrap_or(current.as_ref());
+
+            Button::new(make_id("setting-dropdown", setting_id))
+                .outline()
+                .child(left_aligned_button_label(label))
+                .dropdown_caret(true)
+                .w(rems(SETTING_DROPDOWN_WIDTH_REM))
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, _| {
+                    let menu_width = rems(SETTING_DROPDOWN_WIDTH_REM).to_pixels(window.rem_size());
+                    options
+                        .iter()
+                        .fold(menu.min_w(menu_width).max_w(menu_width), |menu, option| {
+                            let checked = option.id == current.as_ref();
+                            menu.item(PopupMenuItem::new(option.label).checked(checked).on_click(
+                                move |_, _, cx| {
+                                    cx.update_global::<Settings, _>(|settings, _| {
+                                        settings.set(
+                                            setting_id,
+                                            SettingValue::String(option.id.into()),
+                                        );
+                                    });
+                                    cx.refresh_windows();
+                                },
+                            ))
+                        })
+                })
                 .into_any_element()
         }
 

@@ -1,14 +1,19 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, Context, Entity, IntoElement, MouseButton, Pixels, Point, SharedString,
-    Window, anchored, deferred, div, prelude::*, rems,
+    AnyElement, App, Context, Entity, IntoElement, MouseButton, Pixels, Point, Window, anchored,
+    deferred, div, prelude::*, rems,
+};
+use gpui_component::{
+    Disableable, Icon as ComponentIcon,
+    button::{Button, ButtonVariants},
 };
 
 use file_tree::{ClipboardOp, FileTree, NodeKind};
-use icons::{Icon, IconName};
+use icons::IconName;
 use theme::ActiveTheme;
 
+use crate::components::left_aligned_button_label;
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 use crate::tabs::file_tree::actions;
 
@@ -286,46 +291,18 @@ fn menu_item<T: PaneDelegate + SettingsDelegate>(
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    let hover_bg = theme.bg_selected;
-    let hover_text = theme.text_emphasis;
-    let text_color = if enabled {
-        theme.text
-    } else {
-        theme.text_subtle
-    };
-    let icon_color = if enabled {
-        theme.text_muted
-    } else {
-        theme.text_subtle
-    };
-    let label_text: SharedString = label.into();
     let _ = cx;
 
-    let mut row = div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_2()
+    Button::new(id)
+        .ghost()
+        .tab_stop(false)
+        .disabled(!enabled)
+        .w_full()
         .h(rems(1.625))
-        .px_2()
-        .rounded(rems(0.25))
-        .text_color(text_color)
-        .child(
-            div()
-                .w(rems(1.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(icon).size(14.0).color(icon_color)),
-        )
-        .child(label_text);
-    if enabled {
-        row = row
-            .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-            .on_click(listener);
-    }
-    row.into_any_element()
+        .icon(ComponentIcon::empty().path(icon.path()))
+        .child(left_aligned_button_label(label))
+        .on_click(listener)
+        .into_any_element()
 }
 
 fn separator(theme: theme::Theme) -> AnyElement {

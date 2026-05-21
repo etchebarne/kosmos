@@ -17,13 +17,15 @@ use kosmos_git::{
     Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
 };
 use gpui_component::{
-    Icon as ComponentIcon, Sizable,
+    Disableable, Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
 };
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, ValueChanged, modal, toast};
+use crate::components::{
+    TextArea, TextInput, ValueChanged, left_aligned_button_label, modal, toast,
+};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 thread_local! {
@@ -60,6 +62,10 @@ fn current_git_ui_namespace() -> SharedString {
             .cloned()
             .unwrap_or_else(|| SharedString::new_static("git"))
     })
+}
+
+fn component_icon(icon: IconName) -> ComponentIcon {
+    ComponentIcon::empty().path(icon.path())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

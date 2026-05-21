@@ -5,6 +5,10 @@ use gpui::{
     SharedString, Window, WindowControlArea, anchored, deferred, div, ease_in_out, prelude::*,
     rems, svg,
 };
+use gpui_component::{
+    Disableable,
+    button::{Button, ButtonVariants},
+};
 
 use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};

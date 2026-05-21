@@ -2,8 +2,12 @@ use std::path::Path;
 
 use file_tree::NodeKind;
 use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+};
 
-use icons::{Icon, IconName};
+use icons::IconName;
 use pane_tree::{DropZone, PaneTree};
 use panes::Pane;
 use theme::ActiveTheme;
@@ -192,21 +196,14 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>
 }
 
 fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id(("add-tab", pane_id))
+    Button::new(("add-tab", pane_id))
+        .ghost()
+        .tab_stop(false)
         .size(rems(2.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.375))
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .child(ComponentIcon::empty().path(IconName::Add.path()).small())
         .on_click(cx.listener(move |this, _, _, cx| {
             this.add_tab(pane_id, tabs::registry::BLANK.id, cx);
         }))
-        .child(Icon::new(IconName::Add).color(theme.text_muted))
         .into_any_element()
 }
 

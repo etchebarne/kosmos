@@ -10,6 +10,10 @@ use gpui::{
     ScrollHandle, ScrollWheelEvent, SharedString, Window, anchored, deferred, div, prelude::*, px,
     rems,
 };
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+};
 use icons::{Icon, IconName};
 use infinity::{
     CanvasPanel, CanvasPoint, InfinityCanvasKey, InfinityCanvasStore, PanelResizeHandle, Viewport,
@@ -18,7 +22,10 @@ use infinity::{
 use tabs::{Tab, TabKind, registry};
 use theme::ActiveTheme;
 
-use crate::delegate::{PaneDelegate, SettingsDelegate};
+use crate::{
+    components::left_aligned_button_label,
+    delegate::{PaneDelegate, SettingsDelegate},
+};
 
 const PANEL_HEADER_HEIGHT_REM: f32 = 2.75;
 const PANEL_RESIZE_HANDLE_REM: f32 = 1.0;
@@ -379,34 +386,17 @@ fn render_context_menu_item<T: PaneDelegate + SettingsDelegate>(
     kind: &'static TabKind,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let kind_id = kind.id;
-    div()
-        .id(SharedString::from(format!("infinity-menu-{kind_id}")))
-        .flex()
-        .items_center()
-        .gap_2()
+    Button::new(SharedString::from(format!("infinity-menu-{kind_id}")))
+        .ghost()
+        .tab_stop(false)
+        .w_full()
         .h(rems(1.75))
-        .px_2()
-        .rounded(rems(0.25))
-        .text_color(theme.text)
-        .hover(move |this| this.bg(theme.bg_selected).text_color(theme.text_emphasis))
+        .icon(ComponentIcon::empty().path(super::icon_for_kind(kind.id).path()))
+        .child(left_aligned_button_label(kind.name))
         .on_click(cx.listener(move |_, _, _, cx| {
             add_panel_at(key, kind_id, canvas_position, cx);
         }))
-        .child(
-            div()
-                .w(rems(1.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(super::icon_for_kind(kind.id))
-                        .size(14.0)
-                        .color(theme.text_muted),
-                ),
-        )
-        .child(kind.name)
         .into_any_element()
 }
 
@@ -564,15 +554,10 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
                         ),
                 )
                 .child(
-                    div()
-                        .id(("infinity-panel-close", panel_id))
+                    Button::new(("infinity-panel-close", panel_id))
+                        .ghost()
+                        .tab_stop(false)
                         .size(rems(1.5 * zoom))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(rems(0.375 * zoom))
-                        .hover(move |this| this.bg(theme.bg_close_hover))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             if mutate_canvas(key, cx, |canvas| canvas.remove_panel(panel_id)) {
                                 cx.update_global::<InfinityUi, _>(|ui, _| {
@@ -581,11 +566,7 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
                                 cx.notify();
                             }
                         }))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(13.0 * zoom)
-                                .color(theme.text_muted),
-                        ),
+                        .child(ComponentIcon::empty().path(IconName::Close.path()).small()),
                 ),
         )
         .child(

@@ -4,14 +4,19 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, Element, ElementId, ElementInputHandler,
-    Entity, FocusHandle, FontFeatures, Global, GlobalElementId, InteractiveElement, IntoElement,
-    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, ShapedLine, SharedString, StatefulInteractiveElement, StrikethroughStyle, Style,
-    TextRun, UnderlineStyle, Window, canvas, deferred, div, fill, outline, point, prelude::*, px,
+    Anchor, AnyElement, App, Bounds, ClipboardItem, Context, Element, ElementId,
+    ElementInputHandler, Entity, FocusHandle, FontFeatures, Global, GlobalElementId,
+    InteractiveElement, IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString, StrikethroughStyle,
+    Style, TextRun, UnderlineStyle, Window, canvas, div, fill, outline, point, prelude::*, px,
     relative, rems, rgb,
 };
-use icons::{Icon, IconName};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+    menu::{DropdownMenu, PopupMenuItem},
+};
+use icons::IconName;
 use terminal::{
     ShellProfile, TerminalCell, TerminalCellRun, TerminalColor, TerminalCursorShape, TerminalKey,
     TerminalKeyInput, TerminalMouseButton, TerminalMouseModifiers, TerminalPalette,
@@ -19,6 +24,8 @@ use terminal::{
     TerminalStyle, TerminalTheme,
 };
 use theme::{ActiveTheme, Theme};
+
+use crate::components::left_aligned_button_label;
 
 const KEY_CONTEXT: &str = "Terminal";
 const BASE_FONT_SIZE_REM: f32 = 0.875;
@@ -32,34 +39,18 @@ const TERMINAL_ASCII_WIDTH_SAMPLE: [char; 5] = ['i', 'm', 'W', '0', 'A'];
 const TERMINAL_DRAWING_WIDTH_SAMPLE: [char; 4] = ['\u{2502}', '\u{2580}', '\u{2584}', '\u{2588}'];
 const BOTTOM_BAR_HEIGHT_REM: f32 = 1.75;
 const BOTTOM_BAR_BUTTON_SIZE_REM: f32 = 1.375;
-const BOTTOM_BAR_ICON_SIZE_REM: f32 = 0.8125;
-const SHELL_PICKER_ICON_SIZE_REM: f32 = 0.75;
 const SHELL_PICKER_WIDTH_REM: f32 = 8.0;
 
 #[derive(Default)]
-pub struct TerminalUi {
-    open_shell_picker: Option<TerminalKey>,
-}
+pub struct TerminalUi;
 
 impl TerminalUi {
     pub fn install(cx: &mut App) {
         cx.set_global(Self::default());
     }
 
-    fn toggle_shell_picker(&mut self, key: TerminalKey) {
-        self.open_shell_picker = if self.open_shell_picker == Some(key) {
-            None
-        } else {
-            Some(key)
-        };
-    }
-
     pub fn close_shell_picker(&mut self) -> bool {
-        self.open_shell_picker.take().is_some()
-    }
-
-    fn shell_picker_open(&self, key: TerminalKey) -> bool {
-        self.open_shell_picker == Some(key)
+        false
     }
 }
 
@@ -1978,9 +1969,6 @@ fn render_bottom_bar<T: 'static>(
 ) -> AnyElement {
     let theme = *cx.theme();
     let key = session.read(cx).key();
-    let shell_picker_open = cx
-        .try_global::<TerminalUi>()
-        .is_some_and(|ui| ui.shell_picker_open(key));
     let id_prefix = format!("terminal-{}-{}", key.workspace_id, key.tab_id);
     let zoom_out = session.clone();
     let zoom_in = session.clone();
@@ -2014,19 +2002,15 @@ fn render_bottom_bar<T: 'static>(
                     },
                 ))
                 .child(
-                    div()
-                        .id(SharedString::from(format!("{id_prefix}-zoom-reset")))
+                    Button::new(SharedString::from(format!("{id_prefix}-zoom-reset")))
+                        .ghost()
+                        .tab_stop(false)
                         .min_w(rems(2.5))
                         .h(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(rems(0.25))
-                        .hover(move |this| this.bg(theme.bg_hover))
+                        .label(format!("{}", snapshot.zoom_percent))
                         .on_click(move |_, _, cx| {
                             reset_zoom.update(cx, |session, cx| session.reset_zoom(cx));
-                        })
-                        .child(format!("{}", snapshot.zoom_percent)),
+                        }),
                 )
                 .child(compact_text_button(
                     format!("{id_prefix}-zoom-in"),
@@ -2040,9 +2024,7 @@ fn render_bottom_bar<T: 'static>(
                     key,
                     &snapshot.selected_shell_label,
                     &snapshot.shells,
-                    shell_picker_open,
                     session,
-                    cx,
                 ))
                 .child(render_separator())
                 .child(icon_button(
@@ -2072,119 +2054,43 @@ fn render_status(snapshot: &TerminalSnapshot) -> AnyElement {
         .into_any_element()
 }
 
-fn render_shell_picker<T: 'static>(
+fn render_shell_picker(
     key: TerminalKey,
     selected_label: &str,
     shells: &[ShellProfile],
-    is_open: bool,
     session: &Entity<TerminalSession>,
-    cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    let notify_session = session.clone();
-    let menu = is_open.then(|| render_shell_menu(key, shells, session, cx));
-    div()
-        .id(SharedString::from(format!(
-            "terminal-shell-picker-{}-{}",
-            key.workspace_id, key.tab_id
-        )))
-        .relative()
-        .h(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
-        .w(rems(SHELL_PICKER_WIDTH_REM))
-        .px_1()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_1()
-        .rounded(rems(0.25))
-        .hover(move |this| this.bg(theme.bg_hover))
-        .on_click(move |_, _, cx| {
-            cx.stop_propagation();
-            cx.update_global::<TerminalUi, _>(|ui, _| ui.toggle_shell_picker(key));
-            notify_session.update(cx, |_, cx| cx.notify());
-        })
-        .child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(selected_label.to_string()),
-        )
-        .child(
-            Icon::new(IconName::ChevronDown)
-                .size_rem(SHELL_PICKER_ICON_SIZE_REM)
-                .color(theme.text_subtle),
-        )
-        .children(menu)
-        .into_any_element()
-}
-
-fn render_shell_menu<T: 'static>(
-    key: TerminalKey,
-    shells: &[ShellProfile],
-    session: &Entity<TerminalSession>,
-    _cx: &mut Context<T>,
-) -> AnyElement {
+    let selected_label = selected_label.to_string();
     let options = shells
         .iter()
-        .map(|shell| render_shell_option(key, shell, session))
+        .map(|shell| (shell.id.clone(), shell.label.clone()))
         .collect::<Vec<_>>();
-    deferred(
-        div()
-            .id(SharedString::from(format!(
-                "terminal-shell-menu-{}-{}",
-                key.workspace_id, key.tab_id
-            )))
-            .absolute()
-            .bottom(rems(1.75))
-            .right(rems(0.0))
-            .w(rems(SHELL_PICKER_WIDTH_REM))
-            .max_h(rems(12.0))
-            .overflow_y_scroll()
-            .p_1()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .rounded(rems(0.375))
-            .border_1()
-            .border_color(rgb(0x363636))
-            .bg(rgb(0x1c1c1c))
-            .shadow_lg()
-            .block_mouse_except_scroll()
-            .children(options),
-    )
-    .into_any_element()
-}
+    let session = session.clone();
 
-fn render_shell_option(
-    key: TerminalKey,
-    shell: &ShellProfile,
-    session: &Entity<TerminalSession>,
-) -> AnyElement {
-    let shell_id = shell.id.clone();
-    let label = shell.label.clone();
-    let select_session = session.clone();
-    div()
-        .id(SharedString::from(format!(
-            "terminal-shell-{}-{}",
-            key.tab_id, shell.id
-        )))
-        .h(rems(1.5))
-        .px_2()
-        .flex()
-        .items_center()
-        .rounded(rems(0.25))
-        .text_color(rgb(0xe5e5e5))
-        .hover(|this| this.bg(rgb(0x2e2e2e)))
-        .on_click(move |_, _, cx| {
-            cx.stop_propagation();
-            select_session.update(cx, |session, cx| session.select_shell(&shell_id, cx));
-            cx.update_global::<TerminalUi, _>(|ui, _| ui.close_shell_picker());
-            select_session.update(cx, |_, cx| cx.notify());
+    Button::new(SharedString::from(format!(
+        "terminal-shell-picker-{}-{}",
+        key.workspace_id, key.tab_id
+    )))
+    .ghost()
+    .tab_stop(false)
+    .w(rems(SHELL_PICKER_WIDTH_REM))
+    .h(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
+    .child(left_aligned_button_label(selected_label.clone()))
+    .dropdown_caret(true)
+    .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
+        options.iter().fold(menu, |menu, (shell_id, label)| {
+            let shell_id = shell_id.clone();
+            let session = session.clone();
+            menu.item(
+                PopupMenuItem::new(label.clone())
+                    .checked(label == &selected_label)
+                    .on_click(move |_, _, cx| {
+                        session.update(cx, |session, cx| session.select_shell(&shell_id, cx));
+                    }),
+            )
         })
-        .child(label)
-        .into_any_element()
+    })
+    .into_any_element()
 }
 
 fn compact_text_button(
@@ -2192,16 +2098,12 @@ fn compact_text_button(
     label: &'static str,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id.into())
+    Button::new(id.into())
+        .ghost()
+        .tab_stop(false)
         .size(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
-        .hover(|this| this.bg(rgb(0x252525)))
+        .label(label)
         .on_click(on_click)
-        .child(label)
 }
 
 fn icon_button(
@@ -2209,20 +2111,16 @@ fn icon_button(
     icon_name: IconName,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id.into())
+    Button::new(id.into())
+        .ghost()
+        .tab_stop(false)
         .size(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
-        .hover(|this| this.bg(rgb(0x252525)))
+        .child(component_icon(icon_name).small())
         .on_click(on_click)
-        .child(
-            Icon::new(icon_name)
-                .size_rem(BOTTOM_BAR_ICON_SIZE_REM)
-                .color(rgb(0x8a8a8a)),
-        )
+}
+
+fn component_icon(icon: IconName) -> ComponentIcon {
+    ComponentIcon::empty().path(icon.path())
 }
 
 fn render_separator() -> AnyElement {
