@@ -59,6 +59,7 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
                     ),
                     button_id: "git-confirm-discard-selected",
                     button_label: "Discard Selected",
+                    danger: true,
                     confirm: cx.listener(move |_, _, _, cx| {
                         close_modal(cx);
                         run_git_action(
@@ -84,9 +85,67 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
                     message: "This will permanently discard all tracked and untracked working tree changes. This action cannot be undone.".to_string(),
                     button_id: "git-confirm-discard",
                     button_label: "Discard All",
+                    danger: true,
                     confirm: cx.listener(move |_, _, _, cx| {
                         close_modal(cx);
                         run_git_action(root.clone(), kosmos_git::discard_all_changes, cx);
+                    }),
+                },
+                theme,
+                cx,
+            )
+        }
+        GitModal::ConfirmResolveConflicts => {
+            let root = root.to_path_buf();
+            let (conflict_paths, stage_all_changes) = {
+                let state = cx.global::<GitUiState>();
+                (
+                    state.pending_conflict_paths.clone(),
+                    state.pending_conflict_resolution_stages_all,
+                )
+            };
+            let conflict_count = conflict_paths.len();
+            let (message, button_label) = if stage_all_changes {
+                (
+                    format!(
+                        "This will stage all changes, including {conflict_count} conflicted file{}. Staging conflicted files tells Git the conflict{} resolved. Make sure the conflict markers are handled before continuing.",
+                        plural(conflict_count),
+                        plural(conflict_count)
+                    ),
+                    "Stage All",
+                )
+            } else {
+                (
+                    format!(
+                        "This will stage {conflict_count} conflicted file{} and tell Git the conflict{} resolved. Make sure the conflict markers are handled before continuing.",
+                        plural(conflict_count),
+                        plural(conflict_count)
+                    ),
+                    "Mark Resolved",
+                )
+            };
+            confirm_git_action_modal(
+                ConfirmGitActionModal {
+                    modal_id: "git-resolve-conflicts-modal",
+                    title: "Mark Conflicts Resolved",
+                    message,
+                    button_id: "git-confirm-resolve-conflicts",
+                    button_label,
+                    danger: false,
+                    confirm: cx.listener(move |_, _, _, cx| {
+                        close_modal(cx);
+                        if stage_all_changes {
+                            run_git_action(root.clone(), kosmos_git::stage_all, cx);
+                        } else {
+                            run_git_action(
+                                root.clone(),
+                                {
+                                    let conflict_paths = conflict_paths.clone();
+                                    move |root| kosmos_git::stage_files(root, &conflict_paths)
+                                },
+                                cx,
+                            );
+                        }
                     }),
                 },
                 theme,
@@ -102,6 +161,7 @@ struct ConfirmGitActionModal<C> {
     message: String,
     button_id: &'static str,
     button_label: &'static str,
+    danger: bool,
     confirm: C,
 }
 
@@ -132,7 +192,7 @@ where
             .child(action_button(
                 config.button_id,
                 config.button_label,
-                true,
+                config.danger,
                 config.confirm,
                 cx,
             ))

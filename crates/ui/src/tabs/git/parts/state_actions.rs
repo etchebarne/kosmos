@@ -1,6 +1,7 @@
 fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
     id: SharedString,
     staged: bool,
+    conflict_paths: Vec<String>,
     root: PathBuf,
     path: String,
     cx: &mut Context<T>,
@@ -43,6 +44,8 @@ fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
                     move |root| kosmos_git::unstage_file(root, &path),
                     cx,
                 );
+            } else if !conflict_paths.is_empty() {
+                open_resolve_conflicts_modal(root.clone(), conflict_paths.clone(), false, cx);
             } else {
                 run_git_action(
                     root.clone(),
@@ -137,13 +140,62 @@ fn open_modal<T: PaneDelegate + SettingsDelegate>(
         state.root = Some(root.clone());
         state.modal = Some(modal);
         state.last_error = None;
+        state.pending_conflict_paths.clear();
+        state.pending_conflict_resolution_stages_all = false;
     });
     refresh_modal_data(root, modal, cx);
     cx.notify();
 }
 
 fn close_modal(cx: &mut App) {
-    cx.update_global::<GitUiState, _>(|state, _| state.modal = None);
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.modal = None;
+        state.pending_conflict_paths.clear();
+        state.pending_conflict_resolution_stages_all = false;
+    });
+}
+
+fn stage_all_changes<T: PaneDelegate + SettingsDelegate>(root: PathBuf, cx: &mut Context<T>) {
+    let conflict_paths = cx
+        .global::<GitUiState>()
+        .summary
+        .as_ref()
+        .map(conflict_paths_in_summary)
+        .unwrap_or_default();
+    if conflict_paths.is_empty() {
+        run_git_action(root, kosmos_git::stage_all, cx);
+    } else {
+        open_resolve_conflicts_modal(root, conflict_paths, true, cx);
+    }
+}
+
+fn open_resolve_conflicts_modal<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    conflict_paths: Vec<String>,
+    stage_all_changes: bool,
+    cx: &mut Context<T>,
+) {
+    if conflict_paths.is_empty() {
+        return;
+    }
+    close_menu(cx);
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.root = Some(root);
+        state.pending_conflict_paths = conflict_paths;
+        state.pending_conflict_resolution_stages_all = stage_all_changes;
+        state.modal = Some(GitModal::ConfirmResolveConflicts);
+        state.last_error = None;
+    });
+    cx.notify();
+}
+
+fn conflict_paths_in_summary(summary: &RepositorySummary) -> Vec<String> {
+    summary
+        .files
+        .iter()
+        .filter(|file| file.kind == FileChangeKind::Conflicted)
+        .map(|file| file.path.clone())
+        .collect()
 }
 
 fn selected_change_paths<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> Vec<String> {
@@ -221,7 +273,10 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
                 apply_modal_list_result(modal, result.map(ModalList::Tags), cx);
             });
         }
-        GitModal::CreateBranch | GitModal::ConfirmDiscardSelected | GitModal::ConfirmDiscard => {}
+        GitModal::CreateBranch
+        | GitModal::ConfirmDiscardSelected
+        | GitModal::ConfirmDiscard
+        | GitModal::ConfirmResolveConflicts => {}
     })
     .detach();
 }

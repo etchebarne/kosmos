@@ -98,7 +98,8 @@ fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Cont
 
     let needs_refresh = {
         let state = cx.global::<GitUiState>();
-        state.root.as_deref() != Some(root) || (!state.loading && state.summary.is_none())
+        state.root.as_deref() != Some(root)
+            || (!state.loading && state.summary.is_none() && !state.can_initialize_repository)
     };
     if needs_refresh {
         refresh_summary(root.to_path_buf(), false, true, cx);
@@ -163,15 +164,22 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
 
         match result {
             Ok(summary) => {
-                changed = state.summary.as_ref() != Some(&summary) || state.last_error.is_some();
+                changed = state.summary.as_ref() != Some(&summary)
+                    || state.last_error.is_some()
+                    || state.can_initialize_repository;
                 state.summary = Some(summary);
                 state.last_error = None;
+                state.can_initialize_repository = false;
             }
             Err(error) => {
+                let is_missing_repository = is_missing_repository(&error);
                 let error = error.to_string();
-                changed = state.summary.is_some() || state.last_error.as_ref() != Some(&error);
+                changed = state.summary.is_some()
+                    || state.last_error.as_ref() != Some(&error)
+                    || state.can_initialize_repository != is_missing_repository;
                 state.summary = None;
                 state.last_error = Some(error);
+                state.can_initialize_repository = is_missing_repository;
             }
         }
         true
@@ -194,6 +202,7 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
         if state.root.as_ref() != Some(&root) {
             state.summary = None;
             state.last_error = None;
+            state.can_initialize_repository = false;
             state.collapsed_change_dirs.clear();
         }
         state.root = Some(root.clone());
@@ -223,8 +232,10 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
                     Ok(summary) => {
                         state.summary = Some(summary);
                         state.last_error = None;
+                        state.can_initialize_repository = false;
                     }
                     Err(error) => {
+                        state.can_initialize_repository = is_missing_repository(&error);
                         state.summary = None;
                         state.last_error = Some(error.to_string());
                     }
@@ -323,6 +334,10 @@ fn git_error_message(error: kosmos_git::Error) -> String {
         kosmos_git::Error::Status(message) => message,
         error => error.to_string(),
     }
+}
+
+fn is_missing_repository(error: &kosmos_git::Error) -> bool {
+    matches!(error, kosmos_git::Error::Discover { .. })
 }
 
 fn commit_tracked<T: PaneDelegate + SettingsDelegate>(

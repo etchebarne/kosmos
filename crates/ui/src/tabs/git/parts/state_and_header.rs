@@ -67,6 +67,7 @@ enum GitModal {
     Tags,
     ConfirmDiscardSelected,
     ConfirmDiscard,
+    ConfirmResolveConflicts,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -145,6 +146,7 @@ impl GitSyncAction {
 struct GitUiState {
     root: Option<PathBuf>,
     summary: Option<RepositorySummary>,
+    can_initialize_repository: bool,
     loading: bool,
     refresh_generation: u64,
     refresh_task: Option<Task<()>>,
@@ -156,6 +158,8 @@ struct GitUiState {
     sync_menu_namespace: Option<SharedString>,
     modal: Option<GitModal>,
     last_error: Option<String>,
+    pending_conflict_paths: Vec<String>,
+    pending_conflict_resolution_stages_all: bool,
     last_sync_action: GitSyncAction,
     remotes: Vec<Remote>,
     stashes: Vec<Stash>,
@@ -205,10 +209,11 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
     ensure_summary(&root, cx);
     let namespace = current_git_ui_namespace();
 
-    let (summary, loading, menu_position, sync_menu_position) = {
+    let (summary, can_initialize_repository, loading, menu_position, sync_menu_position) = {
         let state = cx.global::<GitUiState>();
         (
             state.summary.clone(),
+            state.can_initialize_repository,
             state.loading,
             state
                 .menu_namespace
@@ -246,6 +251,8 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                 .when(summary.is_none(), |this| {
                     this.child(if loading {
                         loading_state(cx)
+                    } else if can_initialize_repository {
+                        init_repository_panel(&root, cx)
                     } else {
                         empty_panel("Git status unavailable", cx)
                     })
@@ -254,7 +261,9 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                     this.child(change_list(&root, summary, cx))
                 }),
         )
-        .child(commit_panel(&root, summary.as_ref(), cx))
+        .when(!can_initialize_repository, |this| {
+            this.child(commit_panel(&root, summary.as_ref(), cx))
+        })
         .when_some(
             summary
                 .as_ref()
@@ -323,7 +332,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     cx,
                 ))
                 .child(change_count(
-                    summary.map(|summary| summary.changes),
+                    summary,
                     loading,
                     cx,
                 ))
@@ -340,7 +349,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     IconName::Add,
                     Some("Stage All Changes"),
                     move |_, _, cx| {
-                        run_git_action(root_stage.clone(), kosmos_git::stage_all, cx);
+                        stage_all_changes(root_stage.clone(), cx);
                     },
                     cx,
                 ))
@@ -368,14 +377,27 @@ fn header<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn change_count<T: PaneDelegate + SettingsDelegate>(
-    changes: Option<usize>,
+    summary: Option<&RepositorySummary>,
     loading: bool,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let label = match changes {
-        Some(0) => "No Changes".to_string(),
-        Some(changes) => format!("{changes} Change{}", plural(changes)),
+    let label = match summary {
+        Some(summary) if conflict_count(summary) > 0 => {
+            let conflicts = conflict_count(summary);
+            if summary.changes == conflicts {
+                format!("{conflicts} Conflict{}", plural(conflicts))
+            } else {
+                format!(
+                    "{} Change{}, {conflicts} Conflict{}",
+                    summary.changes,
+                    plural(summary.changes),
+                    plural(conflicts)
+                )
+            }
+        }
+        Some(summary) if summary.changes == 0 => "No Changes".to_string(),
+        Some(summary) => format!("{} Change{}", summary.changes, plural(summary.changes)),
         None if loading => "Loading Changes".to_string(),
         None => "No Changes".to_string(),
     };
@@ -384,4 +406,12 @@ fn change_count<T: PaneDelegate + SettingsDelegate>(
         .text_color(theme.text_emphasis)
         .child(label)
         .into_any_element()
+}
+
+fn conflict_count(summary: &RepositorySummary) -> usize {
+    summary
+        .files
+        .iter()
+        .filter(|file| file.kind == FileChangeKind::Conflicted)
+        .count()
 }

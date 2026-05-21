@@ -37,6 +37,7 @@ pub enum FileChangeKind {
     Modified,
     Deleted,
     Renamed,
+    Conflicted,
 }
 
 #[derive(Debug, Clone)]
@@ -77,17 +78,8 @@ impl RepositorySummary {
             .map_err(|source| Error::ReadHead(source.to_string()))?
             .map(|name| name.shorten().to_string());
 
-        let changes = repo
-            .status(gix::progress::Discard)
-            .map_err(|source| Error::Status(source.to_string()))?
-            .into_iter(Vec::new())
-            .map_err(|source| Error::Status(source.to_string()))?
-            .try_fold(0, |count, item| {
-                item.map(|_| count + 1)
-                    .map_err(|source| Error::Status(source.to_string()))
-            })?;
-
         let files = file_changes(path.as_ref()).unwrap_or_default();
+        let changes = files.len();
         let stats = files.iter().fold(DiffStats::default(), |mut stats, file| {
             stats.insertions += file.insertions;
             stats.deletions += file.deletions;
@@ -123,9 +115,13 @@ struct DiffStats {
 
 fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
     let work_dir = git_work_dir(path)?;
-    let numstat = git_output(&work_dir, &["diff", "--numstat", "HEAD"])?;
-    let mut stats_by_path = parse_numstat(&numstat);
-    let status = git_output(&work_dir, &["status", "--porcelain=v1", "-z"])?;
+    let status = git_output(
+        &work_dir,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    let mut stats_by_path = git_output(&work_dir, &["diff", "--numstat", "HEAD"])
+        .map(|numstat| parse_numstat(&numstat))
+        .unwrap_or_default();
     Ok(parse_status_changes(&status, &work_dir, &mut stats_by_path))
 }
 
@@ -170,9 +166,11 @@ fn parse_status_changes(
         }
 
         let kind = change_kind(entry.index_status, entry.worktree_status);
-        let staged = entry.index_status != ' ' && entry.index_status != '?';
+        let staged = kind != FileChangeKind::Conflicted
+            && entry.index_status != ' '
+            && entry.index_status != '?';
         let mut stats = stats_by_path.remove(&entry.path).unwrap_or_default();
-        if entry.index_status == '?' && stats.insertions == 0 && stats.deletions == 0 {
+        if kind == FileChangeKind::Created && stats.insertions == 0 && stats.deletions == 0 {
             stats.insertions = count_text_lines(work_dir.join(&entry.path));
         }
         changes.push(FileChange {
@@ -200,6 +198,13 @@ fn parse_status_entry(entry: &str) -> Option<StatusEntry> {
 
 fn change_kind(index_status: char, worktree_status: char) -> FileChangeKind {
     match (index_status, worktree_status) {
+        ('D', 'D')
+        | ('A', 'U')
+        | ('U', 'D')
+        | ('U', 'A')
+        | ('D', 'U')
+        | ('A', 'A')
+        | ('U', 'U') => FileChangeKind::Conflicted,
         ('R', _) | ('C', _) => FileChangeKind::Renamed,
         ('A', _) | ('?', '?') => FileChangeKind::Created,
         ('D', _) | (_, 'D') => FileChangeKind::Deleted,
@@ -247,16 +252,68 @@ pub fn stage_all(path: impl AsRef<Path>) -> Result<(), Error> {
     run_git(path.as_ref(), &["add", "--all"])
 }
 
+pub fn init(path: impl AsRef<Path>) -> Result<(), Error> {
+    let output = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(path.as_ref())
+        .output()
+        .map_err(|source| Error::Status(source.to_string()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(Error::Status(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
+    }
+}
+
 pub fn unstage_all(path: impl AsRef<Path>) -> Result<(), Error> {
-    run_git(path.as_ref(), &["restore", "--staged", "."])
+    unstage_matching_changes(path.as_ref(), None)
 }
 
 pub fn stage_file(path: impl AsRef<Path>, file: &str) -> Result<(), Error> {
-    run_git(path.as_ref(), &["add", "--", file])
+    run_git(path.as_ref(), &["add", "--all", "--", file])
+}
+
+pub fn stage_files(path: impl AsRef<Path>, files: &[String]) -> Result<(), Error> {
+    let path = path.as_ref();
+    for file in files {
+        run_git(path, &["add", "--all", "--", file])?;
+    }
+    Ok(())
 }
 
 pub fn unstage_file(path: impl AsRef<Path>, file: &str) -> Result<(), Error> {
-    run_git(path.as_ref(), &["restore", "--staged", "--", file])
+    unstage_matching_changes(path.as_ref(), Some(file))
+}
+
+fn unstage_matching_changes(path: &Path, selected_path: Option<&str>) -> Result<(), Error> {
+    for change_path in non_conflicted_change_paths(path, selected_path, Some(true))? {
+        run_git(path, &["reset", "--", &change_path])?;
+    }
+    Ok(())
+}
+
+fn non_conflicted_change_paths(
+    path: &Path,
+    selected_path: Option<&str>,
+    staged: Option<bool>,
+) -> Result<Vec<String>, Error> {
+    Ok(file_changes(path)?
+        .into_iter()
+        .filter(|change| change.kind != FileChangeKind::Conflicted)
+        .filter(|change| selected_path.is_none_or(|path| path_matches_change(path, &change.path)))
+        .filter(|change| staged.is_none_or(|staged| change.staged == staged))
+        .map(|change| change.path)
+        .collect())
+}
+
+fn path_matches_change(selected_path: &str, change_path: &str) -> bool {
+    let selected_path = selected_path.trim_end_matches('/');
+    change_path == selected_path
+        || change_path
+            .strip_prefix(selected_path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 pub fn stash_staged(path: impl AsRef<Path>) -> Result<(), Error> {
@@ -583,6 +640,154 @@ mod tests {
     }
 
     #[test]
+    fn parses_conflicted_status_entries() {
+        let mut stats = HashMap::from([(
+            "file.txt".to_string(),
+            DiffStats {
+                insertions: 4,
+                deletions: 0,
+            },
+        )]);
+        let changes = parse_status_changes(
+            "UU file.txt\0AA both-added.txt\0DD both-deleted.txt\0",
+            Path::new("/tmp"),
+            &mut stats,
+        );
+
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].path, "file.txt");
+        assert_eq!(changes[0].kind, FileChangeKind::Conflicted);
+        assert!(!changes[0].staged);
+        assert_eq!(changes[0].insertions, 4);
+
+        assert_eq!(changes[1].kind, FileChangeKind::Conflicted);
+        assert!(!changes[1].staged);
+        assert_eq!(changes[2].kind, FileChangeKind::Conflicted);
+        assert!(!changes[2].staged);
+    }
+
+    #[test]
+    fn discovers_files_in_unborn_repository() {
+        let root = temp_test_dir("unborn");
+        std::fs::create_dir_all(&root).expect("create test repository directory");
+        run_test_git(&root, &["init"]);
+        std::fs::write(root.join("file.txt"), "first\nsecond\n").expect("write test file");
+        std::fs::create_dir(root.join("src")).expect("create nested source directory");
+        std::fs::write(root.join("src/main.zig"), "pub fn main() void {}\n")
+            .expect("write nested test file");
+
+        let summary = RepositorySummary::discover(&root).expect("discover unborn repository");
+
+        assert_eq!(summary.changes, 2);
+        assert_eq!(summary.files.len(), 2);
+        assert!(summary.files.iter().all(|file| !file.path.ends_with('/')));
+        let file = summary
+            .files
+            .iter()
+            .find(|file| file.path == "file.txt")
+            .expect("include root file");
+        assert_eq!(file.kind, FileChangeKind::Created);
+        assert_eq!(file.insertions, 2);
+        let nested_file = summary
+            .files
+            .iter()
+            .find(|file| file.path == "src/main.zig")
+            .expect("include nested file instead of collapsed directory");
+        assert_eq!(nested_file.kind, FileChangeKind::Created);
+        assert_eq!(nested_file.insertions, 1);
+
+        run_test_git(&root, &["add", "src/main.zig"]);
+        let staged_summary =
+            RepositorySummary::discover(&root).expect("rediscover unborn repository");
+        let staged_nested_file = staged_summary
+            .files
+            .iter()
+            .find(|file| file.path == "src/main.zig")
+            .expect("include staged nested file");
+        assert!(staged_nested_file.staged);
+        assert_eq!(staged_nested_file.insertions, 1);
+
+        std::fs::remove_dir_all(root).expect("remove test repository directory");
+    }
+
+    #[test]
+    fn unstages_files_in_unborn_repository() {
+        let root = temp_test_dir("unstage-unborn");
+        std::fs::create_dir_all(root.join("src")).expect("create test repository directories");
+        run_test_git(&root, &["init"]);
+        std::fs::write(root.join("file.txt"), "root\n").expect("write root test file");
+        std::fs::write(root.join("src/main.zig"), "pub fn main() void {}\n")
+            .expect("write nested test file");
+        run_test_git(&root, &["add", "."]);
+
+        unstage_file(&root, "src").expect("unstage nested directory before first commit");
+        let summary = RepositorySummary::discover(&root).expect("discover partially unstaged repo");
+        assert!(
+            summary
+                .files
+                .iter()
+                .find(|file| file.path == "file.txt")
+                .expect("include root file")
+                .staged
+        );
+        assert!(
+            !summary
+                .files
+                .iter()
+                .find(|file| file.path == "src/main.zig")
+                .expect("include nested file")
+                .staged
+        );
+
+        unstage_all(&root).expect("unstage all before first commit");
+        let summary = RepositorySummary::discover(&root).expect("discover unstaged repo");
+        assert!(summary.files.iter().all(|file| !file.staged));
+
+        std::fs::remove_dir_all(root).expect("remove test repository directory");
+    }
+
+    #[test]
+    fn unstage_all_does_not_clear_conflicts() {
+        let root = create_conflicted_test_repository("bulk-stage-conflict");
+
+        unstage_all(&root).expect("skip conflicted file when unstaging all");
+
+        let summary = RepositorySummary::discover(&root).expect("discover conflicted repository");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].kind, FileChangeKind::Conflicted);
+
+        std::fs::remove_dir_all(root).expect("remove test repository directory");
+    }
+
+    #[test]
+    fn stage_all_marks_conflict_resolved() {
+        let root = create_conflicted_test_repository("stage-all-conflict");
+
+        stage_all(&root).expect("stage all, including conflicted files");
+
+        let summary = RepositorySummary::discover(&root).expect("discover resolved repository");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].kind, FileChangeKind::Modified);
+        assert!(summary.files[0].staged);
+
+        std::fs::remove_dir_all(root).expect("remove test repository directory");
+    }
+
+    #[test]
+    fn stage_file_marks_conflict_resolved() {
+        let root = create_conflicted_test_repository("stage-conflict-file");
+
+        stage_file(&root, "file.txt").expect("stage conflicted file as resolved");
+
+        let summary = RepositorySummary::discover(&root).expect("discover resolved repository");
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].kind, FileChangeKind::Modified);
+        assert!(summary.files[0].staged);
+
+        std::fs::remove_dir_all(root).expect("remove test repository directory");
+    }
+
+    #[test]
     fn parses_git_listing_rows() {
         let local = parse_local_branch("*\tmain").unwrap();
         assert_eq!(local.name, "main");
@@ -605,5 +810,60 @@ mod tests {
         let stash = parse_stash_line("stash@{0}: WIP on main").unwrap();
         assert_eq!(stash.0, "stash@{0}");
         assert_eq!(stash.1, "WIP on main");
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("kosmos-git-{name}-{}-{unique}", std::process::id()))
+    }
+
+    fn create_conflicted_test_repository(name: &str) -> PathBuf {
+        let root = temp_test_dir(name);
+        std::fs::create_dir_all(&root).expect("create test repository directory");
+        run_test_git(&root, &["init"]);
+        run_test_git(&root, &["config", "user.email", "a@example.com"]);
+        run_test_git(&root, &["config", "user.name", "A"]);
+        std::fs::write(root.join("file.txt"), "base\n").expect("write base file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "base"]);
+        run_test_git(&root, &["switch", "-c", "left"]);
+        std::fs::write(root.join("file.txt"), "left\n").expect("write left file");
+        run_test_git(&root, &["commit", "-am", "left"]);
+        run_test_git(&root, &["switch", "-"]);
+        run_test_git(&root, &["switch", "-c", "right"]);
+        std::fs::write(root.join("file.txt"), "right\n").expect("write right file");
+        run_test_git(&root, &["commit", "-am", "right"]);
+        run_test_git_expect_failure(&root, &["merge", "left"]);
+        root
+    }
+
+    fn run_test_git(root: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run git command");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn run_test_git_expect_failure(root: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run git command");
+        assert!(
+            !output.status.success(),
+            "git {} succeeded unexpectedly",
+            args.join(" ")
+        );
     }
 }

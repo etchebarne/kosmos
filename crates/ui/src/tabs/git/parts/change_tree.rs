@@ -172,6 +172,7 @@ fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
                 .child(stage_checkbox(
                     SharedString::from(format!("git-folder-toggle:{path}")),
                     stats.staged == stats.total,
+                    stats.conflict_paths.clone(),
                     root.clone(),
                     path,
                     cx,
@@ -210,6 +211,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
         FileChangeKind::Modified => theme.text_muted,
         FileChangeKind::Deleted => theme.danger,
         FileChangeKind::Renamed => rgb(0xa855f7),
+        FileChangeKind::Conflicted => rgb(0xa855f7),
     };
 
     div()
@@ -264,6 +266,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
                 .child(stage_checkbox(
                     SharedString::from(format!("git-file-toggle:{}", change.path)),
                     change.staged,
+                    conflict_paths_for_change(&change),
                     root,
                     change.path,
                     cx,
@@ -276,6 +279,7 @@ fn change_file_row<T: PaneDelegate + SettingsDelegate>(
 struct ChangeNodeStats {
     total: usize,
     staged: usize,
+    conflict_paths: Vec<String>,
 }
 
 fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
@@ -284,6 +288,9 @@ fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
         if file.staged {
             stats.staged += 1;
         }
+        if file.kind == FileChangeKind::Conflicted {
+            stats.conflict_paths.push(file.path.clone());
+        }
         stats
     });
 
@@ -291,8 +298,17 @@ fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
         let child_stats = node_stats(child);
         stats.total += child_stats.total;
         stats.staged += child_stats.staged;
+        stats.conflict_paths.extend(child_stats.conflict_paths);
         stats
     })
+}
+
+fn conflict_paths_for_change(change: &FileChange) -> Vec<String> {
+    if change.kind == FileChangeKind::Conflicted {
+        vec![change.path.clone()]
+    } else {
+        Vec::new()
+    }
 }
 
 fn change_indent_guides(depth: usize, theme: theme::Theme) -> AnyElement {
@@ -335,6 +351,19 @@ fn icon_for_git_file(path: &Path) -> IconName {
 }
 
 fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
+    if change.kind == FileChangeKind::Conflicted {
+        let conflict_color = rgb(0xa855f7);
+        return div()
+            .rounded(rems(0.25))
+            .bg(gpui::Hsla::from(conflict_color).opacity(0.12))
+            .px_1p5()
+            .py_0p5()
+            .text_xs()
+            .text_color(conflict_color)
+            .child("Conflict")
+            .into_any_element();
+    }
+
     let added = rgb(0x22c55e);
     div()
         .flex()

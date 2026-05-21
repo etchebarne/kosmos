@@ -317,6 +317,40 @@ fn empty_panel<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
+fn init_repository_panel<T: PaneDelegate + SettingsDelegate>(
+    root: &Path,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let root = root.to_path_buf();
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .id("git-init-repository")
+                .flex_none()
+                .rounded(rems(0.3125))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.bg_elevated)
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(theme.text)
+                .hover(move |this| this.bg(theme.bg_hover))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    run_git_action(root.clone(), kosmos_git::init, cx);
+                }))
+                .child("Initialize Repository"),
+        )
+        .into_any_element()
+}
+
 fn diff_stats<T: PaneDelegate + SettingsDelegate>(
     summary: &RepositorySummary,
     cx: &mut Context<T>,
