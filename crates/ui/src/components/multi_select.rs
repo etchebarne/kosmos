@@ -2,11 +2,14 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, IntoElement, MouseButton, RenderOnce, SharedString,
-    Window, deferred, div, prelude::*, rems,
+    Anchor, AnyElement, App, ClickEvent, ElementId, IntoElement, MouseButton, RenderOnce,
+    SharedString, Window, div, prelude::*, rems,
 };
+use gpui_component::{button::Button, popover::Popover};
 
 use theme::ActiveTheme;
+
+use super::left_aligned_button_label;
 
 type ToggleHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type ChangeHandler = Rc<dyn Fn(&Vec<SharedString>, &mut Window, &mut App) + 'static>;
@@ -82,9 +85,7 @@ impl MultiSelect {
 }
 
 impl RenderOnce for MultiSelect {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = *cx.theme();
-
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let summary: SharedString = if self.selected.is_empty() {
             "None".into()
         } else {
@@ -102,50 +103,36 @@ impl RenderOnce for MultiSelect {
                 .into()
         };
 
-        let menu = self.is_open.then(|| MultiSelectMenu {
+        let menu = MultiSelectMenu {
             id: self.id.clone(),
             selected: self.selected.clone(),
             options: self.options.clone(),
             ordered: self.ordered,
             on_change: self.on_change.clone(),
-        });
+        };
 
         let on_toggle = self.on_toggle.clone();
-        div()
-            .id(ElementId::Name(format!("{}-trigger", self.id).into()))
-            .relative()
-            .h(rems(1.75))
-            .min_w(rems(13.75))
-            .px_2()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .rounded(rems(0.3125))
-            .bg(theme.bg_elevated)
-            .border_1()
-            .border_color(if self.is_open {
-                theme.border_strong
-            } else {
-                theme.border
-            })
-            .text_sm()
-            .text_color(theme.text)
-            .hover(move |this| this.bg(theme.bg_hover))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |event, window, cx| {
-                cx.stop_propagation();
+        let trigger = Button::new(ElementId::Name(format!("{}-trigger", self.id).into()))
+            .outline()
+            .w(rems(13.75))
+            .child(left_aligned_button_label(summary))
+            .dropdown_caret(true);
+
+        Popover::new(ElementId::Name(format!("{}-popover", self.id).into()))
+            .anchor(Anchor::TopLeft)
+            .appearance(false)
+            .open(self.is_open)
+            .trigger(trigger)
+            .on_open_change(move |_, window, cx| {
                 if let Some(handler) = &on_toggle {
-                    handler(event, window, cx);
+                    handler(&ClickEvent::default(), window, cx);
                 }
             })
-            .child(div().overflow_hidden().child(summary))
-            .child(div().text_color(theme.text_subtle).child("▾"))
-            .children(menu)
+            .content(move |_, _, _| menu.clone())
     }
 }
 
-#[derive(IntoElement)]
+#[derive(Clone, IntoElement)]
 struct MultiSelectMenu {
     id: SharedString,
     selected: Vec<SharedString>,
@@ -293,24 +280,20 @@ impl RenderOnce for MultiSelectMenu {
             items.push(row.into_any_element());
         }
 
-        deferred(
-            div()
-                .id(ElementId::Name(format!("{}-menu", self.id).into()))
-                .absolute()
-                .top(rems(2.0))
-                .left(rems(0.0))
-                .min_w_full()
-                .p_1()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .rounded(rems(0.375))
-                .border_1()
-                .border_color(theme.border_strong)
-                .bg(theme.bg_elevated)
-                .shadow_lg()
-                .block_mouse_except_scroll()
-                .children(items),
-        )
+        div()
+            .id(ElementId::Name(format!("{}-menu", self.id).into()))
+            .mt(rems(1.75))
+            .min_w(rems(13.75))
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .rounded(rems(0.375))
+            .border_1()
+            .border_color(theme.border_strong)
+            .bg(theme.bg_elevated)
+            .shadow_lg()
+            .block_mouse_except_scroll()
+            .children(items)
     }
 }
