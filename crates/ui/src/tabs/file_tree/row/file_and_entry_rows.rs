@@ -27,7 +27,7 @@ fn node_label(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(component_icon(icon).text_color(icon_color)),
+                .child(file_tree_icon(icon, icon_color)),
         )
         .child(
             div()

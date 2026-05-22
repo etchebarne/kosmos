@@ -56,7 +56,7 @@ impl Render for TabDrag {
                     .shadow_lg()
                     .child(
                         Icon::new(self.icon)
-                            .size(16.0)
+                            .size_rem(1.0)
                             .color(theme.text)
                             .into_any_element(),
                     )

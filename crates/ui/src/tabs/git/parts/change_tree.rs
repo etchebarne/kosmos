@@ -55,13 +55,7 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
                 })
                 .child(
                     component_tree(&tree_state, move |ix, entry, _, _, cx| {
-                        change_tree_row(
-                            ix,
-                            entry,
-                            root_path.clone(),
-                            file_changes.clone(),
-                            cx,
-                        )
+                        change_tree_row(ix, entry, root_path.clone(), file_changes.clone(), cx)
                     })
                     .size_full(),
                 ),
@@ -153,12 +147,9 @@ fn change_dir_tree_item<T: PaneDelegate + SettingsDelegate>(
         .map(|child| change_dir_tree_item(child, false, cx))
         .chain(display_node.files.iter().map(change_file_tree_item));
 
-    TreeItem::new(
-        format!("{CHANGE_DIR_PREFIX}{}", display_node.path),
-        label,
-    )
-    .expanded(is_expanded)
-    .children(children)
+    TreeItem::new(format!("{CHANGE_DIR_PREFIX}{}", display_node.path), label)
+        .expanded(is_expanded)
+        .children(children)
 }
 
 fn change_file_tree_item(change: &FileChange) -> TreeItem {
@@ -215,7 +206,12 @@ fn change_tree_dir_row(
         .h(rems(CHANGE_ROW_HEIGHT_REM))
         .px(rems(CHANGE_ROW_PADDING_REM))
         .py_0()
-        .child(change_row_label(entry.depth(), icon, entry.item().label.clone(), cx))
+        .child(change_row_label(
+            entry.depth(),
+            icon,
+            entry.item().label.clone(),
+            cx,
+        ))
         .suffix(move |_, cx| {
             stage_checkbox_app(
                 SharedString::from(format!("git-folder-toggle:{path}")),
@@ -289,9 +285,10 @@ struct ChangeNodeStats {
 
 fn node_stats_for_path(files: &[FileChange], path: &str) -> ChangeNodeStats {
     let prefix = format!("{path}/");
-    files.iter().filter(|file| file.path.starts_with(&prefix)).fold(
-        ChangeNodeStats::default(),
-        |mut stats, file| {
+    files
+        .iter()
+        .filter(|file| file.path.starts_with(&prefix))
+        .fold(ChangeNodeStats::default(), |mut stats, file| {
             stats.total += 1;
             if file.staged {
                 stats.staged += 1;
@@ -300,8 +297,7 @@ fn node_stats_for_path(files: &[FileChange], path: &str) -> ChangeNodeStats {
                 stats.conflict_paths.push(file.path.clone());
             }
             stats
-        },
-    )
+        })
 }
 
 fn change_row_label(
@@ -336,7 +332,7 @@ fn change_row_label_with_color(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(icon_name).size(14.0).color(icon_color)),
+                .child(Icon::new(icon_name).size_rem(0.875).color(icon_color)),
         )
         .child(
             div()

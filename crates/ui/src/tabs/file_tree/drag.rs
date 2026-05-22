@@ -2,12 +2,10 @@ use std::path::PathBuf;
 
 use file_tree::NodeKind;
 use gpui::{
-    Context, IntoElement, MouseButton, Pixels, Point, Render, SharedString, Window, div, prelude::*,
-    rems,
+    Context, IntoElement, MouseButton, Pixels, Point, Render, SharedString, Window, div,
+    prelude::*, rems,
 };
-use gpui_component::{Icon as ComponentIcon, Sizable};
-
-use icons::IconName;
+use icons::{Icon, IconName};
 use theme::ActiveTheme;
 
 use super::FileTreeUi;
@@ -58,9 +56,9 @@ impl Render for FileNodeDrag {
             .pl(self.position.x - rems(0.5).to_pixels(rem))
             .pt(self.position.y - rems(0.75).to_pixels(rem))
             .on_mouse_up(MouseButton::Left, |_, window, cx| {
-                let Some(pending_drop) = cx.update_global::<FileTreeUi, _>(|ui, _| {
-                    ui.take_pending_drop()
-                }) else {
+                let Some(pending_drop) =
+                    cx.update_global::<FileTreeUi, _>(|ui, _| ui.take_pending_drop())
+                else {
                     return;
                 };
                 if !pending_drop.bounds.contains(&window.mouse_position()) {
@@ -84,10 +82,9 @@ impl Render for FileNodeDrag {
                     .text_color(theme.text_emphasis)
                     .shadow_lg()
                     .child(
-                        ComponentIcon::empty()
-                            .path(self.icon.path())
-                            .small()
-                            .text_color(theme.text)
+                        Icon::new(self.icon)
+                            .size_rem(0.875)
+                            .color(theme.text)
                             .into_any_element(),
                     )
                     .child(display_label),

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, App, Entity, IntoElement, KeyDownEvent, MouseButton, SharedString, Window, div,
-    prelude::*, rems,
+    AnyElement, App, Entity, IntoElement, KeyDownEvent, MouseButton, Rgba, SharedString, Window,
+    div, prelude::*, rems,
 };
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
@@ -12,7 +12,7 @@ use gpui_component::{
 };
 
 use file_tree::{FileTree, NewEntryDraft, NodeKind};
-use icons::IconName;
+use icons::{Icon, IconName};
 use theme::{ActiveTheme, Theme};
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
@@ -151,7 +151,10 @@ fn root_actions_app<T: PaneDelegate + SettingsDelegate>(
             "ft-action-new-file",
             IconName::FileAdd,
             move |window, cx| {
-                let anchor = new_file_entity.read(cx).selected().map(|path| path.to_path_buf());
+                let anchor = new_file_entity
+                    .read(cx)
+                    .selected()
+                    .map(|path| path.to_path_buf());
                 new_file_entity.update(cx, |tree, cx| {
                     tree.start_new_entry(anchor.as_deref(), NodeKind::File, cx);
                 });
@@ -162,7 +165,10 @@ fn root_actions_app<T: PaneDelegate + SettingsDelegate>(
             "ft-action-new-folder",
             IconName::FolderAdd,
             move |window, cx| {
-                let anchor = new_dir_entity.read(cx).selected().map(|path| path.to_path_buf());
+                let anchor = new_dir_entity
+                    .read(cx)
+                    .selected()
+                    .map(|path| path.to_path_buf());
                 new_dir_entity.update(cx, |tree, cx| {
                     tree.start_new_entry(anchor.as_deref(), NodeKind::Directory, cx);
                 });
@@ -251,7 +257,13 @@ fn draggable_node_body(
         .h(ROW_HEIGHT)
         .flex()
         .items_center()
-        .child(node_label(depth, icon_name, name.clone(), is_selected, theme))
+        .child(node_label(
+            depth,
+            icon_name,
+            name.clone(),
+            is_selected,
+            theme,
+        ))
         .child(
             div()
                 .id(drag_overlay_id)
@@ -303,9 +315,7 @@ fn draggable_node_body(
                     |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
                 ),
         )
-        .child(
-            div().hidden().child(component_icon(icon_name).text_color(icon_color)),
-        )
+        .child(div().hidden().child(file_tree_icon(icon_name, icon_color)))
         .into_any_element()
 }
 
@@ -325,7 +335,9 @@ fn can_drop_into_dir_app(drag: &FileNodeDrag, dest_dir: &Path) -> bool {
     if drag.paths.iter().any(|path| dest_dir.starts_with(path)) {
         return false;
     }
-    drag.paths.iter().any(|path| path.parent() != Some(dest_dir))
+    drag.paths
+        .iter()
+        .any(|path| path.parent() != Some(dest_dir))
 }
 
 fn render_new_entry_item(
@@ -375,7 +387,7 @@ fn new_entry_input_body_app(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(component_icon(icon_name).text_color(theme.text_muted)),
+                .child(file_tree_icon(icon_name, theme.text_muted)),
         )
         .child(
             div()
@@ -428,7 +440,7 @@ fn rename_input_body_app(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(component_icon(icon_name).text_color(theme.text_muted)),
+                .child(file_tree_icon(icon_name, theme.text_muted)),
         )
         .child(
             div()
@@ -453,6 +465,6 @@ fn rename_input_body_app(
         .into_any_element()
 }
 
-fn component_icon(icon: IconName) -> ComponentIcon {
-    ComponentIcon::empty().path(icon.path()).small()
+fn file_tree_icon(icon: IconName, color: Rgba) -> Icon {
+    Icon::new(icon).size_rem(0.875).color(color)
 }

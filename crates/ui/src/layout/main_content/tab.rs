@@ -61,7 +61,7 @@ pub fn render<T: PaneDelegate>(
         .px_2()
         .child(
             Icon::new(icon_name)
-                .size(16.0)
+                .size_rem(1.0)
                 .color(if is_active {
                     theme.text
                 } else {
