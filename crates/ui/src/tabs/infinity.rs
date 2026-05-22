@@ -1,12 +1,11 @@
 use std::cell::Cell as StdCell;
-use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, DragMoveEvent, Element, ElementId, Global, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, Render,
-    ScrollHandle, ScrollWheelEvent, SharedString, Window, div, prelude::*, px, rems,
+    ScrollWheelEvent, SharedString, Window, div, prelude::*, px, rems,
 };
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
@@ -33,7 +32,6 @@ type CanvasBounds = Rc<StdCell<Option<Bounds<Pixels>>>>;
 #[derive(Default)]
 pub struct InfinityUi {
     store: InfinityCanvasStore,
-    file_tree_scrolls: HashMap<(InfinityCanvasKey, usize), ScrollHandle>,
 }
 
 impl InfinityUi {
@@ -52,13 +50,6 @@ impl InfinityUi {
 
     fn snapshot(&self, key: InfinityCanvasKey) -> infinity::InfinityCanvas {
         self.store.snapshot(key)
-    }
-
-    fn file_tree_scroll(&mut self, key: InfinityCanvasKey, panel_id: usize) -> ScrollHandle {
-        self.file_tree_scrolls
-            .entry((key, panel_id))
-            .or_default()
-            .clone()
     }
 }
 
@@ -428,14 +419,11 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
     let icon_name = super::icon_for_kind(&panel.kind);
     let bounds_for_move = canvas_bounds.clone();
     let tab = embedded_tab(owner_tab_id, workspace_path, &panel);
-    let file_tree_scroll = (panel.kind == registry::FILE_TREE.id)
-        .then(|| cx.update_global::<InfinityUi, _>(|ui, _| ui.file_tree_scroll(key, panel_id)));
     let panel_body = render_scaled_panel_body(
         workspace_id,
         workspace_path,
         panel_id,
         &tab,
-        file_tree_scroll,
         viewport.zoom,
         window,
         cx,
@@ -520,9 +508,6 @@ fn render_panel<T: PaneDelegate + SettingsDelegate>(
                         .size(rems(1.5 * zoom))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             if mutate_canvas(key, cx, |canvas| canvas.remove_panel(panel_id)) {
-                                cx.update_global::<InfinityUi, _>(|ui, _| {
-                                    ui.file_tree_scrolls.remove(&(key, panel_id));
-                                });
                                 cx.notify();
                             }
                         }))
@@ -666,20 +651,13 @@ fn render_scaled_panel_body<T: PaneDelegate + SettingsDelegate>(
     workspace_path: &Path,
     panel_id: usize,
     tab: &Tab,
-    file_tree_scroll: Option<ScrollHandle>,
     scale: f32,
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let base_rem = window.rem_size();
     window.set_rem_size(scaled_rem(base_rem, scale));
-    let child = if tab.kind == registry::FILE_TREE.id
-        && let Some(scroll_handle) = file_tree_scroll
-    {
-        super::file_tree::render_with_scroll(window, scroll_handle, cx)
-    } else {
-        super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
-    };
+    let child = super::render(workspace_id, workspace_path, panel_id, tab, window, cx);
     window.set_rem_size(base_rem);
     ScaledRemElement { child, scale }.into_any_element()
 }
@@ -843,16 +821,9 @@ fn handle_scroll(
     else {
         return;
     };
-    if let Some((panel_id, panel_kind)) = panel_body_at(&canvas_snapshot, pointer) {
+    if let Some((_panel_id, panel_kind)) = panel_body_at(&canvas_snapshot, pointer) {
         if panel_kind == registry::FILE_TREE.id {
-            let delta_y = event
-                .delta
-                .pixel_delta(window.line_height() * canvas_snapshot.viewport().zoom)
-                .y;
-            if scroll_file_tree(key, panel_id, delta_y, cx) {
-                cx.stop_propagation();
-                window.refresh();
-            }
+            cx.stop_propagation();
         }
         return;
     }
@@ -899,27 +870,6 @@ fn panel_body_at(canvas: &infinity::InfinityCanvas, pointer: CanvasPoint) -> Opt
             && pointer.y <= screen_position.y + panel_height;
         is_over_body.then_some((panel.id, panel.kind.as_str()))
     })
-}
-
-fn scroll_file_tree(
-    key: InfinityCanvasKey,
-    panel_id: usize,
-    delta_y: Pixels,
-    cx: &mut App,
-) -> bool {
-    if delta_y == Pixels::ZERO {
-        return false;
-    }
-    let scroll_handle =
-        cx.update_global::<InfinityUi, _>(|ui, _| ui.file_tree_scroll(key, panel_id));
-    let offset = scroll_handle.offset();
-    let max_offset = scroll_handle.max_offset();
-    let next_y = (offset.y + delta_y).max(-max_offset.y).min(Pixels::ZERO);
-    if next_y == offset.y {
-        return false;
-    }
-    scroll_handle.set_offset(Point::new(offset.x, next_y));
-    true
 }
 
 fn pointer_from_bounds(

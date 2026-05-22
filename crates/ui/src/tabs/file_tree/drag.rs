@@ -4,8 +4,9 @@ use file_tree::NodeKind;
 use gpui::{
     Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, rems,
 };
+use gpui_component::{Icon as ComponentIcon, Sizable};
 
-use icons::{Icon, IconName};
+use icons::IconName;
 use theme::ActiveTheme;
 
 #[derive(Clone)]
@@ -66,9 +67,10 @@ impl Render for FileNodeDrag {
                     .text_color(theme.text_emphasis)
                     .shadow_lg()
                     .child(
-                        Icon::new(self.icon)
-                            .size(14.0)
-                            .color(theme.text)
+                        ComponentIcon::empty()
+                            .path(self.icon.path())
+                            .small()
+                            .text_color(theme.text)
                             .into_any_element(),
                     )
                     .child(display_label),

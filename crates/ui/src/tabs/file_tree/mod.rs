@@ -9,9 +9,7 @@ pub use state::{ActiveFileTreeUi, FileTreeUi};
 
 use std::path::Path;
 
-use gpui::{
-    AnyElement, Context, Entity, IntoElement, ScrollHandle, SharedString, Window, div, prelude::*,
-};
+use gpui::{AnyElement, Context, Entity, IntoElement, SharedString, Window, div, prelude::*};
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
 use gpui_component::{
@@ -19,7 +17,7 @@ use gpui_component::{
     alert::Alert,
     tree::{tree as component_tree, TreeEntry, TreeItem},
 };
-use icons::{Icon, IconName};
+use icons::IconName;
 use tabs::registry;
 use theme::ActiveTheme;
 
@@ -29,13 +27,11 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
-    render_with_scroll(window, scroll_handle, cx)
+    render_content(window, cx)
 }
 
-pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
+fn render_content<T: PaneDelegate + SettingsDelegate>(
     _window: &mut Window,
-    scroll_handle: ScrollHandle,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -89,7 +85,6 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
                     div()
                         .id("file-tree-scroll")
                         .size_full()
-                        .track_scroll(&scroll_handle)
                         .child(
                             component_tree(&tree_state, move |ix, entry, _, window, cx| {
                                 row::render_tree_entry::<T>(
@@ -257,9 +252,9 @@ fn empty_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEl
         .gap_2()
         .text_color(theme.text_subtle)
         .child(
-            Icon::new(super::icon_for_kind(registry::FILE_TREE.id))
-                .size(28.0)
-                .color(theme.text_muted),
+            ComponentIcon::empty()
+                .path(super::icon_for_kind(registry::FILE_TREE.id).path())
+                .text_color(theme.text_muted),
         )
         .child(div().text_sm().child("No workspace open"))
         .into_any_element()

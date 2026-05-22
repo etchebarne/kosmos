@@ -4,10 +4,15 @@ use gpui::{
     AnyElement, App, Entity, IntoElement, KeyDownEvent, MouseButton, SharedString, Window, div,
     prelude::*, rems,
 };
-use gpui_component::{list::ListItem, tree::TreeEntry};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+    list::ListItem,
+    tree::TreeEntry,
+};
 
 use file_tree::{FileTree, NewEntryDraft, NodeKind};
-use icons::{Icon, IconName};
+use icons::IconName;
 use theme::{ActiveTheme, Theme};
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
@@ -191,20 +196,15 @@ fn root_action_button(
     icon: IconName,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(rems(1.375))
-        .h(rems(1.375))
-        .rounded(rems(0.25))
-        .hover(|style| style.bg(gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.06)))
+    Button::new(id)
+        .ghost()
+        .tab_stop(false)
+        .size(rems(1.375))
+        .icon(ComponentIcon::empty().path(icon.path()).small())
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_click(window, cx);
         })
-        .child(Icon::new(icon).size(13.0))
         .into_any_element()
 }
 
@@ -270,7 +270,9 @@ fn draggable_node_body(
             FileNodeDrag::new(drag_paths, name, icon_name, kind),
             |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
         )
-        .child(div().hidden().child(Icon::new(icon_name).size(14.0).color(icon_color)))
+        .child(
+            div().hidden().child(component_icon(icon_name).text_color(icon_color)),
+        )
         .into_any_element()
 }
 
@@ -340,7 +342,7 @@ fn new_entry_input_body_app(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(icon_name).size(14.0).color(theme.text_muted)),
+                .child(component_icon(icon_name).text_color(theme.text_muted)),
         )
         .child(
             div()
@@ -393,7 +395,7 @@ fn rename_input_body_app(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(icon_name).size(14.0).color(theme.text_muted)),
+                .child(component_icon(icon_name).text_color(theme.text_muted)),
         )
         .child(
             div()
@@ -416,4 +418,8 @@ fn rename_input_body_app(
                 .child(Input::new(&input)),
         )
         .into_any_element()
+}
+
+fn component_icon(icon: IconName) -> ComponentIcon {
+    ComponentIcon::empty().path(icon.path()).small()
 }
