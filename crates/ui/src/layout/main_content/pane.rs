@@ -5,6 +5,7 @@ use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
+    scroll::{Scrollbar, ScrollbarShow},
 };
 
 use icons::IconName;
@@ -90,17 +91,36 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .overflow_hidden()
                 .child(
                     div()
-                        .id(("tab-scroll", pane_id))
+                        .relative()
                         .flex_1()
                         .min_w_0()
-                        .flex()
-                        .items_center()
-                        .gap(rems(0.125))
-                        .overflow_x_scroll()
-                        .track_scroll(&scroll_handle)
-                        .children(tab_elements)
-                        .child(render_add_tab_button(pane_id, cx))
-                        .child(render_tab_end_drop_zone(pane_id, cx)),
+                        .h_full()
+                        .child(
+                            div()
+                                .id(("tab-scroll", pane_id))
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .gap(rems(0.125))
+                                .overflow_x_scroll()
+                                .track_scroll(&scroll_handle)
+                                .children(tab_elements)
+                                .child(render_add_tab_button(pane_id, cx))
+                                .child(render_tab_end_drop_zone(pane_id, cx)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(
+                                    Scrollbar::horizontal(&scroll_handle)
+                                        .id(("tab-scrollbar", pane_id))
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                        ),
                 ),
         )
         .child(body)

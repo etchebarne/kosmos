@@ -2,7 +2,7 @@ use std::{path::{Path, PathBuf}, rc::Rc, time::Duration};
 
 use gpui::{
     Anchor, AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, Pixels,
-    SharedString, Task, Window, div, prelude::*, rems, rgb,
+    ScrollHandle, SharedString, Task, Window, div, prelude::*, rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
@@ -15,6 +15,7 @@ use gpui_component::{
     checkbox::Checkbox,
     dialog::Dialog,
     menu::{DropdownMenu, PopupMenuItem},
+    scroll::{Scrollbar, ScrollbarShow},
     Disableable, Icon as ComponentIcon, Sizable, WindowExt,
 };
 use tabs::registry;
@@ -111,6 +112,7 @@ struct GitUiState {
     loading: bool,
     refresh_generation: u64,
     refresh_task: Option<Task<()>>,
+    change_scroll_handle: ScrollHandle,
     watch_generation: u64,
     watch_task: Option<Task<()>>,
     modal: Option<GitModal>,
@@ -163,12 +165,13 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
     };
 
     ensure_summary(&root, cx);
-    let (summary, can_initialize_repository, loading) = {
+    let (summary, can_initialize_repository, loading, change_scroll_handle) = {
         let state = cx.global::<GitUiState>();
         (
             state.summary.clone(),
             state.can_initialize_repository,
             state.loading,
+            state.change_scroll_handle.clone(),
         )
     };
 
@@ -197,7 +200,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                     })
                 })
                 .when_some(summary.as_ref(), |this, summary| {
-                    this.child(change_list(&root, summary, cx))
+                    this.child(change_list(&root, summary, change_scroll_handle, cx))
                 }),
         )
         .when(!can_initialize_repository, |this| {

@@ -18,6 +18,7 @@ use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
+    scroll::{Scrollbar, ScrollbarShow},
 };
 use icons::{Icon, IconName};
 use tabs::registry;
@@ -84,14 +85,32 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         .child(error_banner(error.clone(), &entity, cx))
         .child(
             div()
-                .id("file-tree-scroll")
+                .relative()
                 .flex_1()
                 .min_h_0()
-                .flex()
-                .flex_col()
-                .overflow_y_scroll()
-                .track_scroll(&scroll_handle)
-                .children(rows),
+                .child(
+                    div()
+                        .id("file-tree-scroll")
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
+                        .children(rows),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(
+                            Scrollbar::vertical(&scroll_handle)
+                                .id("file-tree-scrollbar")
+                                .scrollbar_show(ScrollbarShow::Always),
+                        ),
+                ),
         )
         .into_any_element()
 }

@@ -4,17 +4,23 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, Context, CursorStyle, DragMoveEvent, Element, ElementId,
+    Anchor, AnyElement, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle, InteractiveText,
     IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText, TextLayout, TextRun,
-    Window, canvas, div, fill, point, prelude::*, px, relative, rems, uniform_list,
+    MouseMoveEvent, Pixels, Point, Rgba, SharedString, Size, Style, StyledText, TextLayout,
+    TextRun, UniformListScrollHandle, Window, canvas, div, fill, point, prelude::*, px, relative,
+    rems, size, uniform_list,
 };
-use gpui_component::{button::{Button, ButtonVariants}, popover::Popover};
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    popover::Popover,
+    scroll::{Scrollbar, ScrollbarHandle, ScrollbarShow, ScrollableElement},
+};
 
 use file_editor::{
     BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorInputLayout,
-    EditorLineInputLayout, EditorView, EditorViewStore, soft_wrap_enabled, virtual_list,
+    EditorLineInputLayout, EditorView, EditorViewStore, VirtualListState, soft_wrap_enabled,
+    virtual_list,
 };
 use file_tree::ActiveFileTree;
 use highlight::HighlightId;
@@ -29,8 +35,6 @@ use crate::components::input::{
     SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
     should_paint_text_cursor, text_cursor_bounds,
 };
-use crate::components::scrollbar::{self, EditorScrollMetrics, ScrollbarDrag};
-
 use self::markdown::render_markdown;
 
 const GUTTER_WIDTH_REM: f32 = 3.5;
@@ -80,6 +84,32 @@ struct ActiveIndentGuideRun {
 struct EditLineState {
     selection: Option<LineSelection>,
     cursor: Option<usize>,
+}
+
+#[derive(Clone)]
+struct VirtualListScrollbarHandle {
+    state: VirtualListState,
+}
+
+impl VirtualListScrollbarHandle {
+    fn new(state: VirtualListState) -> Self {
+        Self { state }
+    }
+}
+
+impl ScrollbarHandle for VirtualListScrollbarHandle {
+    fn offset(&self) -> Point<Pixels> {
+        point(Pixels::ZERO, -self.state.scroll_y())
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.state.set_scroll_y(-offset.y);
+    }
+
+    fn content_size(&self) -> Size<Pixels> {
+        let viewport_size = self.state.viewport_size();
+        size(viewport_size.width, self.state.content_height())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

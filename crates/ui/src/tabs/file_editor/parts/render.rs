@@ -187,18 +187,15 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .into_any_element()
     };
 
-    let view_owner = view.entity_id();
-    // Sibling overlay (not a uniform_list decoration): decorations are
+    // Sibling overlays (not uniform_list decorations): decorations are
     // positioned at the scrolled origin, so their visible area shrinks as
     // the user scrolls down. A sibling absolute child of the editor's
     // outer wrapper stays fixed to the viewport.
-    let scrollbar_overlay =
-        scrollbar::render(current_metrics(&view, soft_wrap, cx), view_owner, cx);
+    let scrollbar_overlay = render_editor_scrollbar(&view, soft_wrap, cx);
     let hover_overlay = render_hover_overlay(&view, cx);
     let indent_guides_overlay =
         render_indent_guides_overlay(&view, soft_wrap, row_count, visible_indent_guides, cx);
 
-    let view_for_drag = view.clone();
     let view_for_mouse = view.clone();
     let view_for_bounds = view.clone();
     let view_for_leave = view.clone();
@@ -230,8 +227,6 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .when(!soft_wrap, |this| this.whitespace_nowrap())
         .child(indent_guides_overlay)
         .child(body)
-        .child(scrollbar_overlay)
-        .child(hover_overlay)
         .child(
             div()
                 .absolute()
@@ -241,6 +236,8 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
                 .left_0()
                 .child(EditorInputElement { view: input_view }),
         )
+        .child(scrollbar_overlay)
+        .child(hover_overlay)
         .on_children_prepainted(move |bounds, window, cx| {
             if let Some(bounds) = bounds.first().copied() {
                 let input_layout = editor_input_layout(
@@ -308,37 +305,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
             if !*hovered {
                 update_gutter_hover_state(&view_for_leave, false, None, window, cx);
             }
-        })
-        .on_drag_move(cx.listener(
-            move |_, event: &DragMoveEvent<ScrollbarDrag>, _window, cx| {
-                let drag = *event.drag(cx);
-                // gpui fires on_drag_move on every listener of this drag
-                // type, so each side-by-side editor would otherwise scroll
-                // when any of them is dragged. Ignore drags that didn't
-                // start in this editor's own scrollbar.
-                if drag.owner() != view_owner {
-                    return;
-                }
-                let metrics = current_metrics(&view_for_drag, soft_wrap, cx);
-                match drag {
-                    ScrollbarDrag::Vertical(_) => {
-                        let Some(axis) = metrics.vertical else { return };
-                        let mouse_y = event.event.position.y - event.bounds.top();
-                        let new_scroll = axis.scroll_for_mouse_position(mouse_y);
-                        set_scroll_y(&view_for_drag, soft_wrap, new_scroll, cx);
-                    }
-                    ScrollbarDrag::Horizontal(_) => {
-                        let Some(axis) = metrics.horizontal else {
-                            return;
-                        };
-                        let mouse_x = event.event.position.x - event.bounds.left();
-                        let new_scroll = axis.scroll_for_mouse_position(mouse_x);
-                        set_scroll_x(&view_for_drag, new_scroll, cx);
-                    }
-                }
-                cx.notify();
-            },
-        ));
+        });
     let editor_area = wire_editor_actions(editor_area, &view, cx);
 
     div()
@@ -405,37 +372,59 @@ fn render_editor_line_row(
     .into_any_element()
 }
 
-fn current_metrics(view: &Entity<EditorView>, soft_wrap: bool, cx: &App) -> EditorScrollMetrics {
+fn render_editor_scrollbar(
+    view: &Entity<EditorView>,
+    soft_wrap: bool,
+    cx: &App,
+) -> AnyElement {
     let editor_view = view.read(cx);
-    if soft_wrap {
-        EditorScrollMetrics::from_virtual(&editor_view.virtual_scroll())
+    let scrollbar = if soft_wrap {
+        let scroll_handle = VirtualListScrollbarHandle::new(editor_view.virtual_scroll());
+        Scrollbar::vertical(&scroll_handle)
+            .id(("file-editor-scrollbar", view.entity_id()))
+            .scrollbar_show(ScrollbarShow::Always)
+            .into_any_element()
     } else {
-        EditorScrollMetrics::from_uniform(&editor_view.uniform_scroll())
-    }
+        let scroll_handle = editor_view.uniform_scroll();
+        let scrollbar = Scrollbar::new(&scroll_handle)
+            .id(("file-editor-scrollbar", view.entity_id()))
+            .scrollbar_show(ScrollbarShow::Always);
+        match uniform_list_scroll_size(&scroll_handle) {
+            Some(scroll_size) => scrollbar.scroll_size(scroll_size).into_any_element(),
+            None => scrollbar.into_any_element(),
+        }
+    };
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .child(scrollbar)
+        .into_any_element()
 }
 
-fn set_scroll_y(view: &Entity<EditorView>, soft_wrap: bool, scrolled: Pixels, cx: &App) {
+fn uniform_list_scroll_size(handle: &UniformListScrollHandle) -> Option<Size<Pixels>> {
+    let state = handle.0.borrow();
+    state
+        .last_item_size
+        .map(|sizes| size(sizes.contents.width, sizes.contents.height))
+}
+
+fn editor_scroll_offsets(
+    view: &Entity<EditorView>,
+    soft_wrap: bool,
+    cx: &App,
+) -> (Pixels, Pixels) {
     let editor_view = view.read(cx);
     if soft_wrap {
-        editor_view.virtual_scroll().set_scroll_y(scrolled);
+        (Pixels::ZERO, editor_view.virtual_scroll().scroll_y())
     } else {
         let handle = editor_view.uniform_scroll();
-        let state = handle.0.borrow();
-        let current = state.base_handle.offset();
-        state
-            .base_handle
-            .set_offset(Point::new(current.x, -scrolled));
+        let offset = handle.0.borrow().base_handle.offset();
+        (-offset.x, -offset.y)
     }
-}
-
-fn set_scroll_x(view: &Entity<EditorView>, scrolled: Pixels, cx: &App) {
-    let editor_view = view.read(cx);
-    let handle = editor_view.uniform_scroll();
-    let state = handle.0.borrow();
-    let current = state.base_handle.offset();
-    state
-        .base_handle
-        .set_offset(Point::new(-scrolled, current.y));
 }
 
 fn editor_input_layout(
@@ -446,20 +435,14 @@ fn editor_input_layout(
     window: &mut Window,
     cx: &App,
 ) -> EditorInputLayout {
-    let metrics = current_metrics(view, soft_wrap, cx);
+    let (scroll_x, scroll_y) = editor_scroll_offsets(view, soft_wrap, cx);
     EditorInputLayout {
         bounds,
         visible_lines,
         soft_wrap,
         row_height: rems(ROW_HEIGHT_REM).to_pixels(window.rem_size()),
-        scroll_x: metrics
-            .horizontal
-            .map(|horizontal| horizontal.scrolled)
-            .unwrap_or(Pixels::ZERO),
-        scroll_y: metrics
-            .vertical
-            .map(|vertical| vertical.scrolled)
-            .unwrap_or(Pixels::ZERO),
+        scroll_x,
+        scroll_y,
         text_left: rems(GUTTER_TOTAL_WIDTH_REM + BODY_PADDING_LEFT_REM)
             .to_pixels(window.rem_size()),
         char_width: monospace_char_width(window.rem_size()),

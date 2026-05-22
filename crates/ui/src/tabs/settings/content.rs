@@ -1,4 +1,5 @@
 use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
+use gpui_component::scroll::ScrollableElement;
 
 use registry::ToolKind;
 use settings::{ActiveSettings, Category, Setting};
@@ -26,7 +27,6 @@ pub fn render<T: SettingsDelegate>(
         .flex_1()
         .min_w_0()
         .h_full()
-        .overflow_y_scroll()
         .p(rems(1.5))
         .flex()
         .flex_col()
@@ -38,6 +38,7 @@ pub fn render<T: SettingsDelegate>(
                 .child(category.name),
         )
         .child(body)
+        .overflow_y_scrollbar()
         .into_any_element()
 }
 

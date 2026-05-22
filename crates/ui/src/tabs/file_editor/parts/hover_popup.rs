@@ -167,7 +167,6 @@ fn render_hover_popup(view: &Entity<EditorView>, line_index: usize, cx: &mut App
         .when(!visible, |this| this.hidden())
         .max_w(rems(42.0))
         .max_h(rems(28.0))
-        .overflow_y_scroll()
         .block_mouse_except_scroll()
         .px(rems(0.75))
         .py(rems(0.625))
@@ -188,6 +187,7 @@ fn render_hover_popup(view: &Entity<EditorView>, line_index: usize, cx: &mut App
             theme.text_emphasis
         })
         .children(content)
+        .overflow_y_scrollbar()
         .into_any_element()
 }
 

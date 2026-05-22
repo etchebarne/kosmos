@@ -14,6 +14,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use theme::ActiveTheme;
 
 pub const KEY_CONTEXT: &str = "TextInput";

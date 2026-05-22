@@ -45,6 +45,7 @@ impl Render for TextArea {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .relative()
             .min_w(rems(13.75))
             .h(rems(height_rem))
             .px(rems(padding_x_rem))
@@ -52,8 +53,6 @@ impl Render for TextArea {
             .pb(rems(padding_bottom_rem))
             .flex()
             .items_start()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
             .when(framed, |this| {
                 this.rounded(rems(0.3125))
                     .bg(theme.bg_elevated)
@@ -63,6 +62,26 @@ impl Render for TextArea {
             .when(!framed, |this| this.bg(theme.bg_surface))
             .text_sm()
             .text_color(theme.text)
-            .child(TextAreaElement { input: cx.entity() })
+            .child(
+                div()
+                    .id(("text-area-scroll", cx.entity().entity_id()))
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(TextAreaElement { input: cx.entity() }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(
+                        Scrollbar::vertical(&self.scroll_handle)
+                            .id(("text-area-scrollbar", cx.entity().entity_id()))
+                            .scrollbar_show(ScrollbarShow::Always),
+                    ),
+            )
     }
 }

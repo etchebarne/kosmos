@@ -1,48 +1,69 @@
 fn change_list<T: PaneDelegate + SettingsDelegate>(
     root: &Path,
     summary: &RepositorySummary,
+    scroll_handle: ScrollHandle,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
     let tree = build_change_tree(&summary.files);
     div()
         .id("git-change-list")
+        .relative()
         .flex_1()
         .min_h_0()
         .bg(theme.bg_surface)
-        .overflow_y_scroll()
-        .when(summary.files.is_empty(), |this| {
-            this.flex().items_center().justify_center()
-        })
-        .when(!summary.files.is_empty(), |this| {
-            this.child(
-                div()
-                    .flex_none()
-                    .px_4()
-                    .pt_3()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(theme.text_subtle)
-                    .child("TRACKED"),
-            )
-        })
-        .when(summary.files.is_empty(), |this| {
-            this.child(
-                div()
-                    .text_sm()
-                    .text_color(theme.text_subtle)
-                    .child("No changes"),
-            )
-        })
-        .children(
-            tree.dirs
-                .into_values()
-                .map(|node| change_dir_row(root.to_path_buf(), node, 0, true, cx)),
+        .child(
+            div()
+                .id("git-change-list-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .when(summary.files.is_empty(), |this| {
+                    this.flex().items_center().justify_center()
+                })
+                .when(!summary.files.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .flex_none()
+                            .px_4()
+                            .pt_3()
+                            .pb_2()
+                            .text_xs()
+                            .text_color(theme.text_subtle)
+                            .child("TRACKED"),
+                    )
+                })
+                .when(summary.files.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_subtle)
+                            .child("No changes"),
+                    )
+                })
+                .children(
+                    tree.dirs
+                        .into_values()
+                        .map(|node| change_dir_row(root.to_path_buf(), node, 0, true, cx)),
+                )
+                .children(
+                    tree.files
+                        .into_iter()
+                        .map(|change| change_file_row(root.to_path_buf(), change, 0, cx)),
+                ),
         )
-        .children(
-            tree.files
-                .into_iter()
-                .map(|change| change_file_row(root.to_path_buf(), change, 0, cx)),
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .child(
+                    Scrollbar::vertical(&scroll_handle)
+                        .id("git-change-list-scrollbar")
+                        .scrollbar_show(ScrollbarShow::Always),
+                ),
         )
         .into_any_element()
 }
