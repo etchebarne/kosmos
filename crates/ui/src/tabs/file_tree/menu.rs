@@ -16,12 +16,12 @@ const MENU_WIDTH_REM: f32 = 13.0;
 
 type FileTreeMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-pub fn build(
+pub fn build<T: 'static>(
     entity: Entity<FileTree>,
     target: PathBuf,
     menu: PopupMenu,
     window: &mut Window,
-    cx: &mut Context<PopupMenu>,
+    cx: &mut Context<T>,
 ) -> PopupMenu {
     select_context_target(&entity, &target, cx);
 
@@ -113,7 +113,11 @@ pub fn build(
         ))
 }
 
-fn select_context_target(entity: &Entity<FileTree>, target: &PathBuf, cx: &mut Context<PopupMenu>) {
+fn select_context_target<T: 'static>(
+    entity: &Entity<FileTree>,
+    target: &PathBuf,
+    cx: &mut Context<T>,
+) {
     entity.update(cx, |tree, cx| {
         if !tree.is_selected(target) {
             tree.select(target.clone(), cx);

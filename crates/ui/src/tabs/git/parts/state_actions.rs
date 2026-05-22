@@ -1,38 +1,3 @@
-fn stage_checkbox<T: PaneDelegate + SettingsDelegate>(
-    id: SharedString,
-    staged: bool,
-    conflict_paths: Vec<String>,
-    root: PathBuf,
-    path: String,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    Checkbox::new(id)
-        .large()
-        .flex_none()
-        .tab_stop(false)
-        .checked(staged)
-        .on_click(cx.listener(move |_, _: &bool, _, cx| {
-            cx.stop_propagation();
-            let path = path.clone();
-            if staged {
-                run_git_action(
-                    root.clone(),
-                    move |root| kosmos_git::unstage_file(root, &path),
-                    cx,
-                );
-            } else if !conflict_paths.is_empty() {
-                open_resolve_conflicts_modal(root.clone(), conflict_paths.clone(), false, cx);
-            } else {
-                run_git_action(
-                    root.clone(),
-                    move |root| kosmos_git::stage_file(root, &path),
-                    cx,
-                );
-            }
-        }))
-        .into_any_element()
-}
-
 fn empty_state<T: PaneDelegate + SettingsDelegate>(
     message: &'static str,
     cx: &mut Context<T>,
@@ -82,6 +47,7 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(
         let tag_name = cx.new(|cx| InputState::new(window, cx).placeholder("v1.0.0"));
         let tag_message = cx.new(|cx| InputState::new(window, cx).placeholder("Release notes"));
         let tag_sha = cx.new(|cx| InputState::new(window, cx).placeholder("HEAD"));
+        let change_tree_state = cx.new(|cx| TreeState::new(cx));
         cx.set_global(GitUiState {
             commit_message: Some(commit_message),
             branch_search: Some(branch_search),
@@ -91,6 +57,7 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(
             tag_name: Some(tag_name),
             tag_message: Some(tag_message),
             tag_sha: Some(tag_sha),
+            change_tree_state: Some(change_tree_state),
             ..Default::default()
         });
     }
@@ -198,13 +165,32 @@ fn toggle_stash(id: &str, cx: &mut App) {
     cx.refresh_windows();
 }
 
-fn toggle_change_dir<T: PaneDelegate + SettingsDelegate>(path: &str, cx: &mut Context<T>) {
+fn toggle_change_dir_app(path: &str, cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| {
         if !state.collapsed_change_dirs.remove(path) {
             state.collapsed_change_dirs.insert(path.to_string());
         }
     });
-    cx.notify();
+    cx.refresh_windows();
+}
+
+fn open_resolve_conflicts_modal_app(
+    root: PathBuf,
+    conflict_paths: Vec<String>,
+    stage_all_changes: bool,
+    cx: &mut App,
+) {
+    if conflict_paths.is_empty() {
+        return;
+    }
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.root = Some(root);
+        state.pending_conflict_paths = conflict_paths;
+        state.pending_conflict_resolution_stages_all = stage_all_changes;
+        state.modal = Some(GitModal::ConfirmResolveConflicts);
+        state.last_error = None;
+    });
+    cx.refresh_windows();
 }
 
 fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(

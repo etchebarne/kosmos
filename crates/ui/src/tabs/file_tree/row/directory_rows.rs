@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, ClickEvent, Context, Entity, IntoElement, KeyDownEvent, MouseButton,
-    SharedString, Window, div, prelude::*, rems,
+    AnyElement, App, Entity, IntoElement, KeyDownEvent, MouseButton, SharedString, Window, div,
+    prelude::*, rems,
 };
-use gpui_component::menu::ContextMenuExt;
+use gpui_component::{list::ListItem, tree::TreeEntry};
 
 use file_tree::{FileTree, NewEntryDraft, NodeKind};
 use icons::{Icon, IconName};
@@ -27,165 +27,393 @@ pub struct RowState {
     pub is_renaming: bool,
 }
 
-pub fn render_root<T: PaneDelegate + SettingsDelegate>(
+pub fn render_tree_entry<T: PaneDelegate + SettingsDelegate>(
+    ix: usize,
+    entry: &TreeEntry,
     entity: &Entity<FileTree>,
-    path: PathBuf,
-    name: SharedString,
-    state: RowState,
-    actions_cluster: AnyElement,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let icon_name = if state.is_expanded {
-        IconName::FolderOpened
+    delegate: &Entity<T>,
+    new_entry: &Option<NewEntryDraft>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> ListItem {
+    let item = entry.item();
+    let id = item.id.as_str();
+    if id.starts_with(super::FILE_TREE_NEW_PREFIX) {
+        if let Some(draft) = new_entry.as_ref() {
+            return render_new_entry_item(ix, draft, entity, entry.depth(), cx);
+        }
+        return ListItem::new(ix).disabled(true);
+    }
+
+    let (path, kind) = if let Some(path) = id.strip_prefix(super::FILE_TREE_DIR_PREFIX) {
+        (PathBuf::from(path), NodeKind::Directory)
+    } else if let Some(path) = id.strip_prefix(super::FILE_TREE_FILE_PREFIX) {
+        (PathBuf::from(path), NodeKind::File)
     } else {
-        IconName::Folder
+        (PathBuf::from(id), NodeKind::File)
     };
+    let state = compute_row_state_app(entity, &path, cx);
+    let icon_name = match kind {
+        NodeKind::Directory if state.is_expanded => IconName::FolderOpened,
+        NodeKind::Directory => IconName::Folder,
+        NodeKind::File => icon_for_file(&path),
+    };
+    if state.is_renaming {
+        return ListItem::new(ix)
+            .h(ROW_HEIGHT)
+            .px(rems(0.375))
+            .py_0()
+            .disabled(true)
+            .child(rename_input_body_app(entity, entry.depth(), icon_name, cx));
+    }
 
-    let entity_click = entity.clone();
-    let entity_drop = entity.clone();
-    let menu_entity = entity.clone();
-    let click_path = path.clone();
-    let drop_path = path.clone();
-    let drop_filter_path = path.clone();
-    let menu_target = path.clone();
-    let drop_highlight = drop_highlight_color(theme);
+    let theme = *cx.theme();
+    let path_for_click = path.clone();
+    let path_for_drag = path.clone();
+    let name_for_drag = item.label.clone();
+    let entity_for_click = entity.clone();
+    let delegate_for_click = delegate.clone();
+    let is_root = kind == NodeKind::Directory && entry.depth() == 0;
+    let entity_for_suffix = entity.clone();
 
-    let label = node_label(0, icon_name, name, state.is_selected, theme);
+    let body = draggable_node_body(
+        entity,
+        &path_for_drag,
+        entry.depth(),
+        icon_name,
+        name_for_drag.clone(),
+        state.is_selected,
+        kind,
+        theme,
+        cx,
+    );
 
-    div()
-        .id(path_id("file-tree-root-row", &path))
-        .flex()
-        .flex_shrink_0()
-        .items_center()
+    ListItem::new(ix)
         .h(ROW_HEIGHT)
         .px(rems(0.375))
-        .text_sm()
+        .py_0()
         .text_color(if state.is_selected {
             theme.text_emphasis
-        } else {
+        } else if kind == NodeKind::Directory && entry.depth() == 0 {
             theme.text_header
-        })
-        .hover(move |s| s.bg(theme.bg_hover))
-        .when(state.is_selected, |s| s.bg(theme.bg_selected))
-        .drag_over::<FileNodeDrag>(move |style, _, _, _| style.bg(drop_highlight))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
-            let target = click_path.clone();
-            let shift = event.modifiers().shift;
-            entity_click.update(cx, |t, cx| {
-                if shift {
-                    t.extend_selection_to(target, cx);
-                } else {
-                    t.select(target.clone(), cx);
-                    t.toggle_expand(&target, cx);
-                }
-            });
-        }))
-        .can_drop(move |drag, _, _| {
-            drag.downcast_ref::<FileNodeDrag>()
-                .is_some_and(|d| can_drop_into_dir(d, &drop_filter_path))
-        })
-        .on_drop(cx.listener(move |_, drag: &FileNodeDrag, _, cx| {
-            cx.stop_propagation();
-            let dest = drop_path.clone();
-            let srcs = drag.paths.clone();
-            entity_drop.update(cx, |t, cx| t.move_into(srcs, dest, cx));
-        }))
-        .child(div().flex_1().min_w_0().child(label))
-        .child(actions_cluster)
-        .context_menu(move |popup_menu, window, cx| {
-            super::menu::build(menu_entity.clone(), menu_target.clone(), popup_menu, window, cx)
-        })
-        .into_any_element()
-}
-
-pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
-    window: &mut Window,
-    entity: &Entity<FileTree>,
-    path: PathBuf,
-    name: SharedString,
-    depth: usize,
-    state: RowState,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let icon_name = if state.is_expanded {
-        IconName::FolderOpened
-    } else {
-        IconName::Folder
-    };
-
-    let body = if state.is_renaming {
-        rename_input_body::<T>(window, entity, depth, icon_name, cx)
-    } else {
-        node_label(depth, icon_name, name.clone(), state.is_selected, theme)
-    };
-
-    let entity_click = entity.clone();
-    let entity_drop = entity.clone();
-    let menu_entity = entity.clone();
-    let click_path = path.clone();
-    let drop_path = path.clone();
-    let drop_filter_path = path.clone();
-    let drag_path = path.clone();
-    let menu_target = path.clone();
-    let drag_name = name.clone();
-    let drop_highlight = drop_highlight_color(theme);
-
-    let mut row = div()
-        .id(path_id("file-tree-dir-row", &path))
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .h(ROW_HEIGHT)
-        .px(rems(0.375))
-        .text_sm()
-        .text_color(if state.is_selected {
-            theme.text_emphasis
         } else {
             theme.text
         })
-        .when(!state.is_renaming, |this| {
-            this.hover(move |s| s.bg(theme.bg_hover))
-                .when(state.is_selected, |s| s.bg(theme.bg_selected))
-                .drag_over::<FileNodeDrag>(move |style, _, _, _| style.bg(drop_highlight))
-        })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
-            let target = click_path.clone();
+        .selected(state.is_selected)
+        .child(body)
+        .on_click(move |event, _window, cx| {
+            let target = path_for_click.clone();
             let shift = event.modifiers().shift;
-            entity_click.update(cx, |t, cx| {
+            entity_for_click.update(cx, |tree, cx| {
                 if shift {
-                    t.extend_selection_to(target, cx);
+                    tree.extend_selection_to(target.clone(), cx);
                 } else {
-                    t.select(target.clone(), cx);
-                    t.toggle_expand(&target, cx);
+                    tree.select(target.clone(), cx);
+                    if kind == NodeKind::Directory {
+                        tree.toggle_expand(&target, cx);
+                    }
                 }
             });
-        }))
-        .can_drop(move |drag, _, _| {
-            drag.downcast_ref::<FileNodeDrag>()
-                .is_some_and(|d| can_drop_into_dir(d, &drop_filter_path))
+            if !shift && kind == NodeKind::File {
+                delegate_for_click.update(cx, |delegate, cx| delegate.open_file(target, cx));
+            }
         })
-        .on_drop(cx.listener(move |_, drag: &FileNodeDrag, _, cx| {
+        .suffix(move |window, cx| {
+            if is_root {
+                root_actions_app::<T>(&entity_for_suffix, window, cx)
+            } else {
+                div().into_any_element()
+            }
+        })
+}
+
+fn root_actions_app<T: PaneDelegate + SettingsDelegate>(
+    entity: &Entity<FileTree>,
+    _window: &mut Window,
+    _cx: &mut App,
+) -> AnyElement {
+    let new_file_entity = entity.clone();
+    let new_dir_entity = entity.clone();
+    let refresh_entity = entity.clone();
+    let collapse_entity = entity.clone();
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(root_action_button(
+            "ft-action-new-file",
+            IconName::FileAdd,
+            move |window, cx| {
+                let anchor = new_file_entity.read(cx).selected().map(|path| path.to_path_buf());
+                new_file_entity.update(cx, |tree, cx| {
+                    tree.start_new_entry(anchor.as_deref(), NodeKind::File, cx);
+                });
+                super::actions::focus_new_entry_input(window, cx);
+            },
+        ))
+        .child(root_action_button(
+            "ft-action-new-folder",
+            IconName::FolderAdd,
+            move |window, cx| {
+                let anchor = new_dir_entity.read(cx).selected().map(|path| path.to_path_buf());
+                new_dir_entity.update(cx, |tree, cx| {
+                    tree.start_new_entry(anchor.as_deref(), NodeKind::Directory, cx);
+                });
+                super::actions::focus_new_entry_input(window, cx);
+            },
+        ))
+        .child(root_action_button(
+            "ft-action-refresh",
+            IconName::Refresh,
+            move |_, cx| {
+                refresh_entity.update(cx, |tree, cx| {
+                    if let Some(root) = tree.root().map(Path::to_path_buf) {
+                        tree.reload_dir(&root);
+                    }
+                    cx.notify();
+                });
+            },
+        ))
+        .child(root_action_button(
+            "ft-action-collapse-all",
+            IconName::CollapseAll,
+            move |_, cx| {
+                collapse_entity.update(cx, |tree, cx| tree.collapse_all(cx));
+            },
+        ))
+        .into_any_element()
+}
+
+fn root_action_button(
+    id: &'static str,
+    icon: IconName,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(rems(1.375))
+        .h(rems(1.375))
+        .rounded(rems(0.25))
+        .hover(|style| style.bg(gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.06)))
+        .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            let dest = drop_path.clone();
-            let srcs = drag.paths.clone();
-            entity_drop.update(cx, |t, cx| t.move_into(srcs, dest, cx));
-        }))
-        .child(body);
+            on_click(window, cx);
+        })
+        .child(Icon::new(icon).size(13.0))
+        .into_any_element()
+}
 
-    if !state.is_renaming {
-        let paths = drag_paths_for(entity, &drag_path, cx);
-        row = row.on_drag(
-            FileNodeDrag::new(paths, drag_name, icon_name, NodeKind::Directory),
-            |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
-        );
+fn compute_row_state_app(entity: &Entity<FileTree>, path: &Path, cx: &App) -> RowState {
+    let tree = entity.read(cx);
+    RowState {
+        is_expanded: tree.is_expanded(path),
+        is_selected: tree.is_selected(path),
+        is_renaming: tree
+            .rename_target()
+            .is_some_and(|rename| rename.path.as_path() == path),
     }
+}
 
-    row.context_menu(move |popup_menu, window, cx| {
-        super::menu::build(menu_entity.clone(), menu_target.clone(), popup_menu, window, cx)
-    })
-    .into_any_element()
+fn draggable_node_body(
+    entity: &Entity<FileTree>,
+    path: &Path,
+    depth: usize,
+    icon_name: IconName,
+    name: SharedString,
+    is_selected: bool,
+    kind: NodeKind,
+    theme: Theme,
+    cx: &mut App,
+) -> AnyElement {
+    let icon_color = if is_selected {
+        theme.text
+    } else {
+        theme.text_muted
+    };
+    let drag_paths = drag_paths_for_app(entity, path, cx);
+    let drop_entity = entity.clone();
+    let drop_destination = match kind {
+        NodeKind::Directory => Some(path.to_path_buf()),
+        NodeKind::File => path.parent().map(Path::to_path_buf),
+    };
+    let drop_filter_destination = drop_destination.clone();
+    div()
+        .id(path_id("file-tree-node-drag", path))
+        .w_full()
+        .child(node_label(depth, icon_name, name.clone(), is_selected, theme))
+        .drag_over::<FileNodeDrag>(move |style, _, _, _| {
+            style.bg(gpui::Hsla::from(theme.accent).opacity(0.18))
+        })
+        .can_drop(move |drag, _, _| {
+            let (Some(drag), Some(destination)) = (
+                drag.downcast_ref::<FileNodeDrag>(),
+                drop_filter_destination.as_ref(),
+            ) else {
+                return false;
+            };
+            can_drop_into_dir_app(drag, destination)
+        })
+        .on_drop(move |drag: &FileNodeDrag, _, cx| {
+            cx.stop_propagation();
+            let Some(destination) = drop_destination.clone() else {
+                return;
+            };
+            let paths = drag.paths.clone();
+            drop_entity.update(cx, |tree, cx| tree.move_into(paths, destination, cx));
+        })
+        .on_drag(
+            FileNodeDrag::new(drag_paths, name, icon_name, kind),
+            |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
+        )
+        .child(div().hidden().child(Icon::new(icon_name).size(14.0).color(icon_color)))
+        .into_any_element()
+}
+
+fn drag_paths_for_app(entity: &Entity<FileTree>, row_path: &Path, cx: &App) -> Vec<PathBuf> {
+    let tree = entity.read(cx);
+    if tree.is_selected(row_path) && tree.selected_count() > 1 {
+        tree.selected_paths().iter().cloned().collect()
+    } else {
+        vec![row_path.to_path_buf()]
+    }
+}
+
+fn can_drop_into_dir_app(drag: &FileNodeDrag, dest_dir: &Path) -> bool {
+    if drag.paths.is_empty() {
+        return false;
+    }
+    if drag.paths.iter().any(|path| dest_dir.starts_with(path)) {
+        return false;
+    }
+    drag.paths.iter().any(|path| path.parent() != Some(dest_dir))
+}
+
+fn render_new_entry_item(
+    ix: usize,
+    draft: &NewEntryDraft,
+    entity: &Entity<FileTree>,
+    depth: usize,
+    cx: &mut App,
+) -> ListItem {
+    let icon_name = match draft.kind {
+        NodeKind::Directory => IconName::Folder,
+        NodeKind::File => IconName::File,
+    };
+    ListItem::new(ix)
+        .h(ROW_HEIGHT)
+        .px(rems(0.375))
+        .py_0()
+        .disabled(true)
+        .child(new_entry_input_body_app(entity, depth, icon_name, cx))
+}
+
+fn new_entry_input_body_app(
+    entity: &Entity<FileTree>,
+    depth: usize,
+    icon_name: IconName,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let Some(input) = cx.file_tree_ui().map(|ui| ui.input()) else {
+        return div().into_any_element();
+    };
+    let entity_submit = entity.clone();
+    let entity_cancel = entity.clone();
+    let input_for_submit = input.clone();
+
+    div()
+        .flex()
+        .items_center()
+        .h(ROW_HEIGHT)
+        .w_full()
+        .child(indent_guides(depth, theme))
+        .child(
+            div()
+                .w(rems(ICON_WIDTH_REM))
+                .h(ROW_HEIGHT)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(icon_name).size(14.0).color(theme.text_muted)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .capture_key_down(move |event: &KeyDownEvent, _: &mut Window, cx: &mut App| {
+                    match event.keystroke.key.as_str() {
+                        "enter" => {
+                            cx.stop_propagation();
+                            let value = input_for_submit.read(cx).value().to_string();
+                            entity_submit.update(cx, |tree, cx| tree.apply_new_entry(value, cx));
+                        }
+                        "escape" => {
+                            cx.stop_propagation();
+                            entity_cancel.update(cx, |tree, cx| tree.cancel_new_entry(cx));
+                        }
+                        _ => {}
+                    }
+                })
+                .child(Input::new(&input)),
+        )
+        .into_any_element()
+}
+
+fn rename_input_body_app(
+    entity: &Entity<FileTree>,
+    depth: usize,
+    icon_name: IconName,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let Some(input) = cx.file_tree_ui().map(|ui| ui.input()) else {
+        return div().into_any_element();
+    };
+    let entity_submit = entity.clone();
+    let entity_cancel = entity.clone();
+    let input_for_submit = input.clone();
+
+    div()
+        .flex()
+        .items_center()
+        .h(ROW_HEIGHT)
+        .w_full()
+        .child(indent_guides(depth, theme))
+        .child(
+            div()
+                .w(rems(ICON_WIDTH_REM))
+                .h(ROW_HEIGHT)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(icon_name).size(14.0).color(theme.text_muted)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .capture_key_down(move |event: &KeyDownEvent, _: &mut Window, cx: &mut App| {
+                    match event.keystroke.key.as_str() {
+                        "enter" => {
+                            cx.stop_propagation();
+                            let value = input_for_submit.read(cx).value().to_string();
+                            entity_submit.update(cx, |tree, cx| tree.apply_rename(value, cx));
+                        }
+                        "escape" => {
+                            cx.stop_propagation();
+                            entity_cancel.update(cx, |tree, cx| tree.cancel_rename(cx));
+                        }
+                        _ => {}
+                    }
+                })
+                .child(Input::new(&input)),
+        )
+        .into_any_element()
 }
