@@ -31,7 +31,7 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
                 .id("git-change-list-scroll")
                 .size_full()
                 .when(summary.files.is_empty(), |this| {
-                    this.flex().items_center().justify_center()
+                    this.flex().flex_col().items_center().justify_center()
                 })
                 .when(!summary.files.is_empty(), |this| {
                     this.child(
@@ -53,12 +53,14 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
                             .child("No changes"),
                     )
                 })
-                .child(
-                    component_tree(&tree_state, move |ix, entry, _, _, cx| {
-                        change_tree_row(ix, entry, root_path.clone(), file_changes.clone(), cx)
-                    })
-                    .size_full(),
-                ),
+                .when(!summary.files.is_empty(), |this| {
+                    this.child(
+                        component_tree(&tree_state, move |ix, entry, _, _, cx| {
+                            change_tree_row(ix, entry, root_path.clone(), file_changes.clone(), cx)
+                        })
+                        .size_full(),
+                    )
+                }),
         )
         .into_any_element()
 }
