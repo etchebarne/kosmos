@@ -1,22 +1,26 @@
+use std::collections::HashSet;
+
 use gpui::{
-    Anchor, AnyElement, Context, Entity, IntoElement, SharedString, Subscription, Window, div,
-    prelude::*, rems,
+    Anchor, AnyElement, App, Context, ElementId, Entity, IntoElement, MouseButton, SharedString,
+    Subscription, Window, div, prelude::*, rems,
 };
 use gpui_component::{
     button::Button,
     input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     menu::{DropdownMenu, PopupMenuItem},
+    popover::Popover,
     switch::Switch,
 };
 
-use settings::{Setting, SettingControl, SettingValue, Settings};
+use settings::{DropdownOption, Setting, SettingControl, SettingValue, Settings};
 use theme::ActiveTheme;
 
-use crate::components::{DropdownOption, MultiSelect, left_aligned_button_label};
+use crate::components::left_aligned_button_label;
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
 
 const SETTING_DROPDOWN_WIDTH_REM: f32 = 11.25;
+const SETTING_MULTI_SELECT_WIDTH_REM: f32 = 13.75;
 const SETTING_NUMBER_WIDTH_REM: f32 = 7.5;
 
 struct NumberSettingState {
@@ -115,10 +119,6 @@ pub fn render<T: SettingsDelegate>(
         SettingControl::MultiSelect {
             options, ordered, ..
         } => {
-            let opts: Vec<DropdownOption> = options()
-                .iter()
-                .map(|o| DropdownOption::new(o.id, o.label))
-                .collect();
             let current: Vec<SharedString> = value
                 .as_list()
                 .map(|l| {
@@ -130,28 +130,240 @@ pub fn render<T: SettingsDelegate>(
                         .collect()
                 })
                 .unwrap_or_default();
-            MultiSelect::new(format!("setting-multi:{setting_id}"), current, opts)
-                .ordered(*ordered)
-                .open(open_dropdown == Some(setting_id))
-                .on_toggle(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    this.toggle_settings_dropdown(setting_id, cx);
-                }))
-                .on_change(
-                    cx.listener(move |this, new_value: &Vec<SharedString>, _, cx| {
-                        let list = new_value
-                            .iter()
-                            .map(|s| SettingValue::String(s.clone()))
-                            .collect();
-                        this.set_setting_value(setting_id, SettingValue::List(list), cx);
-                    }),
-                )
-                .into_any_element()
+            render_multi_select(
+                setting_id,
+                current,
+                options(),
+                *ordered,
+                open_dropdown == Some(setting_id),
+                cx,
+            )
         }
     }
 }
 
 fn make_id(prefix: &str, id: &str) -> SharedString {
     SharedString::from(format!("{prefix}:{id}"))
+}
+
+fn render_multi_select<T: SettingsDelegate>(
+    setting_id: &'static str,
+    selected: Vec<SharedString>,
+    options: &'static [DropdownOption],
+    ordered: bool,
+    is_open: bool,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let summary = multi_select_summary(&selected, options);
+    let on_open_change = cx.listener(move |this, _: &bool, _, cx| {
+        this.toggle_settings_dropdown(setting_id, cx);
+    });
+    let trigger = Button::new(make_id("setting-multi-select", setting_id))
+        .outline()
+        .w(rems(SETTING_MULTI_SELECT_WIDTH_REM))
+        .child(left_aligned_button_label(summary))
+        .dropdown_caret(true);
+
+    Popover::new(make_id("setting-multi-select-popover", setting_id))
+        .anchor(Anchor::TopLeft)
+        .appearance(false)
+        .open(is_open)
+        .trigger(trigger)
+        .on_open_change(move |is_open, window, cx| on_open_change(is_open, window, cx))
+        .content(move |_, _, cx| {
+            render_multi_select_menu(setting_id, selected.clone(), options, ordered, cx)
+        })
+        .into_any_element()
+}
+
+fn multi_select_summary(selected: &[SharedString], options: &[DropdownOption]) -> SharedString {
+    if selected.is_empty() {
+        return "None".into();
+    }
+
+    selected
+        .iter()
+        .map(|id| {
+            options
+                .iter()
+                .find(|option| option.id == id.as_ref())
+                .map(|option| option.label)
+                .unwrap_or(id.as_ref())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
+struct MultiSelectRow {
+    option_id: &'static str,
+    option_label: &'static str,
+    is_selected: bool,
+    selected_index: Option<usize>,
+}
+
+fn render_multi_select_menu<T>(
+    setting_id: &'static str,
+    selected: Vec<SharedString>,
+    options: &'static [DropdownOption],
+    ordered: bool,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let theme = *cx.theme();
+    let rows = multi_select_rows(&selected, options);
+    let last_selected_idx = selected.len().saturating_sub(1);
+    let mut items: Vec<AnyElement> = Vec::with_capacity(rows.len());
+
+    for (row_idx, row_data) in rows.into_iter().enumerate() {
+        let item_id =
+            ElementId::Name(format!("setting-multi-select-{setting_id}-{row_idx}").into());
+        let selected_for_row = selected.clone();
+        let option_id = row_data.option_id;
+
+        let mut row = div()
+            .id(item_id)
+            .h(rems(1.75))
+            .min_w_full()
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded(rems(0.25))
+            .text_sm()
+            .text_color(if row_data.is_selected {
+                theme.text_emphasis
+            } else {
+                theme.text
+            })
+            .hover(move |this| this.bg(theme.bg_selected))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                let mut next = selected_for_row.clone();
+                if let Some(pos) = next.iter().position(|id| id.as_ref() == option_id) {
+                    next.remove(pos);
+                } else {
+                    next.push(SharedString::from(option_id));
+                }
+                set_multi_select_value(setting_id, next, cx);
+            })
+            .child(div().flex_1().child(row_data.option_label));
+
+        if ordered && row_data.is_selected {
+            if let Some(selected_index) = row_data.selected_index {
+                let is_first = selected_index == 0;
+                let is_last = selected_index == last_selected_idx;
+
+                if !is_first {
+                    let selected_up = selected.clone();
+                    row = row.child(
+                        div()
+                            .id(ElementId::Name(
+                                format!("setting-multi-select-{setting_id}-up-{row_idx}").into(),
+                            ))
+                            .px_1()
+                            .text_color(theme.text_subtle)
+                            .hover(move |this| this.text_color(theme.text_emphasis))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                let mut next = selected_up.clone();
+                                next.swap(selected_index, selected_index - 1);
+                                set_multi_select_value(setting_id, next, cx);
+                            })
+                            .child("↑"),
+                    );
+                }
+
+                if !is_last {
+                    let selected_down = selected.clone();
+                    row = row.child(
+                        div()
+                            .id(ElementId::Name(
+                                format!("setting-multi-select-{setting_id}-down-{row_idx}").into(),
+                            ))
+                            .px_1()
+                            .text_color(theme.text_subtle)
+                            .hover(move |this| this.text_color(theme.text_emphasis))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                let mut next = selected_down.clone();
+                                next.swap(selected_index, selected_index + 1);
+                                set_multi_select_value(setting_id, next, cx);
+                            })
+                            .child("↓"),
+                    );
+                }
+            }
+        }
+
+        if row_data.is_selected {
+            row = row.child(div().text_color(theme.accent).child("✓"));
+        }
+
+        items.push(row.into_any_element());
+    }
+
+    div()
+        .id(make_id("setting-multi-select-menu", setting_id))
+        .mt(rems(1.75))
+        .min_w(rems(SETTING_MULTI_SELECT_WIDTH_REM))
+        .p_1()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .rounded(rems(0.375))
+        .border_1()
+        .border_color(theme.border_strong)
+        .bg(theme.bg_elevated)
+        .shadow_lg()
+        .block_mouse_except_scroll()
+        .children(items)
+        .into_any_element()
+}
+
+fn multi_select_rows(
+    selected: &[SharedString],
+    options: &'static [DropdownOption],
+) -> Vec<MultiSelectRow> {
+    let selected_set: HashSet<&str> = selected.iter().map(|id| id.as_ref()).collect();
+    let mut rows = Vec::with_capacity(options.len());
+
+    for (selected_index, selected_id) in selected.iter().enumerate() {
+        if let Some(option) = options
+            .iter()
+            .find(|option| option.id == selected_id.as_ref())
+        {
+            rows.push(MultiSelectRow {
+                option_id: option.id,
+                option_label: option.label,
+                is_selected: true,
+                selected_index: Some(selected_index),
+            });
+        }
+    }
+
+    for option in options {
+        if !selected_set.contains(option.id) {
+            rows.push(MultiSelectRow {
+                option_id: option.id,
+                option_label: option.label,
+                is_selected: false,
+                selected_index: None,
+            });
+        }
+    }
+
+    rows
+}
+
+fn set_multi_select_value(setting_id: &'static str, selected: Vec<SharedString>, cx: &mut App) {
+    let list = selected.into_iter().map(SettingValue::String).collect();
+    cx.update_global::<Settings, _>(|settings, _| {
+        settings.set(setting_id, SettingValue::List(list));
+    });
+    cx.refresh_windows();
 }
 
 fn number_setting_input<T: SettingsDelegate>(
