@@ -11,11 +11,15 @@ use kosmos_git::{
     Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
 };
 use gpui_component::{
+    Size,
+    alert::Alert,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     dialog::Dialog,
     menu::{DropdownMenu, PopupMenuItem},
     scroll::{Scrollbar, ScrollbarShow},
+    separator::Separator,
+    tag::Tag as ComponentTag,
     Disableable, Icon as ComponentIcon, Sizable, WindowExt,
 };
 use tabs::registry;
@@ -28,6 +32,21 @@ type PopupMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>
 
 fn component_icon(icon: IconName) -> ComponentIcon {
     ComponentIcon::empty().path(icon.path())
+}
+
+fn error_alert(id: impl Into<gpui::ElementId>, message: impl Into<SharedString>) -> AnyElement {
+    Alert::error(id, message.into())
+        .with_size(Size::Small)
+        .icon(component_icon(IconName::Close))
+        .into_any_element()
+}
+
+fn metric_tag(label: impl Into<SharedString>, color: gpui::Rgba) -> AnyElement {
+    let color = gpui::Hsla::from(color);
+    ComponentTag::custom(color.opacity(0.12), color, color.opacity(0.28))
+        .with_size(Size::Small)
+        .child(label.into())
+        .into_any_element()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -77,9 +77,9 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
                         )
                         .when(is_remote, |this| {
                             this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_subtle)
+                                ComponentTag::secondary()
+                                    .outline()
+                                    .with_size(Size::Small)
                                     .child("Remote"),
                             )
                         }),
@@ -111,7 +111,6 @@ fn create_branch_modal_body(cx: &mut App) -> AnyElement {
             state.last_error.clone(),
         )
     };
-    let theme = *cx.theme();
 
     div()
         .flex()
@@ -119,17 +118,7 @@ fn create_branch_modal_body(cx: &mut App) -> AnyElement {
         .gap_3()
         .child(input_row("Branch Name", branch_name))
         .when_some(last_error, |this, error| {
-            this.child(
-                div()
-                    .rounded(rems(0.375))
-                    .border_1()
-                    .border_color(gpui::Hsla::from(theme.danger).opacity(0.35))
-                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
-                    .p_2()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(error),
-            )
+            this.child(error_alert("git-create-branch-error", error))
         })
         .into_any_element()
 }

@@ -6,6 +6,7 @@ use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
     scroll::{Scrollbar, ScrollbarShow},
+    separator::Separator,
 };
 
 use icons::IconName;
@@ -41,14 +42,19 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         if i > 0 {
             let prev_tab = &tabs[i - 1];
             let show_divider = prev_tab.id != active_tab_id && t.id != active_tab_id;
-            tab_elements.push(
+            let divider = if show_divider {
+                Separator::vertical()
+                    .h(rems(1.0))
+                    .color(gpui::Hsla::from(theme.border_strong))
+                    .into_any_element()
+            } else {
                 div()
                     .w(rems(0.0625))
                     .h(rems(1.0))
                     .flex_none()
-                    .when(show_divider, |this| this.bg(theme.border_strong))
-                    .into_any_element(),
-            );
+                    .into_any_element()
+            };
+            tab_elements.push(divider);
         }
         tab_elements.push(tab::render(workspace_id, pane, t, can_close, window, cx));
     }

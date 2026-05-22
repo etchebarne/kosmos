@@ -214,11 +214,9 @@ fn input_row(label: &'static str, input: Entity<TextInput>) -> AnyElement {
 }
 
 fn section_label(label: &'static str, theme: theme::Theme) -> AnyElement {
-    div()
-        .pt_2()
-        .text_xs()
-        .text_color(theme.text_subtle)
-        .child(label)
+    Separator::horizontal()
+        .label(label)
+        .color(gpui::Hsla::from(theme.border_subtle))
         .into_any_element()
 }
 

@@ -15,6 +15,7 @@ use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
     menu::{DropdownMenu, PopupMenuItem},
+    separator::Separator,
 };
 use icons::IconName;
 use terminal::{
@@ -2124,10 +2125,9 @@ fn component_icon(icon: IconName) -> ComponentIcon {
 }
 
 fn render_separator() -> AnyElement {
-    div()
+    Separator::vertical()
         .h(rems(1.0))
-        .w(rems(0.0625))
-        .bg(rgb(0x363636))
+        .color(gpui::Hsla::from(rgb(0x363636)))
         .into_any_element()
 }
 

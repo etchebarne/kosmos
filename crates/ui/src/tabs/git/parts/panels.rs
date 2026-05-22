@@ -237,24 +237,10 @@ fn empty_panel<T: PaneDelegate + SettingsDelegate>(
     message: &'static str,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .rounded(rems(0.5))
-        .border_1()
-        .border_color(theme.border_subtle)
-        .bg(theme.bg_elevated)
-        .p_3()
-        .text_sm()
-        .text_color(theme.text_subtle)
-        .child(
-            Icon::new(IconName::SourceControl)
-                .size(14.0)
-                .color(theme.text_muted),
-        )
-        .child(message)
+    let _ = cx;
+    Alert::new("git-empty-panel", message)
+        .with_size(Size::Small)
+        .icon(component_icon(IconName::SourceControl))
         .into_any_element()
 }
 
@@ -290,28 +276,11 @@ fn diff_stats<T: PaneDelegate + SettingsDelegate>(
         .flex()
         .items_center()
         .gap_1()
-        .text_xs()
         .when(summary.insertions > 0, |this| {
-            this.child(
-                div()
-                    .rounded(rems(0.25))
-                    .bg(gpui::Hsla::from(added).opacity(0.12))
-                    .px_1p5()
-                    .py_0p5()
-                    .text_color(added)
-                    .child(format!("+{}", summary.insertions)),
-            )
+            this.child(metric_tag(format!("+{}", summary.insertions), added))
         })
         .when(summary.deletions > 0, |this| {
-            this.child(
-                div()
-                    .rounded(rems(0.25))
-                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
-                    .px_1p5()
-                    .py_0p5()
-                    .text_color(theme.danger)
-                    .child(format!("-{}", summary.deletions)),
-            )
+            this.child(metric_tag(format!("-{}", summary.deletions), theme.danger))
         })
         .into_any_element()
 }

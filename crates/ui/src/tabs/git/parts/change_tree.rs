@@ -374,15 +374,7 @@ fn icon_for_git_file(path: &Path) -> IconName {
 fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
     if change.kind == FileChangeKind::Conflicted {
         let conflict_color = rgb(0xa855f7);
-        return div()
-            .rounded(rems(0.25))
-            .bg(gpui::Hsla::from(conflict_color).opacity(0.12))
-            .px_1p5()
-            .py_0p5()
-            .text_xs()
-            .text_color(conflict_color)
-            .child("Conflict")
-            .into_any_element();
+        return metric_tag("Conflict", conflict_color);
     }
 
     let added = rgb(0x22c55e);

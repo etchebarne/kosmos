@@ -263,17 +263,7 @@ fn branches_modal_body(root: &Path, cx: &mut App) -> AnyElement {
         .gap_2()
         .child(input_row("Search Branches", branch_search))
         .when_some(last_error, |this, error| {
-            this.child(
-                div()
-                    .rounded(rems(0.375))
-                    .border_1()
-                    .border_color(gpui::Hsla::from(theme.danger).opacity(0.35))
-                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
-                    .p_2()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(error),
-            )
+            this.child(error_alert("git-branches-error", error))
         })
         .child(
             div()

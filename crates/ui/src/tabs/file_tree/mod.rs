@@ -16,7 +16,8 @@ use gpui::{
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
 use gpui_component::{
-    Icon as ComponentIcon, Sizable,
+    Icon as ComponentIcon, Sizable, Size,
+    alert::Alert,
     button::{Button, ButtonVariants},
     scroll::{Scrollbar, ScrollbarShow},
 };
@@ -290,47 +291,20 @@ fn action_button<T: PaneDelegate + SettingsDelegate>(
 fn error_banner<T: PaneDelegate + SettingsDelegate>(
     error: Option<SharedString>,
     entity: &Entity<FileTree>,
-    cx: &mut Context<T>,
+    _cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let Some(message) = error else {
         return div().into_any_element();
     };
     let entity = entity.clone();
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .px_3()
-        .py_1()
-        .bg(gpui::Hsla::from(theme.danger).opacity(0.15))
-        .text_xs()
-        .text_color(theme.text)
-        .child(div().flex_1().min_w_0().child(message))
-        .child(
-            div()
-                .id("ft-error-dismiss")
-                .size(rems(1.25))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .text_color(theme.text_muted)
-                .hover(move |s| s.bg(theme.bg_hover))
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    let entity = entity.clone();
-                    entity.update(cx, |t, _| t.clear_error());
-                    cx.notify();
-                }))
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(12.0)
-                        .color(theme.text_muted),
-                ),
-        )
+    Alert::error("file-tree-error", message)
+        .banner()
+        .with_size(Size::Small)
+        .icon(ComponentIcon::empty().path(IconName::Close.path()))
+        .on_close(move |_, _, cx| {
+            entity.update(cx, |tree, _| tree.clear_error());
+            cx.refresh_windows();
+        })
         .into_any_element()
 }
 
