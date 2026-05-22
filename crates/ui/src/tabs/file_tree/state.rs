@@ -1,11 +1,22 @@
-use gpui::{App, AppContext, Entity, Global};
+use std::path::PathBuf;
+
+use file_tree::FileTree;
+use gpui::{App, AppContext, Bounds, Entity, Global, Pixels};
 use gpui_component::{input::InputState, tree::TreeState};
+
+pub(crate) struct PendingFileTreeDrop {
+    pub tree: Entity<FileTree>,
+    pub paths: Vec<PathBuf>,
+    pub destination: PathBuf,
+    pub bounds: Bounds<Pixels>,
+}
 
 /// Holds stateful file tree UI components so they survive re-renders triggered
 /// by file system updates.
 pub struct FileTreeUi {
     input: Entity<InputState>,
     tree: Entity<TreeState>,
+    pending_drop: Option<PendingFileTreeDrop>,
 }
 
 impl FileTreeUi {
@@ -15,6 +26,7 @@ impl FileTreeUi {
         cx.set_global(FileTreeUi {
             input,
             tree,
+            pending_drop: None,
         });
     }
 
@@ -24,6 +36,18 @@ impl FileTreeUi {
 
     pub fn tree(&self) -> Entity<TreeState> {
         self.tree.clone()
+    }
+
+    pub(crate) fn set_pending_drop(&mut self, pending_drop: PendingFileTreeDrop) {
+        self.pending_drop = Some(pending_drop);
+    }
+
+    pub(crate) fn clear_pending_drop(&mut self) {
+        self.pending_drop = None;
+    }
+
+    pub(crate) fn take_pending_drop(&mut self) -> Option<PendingFileTreeDrop> {
+        self.pending_drop.take()
     }
 }
 

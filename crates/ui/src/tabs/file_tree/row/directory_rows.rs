@@ -17,7 +17,7 @@ use theme::{ActiveTheme, Theme};
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 use crate::tabs::file_tree::drag::FileNodeDrag;
-use crate::tabs::file_tree::state::ActiveFileTreeUi;
+use crate::tabs::file_tree::state::{ActiveFileTreeUi, FileTreeUi, PendingFileTreeDrop};
 
 pub const ROW_HEIGHT: gpui::Rems = gpui::Rems(1.625);
 pub const INDENT_REM: f32 = 1.25;
@@ -97,6 +97,7 @@ pub fn render_tree_entry<T: PaneDelegate + SettingsDelegate>(
         .h(ROW_HEIGHT)
         .px(rems(0.375))
         .py_0()
+        .when(state.is_selected, |item| item.bg(theme.bg_hover))
         .text_color(if state.is_selected {
             theme.text_emphasis
         } else if kind == NodeKind::Directory && entry.depth() == 0 {
@@ -236,45 +237,71 @@ fn draggable_node_body(
     };
     let drag_paths = drag_paths_for_app(entity, path, cx);
     let drop_entity = entity.clone();
+    let pending_drop_entity = entity.clone();
     let drop_destination = match kind {
         NodeKind::Directory => Some(path.to_path_buf()),
         NodeKind::File => path.parent().map(Path::to_path_buf),
     };
-    let drop_filter_destination = drop_destination.clone();
+    let pending_drop_destination = drop_destination.clone();
+    let drag_overlay_id = path_id("file-tree-node-drag", path);
     div()
-        .id(path_id("file-tree-node-drag", path))
+        .id(path_id("file-tree-node-body", path))
         .relative()
         .w_full()
         .h(ROW_HEIGHT)
         .flex()
         .items_center()
-        .rounded(rems(0.25))
-        .when(is_selected, |style| style.bg(theme.bg_selected))
-        .hover(move |style| style.bg(if is_selected { theme.bg_selected } else { theme.bg_hover }))
         .child(node_label(depth, icon_name, name.clone(), is_selected, theme))
-        .drag_over::<FileNodeDrag>(move |style, _, _, _| {
-            style.bg(gpui::Hsla::from(theme.accent).opacity(0.18))
-        })
-        .can_drop(move |drag, _, _| {
-            let (Some(drag), Some(destination)) = (
-                drag.downcast_ref::<FileNodeDrag>(),
-                drop_filter_destination.as_ref(),
-            ) else {
-                return false;
-            };
-            can_drop_into_dir_app(drag, destination)
-        })
-        .on_drop(move |drag: &FileNodeDrag, _, cx| {
-            cx.stop_propagation();
-            let Some(destination) = drop_destination.clone() else {
-                return;
-            };
-            let paths = drag.paths.clone();
-            drop_entity.update(cx, |tree, cx| tree.move_into(paths, destination, cx));
-        })
-        .on_drag(
-            FileNodeDrag::new(drag_paths, name, icon_name, kind),
-            |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
+        .child(
+            div()
+                .id(drag_overlay_id)
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .right_0()
+                .drag_over::<FileNodeDrag>(move |style, _, _, _| {
+                    style.bg(gpui::Hsla::from(theme.accent).opacity(0.18))
+                })
+                .on_drag_move(move |event: &gpui::DragMoveEvent<FileNodeDrag>, _, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let Some(destination) = pending_drop_destination.clone() else {
+                        cx.update_global::<FileTreeUi, _>(|ui, _| ui.clear_pending_drop());
+                        return;
+                    };
+                    let drag = event.drag(cx);
+                    if !can_drop_into_dir_app(drag, &destination) {
+                        cx.update_global::<FileTreeUi, _>(|ui, _| ui.clear_pending_drop());
+                        return;
+                    }
+                    let paths = drag.paths.clone();
+                    cx.update_global::<FileTreeUi, _>(|ui, _| {
+                        ui.set_pending_drop(PendingFileTreeDrop {
+                            tree: pending_drop_entity.clone(),
+                            paths,
+                            destination,
+                            bounds: event.bounds,
+                        });
+                    });
+                })
+                .on_drop(move |drag: &FileNodeDrag, _, cx| {
+                    cx.stop_propagation();
+                    cx.update_global::<FileTreeUi, _>(|ui, _| ui.clear_pending_drop());
+                    let Some(destination) = drop_destination.clone() else {
+                        return;
+                    };
+                    if !can_drop_into_dir_app(drag, &destination) {
+                        return;
+                    }
+                    let paths = drag.paths.clone();
+                    drop_entity.update(cx, |tree, cx| tree.move_into(paths, destination, cx));
+                })
+                .on_drag(
+                    FileNodeDrag::new(drag_paths, name, icon_name, kind),
+                    |drag, position, _, cx| cx.new(|_| drag.clone().position(position)),
+                ),
         )
         .child(
             div().hidden().child(component_icon(icon_name).text_color(icon_color)),
