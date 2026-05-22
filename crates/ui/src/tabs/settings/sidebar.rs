@@ -7,7 +7,7 @@ use gpui_component::{
 use settings::{Category, Settings};
 use theme::ActiveTheme;
 
-use crate::{components::left_aligned_button_label, delegate::SettingsDelegate};
+use crate::delegate::SettingsDelegate;
 
 pub fn render<T: SettingsDelegate>(active_id: &str, cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
@@ -41,7 +41,7 @@ fn render_item<T: SettingsDelegate>(
         .ghost()
         .selected(is_active)
         .icon(ComponentIcon::empty().path(category.icon.path()))
-        .child(left_aligned_button_label(category.name))
+        .label(category.name)
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             this.select_settings_category(id, cx);

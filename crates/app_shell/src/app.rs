@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
+    Anchor, App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
     prelude::*,
 };
 
@@ -41,6 +41,7 @@ fn apply_theme(cx: &mut App) {
     };
     cx.set_global(theme);
     gpui_component::Theme::change(component_theme_mode, None, cx);
+    gpui_component::Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 }
 
 pub(crate) struct KosmosApp {

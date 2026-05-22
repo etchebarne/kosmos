@@ -15,7 +15,6 @@ use gpui_component::{
 use settings::{DropdownOption, Setting, SettingControl, SettingValue, Settings};
 use theme::ActiveTheme;
 
-use crate::components::left_aligned_button_label;
 use crate::delegate::SettingsDelegate;
 use crate::tabs::settings::state::ActiveSettingsInputs;
 
@@ -70,7 +69,7 @@ pub fn render<T: SettingsDelegate>(
 
             Button::new(make_id("setting-dropdown", setting_id))
                 .outline()
-                .child(left_aligned_button_label(label))
+                .label(label)
                 .dropdown_caret(true)
                 .w(rems(SETTING_DROPDOWN_WIDTH_REM))
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, _| {
@@ -98,9 +97,10 @@ pub fn render<T: SettingsDelegate>(
         SettingControl::Input { placeholder, .. } => {
             let theme = *cx.theme();
             match cx.settings_inputs().get(setting_id) {
-                Some(entity) => {
-                    div().min_w(rems(13.75)).child(Input::new(&entity)).into_any_element()
-                }
+                Some(entity) => div()
+                    .min_w(rems(13.75))
+                    .child(Input::new(&entity))
+                    .into_any_element(),
                 None => div()
                     .h(rems(1.75))
                     .min_w(rems(13.75))
@@ -163,7 +163,7 @@ fn render_multi_select<T: SettingsDelegate>(
     let trigger = Button::new(make_id("setting-multi-select", setting_id))
         .outline()
         .w(rems(SETTING_MULTI_SELECT_WIDTH_REM))
-        .child(left_aligned_button_label(summary))
+        .label(summary)
         .dropdown_caret(true);
 
     Popover::new(make_id("setting-multi-select-popover", setting_id))

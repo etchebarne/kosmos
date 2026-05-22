@@ -213,7 +213,7 @@ pub fn render<T: 'static>(tab: &Tab, cx: &mut Context<T>) -> AnyElement {
         .min_h_0()
         .min_w_0()
         .track_focus(&focus_handle)
-        .key_context(KEY_CONTEXT)
+        .key_context(EDITOR_KEY_CONTEXT)
         .cursor(CursorStyle::IBeam)
         .text_sm()
         .font_family(FONT_FAMILY)

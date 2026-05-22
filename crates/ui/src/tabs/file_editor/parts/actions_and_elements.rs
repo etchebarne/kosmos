@@ -1,15 +1,16 @@
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Anchor, AnyElement, App, Bounds, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle, InteractiveText,
-    IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
+    IntoElement, KeyBinding, LayoutId, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
     MouseMoveEvent, Pixels, Point, Rgba, SharedString, Size, Style, StyledText, TextLayout,
-    TextRun, UniformListScrollHandle, Window, canvas, div, fill, point, prelude::*, px, relative,
-    rems, size, uniform_list,
+    TextRun, UniformListScrollHandle, Window, actions, canvas, div, fill, point, prelude::*, px,
+    relative, rems, size, uniform_list,
 };
 use gpui_component::{
     button::{Button, ButtonVariants},
@@ -29,13 +30,13 @@ use syntax::{SyntaxSnapshot, SyntaxStore};
 use tabs::{Tab, registry};
 use theme::{ActiveTheme, SyntaxStyles, Theme};
 
-use crate::components::input::{
-    Backspace, Copy, Cut, Delete, Down, DuplicateLineDown, DuplicateLineUp, End, Enter, Home,
-    KEY_CONTEXT, Left, Paste, Redo, Right, SelectAll, SelectDown, SelectLeft, SelectRight,
-    SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
-    should_paint_text_cursor, text_cursor_bounds,
-};
 use self::markdown::render_markdown;
+
+pub const EDITOR_KEY_CONTEXT: &str = "TextInput";
+const TEXT_CURSOR_WIDTH_REM: f32 = 0.0625;
+const TEXT_CURSOR_HEIGHT_FRACTION: f32 = 0.78;
+const TEXT_CURSOR_BLINK_PERIOD_MS: u128 = 1_000;
+const TEXT_CURSOR_BLINK_VISIBLE_MS: u128 = 530;
 
 const GUTTER_WIDTH_REM: f32 = 3.5;
 const GUTTER_PADDING_REM: f32 = 0.5;
@@ -58,6 +59,83 @@ const INDENT_GUIDE_WIDTH_REM: f32 = 0.0625;
 const ROW_HEIGHT_REM: f32 = 1.4;
 const HOVER_DEBOUNCE: Duration = Duration::from_millis(500);
 const HOVER_HIDE_DELAY: Duration = Duration::from_millis(180);
+
+actions!(
+    text_input,
+    [
+        Backspace,
+        Delete,
+        Left,
+        Right,
+        Up,
+        Down,
+        WordLeft,
+        WordRight,
+        SelectLeft,
+        SelectRight,
+        SelectUp,
+        SelectDown,
+        SelectWordLeft,
+        SelectWordRight,
+        SelectAll,
+        Enter,
+        Home,
+        End,
+        Paste,
+        Cut,
+        Copy,
+        Undo,
+        Redo,
+        DuplicateLineUp,
+        DuplicateLineDown
+    ]
+);
+
+pub fn install_default_keybindings(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("backspace", Backspace, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("delete", Delete, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("left", Left, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("right", Right, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("up", Up, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("down", Down, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("alt-left", WordLeft, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("alt-right", WordRight, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("shift-left", SelectLeft, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("shift-right", SelectRight, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("shift-up", SelectUp, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("shift-down", SelectDown, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("alt-shift-right", SelectWordRight, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("enter", Enter, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("home", Home, Some(EDITOR_KEY_CONTEXT)),
+        KeyBinding::new("end", End, Some(EDITOR_KEY_CONTEXT)),
+    ]);
+}
+
+fn text_cursor_bounds(
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    window: &Window,
+) -> Bounds<Pixels> {
+    let height = (line_height * TEXT_CURSOR_HEIGHT_FRACTION).round();
+    let top = origin.y + ((line_height - height) / 2.0).round();
+    Bounds::new(
+        point(origin.x.round(), top),
+        size(
+            rems(TEXT_CURSOR_WIDTH_REM).to_pixels(window.rem_size()),
+            height,
+        ),
+    )
+}
+
+fn should_paint_text_cursor(window: &mut Window) -> bool {
+    window.request_animation_frame();
+
+    static BLINK_START: OnceLock<Instant> = OnceLock::new();
+    let elapsed = BLINK_START.get_or_init(Instant::now).elapsed().as_millis();
+    elapsed % TEXT_CURSOR_BLINK_PERIOD_MS < TEXT_CURSOR_BLINK_VISIBLE_MS
+}
 
 #[derive(Clone)]
 struct LineHover {

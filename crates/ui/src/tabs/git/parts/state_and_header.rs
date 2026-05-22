@@ -19,6 +19,7 @@ use gpui_component::{
     input::{Input, InputState},
     list::ListItem,
     menu::{DropdownMenu, PopupMenuItem},
+    notification::Notification,
     separator::Separator,
     tag::Tag as ComponentTag,
     tree::{tree as component_tree, TreeEntry, TreeItem, TreeState},
@@ -26,8 +27,6 @@ use gpui_component::{
 };
 use tabs::registry;
 use theme::ActiveTheme;
-
-use crate::components::toast;
 
 type PopupMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 

@@ -186,8 +186,12 @@ impl AssetSource for AppAssets {
 
 fn component_compat_icon(path: &str) -> Option<String> {
     let icon = match path {
+        "icons/circle-check.svg" => IconName::Pass,
+        "icons/circle-x.svg" => IconName::Error,
+        "icons/info.svg" => IconName::Info,
         "icons/minus.svg" => IconName::Remove,
         "icons/plus.svg" => IconName::Add,
+        "icons/triangle-alert.svg" => IconName::Warning,
         _ => return None,
     };
     icon.to_svg()

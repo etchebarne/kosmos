@@ -10,7 +10,7 @@ pub mod terminal;
 
 use std::path::Path;
 
-use gpui::{AnyElement, Context, IntoElement, Window, div};
+use gpui::{AnyElement, App, Context, IntoElement, Window, div};
 use icons::IconName;
 
 use tabs::{Tab, registry};
@@ -42,6 +42,10 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "file_editor" => file_editor::render(tab, cx),
         _ => div().into_any_element(),
     }
+}
+
+pub fn install_keybindings(cx: &mut App) {
+    file_editor::install_default_keybindings(cx);
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {

@@ -42,7 +42,7 @@ fn install_feature_state(cx: &mut App) {
 }
 
 fn install_keybindings(cx: &mut App) {
-    ui::components::install_default_keybindings(cx);
+    ui::tabs::install_keybindings(cx);
     shortcuts::install_defaults(cx);
 }
 

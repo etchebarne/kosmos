@@ -644,18 +644,43 @@ fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
         root,
         action,
         move |root, cx| {
-            toast::show_success(cx, success_title);
+            show_git_success(cx, success_title);
             refresh_summary(root, true, true, cx);
         },
         move |error, cx| {
             cx.update_global::<GitUiState, _>(|state, _| {
                 state.loading = false;
             });
-            toast::show_error(cx, error_title, git_error_message(error));
+            show_git_error(cx, error_title, git_error_message(error));
             cx.notify();
         },
         cx,
     );
+}
+
+fn show_git_success(cx: &mut App, title: impl Into<SharedString>) {
+    push_git_notification(cx, Notification::success(title.into()));
+}
+
+fn show_git_error(
+    cx: &mut App,
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+) {
+    push_git_notification(cx, Notification::error(message.into()).title(title.into()));
+}
+
+fn push_git_notification(cx: &mut App, notification: Notification) {
+    let Some(window_handle) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
+        return;
+    };
+
+    let _ = window_handle.update(cx, move |_, window, cx| {
+        window.push_notification(notification, cx);
+    });
 }
 
 fn run_sync_action<T: PaneDelegate + SettingsDelegate>(

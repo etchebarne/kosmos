@@ -26,8 +26,6 @@ use terminal::{
 };
 use theme::{ActiveTheme, Theme};
 
-use crate::components::left_aligned_button_label;
-
 const KEY_CONTEXT: &str = "Terminal";
 const BASE_FONT_SIZE_REM: f32 = 0.875;
 const BASE_ROW_HEIGHT_REM: f32 = 1.15625;
@@ -2076,7 +2074,7 @@ fn render_shell_picker(
     .tab_stop(false)
     .w(rems(SHELL_PICKER_WIDTH_REM))
     .h(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
-    .child(left_aligned_button_label(selected_label.clone()))
+    .label(selected_label.clone())
     .dropdown_caret(true)
     .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
         options.iter().fold(menu, |menu, (shell_id, label)| {
