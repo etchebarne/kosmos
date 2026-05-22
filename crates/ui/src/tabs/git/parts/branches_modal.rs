@@ -318,8 +318,8 @@ fn create_branch_row(root: PathBuf, cx: &mut App) -> AnyElement {
         .text_sm()
         .text_color(theme.text)
         .hover(move |this| this.bg(theme.bg_hover))
-        .on_click(move |_, _, cx| {
-            branch_name.update(cx, |input, cx| input.set_value("", cx));
+        .on_click(move |_, window, cx| {
+            branch_name.update(cx, |input, cx| input.set_value("", window, cx));
             open_modal_app(root.clone(), GitModal::CreateBranch, cx);
         })
         .child(

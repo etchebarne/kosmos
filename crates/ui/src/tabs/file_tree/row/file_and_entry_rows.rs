@@ -1,4 +1,7 @@
+use gpui_component::input::Input;
+
 pub fn render_file<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
     entity: &Entity<FileTree>,
     path: PathBuf,
     name: SharedString,
@@ -10,7 +13,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
     let icon_name = icon_for_file(&path);
 
     let body = if state.is_renaming {
-        rename_input_body::<T>(entity, depth, icon_name, cx)
+        rename_input_body::<T>(window, entity, depth, icon_name, cx)
     } else {
         node_label(depth, icon_name, name.clone(), state.is_selected, theme)
     };
@@ -97,6 +100,7 @@ pub fn render_file<T: PaneDelegate + SettingsDelegate>(
 }
 
 pub fn render_new_entry<T: PaneDelegate + SettingsDelegate>(
+    _window: &mut Window,
     draft: &NewEntryDraft,
     entity: &Entity<FileTree>,
     depth: usize,
@@ -154,12 +158,13 @@ pub fn render_new_entry<T: PaneDelegate + SettingsDelegate>(
                         }
                     },
                 ))
-                .child(input),
+                .child(Input::new(&input)),
         )
         .into_any_element()
 }
 
-fn rename_input_body<T: PaneDelegate + SettingsDelegate>(
+pub fn rename_input_body<T: PaneDelegate + SettingsDelegate>(
+    _window: &mut Window,
     entity: &Entity<FileTree>,
     depth: usize,
     icon_name: IconName,
@@ -209,7 +214,7 @@ fn rename_input_body<T: PaneDelegate + SettingsDelegate>(
                         }
                     },
                 ))
-                .child(input),
+                .child(Input::new(&input)),
         )
         .into_any_element()
 }

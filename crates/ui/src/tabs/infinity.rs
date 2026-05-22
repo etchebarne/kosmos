@@ -676,7 +676,7 @@ fn render_scaled_panel_body<T: PaneDelegate + SettingsDelegate>(
     let child = if tab.kind == registry::FILE_TREE.id
         && let Some(scroll_handle) = file_tree_scroll
     {
-        super::file_tree::render_with_scroll(scroll_handle, cx)
+        super::file_tree::render_with_scroll(window, scroll_handle, cx)
     } else {
         super::render(workspace_id, workspace_path, panel_id, tab, window, cx)
     };

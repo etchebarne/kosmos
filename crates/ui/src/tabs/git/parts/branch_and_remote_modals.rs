@@ -143,8 +143,8 @@ fn create_branch_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
             "git-cancel-create-branch",
             "Cancel",
             false,
-            move |_, _, cx| {
-                cancel_input.update(cx, |input, cx| input.set_value("", cx));
+            move |_, window, cx| {
+                cancel_input.update(cx, |input, cx| input.set_value("", window, cx));
                 open_modal_app(root_cancel.clone(), GitModal::Branches, cx);
             },
             cx,
@@ -158,13 +158,11 @@ fn create_branch_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
                 if branch.is_empty() {
                     return;
                 }
-                let input = create_input.clone();
                 run_modal_action_after_success_app(
                     root_create.clone(),
                     GitModal::Branches,
                     move |root| kosmos_git::create_branch(root, &branch),
                     move |cx| {
-                        input.update(cx, |input, cx| input.set_value("", cx));
                         cx.update_global::<GitUiState, _>(|state, _| {
                             state.modal = Some(GitModal::Branches)
                         });

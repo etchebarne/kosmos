@@ -1,8 +1,8 @@
 use std::{path::{Path, PathBuf}, rc::Rc, time::Duration};
 
 use gpui::{
-    Anchor, AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, Pixels,
-    ScrollHandle, SharedString, Task, Window, div, prelude::*, rems, rgb,
+    Anchor, App, ClickEvent, Entity, IntoElement, MouseButton, Pixels, ScrollHandle,
+    SharedString, Task, div, prelude::*, rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
@@ -16,6 +16,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     dialog::Dialog,
+    input::{Input, InputState},
     menu::{DropdownMenu, PopupMenuItem},
     scroll::{Scrollbar, ScrollbarShow},
     separator::Separator,
@@ -25,8 +26,7 @@ use gpui_component::{
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, ValueChanged, toast};
-use crate::delegate::{PaneDelegate, SettingsDelegate};
+use crate::components::toast;
 
 type PopupMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -145,14 +145,14 @@ struct GitUiState {
     collapsed_change_dirs: std::collections::HashSet<String>,
     tags: Vec<Tag>,
     branches: Vec<Branch>,
-    commit_message: Option<Entity<TextArea>>,
-    branch_search: Option<Entity<TextInput>>,
-    branch_name: Option<Entity<TextInput>>,
-    remote_name: Option<Entity<TextInput>>,
-    remote_url: Option<Entity<TextInput>>,
-    tag_name: Option<Entity<TextInput>>,
-    tag_message: Option<Entity<TextInput>>,
-    tag_sha: Option<Entity<TextInput>>,
+    commit_message: Option<Entity<InputState>>,
+    branch_search: Option<Entity<InputState>>,
+    branch_name: Option<Entity<InputState>>,
+    remote_name: Option<Entity<InputState>>,
+    remote_url: Option<Entity<InputState>>,
+    tag_name: Option<Entity<InputState>>,
+    tag_message: Option<Entity<InputState>>,
+    tag_sha: Option<Entity<InputState>>,
 }
 
 impl Global for GitUiState {}
@@ -173,8 +173,11 @@ const COMMIT_CONTROLS_INSET_X_REM: f32 = 1.0;
 const SYNC_PANEL_INSET_X_REM: f32 = 0.5;
 const COMMIT_CONTROLS_INSET_BOTTOM_REM: f32 = 1.0;
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    ensure_state(cx);
+pub fn render_git<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    ensure_state(window, cx);
     let theme = *cx.theme();
     let Some(root) = cx
         .file_tree()

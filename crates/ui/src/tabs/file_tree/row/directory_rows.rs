@@ -101,6 +101,7 @@ pub fn render_root<T: PaneDelegate + SettingsDelegate>(
 }
 
 pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
     entity: &Entity<FileTree>,
     path: PathBuf,
     name: SharedString,
@@ -116,7 +117,7 @@ pub fn render_dir<T: PaneDelegate + SettingsDelegate>(
     };
 
     let body = if state.is_renaming {
-        rename_input_body::<T>(entity, depth, icon_name, cx)
+        rename_input_body::<T>(window, entity, depth, icon_name, cx)
     } else {
         node_label(depth, icon_name, name.clone(), state.is_selected, theme)
     };

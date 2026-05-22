@@ -203,13 +203,13 @@ fn stash_row(
         .into_any_element()
 }
 
-fn input_row(label: &'static str, input: Entity<TextInput>) -> AnyElement {
+fn input_row(label: &'static str, input: Entity<InputState>) -> AnyElement {
     div()
         .flex()
         .flex_col()
         .gap_1()
         .child(div().text_xs().child(label))
-        .child(input)
+        .child(Input::new(&input))
         .into_any_element()
 }
 

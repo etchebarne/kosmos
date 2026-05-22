@@ -1,25 +1,24 @@
 use gpui::{App, AppContext, Entity, Global, ScrollHandle};
-
-use crate::components::TextInput;
+use gpui_component::input::InputState;
 
 /// Holds the single rename / new-entry text input plus the persistent scroll
 /// handle for the file tree. We keep these out of the render so they survive
 /// re-renders triggered by file system updates.
 pub struct FileTreeUi {
-    input: Entity<TextInput>,
+    input: Entity<InputState>,
     scroll: ScrollHandle,
 }
 
 impl FileTreeUi {
-    pub fn install(cx: &mut App) {
-        let input = cx.new(|cx| TextInput::new("", "", cx));
+    pub fn install(window: &mut gpui::Window, cx: &mut App) {
+        let input = cx.new(|cx| InputState::new(window, cx));
         cx.set_global(FileTreeUi {
             input,
             scroll: ScrollHandle::new(),
         });
     }
 
-    pub fn input(&self) -> Entity<TextInput> {
+    pub fn input(&self) -> Entity<InputState> {
         self.input.clone()
     }
 

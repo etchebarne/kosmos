@@ -32,7 +32,6 @@ fn install_globals(cx: &mut App) {
 }
 
 fn install_feature_state(cx: &mut App) {
-    ui::tabs::file_tree::FileTreeUi::install(cx);
     ui::tabs::infinity::InfinityUi::install(cx);
     ui::tabs::terminal::TerminalUi::install(cx);
     file_editor::BufferStore::install(cx);
@@ -64,7 +63,7 @@ fn open_main_window(cx: &mut App) {
         },
         |window, cx| {
             window.set_window_title(APP_NAME);
-            let entity = cx.new(KosmosApp::new);
+            let entity = cx.new(|cx| KosmosApp::new(window, cx));
             entity.update(cx, |app, cx| app.start_observing_window(window, cx));
             cx.new(|cx| {
                 gpui_component::Root::new(entity, window, cx).window_shadow_size(Pixels::ZERO)

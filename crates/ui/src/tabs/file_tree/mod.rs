@@ -11,7 +11,7 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, IntoElement, MouseButton, ScrollHandle, SharedString,
-    div, prelude::*, rems,
+    Window, div, prelude::*, rems,
 };
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
@@ -27,12 +27,16 @@ use theme::ActiveTheme;
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+pub fn render<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
-    render_with_scroll(scroll_handle, cx)
+    render_with_scroll(window, scroll_handle, cx)
 }
 
 pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
     scroll_handle: ScrollHandle,
     cx: &mut Context<T>,
 ) -> AnyElement {
@@ -73,7 +77,7 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         cx,
     ));
     if root_expanded {
-        collect_rows::<T>(&entity, &root, 0, &mut rows, &new_entry, cx);
+        collect_rows::<T>(window, &entity, &root, 0, &mut rows, &new_entry, cx);
     }
 
     div()
@@ -117,6 +121,7 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
 }
 
 fn collect_rows<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
     entity: &Entity<FileTree>,
     dir: &Path,
     depth: usize,
@@ -137,7 +142,7 @@ fn collect_rows<T: PaneDelegate + SettingsDelegate>(
     };
 
     if let Some(draft) = new_here.as_ref().filter(|d| d.kind == NodeKind::Directory) {
-        out.push(row::render_new_entry::<T>(draft, entity, depth + 1, cx));
+        out.push(row::render_new_entry::<T>(window, draft, entity, depth + 1, cx));
     }
 
     for node in snapshot
@@ -146,6 +151,7 @@ fn collect_rows<T: PaneDelegate + SettingsDelegate>(
     {
         let row_state = compute_row_state(entity, &node.path, cx);
         out.push(row::render_dir::<T>(
+            window,
             entity,
             node.path.clone(),
             node.name.clone(),
@@ -154,12 +160,12 @@ fn collect_rows<T: PaneDelegate + SettingsDelegate>(
             cx,
         ));
         if row_state.is_expanded {
-            collect_rows::<T>(entity, &node.path, depth + 1, out, new_entry, cx);
+            collect_rows::<T>(window, entity, &node.path, depth + 1, out, new_entry, cx);
         }
     }
 
     if let Some(draft) = new_here.as_ref().filter(|d| d.kind == NodeKind::File) {
-        out.push(row::render_new_entry::<T>(draft, entity, depth + 1, cx));
+        out.push(row::render_new_entry::<T>(window, draft, entity, depth + 1, cx));
     }
 
     for node in snapshot
@@ -168,6 +174,7 @@ fn collect_rows<T: PaneDelegate + SettingsDelegate>(
     {
         let row_state = compute_row_state(entity, &node.path, cx);
         out.push(row::render_file::<T>(
+            window,
             entity,
             node.path.clone(),
             node.name.clone(),

@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui_component::{
     button::Button,
-    input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
+    input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     menu::{DropdownMenu, PopupMenuItem},
     popover::Popover,
     switch::Switch,
@@ -98,7 +98,9 @@ pub fn render<T: SettingsDelegate>(
         SettingControl::Input { placeholder, .. } => {
             let theme = *cx.theme();
             match cx.settings_inputs().get(setting_id) {
-                Some(entity) => div().min_w(rems(13.75)).child(entity).into_any_element(),
+                Some(entity) => {
+                    div().min_w(rems(13.75)).child(Input::new(&entity)).into_any_element()
+                }
                 None => div()
                     .h(rems(1.75))
                     .min_w(rems(13.75))

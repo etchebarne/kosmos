@@ -32,7 +32,14 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
                 .flex_col()
                 .pb(rems(COMMIT_CONTROLS_INSET_BOTTOM_REM))
                 .child(sync_action_panel(root, summary, cx))
-                .child(commit_message)
+                .child(
+                    Input::new(&commit_message)
+                        .h(rems(COMMIT_MESSAGE_HEIGHT_REM))
+                        .appearance(false)
+                        .px(rems(COMMIT_MESSAGE_PADDING_X_REM))
+                        .pt(rems(COMMIT_MESSAGE_PADDING_TOP_REM))
+                        .pb(rems(COMMIT_MESSAGE_PADDING_BOTTOM_REM)),
+                )
                 .child(
                     div()
                         .flex_none()
@@ -43,12 +50,13 @@ fn commit_panel<T: PaneDelegate + SettingsDelegate>(
                         .justify_end()
                         .child(commit_button(
                             has_staged,
-                            cx.listener(move |_, _, _, cx| {
+                            cx.listener(move |_, _, window, cx| {
                                 let message = message_input.read(cx).value().to_string();
                                 commit_tracked(
                                     root_commit.clone(),
                                     message,
                                     message_input.clone(),
+                                    window,
                                     cx,
                                 );
                             }),

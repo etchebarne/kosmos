@@ -58,8 +58,9 @@ pub(crate) struct KosmosApp {
 }
 
 impl KosmosApp {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
-        SettingsInputs::install(cx);
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        ui::tabs::file_tree::FileTreeUi::install(window, cx);
+        SettingsInputs::install(window, cx);
         let workspaces = persistence::load();
         let file_tree = Self::create_file_tree(cx);
         let mut app = Self {
