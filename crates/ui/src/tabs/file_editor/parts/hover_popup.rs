@@ -78,42 +78,70 @@ fn render_hover_overlay(view: &Entity<EditorView>, cx: &mut App) -> AnyElement {
     let Some(source_bounds) = active.source_bounds else {
         return div().into_any_element();
     };
+    let Some(editor_bounds) = view.read(cx).editor_bounds() else {
+        return div().into_any_element();
+    };
 
-    let anchor = point(source_bounds.left(), source_bounds.bottom());
     let overlay_view = view.clone();
+    let content_view = view.clone();
     let bounds_view = view.clone();
     let line_index = active.line_index;
+    let source_left = source_bounds.left() - editor_bounds.left();
+    let source_bottom = source_bounds.bottom() - editor_bounds.top();
 
-    deferred(
-        anchored()
-            .position(anchor)
-            .position_mode(AnchoredPositionMode::Window)
-            .anchor(Anchor::TopLeft)
-            .snap_to_window()
-            .child(
-                div()
-                    .child(render_hover_popup(view, line_index, cx))
-                    .on_children_prepainted(move |bounds, window, cx| {
-                        if let Some(bounds) = bounds.first().copied() {
-                            bounds_view.update(cx, |view, _| {
-                                view.set_hover_popup_bounds(line_index, bounds)
-                            });
-                            update_hover_visibility_at(
-                                &bounds_view,
-                                window.mouse_position(),
-                                window,
-                                cx,
-                            );
-                        }
-                    })
-                    .on_mouse_move(move |event, window, cx| {
-                        update_hover_visibility(&overlay_view, event, window, cx);
-                    })
-                    .id(("lsp-hover-overlay-hitbox", line_index)),
-            ),
-    )
-    .with_priority(3)
-    .into_any_element()
+    div()
+        .absolute()
+        .left(source_left)
+        .top(source_bottom)
+        .w(source_bounds.size.width)
+        .h(px(1.0))
+        .child(
+            Popover::new(ElementId::Name(
+                format!("lsp-hover-popover-{:?}-{line_index}", view.entity_id()).into(),
+            ))
+                .anchor(Anchor::TopLeft)
+                .appearance(false)
+                .open(true)
+                .mouse_button(MouseButton::Right)
+                .trigger(
+                    Button::new(ElementId::Name(
+                        format!("lsp-hover-trigger-{:?}-{line_index}", view.entity_id()).into(),
+                    ))
+                        .ghost()
+                        .tab_stop(false)
+                        .w_full()
+                        .h_full()
+                        .opacity(0.0),
+                )
+                .content(move |_, _, cx| {
+                    div()
+                        .child(render_hover_popup(&content_view, line_index, cx))
+                        .on_children_prepainted({
+                            let bounds_view = bounds_view.clone();
+                            move |bounds, window, cx| {
+                                if let Some(bounds) = bounds.first().copied() {
+                                    bounds_view.update(cx, |view, _| {
+                                        view.set_hover_popup_bounds(line_index, bounds)
+                                    });
+                                    update_hover_visibility_at(
+                                        &bounds_view,
+                                        window.mouse_position(),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }
+                        })
+                        .on_mouse_move({
+                            let overlay_view = overlay_view.clone();
+                            move |event, window, cx| {
+                                update_hover_visibility(&overlay_view, event, window, cx);
+                            }
+                        })
+                        .id(("lsp-hover-overlay-hitbox", line_index))
+                }),
+        )
+        .into_any_element()
 }
 
 fn render_hover_popup(view: &Entity<EditorView>, line_index: usize, cx: &mut App) -> AnyElement {

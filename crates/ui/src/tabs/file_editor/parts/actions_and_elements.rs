@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
-    Anchor, AnchoredPositionMode, AnyElement, App, Bounds, Context, CursorStyle, DragMoveEvent,
-    Element, ElementId, ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle,
-    InteractiveText, IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton,
-    MouseDownEvent, MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText,
-    TextLayout, TextRun, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
-    relative, rems, uniform_list,
+    Anchor, AnyElement, App, Bounds, Context, CursorStyle, DragMoveEvent, Element, ElementId,
+    ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle, InteractiveText,
+    IntoElement, LayoutId, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
+    MouseMoveEvent, Pixels, Point, Rgba, SharedString, Style, StyledText, TextLayout, TextRun,
+    Window, canvas, div, fill, point, prelude::*, px, relative, rems, uniform_list,
 };
+use gpui_component::{button::{Button, ButtonVariants}, popover::Popover};
 
 use file_editor::{
     BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorInputLayout,
