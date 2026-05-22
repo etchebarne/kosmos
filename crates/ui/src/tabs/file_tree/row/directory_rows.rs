@@ -104,7 +104,6 @@ pub fn render_tree_entry<T: PaneDelegate + SettingsDelegate>(
         } else {
             theme.text
         })
-        .selected(state.is_selected)
         .child(body)
         .on_click(move |event, _window, cx| {
             let target = path_for_click.clone();
@@ -244,7 +243,14 @@ fn draggable_node_body(
     let drop_filter_destination = drop_destination.clone();
     div()
         .id(path_id("file-tree-node-drag", path))
+        .relative()
         .w_full()
+        .h(ROW_HEIGHT)
+        .flex()
+        .items_center()
+        .rounded(rems(0.25))
+        .when(is_selected, |style| style.bg(theme.bg_selected))
+        .hover(move |style| style.bg(if is_selected { theme.bg_selected } else { theme.bg_hover }))
         .child(node_label(depth, icon_name, name.clone(), is_selected, theme))
         .drag_over::<FileNodeDrag>(move |style, _, _, _| {
             style.bg(gpui::Hsla::from(theme.accent).opacity(0.18))
