@@ -6,12 +6,12 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, Context, DragMoveEvent, Element, ElementId, Global, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, Render,
-    ScrollHandle, ScrollWheelEvent, SharedString, Window, anchored, deferred, div, prelude::*, px,
-    rems,
+    ScrollHandle, ScrollWheelEvent, SharedString, Window, div, prelude::*, px, rems,
 };
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
 };
 use icons::{Icon, IconName};
 use infinity::{
@@ -21,10 +21,7 @@ use infinity::{
 use tabs::{Tab, TabKind, registry};
 use theme::ActiveTheme;
 
-use crate::{
-    components::left_aligned_button_label,
-    delegate::{PaneDelegate, SettingsDelegate},
-};
+use crate::delegate::{PaneDelegate, SettingsDelegate};
 
 const PANEL_HEADER_HEIGHT_REM: f32 = 2.75;
 const PANEL_RESIZE_HANDLE_REM: f32 = 1.0;
@@ -36,7 +33,6 @@ type CanvasBounds = Rc<StdCell<Option<Bounds<Pixels>>>>;
 #[derive(Default)]
 pub struct InfinityUi {
     store: InfinityCanvasStore,
-    context_menu: Option<InfinityContextMenu>,
     file_tree_scrolls: HashMap<(InfinityCanvasKey, usize), ScrollHandle>,
 }
 
@@ -67,13 +63,6 @@ impl InfinityUi {
 }
 
 impl Global for InfinityUi {}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct InfinityContextMenu {
-    key: InfinityCanvasKey,
-    position: Point<Pixels>,
-    canvas_position: CanvasPoint,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InfinityDragKind {
@@ -135,11 +124,8 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     let viewport = snapshot.viewport();
     let panels = snapshot.ordered_panels();
     let is_empty = panels.is_empty();
-    let context_menu = cx
-        .global::<InfinityUi>()
-        .context_menu
-        .filter(|menu| menu.key == key);
     let canvas_bounds: CanvasBounds = Rc::new(StdCell::new(None));
+    let menu_position: Rc<StdCell<Option<CanvasPoint>>> = Rc::new(StdCell::new(None));
 
     let mut panel_elements = Vec::with_capacity(panels.len());
     for panel in panels {
@@ -163,8 +149,8 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
     let bounds_for_context_menu = canvas_bounds.clone();
     let bounds_for_scroll = canvas_bounds.clone();
     let bounds_for_prepaint = canvas_bounds.clone();
-    let dismiss_layer = context_menu.map(|_| render_context_menu_dismiss_layer(cx));
-    let menu_overlay = context_menu.map(|menu| render_context_menu(menu, cx));
+    let menu_position_for_pointer = menu_position.clone();
+    let menu_position_for_items = menu_position.clone();
 
     div()
         .on_children_prepainted(move |bounds, _, _| {
@@ -188,7 +174,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 else {
                     return;
                 };
-                close_all_context_menus(cx);
                 mutate_canvas(key, cx, |canvas| {
                     canvas.begin_pan(pointer);
                     true
@@ -203,7 +188,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 else {
                     return;
                 };
-                close_all_context_menus(cx);
                 mutate_canvas(key, cx, |canvas| {
                     canvas.begin_pan(pointer);
                     true
@@ -217,11 +201,16 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 let Some(pointer) =
                     pointer_from_stored_bounds(&bounds_for_context_menu, event.position, window)
                 else {
+                    menu_position_for_pointer.set(None);
                     return;
                 };
-                close_context_menu(cx);
-                open_context_menu(key, event.position, pointer, cx);
-                cx.stop_propagation();
+                let canvas_position = cx
+                    .global::<InfinityUi>()
+                    .store
+                    .snapshot(key)
+                    .viewport()
+                    .screen_to_canvas(pointer);
+                menu_position_for_pointer.set(Some(canvas_position));
             }),
         )
         .on_drag(InfinityDrag::pan(key), |drag, _, _, cx| cx.new(|_| *drag))
@@ -232,7 +221,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 return;
             };
             if update_canvas_drag(key, pointer, cx) {
-                close_all_context_menus_app(cx);
                 window.refresh();
             }
         })
@@ -244,7 +232,6 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 }
                 let pointer = pointer_from_bounds(event.event.position, event.bounds, window);
                 if mutate_canvas(key, cx, |canvas| canvas.drag_to(pointer)) {
-                    close_all_context_menus(cx);
                     cx.notify();
                 }
             }),
@@ -282,8 +269,9 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         .when(is_empty, |this| this.child(render_empty_hint(cx)))
         .children(panel_elements)
         .child(render_zoom_badge(viewport, cx))
-        .when_some(dismiss_layer, |this, layer| this.child(layer))
-        .when_some(menu_overlay, |this, menu| this.child(menu))
+        .context_menu(move |menu, window, cx| {
+            build_context_menu(key, menu_position_for_items.get(), menu, window, cx)
+        })
         .into_any_element()
 }
 
@@ -341,87 +329,60 @@ fn render_empty_hint<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) ->
         .into_any_element()
 }
 
-fn render_context_menu<T: PaneDelegate + SettingsDelegate>(
-    menu: InfinityContextMenu,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let items = registry::ALL
+fn build_context_menu(
+    key: InfinityCanvasKey,
+    canvas_position: Option<CanvasPoint>,
+    menu: PopupMenu,
+    window: &mut Window,
+    _: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(canvas_position) = canvas_position else {
+        return menu;
+    };
+    let menu_width = rems(MENU_MIN_WIDTH_REM).to_pixels(window.rem_size());
+
+    registry::ALL
         .iter()
         .copied()
         .filter(|kind| !kind.is_hidden && kind.id != registry::INFINITY.id)
-        .map(|kind| render_context_menu_item(menu.key, menu.canvas_position, kind, cx))
-        .collect::<Vec<_>>();
-
-    deferred(
-        anchored().position(menu.position).snap_to_window().child(
-            div()
-                .id("infinity-context-menu")
-                .min_w(rems(MENU_MIN_WIDTH_REM))
-                .p_1()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .rounded(rems(0.375))
-                .border_1()
-                .border_color(theme.border_strong)
-                .bg(theme.bg_elevated)
-                .shadow_lg()
-                .text_sm()
-                .text_color(theme.text)
-                .block_mouse_except_scroll()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .children(items),
-        ),
-    )
-    .with_priority(2)
-    .into_any_element()
+        .fold(menu.min_w(menu_width), |menu, kind| {
+            menu.item(context_menu_item(key, canvas_position, kind))
+        })
 }
 
-fn render_context_menu_item<T: PaneDelegate + SettingsDelegate>(
+fn context_menu_item(
     key: InfinityCanvasKey,
     canvas_position: CanvasPoint,
     kind: &'static TabKind,
-    cx: &mut Context<T>,
-) -> AnyElement {
+) -> PopupMenuItem {
     let kind_id = kind.id;
-    Button::new(SharedString::from(format!("infinity-menu-{kind_id}")))
-        .ghost()
-        .tab_stop(false)
-        .w_full()
-        .h(rems(1.75))
-        .icon(ComponentIcon::empty().path(super::icon_for_kind(kind.id).path()))
-        .child(left_aligned_button_label(kind.name))
-        .on_click(cx.listener(move |_, _, _, cx| {
-            add_panel_at(key, kind_id, canvas_position, cx);
-        }))
-        .into_any_element()
-}
+    let kind_name = kind.name;
+    let icon_name = super::icon_for_kind(kind_id);
 
-fn render_context_menu_dismiss_layer<T: PaneDelegate + SettingsDelegate>(
-    cx: &mut Context<T>,
-) -> AnyElement {
-    div()
-        .id("infinity-context-menu-dismiss")
-        .absolute()
-        .top_0()
-        .left_0()
-        .right_0()
-        .bottom_0()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|_, _, _, cx| {
-                close_context_menu(cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(|_, _, _, cx| {
-                close_context_menu(cx);
-            }),
-        )
-        .into_any_element()
+    PopupMenuItem::element(move |_, cx| {
+        let theme = *cx.theme();
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_color(theme.text)
+            .child(
+                div()
+                    .w(rems(1.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(theme.text_muted)
+                    .child(ComponentIcon::empty().path(icon_name.path()).small()),
+            )
+            .child(kind_name)
+    })
+    .on_click(move |_, window, cx| {
+        if add_panel_at(key, kind_id, canvas_position, cx) {
+            window.refresh();
+        }
+    })
 }
 
 fn render_zoom_badge<T: PaneDelegate + SettingsDelegate>(
@@ -833,14 +794,6 @@ fn mutate_canvas<T: PaneDelegate + SettingsDelegate>(
     cx.update_global::<InfinityUi, _>(|ui, _| mutate(ui.store.canvas(key)))
 }
 
-fn close_all_context_menus<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> bool {
-    close_context_menu(cx)
-}
-
-fn close_all_context_menus_app(cx: &mut App) -> bool {
-    close_context_menu_app(cx)
-}
-
 fn update_canvas_drag(key: InfinityCanvasKey, pointer: CanvasPoint, cx: &mut App) -> bool {
     if cx.try_global::<InfinityUi>().is_none() {
         return false;
@@ -848,54 +801,20 @@ fn update_canvas_drag(key: InfinityCanvasKey, pointer: CanvasPoint, cx: &mut App
     cx.update_global::<InfinityUi, _>(|ui, _| ui.store.canvas(key).drag_to(pointer))
 }
 
-fn open_context_menu<T: PaneDelegate + SettingsDelegate>(
-    key: InfinityCanvasKey,
-    position: Point<Pixels>,
-    screen_position: CanvasPoint,
-    cx: &mut Context<T>,
-) {
-    cx.update_global::<InfinityUi, _>(|ui, _| {
-        let canvas_position = ui
-            .store
-            .canvas(key)
-            .viewport()
-            .screen_to_canvas(screen_position);
-        ui.context_menu = Some(InfinityContextMenu {
-            key,
-            position,
-            canvas_position,
-        });
-    });
-    cx.notify();
-}
-
-fn close_context_menu<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> bool {
-    let closed = cx.update_global::<InfinityUi, _>(|ui, _| ui.context_menu.take().is_some());
-    if closed {
-        cx.notify();
-    }
-    closed
-}
-
-fn close_context_menu_app(cx: &mut App) -> bool {
-    if cx.try_global::<InfinityUi>().is_none() {
-        return false;
-    }
-    cx.update_global::<InfinityUi, _>(|ui, _| ui.context_menu.take().is_some())
-}
-
-fn add_panel_at<T: PaneDelegate + SettingsDelegate>(
+fn add_panel_at(
     key: InfinityCanvasKey,
     kind_id: &'static str,
     canvas_position: CanvasPoint,
-    cx: &mut Context<T>,
-) {
+    cx: &mut App,
+) -> bool {
+    if cx.try_global::<InfinityUi>().is_none() {
+        return false;
+    }
     cx.update_global::<InfinityUi, _>(|ui, _| {
         let canvas = ui.store.canvas(key);
         canvas.add_panel_at_position(kind_id, canvas_position);
-        ui.context_menu = None;
     });
-    cx.notify();
+    true
 }
 
 fn finish_canvas_interaction(key: InfinityCanvasKey, cx: &mut App) -> bool {
@@ -952,7 +871,6 @@ fn handle_scroll(
         }
     });
     if changed {
-        close_all_context_menus_app(cx);
         cx.stop_propagation();
         window.refresh();
     }
