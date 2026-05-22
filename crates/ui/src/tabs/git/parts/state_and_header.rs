@@ -1,13 +1,8 @@
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::{path::{Path, PathBuf}, rc::Rc, time::Duration};
 
 use gpui::{
-    Anchor, Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Entity, Global,
-    IntoElement, MouseButton, Pixels, SharedString, Task, Window, anchored, deferred, div, point,
-    prelude::*, rems, rgb,
+    Anchor, AnyElement, App, ClickEvent, Context, Entity, Global, IntoElement, MouseButton, Pixels,
+    SharedString, Task, Window, div, prelude::*, rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
@@ -20,7 +15,7 @@ use gpui_component::{
     checkbox::Checkbox,
     dialog::Dialog,
     menu::{DropdownMenu, PopupMenuItem},
-    Disableable, Icon as ComponentIcon, Sizable,
+    Disableable, Icon as ComponentIcon, Sizable, WindowExt,
 };
 use tabs::registry;
 use theme::ActiveTheme;
@@ -221,55 +216,21 @@ pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let modal = cx
+    let has_modal = cx
         .try_global::<GitUiState>()
-        .and_then(|state| Some((state.root.clone()?, state.modal?)));
-    let Some((root, modal_state)) = modal else {
-        return div().into_any_element();
-    };
+        .is_some_and(|state| state.root.is_some() && state.modal.is_some());
+    if has_modal && !window.has_active_dialog(cx) {
+        window.defer(cx, |window, cx| {
+            let has_modal = cx
+                .try_global::<GitUiState>()
+                .is_some_and(|state| state.root.is_some() && state.modal.is_some());
+            if has_modal && !window.has_active_dialog(cx) {
+                window.open_dialog(cx, |dialog, window, cx| render_git_modal(dialog, window, cx));
+            }
+        });
+    }
 
-    let backdrop = theme::Theme::dark().bg_root;
-    let viewport_size = window.viewport_size();
-    let backdrop_animation = Animation::new(Duration::from_millis(140));
-
-    deferred(
-        anchored()
-            .position(point(Pixels::ZERO, Pixels::ZERO))
-            .snap_to_window()
-            .child(
-                div()
-                    .id("git-modal-overlay")
-                    .relative()
-                    .w(viewport_size.width)
-                    .h(viewport_size.height)
-                    .occlude()
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .right_0()
-                            .bottom_0()
-                            .bg(gpui::Hsla::from(backdrop).opacity(0.72))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _, _, cx| {
-                                    cx.stop_propagation();
-                                    close_modal(cx);
-                                }),
-                            )
-                            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                            .with_animation(
-                                "git-modal-backdrop-fade",
-                                backdrop_animation,
-                                |this, delta| this.opacity(delta),
-                            ),
-                    )
-                    .child(render_git_modal(&root, modal_state, window, cx)),
-            ),
-    )
-    .with_priority(3)
-    .into_any_element()
+    div().into_any_element()
 }
 
 fn header<T: PaneDelegate + SettingsDelegate>(

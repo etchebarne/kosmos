@@ -1,9 +1,15 @@
-fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    modal_state: GitModal,
+fn render_git_modal(
+    dialog: Dialog,
     window: &mut Window,
-    cx: &mut Context<T>,
-) -> AnyElement {
+    cx: &mut App,
+) -> Dialog {
+    let modal = cx
+        .try_global::<GitUiState>()
+        .and_then(|state| Some((state.root.clone()?, state.modal?)));
+    let Some((root, modal_state)) = modal else {
+        return dialog.overlay(false).close_button(false);
+    };
+
     let rem_size = window.rem_size();
     let viewport_size = window.viewport_size();
     let margin_top = viewport_size.height / 10.0;
@@ -14,61 +20,57 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
         (viewport_size.height - margin_top - margin_top).max(rems(12.0).to_pixels(rem_size));
 
     match modal_state {
-        GitModal::Branches => Dialog::new(cx)
+        GitModal::Branches => dialog
             .margin_top(margin_top)
             .w(width)
             .max_h(max_height)
             .overflow_hidden()
             .title("Git Branches")
             .footer(modal_footer(close_modal_button(cx), cx))
-            .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
-            .child(branches_modal_body(root, cx))
-            .into_any_element(),
-        GitModal::CreateBranch => Dialog::new(cx)
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(branches_modal_body(&root, cx)),
+        GitModal::CreateBranch => dialog
             .margin_top(margin_top)
             .w(width)
             .max_h(max_height)
             .overflow_hidden()
             .title("Create Branch")
-            .footer(create_branch_modal_footer(root, cx))
-            .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
+            .footer(create_branch_modal_footer(&root, cx))
+            .on_close(|_, _, cx| close_modal(cx))
             .child(create_branch_modal_body(cx))
-            .into_any_element(),
-        GitModal::Remotes => Dialog::new(cx)
+            ,
+        GitModal::Remotes => dialog
             .margin_top(margin_top)
             .w(width)
             .max_h(max_height)
             .overflow_hidden()
             .title("Git Remotes")
             .footer(modal_footer(close_modal_button(cx), cx))
-            .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
-            .child(remotes_modal_body(root, cx))
-            .into_any_element(),
-        GitModal::Stashes => Dialog::new(cx)
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(remotes_modal_body(&root, cx)),
+        GitModal::Stashes => dialog
             .margin_top(margin_top)
             .w(width)
             .max_h(max_height)
             .overflow_hidden()
             .title("Git Stashes")
             .footer(modal_footer(close_modal_button(cx), cx))
-            .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
-            .child(stashes_modal_body(root, cx))
-            .into_any_element(),
-        GitModal::Tags => Dialog::new(cx)
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(stashes_modal_body(&root, cx)),
+        GitModal::Tags => dialog
             .margin_top(margin_top)
             .w(width)
             .max_h(max_height)
             .overflow_hidden()
             .title("Git Tags")
             .footer(modal_footer(close_modal_button(cx), cx))
-            .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
-            .child(tags_modal_body(root, cx))
-            .into_any_element(),
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(tags_modal_body(&root, cx)),
         GitModal::ConfirmDiscardSelected => {
-            let root = root.to_path_buf();
             let selected_paths = selected_change_paths(cx);
             let selected_count = selected_paths.len();
             confirm_git_action_modal(
+                dialog,
                 ConfirmGitActionModal {
                     title: "Discard Selected Changes",
                     message: format!(
@@ -78,9 +80,10 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
                     button_id: "git-confirm-discard-selected",
                     button_label: "Discard Selected",
                     danger: true,
-                    confirm: cx.listener(move |_, _, _, cx| {
+                    confirm: Rc::new(move |_, window, cx| {
                         close_modal(cx);
-                        run_git_action(
+                        window.close_dialog(cx);
+                        run_git_action_app(
                             root.clone(),
                             {
                                 let selected_paths = selected_paths.clone();
@@ -97,17 +100,18 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             )
         }
         GitModal::ConfirmDiscard => {
-            let root = root.to_path_buf();
             confirm_git_action_modal(
+                dialog,
                 ConfirmGitActionModal {
                     title: "Discard All Changes",
                     message: "This will permanently discard all tracked and untracked working tree changes. This action cannot be undone.".to_string(),
                     button_id: "git-confirm-discard",
                     button_label: "Discard All",
                     danger: true,
-                    confirm: cx.listener(move |_, _, _, cx| {
+                    confirm: Rc::new(move |_, window, cx| {
                         close_modal(cx);
-                        run_git_action(root.clone(), kosmos_git::discard_all_changes, cx);
+                        window.close_dialog(cx);
+                        run_git_action_app(root.clone(), kosmos_git::discard_all_changes, cx);
                     }),
                 },
                 margin_top,
@@ -117,7 +121,6 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
             )
         }
         GitModal::ConfirmResolveConflicts => {
-            let root = root.to_path_buf();
             let (conflict_paths, stage_all_changes) = {
                 let state = cx.global::<GitUiState>();
                 (
@@ -146,18 +149,20 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
                 )
             };
             confirm_git_action_modal(
+                dialog,
                 ConfirmGitActionModal {
                     title: "Mark Conflicts Resolved",
                     message,
                     button_id: "git-confirm-resolve-conflicts",
                     button_label,
                     danger: false,
-                    confirm: cx.listener(move |_, _, _, cx| {
+                    confirm: Rc::new(move |_, window, cx| {
                         close_modal(cx);
+                        window.close_dialog(cx);
                         if stage_all_changes {
-                            run_git_action(root.clone(), kosmos_git::stage_all, cx);
+                            run_git_action_app(root.clone(), kosmos_git::stage_all, cx);
                         } else {
-                            run_git_action(
+                            run_git_action_app(
                                 root.clone(),
                                 {
                                     let conflict_paths = conflict_paths.clone();
@@ -177,27 +182,27 @@ fn render_git_modal<T: PaneDelegate + SettingsDelegate>(
     }
 }
 
-struct ConfirmGitActionModal<C> {
+struct ConfirmGitActionModal {
     title: &'static str,
     message: String,
     button_id: &'static str,
     button_label: &'static str,
     danger: bool,
-    confirm: C,
+    confirm: PopupMenuHandler,
 }
 
-fn confirm_git_action_modal<T, C>(
-    config: ConfirmGitActionModal<C>,
+fn confirm_git_action_modal(
+    dialog: Dialog,
+    config: ConfirmGitActionModal,
     margin_top: Pixels,
     width: Pixels,
     max_height: Pixels,
-    cx: &mut Context<T>,
-) -> AnyElement
-where
-    T: PaneDelegate + SettingsDelegate,
-    C: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut App,
+) -> Dialog
 {
-    Dialog::new(cx)
+    let _ = cx;
+    let confirm = config.confirm.clone();
+    dialog
         .margin_top(margin_top)
         .w(width)
         .max_h(max_height)
@@ -213,11 +218,11 @@ where
                     config.button_id,
                     config.button_label,
                     config.danger,
-                    config.confirm,
+                    move |event, window, cx| confirm(event, window, cx),
                     cx,
                 )),
         )
-        .on_close(cx.listener(|_, _, _, cx| close_modal(cx)))
+        .on_close(|_, _, cx| close_modal(cx))
         .child(
             div()
                 .flex()
@@ -226,13 +231,9 @@ where
                 .text_sm()
                 .child(config.message),
         )
-        .into_any_element()
 }
 
-fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn branches_modal_body(root: &Path, cx: &mut App) -> AnyElement {
     let (branch_search, branches, last_error) = {
         let state = cx.global::<GitUiState>();
         (
@@ -307,10 +308,7 @@ fn branches_modal_body<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn create_branch_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn create_branch_row(root: PathBuf, cx: &mut App) -> AnyElement {
     let theme = *cx.theme();
     let branch_name = cx
         .global::<GitUiState>()
@@ -330,10 +328,10 @@ fn create_branch_row<T: PaneDelegate + SettingsDelegate>(
         .text_sm()
         .text_color(theme.text)
         .hover(move |this| this.bg(theme.bg_hover))
-        .on_click(cx.listener(move |_, _, _, cx| {
+        .on_click(move |_, _, cx| {
             branch_name.update(cx, |input, cx| input.set_value("", cx));
-            open_modal(root.clone(), GitModal::CreateBranch, cx);
-        }))
+            open_modal_app(root.clone(), GitModal::CreateBranch, cx);
+        })
         .child(
             div()
                 .size(rems(1.25))

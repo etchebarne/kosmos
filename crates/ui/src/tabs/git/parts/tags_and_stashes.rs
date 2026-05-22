@@ -1,7 +1,4 @@
-fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn tags_modal_body(root: &Path, cx: &mut App) -> AnyElement {
     let (name, message, sha, tags) = {
         let state = cx.global::<GitUiState>();
         (
@@ -25,14 +22,14 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
             "git-add-tag",
             "Add Tag",
             false,
-            cx.listener(move |_, _, _, cx| {
+            move |_, _, cx| {
                 let name_value = name.read(cx).value().to_string();
                 if name_value.trim().is_empty() {
                     return;
                 }
                 let message_value = message.read(cx).value().to_string();
                 let sha_value = sha.read(cx).value().to_string();
-                run_modal_action(
+                run_modal_action_app(
                     root_add.clone(),
                     GitModal::Tags,
                     move |root| {
@@ -45,7 +42,7 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
                     },
                     cx,
                 );
-            }),
+            },
             cx,
         )))
         .child(section_label("Existing Tags", theme))
@@ -53,10 +50,7 @@ fn tags_modal_body<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn stashes_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn stashes_modal_body(root: &Path, cx: &mut App) -> AnyElement {
     let (stashes, expanded) = {
         let state = cx.global::<GitUiState>();
         (state.stashes.clone(), state.expanded_stashes.clone())
@@ -85,11 +79,11 @@ fn stashes_modal_body<T: PaneDelegate + SettingsDelegate>(
     body.into_any_element()
 }
 
-fn stash_row<T: PaneDelegate + SettingsDelegate>(
+fn stash_row(
     root: PathBuf,
     stash: Stash,
     expanded: std::collections::HashSet<String>,
-    cx: &mut Context<T>,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = *cx.theme();
     let is_expanded = expanded.contains(&stash.id);
@@ -121,9 +115,9 @@ fn stash_row<T: PaneDelegate + SettingsDelegate>(
                         .gap_2()
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |_, _, _, cx| {
+                            move |_, _, cx| {
                                 toggle_stash(&toggle_id, cx);
-                            }),
+                            },
                         )
                         .child(
                             div().mt(rems(0.1875)).child(
@@ -166,8 +160,8 @@ fn stash_row<T: PaneDelegate + SettingsDelegate>(
                             SharedString::from(format!("git-apply-stash:{}", stash.id)),
                             IconName::ArrowDown,
                             theme.text_muted,
-                            cx.listener(move |_, _, _, cx| {
-                                run_modal_action(
+                            move |_, _, cx| {
+                                run_modal_action_app(
                                     root_apply.clone(),
                                     GitModal::Stashes,
                                     {
@@ -176,13 +170,13 @@ fn stash_row<T: PaneDelegate + SettingsDelegate>(
                                     },
                                     cx,
                                 );
-                            }),
+                            },
                             cx,
                         ))
                         .child(delete_button(
                             SharedString::from(format!("git-delete-stash:{}", stash.id)),
-                            cx.listener(move |_, _, _, cx| {
-                                run_modal_action(
+                            move |_, _, cx| {
+                                run_modal_action_app(
                                     root_delete.clone(),
                                     GitModal::Stashes,
                                     {
@@ -191,7 +185,7 @@ fn stash_row<T: PaneDelegate + SettingsDelegate>(
                                     },
                                     cx,
                                 );
-                            }),
+                            },
                             cx,
                         )),
                 ),
@@ -228,24 +222,20 @@ fn section_label(label: &'static str, theme: theme::Theme) -> AnyElement {
         .into_any_element()
 }
 
-fn remote_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    remote: Remote,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn remote_row(root: PathBuf, remote: Remote, cx: &mut App) -> AnyElement {
     let name = remote.name.clone();
     list_row(
         remote.name,
         remote.url,
-        cx.listener(move |_, _, _, cx| {
+        move |_, _, cx| {
             let name = name.clone();
-            run_modal_action(
+            run_modal_action_app(
                 root.clone(),
                 GitModal::Remotes,
                 move |root| kosmos_git::delete_remote(root, &name),
                 cx,
             );
-        }),
+        },
         cx,
     )
 }

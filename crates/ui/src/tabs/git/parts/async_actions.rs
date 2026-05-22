@@ -26,39 +26,72 @@ fn apply_modal_list_result<T: PaneDelegate + SettingsDelegate>(
     cx.notify();
 }
 
-fn run_modal_action<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
+fn apply_modal_list_result_app(
     modal: GitModal,
-    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
-    cx: &mut Context<T>,
+    result: Result<ModalList, kosmos_git::Error>,
+    cx: &mut App,
 ) {
-    run_modal_action_after_success(root, modal, action, |_| {}, cx);
+    cx.update_global::<GitUiState, _>(|state, _| match result {
+        Ok(ModalList::Branches(branches)) if modal == GitModal::Branches => {
+            state.branches = branches;
+            state.last_error = None;
+        }
+        Ok(ModalList::Remotes(remotes)) if modal == GitModal::Remotes => {
+            state.remotes = remotes;
+            state.last_error = None;
+        }
+        Ok(ModalList::Stashes(stashes)) if modal == GitModal::Stashes => {
+            state.stashes = stashes;
+            state.last_error = None;
+        }
+        Ok(ModalList::Tags(tags)) if modal == GitModal::Tags => {
+            state.tags = tags;
+            state.last_error = None;
+        }
+        Ok(_) => {}
+        Err(error) => state.last_error = Some(error.to_string()),
+    });
+    cx.refresh_windows();
 }
 
-fn run_modal_action_after_success<T: PaneDelegate + SettingsDelegate>(
+fn run_modal_action_app(
     root: PathBuf,
     modal: GitModal,
     action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
-    on_success: impl FnOnce(&mut Context<T>) + 'static,
-    cx: &mut Context<T>,
+    cx: &mut App,
+) {
+    run_modal_action_after_success_app(root, modal, action, |_| {}, cx);
+}
+
+fn run_modal_action_after_success_app(
+    root: PathBuf,
+    modal: GitModal,
+    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
+    on_success: impl FnOnce(&mut App) + 'static,
+    cx: &mut App,
 ) {
     clear_error(cx);
-    spawn_git_action(
-        root,
-        action,
-        move |root, cx| {
-            on_success(cx);
-            refresh_modal_data(root.clone(), modal, cx);
-            refresh_summary(root, true, false, cx);
-        },
-        |error, cx| {
-            cx.update_global::<GitUiState, _>(|state, _| {
-                state.last_error = Some(error.to_string())
-            });
-            cx.notify();
-        },
-        cx,
-    );
+    cx.spawn(async move |cx| {
+        let action_root = root.clone();
+        let result = cx
+            .background_executor()
+            .spawn(async move { action(action_root) })
+            .await;
+        let _ = cx.update(|cx| match result {
+            Ok(()) => {
+                on_success(cx);
+                refresh_modal_data_app(root.clone(), modal, cx);
+                refresh_summary_app(root, true, false, cx);
+            }
+            Err(error) => {
+                cx.update_global::<GitUiState, _>(|state, _| {
+                    state.last_error = Some(error.to_string())
+                });
+                cx.refresh_windows();
+            }
+        });
+    })
+    .detach();
 }
 
 fn spawn_git_action<T: PaneDelegate + SettingsDelegate>(
@@ -266,6 +299,87 @@ fn run_git_action<T: PaneDelegate + SettingsDelegate>(
         apply_git_action_error,
         cx,
     );
+}
+
+fn run_git_action_app(
+    root: PathBuf,
+    action: impl FnOnce(PathBuf) -> Result<(), kosmos_git::Error> + Send + 'static,
+    cx: &mut App,
+) {
+    clear_error(cx);
+    cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
+    cx.refresh_windows();
+
+    cx.spawn(async move |cx| {
+        let action_root = root.clone();
+        let result = cx
+            .background_executor()
+            .spawn(async move { action(action_root) })
+            .await;
+        let _ = cx.update(|cx| match result {
+            Ok(()) => refresh_summary_app(root, true, true, cx),
+            Err(error) => apply_git_action_error_app(error, cx),
+        });
+    })
+    .detach();
+}
+
+fn apply_git_action_error_app(error: kosmos_git::Error, cx: &mut App) {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.loading = false;
+        state.last_error = Some(error.to_string());
+    });
+    cx.refresh_windows();
+}
+
+fn refresh_summary_app(root: PathBuf, notify_now: bool, show_loading: bool, cx: &mut App) {
+    let generation = cx.update_global::<GitUiState, _>(|state, _| {
+        if state.root.as_ref() != Some(&root) {
+            state.summary = None;
+            state.last_error = None;
+            state.can_initialize_repository = false;
+            state.collapsed_change_dirs.clear();
+        }
+        state.root = Some(root.clone());
+        if show_loading {
+            state.loading = true;
+        }
+        state.refresh_generation = state.refresh_generation.wrapping_add(1);
+        state.refresh_generation
+    });
+
+    if notify_now {
+        cx.refresh_windows();
+    }
+
+    cx.spawn(async move |cx| {
+        let result = cx
+            .background_executor()
+            .spawn(async move { RepositorySummary::discover(&root) })
+            .await;
+        let _ = cx.update(|cx| {
+            cx.update_global::<GitUiState, _>(|state, _| {
+                if state.refresh_generation != generation {
+                    return;
+                }
+                state.loading = false;
+                match result {
+                    Ok(summary) => {
+                        state.summary = Some(summary);
+                        state.last_error = None;
+                        state.can_initialize_repository = false;
+                    }
+                    Err(error) => {
+                        state.can_initialize_repository = is_missing_repository(&error);
+                        state.summary = None;
+                        state.last_error = Some(error.to_string());
+                    }
+                }
+            });
+            cx.refresh_windows();
+        });
+    })
+    .detach();
 }
 
 fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(

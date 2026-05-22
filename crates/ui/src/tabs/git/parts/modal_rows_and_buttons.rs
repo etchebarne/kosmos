@@ -1,30 +1,26 @@
-fn tag_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    tag: Tag,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn tag_row(root: PathBuf, tag: Tag, cx: &mut App) -> AnyElement {
     let name = tag.name.clone();
     list_row(
         tag.name,
         tag.message,
-        cx.listener(move |_, _, _, cx| {
+        move |_, _, cx| {
             let name = name.clone();
-            run_modal_action(
+            run_modal_action_app(
                 root.clone(),
                 GitModal::Tags,
                 move |root| kosmos_git::delete_tag(root, &name),
                 cx,
             );
-        }),
+        },
         cx,
     )
 }
 
-fn list_row<T: PaneDelegate + SettingsDelegate>(
+fn list_row(
     title: String,
     subtitle: String,
     delete: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &mut Context<T>,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = *cx.theme();
     div()
@@ -54,21 +50,21 @@ fn list_row<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn delete_button<T: PaneDelegate + SettingsDelegate>(
+fn delete_button(
     id: impl Into<gpui::ElementId>,
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &mut Context<T>,
+    cx: &mut App,
 ) -> AnyElement {
     let theme = *cx.theme();
     icon_action_button(id, IconName::Trash, theme.danger, listener, cx)
 }
 
-fn icon_action_button<T: PaneDelegate + SettingsDelegate>(
+fn icon_action_button(
     id: impl Into<gpui::ElementId>,
     icon: IconName,
     color: gpui::Rgba,
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &mut Context<T>,
+    cx: &mut App,
 ) -> AnyElement {
     let _ = cx;
     Button::new(id)
@@ -85,29 +81,29 @@ fn icon_action_button<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn modal_footer<T: PaneDelegate + SettingsDelegate>(
-    button: AnyElement,
-    _cx: &mut Context<T>,
-) -> AnyElement {
+fn modal_footer(button: AnyElement, _cx: &mut App) -> AnyElement {
     div().flex().justify_end().child(button).into_any_element()
 }
 
-fn close_modal_button<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+fn close_modal_button(cx: &mut App) -> AnyElement {
     action_button(
         "git-close-modal",
         "Close",
         false,
-        cx.listener(|_, _, _, cx| close_modal(cx)),
+        |_, window, cx| {
+            close_modal(cx);
+            window.close_dialog(cx);
+        },
         cx,
     )
 }
 
-fn action_button<T: PaneDelegate + SettingsDelegate>(
+fn action_button(
     id: impl Into<gpui::ElementId>,
     label: &'static str,
     danger: bool,
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &mut Context<T>,
+    cx: &mut App,
 ) -> AnyElement {
     let _ = cx;
     Button::new(id)

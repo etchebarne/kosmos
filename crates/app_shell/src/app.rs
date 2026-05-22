@@ -481,10 +481,20 @@ impl Render for KosmosApp {
             )))
             .child(layout::bottom_bar::render(&theme))
             .child(ui::tabs::git::render_modal_overlay(window, cx))
-            .children(gpui_component::Root::render_sheet_layer(window, cx))
-            .children(gpui_component::Root::render_dialog_layer(window, cx))
-            .children(gpui_component::Root::render_notification_layer(window, cx))
+            .child(render_component_layers(window, cx))
     }
+}
+
+fn render_component_layers(window: &mut Window, cx: &mut App) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .children(gpui_component::Root::render_sheet_layer(window, cx))
+        .children(gpui_component::Root::render_dialog_layer(window, cx))
+        .children(gpui_component::Root::render_notification_layer(window, cx))
 }
 
 fn terminal_tab_ids(node: &PaneNode) -> Vec<usize> {

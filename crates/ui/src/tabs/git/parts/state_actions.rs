@@ -114,6 +114,18 @@ fn open_modal<T: PaneDelegate + SettingsDelegate>(
     cx.notify();
 }
 
+fn open_modal_app(root: PathBuf, modal: GitModal, cx: &mut App) {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.root = Some(root.clone());
+        state.modal = Some(modal);
+        state.last_error = None;
+        state.pending_conflict_paths.clear();
+        state.pending_conflict_resolution_stages_all = false;
+    });
+    refresh_modal_data_app(root, modal, cx);
+    cx.refresh_windows();
+}
+
 fn close_modal(cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| {
         state.modal = None;
@@ -164,7 +176,7 @@ fn conflict_paths_in_summary(summary: &RepositorySummary) -> Vec<String> {
         .collect()
 }
 
-fn selected_change_paths<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> Vec<String> {
+fn selected_change_paths(cx: &mut App) -> Vec<String> {
     cx.global::<GitUiState>()
         .summary
         .as_ref()
@@ -179,13 +191,13 @@ fn selected_change_paths<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>
         .unwrap_or_default()
 }
 
-fn toggle_stash<T: PaneDelegate + SettingsDelegate>(id: &str, cx: &mut Context<T>) {
+fn toggle_stash(id: &str, cx: &mut App) {
     cx.update_global::<GitUiState, _>(|state, _| {
         if !state.expanded_stashes.remove(id) {
             state.expanded_stashes.insert(id.to_string());
         }
     });
-    cx.notify();
+    cx.refresh_windows();
 }
 
 fn toggle_change_dir<T: PaneDelegate + SettingsDelegate>(path: &str, cx: &mut Context<T>) {
@@ -237,6 +249,52 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
                 .await;
             let _ = this.update(cx, |_, cx| {
                 apply_modal_list_result(modal, result.map(ModalList::Tags), cx);
+            });
+        }
+        GitModal::CreateBranch
+        | GitModal::ConfirmDiscardSelected
+        | GitModal::ConfirmDiscard
+        | GitModal::ConfirmResolveConflicts => {}
+    })
+    .detach();
+}
+
+fn refresh_modal_data_app(root: PathBuf, modal: GitModal, cx: &mut App) {
+    cx.spawn(async move |cx| match modal {
+        GitModal::Branches => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_branches(root) })
+                .await;
+            let _ = cx.update(|cx| {
+                apply_modal_list_result_app(modal, result.map(ModalList::Branches), cx);
+            });
+        }
+        GitModal::Remotes => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_remotes(root) })
+                .await;
+            let _ = cx.update(|cx| {
+                apply_modal_list_result_app(modal, result.map(ModalList::Remotes), cx);
+            });
+        }
+        GitModal::Stashes => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_stashes(root) })
+                .await;
+            let _ = cx.update(|cx| {
+                apply_modal_list_result_app(modal, result.map(ModalList::Stashes), cx);
+            });
+        }
+        GitModal::Tags => {
+            let result = cx
+                .background_executor()
+                .spawn(async move { kosmos_git::list_tags(root) })
+                .await;
+            let _ = cx.update(|cx| {
+                apply_modal_list_result_app(modal, result.map(ModalList::Tags), cx);
             });
         }
         GitModal::CreateBranch
