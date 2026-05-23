@@ -44,6 +44,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
 
 pub fn install_keybindings(cx: &mut App) {
     file_editor::install_default_keybindings(cx);
+    terminal::install_default_keybindings(cx);
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {

@@ -6,10 +6,10 @@ use std::sync::{Arc, OnceLock};
 use gpui::{
     Anchor, AnyElement, App, Bounds, ClipboardItem, Context, Element, ElementId,
     ElementInputHandler, Entity, FocusHandle, FontFeatures, Global, GlobalElementId,
-    InteractiveElement, IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString, StrikethroughStyle,
-    Style, TextRun, UnderlineStyle, Window, canvas, div, fill, outline, point, prelude::*, px,
-    relative, rems, rgb,
+    InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString,
+    StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, actions, canvas, div, fill,
+    outline, point, prelude::*, px, relative, rems, rgb,
 };
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
@@ -40,6 +40,8 @@ const BOTTOM_BAR_HEIGHT_REM: f32 = 1.75;
 const BOTTOM_BAR_BUTTON_SIZE_REM: f32 = 1.375;
 const SHELL_PICKER_WIDTH_REM: f32 = 8.0;
 
+actions!(terminal, [InsertTab, InsertBacktab]);
+
 #[derive(Default)]
 pub struct TerminalUi;
 
@@ -54,6 +56,13 @@ impl TerminalUi {
 }
 
 impl Global for TerminalUi {}
+
+pub fn install_default_keybindings(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", InsertTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-tab", InsertBacktab, Some(KEY_CONTEXT)),
+    ]);
+}
 
 pub fn render<T: 'static>(
     workspace_id: usize,
@@ -381,6 +390,8 @@ fn render_screen<T: 'static>(
 ) -> AnyElement {
     let session_for_resize = session.clone();
     let session_for_key = session.clone();
+    let session_for_tab = session.clone();
+    let session_for_backtab = session.clone();
     let session_for_copy = session.clone();
     let session_for_paste = session.clone();
     let session_for_scroll = session.clone();
@@ -418,6 +429,27 @@ fn render_screen<T: 'static>(
         .line_height(rems(metrics.row_height_rem))
         .bg(rgba_for_terminal_color(metrics.screen_background))
         .text_color(rgba_for_terminal_color(metrics.cursor_color))
+        .on_action(cx.listener(move |_, _: &InsertTab, _, cx| {
+            write_terminal_key(
+                &session_for_tab,
+                TerminalKeyInput {
+                    key: "tab".to_string(),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }))
+        .on_action(cx.listener(move |_, _: &InsertBacktab, _, cx| {
+            write_terminal_key(
+                &session_for_backtab,
+                TerminalKeyInput {
+                    key: "tab".to_string(),
+                    shift: true,
+                    ..Default::default()
+                },
+                cx,
+            );
+        }))
         .on_any_mouse_down(cx.listener(move |_, event: &MouseDownEvent, window, cx| {
             window.focus(&focus_for_click, cx);
             let Some(button) = terminal_mouse_button(event.button) else {
@@ -595,16 +627,7 @@ fn render_screen<T: 'static>(
             }
 
             let input = terminal_key_input(event);
-            let handled = session_for_key.update(cx, |session, cx| {
-                let handled = session.write_key(input);
-                if handled {
-                    cx.notify();
-                }
-                handled
-            });
-            if handled {
-                cx.stop_propagation();
-            }
+            write_terminal_key(&session_for_key, input, cx);
         }))
         .on_scroll_wheel(move |event, window, cx| {
             let row_height = terminal_row_height_pixels(metrics, window);
@@ -1801,6 +1824,24 @@ fn terminal_grid_axis_index(offset: f32, cell_size: f32, limit: usize) -> usize 
         return 0;
     }
     ((offset / cell_size).floor() as usize).min(limit.saturating_sub(1))
+}
+
+fn write_terminal_key<T: 'static>(
+    session: &Entity<TerminalSession>,
+    input: TerminalKeyInput,
+    cx: &mut Context<T>,
+) -> bool {
+    let handled = session.update(cx, |session, cx| {
+        let handled = session.write_key(input);
+        if handled {
+            cx.notify();
+        }
+        handled
+    });
+    if handled {
+        cx.stop_propagation();
+    }
+    handled
 }
 
 fn terminal_mouse_button(button: MouseButton) -> Option<TerminalMouseButton> {
