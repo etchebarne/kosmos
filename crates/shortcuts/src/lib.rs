@@ -1,4 +1,4 @@
-use gpui::{App, Global, KeyBinding};
+use gpui::{App, Global, KeyBinding, Keystroke};
 
 /// Keymap context that activates the global Kosmos shortcuts.
 pub const CONTEXT: &str = "Kosmos";
@@ -29,6 +29,10 @@ impl ShortcutRegistry {
 
     pub fn primary_label_for_action(&self, action: &str) -> Option<String> {
         primary_label_for_action_in(&self.bindings, action)
+    }
+
+    pub fn primary_keystroke_for_action(&self, action: &str) -> Option<Keystroke> {
+        primary_keystroke_for_action_in(&self.bindings, action)
     }
 }
 
@@ -115,11 +119,29 @@ pub fn primary_label_for_action(action: &str, cx: &App) -> Option<String> {
     primary_label_for_action_in(DEFAULTS, action)
 }
 
+pub fn primary_keystroke_for_action(action: &str, cx: &App) -> Option<Keystroke> {
+    if let Some(registry) = cx.try_global::<ShortcutRegistry>() {
+        return registry.primary_keystroke_for_action(action);
+    }
+    primary_keystroke_for_action_in(DEFAULTS, action)
+}
+
 pub fn primary_label_for_action_in(bindings: &[ShortcutBinding], action: &str) -> Option<String> {
     bindings
         .iter()
         .find(|binding| binding.action == action)
         .map(|binding| format_keystrokes(binding.keystrokes))
+}
+
+pub fn primary_keystroke_for_action_in(
+    bindings: &[ShortcutBinding],
+    action: &str,
+) -> Option<Keystroke> {
+    bindings
+        .iter()
+        .find(|binding| binding.action == action)
+        .and_then(|binding| binding.keystrokes.split_whitespace().next())
+        .and_then(|keystrokes| Keystroke::parse(keystrokes).ok())
 }
 
 pub fn format_keystrokes(keystrokes: &str) -> String {
@@ -197,6 +219,14 @@ mod tests {
         assert_eq!(
             primary_label_for_action_in(DEFAULTS, "input::Redo"),
             Some("Ctrl+Y".to_string())
+        );
+    }
+
+    #[test]
+    fn finds_primary_keystroke_for_action() {
+        assert_eq!(
+            primary_keystroke_for_action_in(DEFAULTS, "file_editor::Save"),
+            Keystroke::parse("ctrl-s").ok()
         );
     }
 

@@ -1,12 +1,13 @@
 use std::{rc::Rc, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, IntoElement, MouseButton,
-    SharedString, Window, WindowControlArea, div, ease_in_out, prelude::*, rems, svg,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, IntoElement, Keystroke,
+    MouseButton, SharedString, Window, WindowControlArea, div, ease_in_out, prelude::*, rems, svg,
 };
 use gpui_component::{
     Disableable, Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
+    kbd::Kbd,
     menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
 };
 

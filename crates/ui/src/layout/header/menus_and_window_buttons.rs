@@ -7,7 +7,7 @@ struct HeaderMenuItem {
 #[derive(Clone)]
 struct HeaderPopupMenuItem {
     label: &'static str,
-    shortcut: Option<SharedString>,
+    shortcut: Option<Keystroke>,
     is_enabled: bool,
     listener: HeaderMenuHandler,
 }
@@ -82,8 +82,7 @@ fn render_menu_button<T: HeaderDelegate>(
                 label: item.label,
                 shortcut: action
                     .shortcut_action_name()
-                    .and_then(|action| shortcuts::primary_label_for_action(action, cx))
-                    .map(SharedString::from),
+                    .and_then(|action| shortcuts::primary_keystroke_for_action(action, cx)),
                 is_enabled: availability.action_enabled(action),
                 listener,
             }
@@ -135,7 +134,7 @@ fn render_menu_item(item: HeaderPopupMenuItem) -> PopupMenuItem {
                     div()
                         .flex_none()
                         .text_color(shortcut_color)
-                        .child(shortcut),
+                        .child(Kbd::new(shortcut)),
                 )
             })
     })
