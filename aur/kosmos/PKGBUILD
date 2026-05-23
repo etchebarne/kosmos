@@ -1,7 +1,7 @@
 # Maintainer: Martin Etchebarne <martin@etchebarne.net>
 pkgname=kosmos
 pkgver=0.4.1
-pkgrel=1
+pkgrel=2
 pkgdesc="A modern code editor."
 arch=('x86_64')
 url="https://github.com/etchebarne/kosmos"
@@ -12,6 +12,7 @@ depends=(
     'libxcb'
     'libxkbcommon'
     'libxkbcommon-x11'
+    'vulkan-driver'
     'vulkan-icd-loader'
     'wayland'
 )

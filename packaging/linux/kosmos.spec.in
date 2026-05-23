@@ -12,6 +12,7 @@ Requires: libxkbcommon
 Requires: libxkbcommon-x11
 Requires: wayland
 Requires: vulkan-loader
+Recommends: mesa-vulkan-drivers
 
 %global debug_package %{nil}
 
