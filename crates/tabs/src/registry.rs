@@ -34,12 +34,6 @@ pub const TERMINAL: TabKind = TabKind {
     is_hidden: false,
 };
 
-pub const INFINITY: TabKind = TabKind {
-    id: "infinity",
-    name: "Infinity",
-    is_hidden: false,
-};
-
 pub const SETTINGS: TabKind = TabKind {
     id: "settings",
     name: "Settings",
@@ -58,7 +52,6 @@ pub const ALL: &[&TabKind] = &[
     &FILE_SEARCH,
     &GIT,
     &TERMINAL,
-    &INFINITY,
     &SETTINGS,
     &FILE_EDITOR,
 ];

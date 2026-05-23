@@ -3,14 +3,13 @@ mod file_editor;
 mod file_search;
 pub mod file_tree;
 pub mod git;
-pub mod infinity;
 mod placeholder;
 pub mod settings;
 pub mod terminal;
 
 use std::path::Path;
 
-use gpui::{AnyElement, Context, IntoElement, Window, div};
+use gpui::{AnyElement, App, Context, IntoElement, Window, div};
 use icons::IconName;
 
 use tabs::{Tab, registry};
@@ -34,14 +33,17 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
             window,
             cx,
         ),
-        "file_tree" => file_tree::render(cx),
+        "file_tree" => file_tree::render(window, cx),
         "file_search" => file_search::render(cx),
-        "git" => git::render(cx),
-        "infinity" => infinity::render(workspace_id, workspace_path, tab.id, window, cx),
-        "settings" => settings::render(cx),
+        "git" => git::render(window, cx),
+        "settings" => settings::render(window, cx),
         "file_editor" => file_editor::render(tab, cx),
         _ => div().into_any_element(),
     }
+}
+
+pub fn install_keybindings(cx: &mut App) {
+    file_editor::install_default_keybindings(cx);
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {
@@ -61,7 +63,6 @@ pub fn icon_for_kind(kind_id: &str) -> IconName {
         id if id == registry::FILE_SEARCH.id => IconName::Search,
         id if id == registry::GIT.id => IconName::SourceControl,
         id if id == registry::TERMINAL.id => IconName::Terminal,
-        id if id == registry::INFINITY.id => IconName::Infinity,
         id if id == registry::SETTINGS.id => IconName::SettingsGear,
         id if id == registry::FILE_EDITOR.id => IconName::File,
         _ => IconName::File,

@@ -18,10 +18,7 @@ fn begin_lsp_hover(hover: &LineHover, byte_index: usize, cx: &mut App) {
     cx.spawn(async move |cx| {
         cx.background_executor().timer(HOVER_DEBOUNCE).await;
 
-        let request = cx
-            .update(|cx| build_lsp_hover_request(&hover, generation, cx))
-            .ok()
-            .flatten();
+        let request = cx.update(|cx| build_lsp_hover_request(&hover, generation, cx));
         let Some(request) = request else {
             let _ = cx.update(|cx| {
                 hover.view.update(cx, |view, _| {

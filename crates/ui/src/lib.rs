@@ -1,4 +1,3 @@
-pub mod components;
 pub mod delegate;
 pub mod drag;
 pub mod layout;

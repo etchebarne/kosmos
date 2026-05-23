@@ -24,35 +24,6 @@ pub fn indent_guides(depth: usize, theme: Theme) -> AnyElement {
     row.into_any_element()
 }
 
-/// Build the path list for a drag started on `row_path`. If the row belongs to
-/// the active multi-selection, the drag carries every selected path; otherwise
-/// it carries just the row's own path.
-fn drag_paths_for<T: PaneDelegate + SettingsDelegate>(
-    entity: &Entity<FileTree>,
-    row_path: &Path,
-    cx: &Context<T>,
-) -> Vec<PathBuf> {
-    let tree = entity.read(cx);
-    if tree.is_selected(row_path) && tree.selected_count() > 1 {
-        tree.selected_paths().iter().cloned().collect()
-    } else {
-        vec![row_path.to_path_buf()]
-    }
-}
-
-/// Drop predicate shared by directory and file rows: allow the drop if at
-/// least one source can land in `dest_dir` (i.e. dest is not inside any
-/// source, and at least one source is not already a direct child).
-fn can_drop_into_dir(drag: &FileNodeDrag, dest_dir: &Path) -> bool {
-    if drag.paths.is_empty() {
-        return false;
-    }
-    if drag.paths.iter().any(|p| dest_dir.starts_with(p)) {
-        return false;
-    }
-    drag.paths.iter().any(|p| p.parent() != Some(dest_dir))
-}
-
 pub fn path_id(prefix: &'static str, path: &Path) -> gpui::ElementId {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

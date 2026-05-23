@@ -9,26 +9,29 @@ pub use state::{ActiveFileTreeUi, FileTreeUi};
 
 use std::path::Path;
 
-use gpui::{
-    AnyElement, ClickEvent, Context, Entity, IntoElement, MouseButton, ScrollHandle, SharedString,
-    div, prelude::*, rems,
-};
+use gpui::{AnyElement, Context, Entity, IntoElement, SharedString, Window, div, prelude::*};
 
 use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
-use icons::{Icon, IconName};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable, Size,
+    alert::Alert,
+    tree::{TreeEntry, TreeItem, tree as component_tree},
+};
+use icons::IconName;
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{Tooltip, TooltipPosition};
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let scroll_handle = cx.file_tree_ui().map(|ui| ui.scroll()).unwrap_or_default();
-    render_with_scroll(scroll_handle, cx)
+pub fn render<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    render_content(window, cx)
 }
 
-pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
-    scroll_handle: ScrollHandle,
+fn render_content<T: PaneDelegate + SettingsDelegate>(
+    _window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -37,7 +40,7 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         None => return empty_state(cx),
     };
 
-    let (root, error, new_entry, context_menu, clipboard, root_expanded) = {
+    let (root, error, new_entry) = {
         let tree = entity.read(cx);
         let Some(root) = tree.root().map(Path::to_path_buf) else {
             return empty_state(cx);
@@ -46,9 +49,6 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
             root.clone(),
             tree.error().cloned(),
             tree.new_entry_draft().cloned(),
-            tree.context_menu().cloned(),
-            tree.clipboard().map(|(op, _)| op),
-            tree.is_expanded(&root),
         )
     };
 
@@ -59,62 +59,21 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         .unwrap_or_else(|| root.display().to_string())
         .into();
 
-    let root_state = compute_row_state(&entity, &root, cx);
-    let mut rows: Vec<AnyElement> = Vec::new();
-    rows.push(row::render_root::<T>(
+    let Some(tree_state) = cx.file_tree_ui().map(|ui| ui.tree()) else {
+        return empty_state(cx);
+    };
+    let root_item = build_tree_item(
         &entity,
-        root.clone(),
+        &root,
         root_label,
-        root_state,
-        actions_row::<T>(&entity, cx),
+        NodeKind::Directory,
+        &new_entry,
         cx,
-    ));
-    if root_expanded {
-        collect_rows::<T>(&entity, &root, 0, &mut rows, &new_entry, cx);
-    }
-
-    let entity_for_dismiss = entity.clone();
-
-    let menu_overlay = context_menu.as_ref().map(|state| {
-        let has_clipboard = clipboard.is_some();
-        let cut_active = matches!(clipboard, Some(file_tree::ClipboardOp::Cut));
-        menu::render::<T>(
-            &entity,
-            state.target.clone(),
-            state.position,
-            has_clipboard,
-            cut_active,
-            cx,
-        )
-    });
-
-    let dismiss_layer = context_menu.as_ref().map(|_| {
-        div()
-            .id("file-tree-menu-dismiss")
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |_, _, _, cx| {
-                    let entity = entity_for_dismiss.clone();
-                    entity.update(cx, |t, cx| t.close_context_menu(cx));
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener({
-                    let entity = entity.clone();
-                    move |_, _, _, cx| {
-                        let entity = entity.clone();
-                        entity.update(cx, |t, cx| t.close_context_menu(cx));
-                    }
-                }),
-            )
-            .into_any_element()
-    });
+    );
+    tree_state.update(cx, |state, cx| state.set_items(vec![root_item], cx));
+    let delegate = cx.entity().clone();
+    let entity_for_rows = entity.clone();
+    let new_entry_for_rows = new_entry.clone();
 
     div()
         .relative()
@@ -125,83 +84,131 @@ pub fn render_with_scroll<T: PaneDelegate + SettingsDelegate>(
         .bg(theme.bg_surface)
         .child(error_banner(error.clone(), &entity, cx))
         .child(
-            div()
-                .id("file-tree-scroll")
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .overflow_y_scroll()
-                .track_scroll(&scroll_handle)
-                .children(rows),
+            div().relative().flex_1().min_h_0().child(
+                div().id("file-tree-scroll").size_full().child(
+                    component_tree(&tree_state, move |ix, entry, _, window, cx| {
+                        row::render_tree_entry::<T>(
+                            ix,
+                            entry,
+                            &entity_for_rows,
+                            &delegate,
+                            &new_entry_for_rows,
+                            window,
+                            cx,
+                        )
+                    })
+                    .context_menu({
+                        let entity = entity.clone();
+                        move |_, entry, popup_menu, window, cx| {
+                            let Some(path) = entry_path(entry) else {
+                                return popup_menu;
+                            };
+                            menu::build(entity.clone(), path, popup_menu, window, cx)
+                        }
+                    })
+                    .size_full(),
+                ),
+            ),
         )
-        .when_some(dismiss_layer, |this, layer| this.child(layer))
-        .when_some(menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
 }
 
-fn collect_rows<T: PaneDelegate + SettingsDelegate>(
-    entity: &Entity<FileTree>,
-    dir: &Path,
-    depth: usize,
-    out: &mut Vec<AnyElement>,
-    new_entry: &Option<NewEntryDraft>,
-    cx: &mut Context<T>,
-) {
-    let snapshot = {
-        let tree = entity.read(cx);
-        let Some(children) = tree.children_of(dir).map(|c| c.to_vec()) else {
-            return;
-        };
-        children
-    };
-    let new_here = match new_entry {
-        Some(draft) if draft.parent.as_path() == dir => Some(draft.clone()),
-        _ => None,
-    };
-
-    if let Some(draft) = new_here.as_ref().filter(|d| d.kind == NodeKind::Directory) {
-        out.push(row::render_new_entry::<T>(draft, entity, depth + 1, cx));
-    }
-
-    for node in snapshot
-        .iter()
-        .filter(|n| matches!(n.kind, file_tree::NodeKind::Directory))
-    {
-        let row_state = compute_row_state(entity, &node.path, cx);
-        out.push(row::render_dir::<T>(
-            entity,
-            node.path.clone(),
-            node.name.clone(),
-            depth + 1,
-            row_state,
-            cx,
-        ));
-        if row_state.is_expanded {
-            collect_rows::<T>(entity, &node.path, depth + 1, out, new_entry, cx);
-        }
-    }
-
-    if let Some(draft) = new_here.as_ref().filter(|d| d.kind == NodeKind::File) {
-        out.push(row::render_new_entry::<T>(draft, entity, depth + 1, cx));
-    }
-
-    for node in snapshot
-        .iter()
-        .filter(|n| matches!(n.kind, file_tree::NodeKind::File))
-    {
-        let row_state = compute_row_state(entity, &node.path, cx);
-        out.push(row::render_file::<T>(
-            entity,
-            node.path.clone(),
-            node.name.clone(),
-            depth + 1,
-            row_state,
-            cx,
-        ));
-    }
+fn entry_path(entry: &TreeEntry) -> Option<std::path::PathBuf> {
+    let id = entry.item().id.as_str();
+    id.strip_prefix(FILE_TREE_DIR_PREFIX)
+        .or_else(|| id.strip_prefix(FILE_TREE_FILE_PREFIX))
+        .map(std::path::PathBuf::from)
 }
 
+pub(super) const FILE_TREE_DIR_PREFIX: &str = "dir:";
+pub(super) const FILE_TREE_FILE_PREFIX: &str = "file:";
+pub(super) const FILE_TREE_NEW_PREFIX: &str = "new:";
+
+fn build_tree_item<T: PaneDelegate + SettingsDelegate>(
+    entity: &Entity<FileTree>,
+    path: &Path,
+    name: SharedString,
+    kind: NodeKind,
+    new_entry: &Option<NewEntryDraft>,
+    cx: &mut Context<T>,
+) -> TreeItem {
+    let state = compute_row_state(entity, path, cx);
+    let id = match kind {
+        NodeKind::Directory => format!("{FILE_TREE_DIR_PREFIX}{}", path.to_string_lossy()),
+        NodeKind::File => format!("{FILE_TREE_FILE_PREFIX}{}", path.to_string_lossy()),
+    };
+    let mut item = TreeItem::new(id, name).expanded(state.is_expanded);
+    if state.is_renaming {
+        item = item.disabled(true);
+    }
+    if kind == NodeKind::File {
+        return item;
+    }
+
+    let snapshot = {
+        let tree = entity.read(cx);
+        tree.children_of(path)
+            .map(|c| c.to_vec())
+            .unwrap_or_default()
+    };
+    let new_here = new_entry
+        .as_ref()
+        .filter(|draft| draft.parent.as_path() == path);
+    let mut children = Vec::new();
+    if let Some(draft) = new_here.filter(|draft| draft.kind == NodeKind::Directory) {
+        children.push(new_entry_tree_item(draft));
+    }
+    children.extend(
+        snapshot
+            .iter()
+            .filter(|n| matches!(n.kind, file_tree::NodeKind::Directory))
+            .map(|node| {
+                build_tree_item(
+                    entity,
+                    &node.path,
+                    node.name.clone(),
+                    node.kind,
+                    new_entry,
+                    cx,
+                )
+            }),
+    );
+    if let Some(draft) = new_here.filter(|draft| draft.kind == NodeKind::File) {
+        children.push(new_entry_tree_item(draft));
+    }
+    children.extend(
+        snapshot
+            .iter()
+            .filter(|n| matches!(n.kind, file_tree::NodeKind::File))
+            .map(|node| {
+                build_tree_item(
+                    entity,
+                    &node.path,
+                    node.name.clone(),
+                    node.kind,
+                    new_entry,
+                    cx,
+                )
+            }),
+    );
+
+    item.children(children)
+}
+
+fn new_entry_tree_item(draft: &NewEntryDraft) -> TreeItem {
+    TreeItem::new(
+        format!(
+            "{FILE_TREE_NEW_PREFIX}{}:{}",
+            match draft.kind {
+                NodeKind::Directory => "dir",
+                NodeKind::File => "file",
+            },
+            draft.parent.to_string_lossy()
+        ),
+        "",
+    )
+    .disabled(true)
+}
 fn compute_row_state<T: PaneDelegate + SettingsDelegate>(
     entity: &Entity<FileTree>,
     path: &Path,
@@ -217,154 +224,23 @@ fn compute_row_state<T: PaneDelegate + SettingsDelegate>(
     }
 }
 
-/// Builds the four-button cluster that lives at the right edge of the root
-/// row (new file, new folder, refresh, collapse all).
-fn actions_row<T: PaneDelegate + SettingsDelegate>(
-    entity: &Entity<FileTree>,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let entity_new_file = entity.clone();
-    let entity_new_dir = entity.clone();
-    let entity_refresh = entity.clone();
-    let entity_collapse = entity.clone();
-
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap_1()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(action_button::<T>(
-            "ft-action-new-file",
-            IconName::FileAdd,
-            "New File",
-            cx.listener(move |_, _, window, cx| {
-                let entity = entity_new_file.clone();
-                let anchor = entity.read(cx).selected().map(|p| p.to_path_buf());
-                entity.update(cx, |t, cx| {
-                    t.start_new_entry(anchor.as_deref(), NodeKind::File, cx);
-                });
-                actions::focus_new_entry_input(window, cx);
-            }),
-            cx,
-        ))
-        .child(action_button::<T>(
-            "ft-action-new-folder",
-            IconName::FolderAdd,
-            "New Folder",
-            cx.listener(move |_, _, window, cx| {
-                let entity = entity_new_dir.clone();
-                let anchor = entity.read(cx).selected().map(|p| p.to_path_buf());
-                entity.update(cx, |t, cx| {
-                    t.start_new_entry(anchor.as_deref(), NodeKind::Directory, cx);
-                });
-                actions::focus_new_entry_input(window, cx);
-            }),
-            cx,
-        ))
-        .child(action_button::<T>(
-            "ft-action-refresh",
-            IconName::Refresh,
-            "Refresh",
-            cx.listener(move |_, _, _, cx| {
-                let entity = entity_refresh.clone();
-                entity.update(cx, |t, cx| {
-                    if let Some(root) = t.root().map(Path::to_path_buf) {
-                        t.reload_dir(&root);
-                        cx.notify();
-                    }
-                });
-            }),
-            cx,
-        ))
-        .child(action_button::<T>(
-            "ft-action-collapse",
-            IconName::CollapseAll,
-            "Collapse All",
-            cx.listener(move |_, _, _, cx| {
-                let entity = entity_collapse.clone();
-                entity.update(cx, |t, cx| t.collapse_all(cx));
-            }),
-            cx,
-        ))
-        .into_any_element()
-}
-
-fn action_button<T: PaneDelegate + SettingsDelegate>(
-    id: &'static str,
-    icon: IconName,
-    tooltip: &'static str,
-    listener: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let _ = cx;
-    let button = div()
-        .id(id)
-        .size(rems(1.375))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.25))
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(move |event, window, cx| {
-            cx.stop_propagation();
-            listener(event, window, cx);
-        })
-        .child(Icon::new(icon).size(14.0).color(theme.text_muted));
-
-    Tooltip::new(format!("{id}-tooltip"), tooltip, button)
-        .position(TooltipPosition::Bottom)
-        .into_any_element()
-}
-
 fn error_banner<T: PaneDelegate + SettingsDelegate>(
     error: Option<SharedString>,
     entity: &Entity<FileTree>,
-    cx: &mut Context<T>,
+    _cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let Some(message) = error else {
         return div().into_any_element();
     };
     let entity = entity.clone();
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .px_3()
-        .py_1()
-        .bg(gpui::Hsla::from(theme.danger).opacity(0.15))
-        .text_xs()
-        .text_color(theme.text)
-        .child(div().flex_1().min_w_0().child(message))
-        .child(
-            div()
-                .id("ft-error-dismiss")
-                .size(rems(1.25))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .text_color(theme.text_muted)
-                .hover(move |s| s.bg(theme.bg_hover))
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    let entity = entity.clone();
-                    entity.update(cx, |t, _| t.clear_error());
-                    cx.notify();
-                }))
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(12.0)
-                        .color(theme.text_muted),
-                ),
-        )
+    Alert::error("file-tree-error", message)
+        .banner()
+        .with_size(Size::Small)
+        .icon(ComponentIcon::empty().path(IconName::Close.path()))
+        .on_close(move |_, _, cx| {
+            entity.update(cx, |tree, _| tree.clear_error());
+            cx.refresh_windows();
+        })
         .into_any_element()
 }
 
@@ -380,9 +256,9 @@ fn empty_state<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEl
         .gap_2()
         .text_color(theme.text_subtle)
         .child(
-            Icon::new(super::icon_for_kind(registry::FILE_TREE.id))
-                .size(28.0)
-                .color(theme.text_muted),
+            ComponentIcon::empty()
+                .path(super::icon_for_kind(registry::FILE_TREE.id).path())
+                .text_color(theme.text_muted),
         )
         .child(div().text_sm().child("No workspace open"))
         .into_any_element()

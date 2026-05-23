@@ -11,7 +11,6 @@ impl FileTree {
             error: None,
             rename: None,
             new_entry: None,
-            context_menu: None,
             watcher: None,
             watcher_rx: None,
             watcher_task: None,
@@ -63,10 +62,6 @@ impl FileTree {
         self.new_entry.as_ref()
     }
 
-    pub fn context_menu(&self) -> Option<&ContextMenuState> {
-        self.context_menu.as_ref()
-    }
-
     pub fn is_expanded(&self, path: &Path) -> bool {
         self.expanded.contains(path)
     }
@@ -88,7 +83,6 @@ impl FileTree {
         self.error = None;
         self.rename = None;
         self.new_entry = None;
-        self.context_menu = None;
         // Drop the previous watcher off the main thread — releasing inotify
         // watches for a large tree can take seconds.
         if let Some(old) = self.watcher.take() {

@@ -1,8 +1,4 @@
-fn branch_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    branch: Branch,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
     let theme = *cx.theme();
     let name = branch.name.clone();
     let is_current = branch.current;
@@ -36,9 +32,9 @@ fn branch_row<T: PaneDelegate + SettingsDelegate>(
         })
         .when(!is_current, |this| {
             this.hover(move |this| this.bg(theme.bg_hover))
-                .on_click(cx.listener(move |_, _, _, cx| {
+                .on_click(move |_, _, cx| {
                     let branch = switch_branch.clone();
-                    run_modal_action(
+                    run_modal_action_app(
                         root_switch.clone(),
                         GitModal::Branches,
                         move |root| {
@@ -50,7 +46,7 @@ fn branch_row<T: PaneDelegate + SettingsDelegate>(
                         },
                         cx,
                     );
-                }))
+                })
         })
         .child(
             div()
@@ -81,9 +77,9 @@ fn branch_row<T: PaneDelegate + SettingsDelegate>(
                         )
                         .when(is_remote, |this| {
                             this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_subtle)
+                                ComponentTag::secondary()
+                                    .outline()
+                                    .with_size(Size::Small)
                                     .child("Remote"),
                             )
                         }),
@@ -92,22 +88,22 @@ fn branch_row<T: PaneDelegate + SettingsDelegate>(
         .when(!is_current && !is_remote, |this| {
             this.child(div().flex_none().child(delete_button(
                 delete_id,
-                cx.listener(move |_, _, _, cx| {
+                move |_, _, cx| {
                     let branch = delete_branch.clone();
-                    run_modal_action(
+                    run_modal_action_app(
                         root_delete.clone(),
                         GitModal::Branches,
                         move |root| kosmos_git::delete_branch(root, &branch),
                         cx,
                     );
-                }),
+                },
                 cx,
             )))
         })
         .into_any_element()
 }
 
-fn create_branch_modal_body<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+fn create_branch_modal_body(cx: &mut App) -> AnyElement {
     let (branch_name, last_error) = {
         let state = cx.global::<GitUiState>();
         (
@@ -115,7 +111,6 @@ fn create_branch_modal_body<T: PaneDelegate + SettingsDelegate>(cx: &mut Context
             state.last_error.clone(),
         )
     };
-    let theme = *cx.theme();
 
     div()
         .flex()
@@ -123,25 +118,12 @@ fn create_branch_modal_body<T: PaneDelegate + SettingsDelegate>(cx: &mut Context
         .gap_3()
         .child(input_row("Branch Name", branch_name))
         .when_some(last_error, |this, error| {
-            this.child(
-                div()
-                    .rounded(rems(0.375))
-                    .border_1()
-                    .border_color(gpui::Hsla::from(theme.danger).opacity(0.35))
-                    .bg(gpui::Hsla::from(theme.danger).opacity(0.12))
-                    .p_2()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(error),
-            )
+            this.child(error_alert("git-create-branch-error", error))
         })
         .into_any_element()
 }
 
-fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn create_branch_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
     let branch_name = cx
         .global::<GitUiState>()
         .branch_name
@@ -161,44 +143,39 @@ fn create_branch_modal_footer<T: PaneDelegate + SettingsDelegate>(
             "git-cancel-create-branch",
             "Cancel",
             false,
-            cx.listener(move |_, _, _, cx| {
-                cancel_input.update(cx, |input, cx| input.set_value("", cx));
-                open_modal(root_cancel.clone(), GitModal::Branches, cx);
-            }),
+            move |_, window, cx| {
+                cancel_input.update(cx, |input, cx| input.set_value("", window, cx));
+                open_modal_app(root_cancel.clone(), GitModal::Branches, cx);
+            },
             cx,
         ))
         .child(action_button(
             "git-confirm-create-branch",
             "Create",
             false,
-            cx.listener(move |_, _, _, cx| {
+            move |_, _, cx| {
                 let branch = create_input.read(cx).value().trim().to_string();
                 if branch.is_empty() {
                     return;
                 }
-                let input = create_input.clone();
-                run_modal_action_after_success(
+                run_modal_action_after_success_app(
                     root_create.clone(),
                     GitModal::Branches,
                     move |root| kosmos_git::create_branch(root, &branch),
                     move |cx| {
-                        input.update(cx, |input, cx| input.set_value("", cx));
                         cx.update_global::<GitUiState, _>(|state, _| {
                             state.modal = Some(GitModal::Branches)
                         });
                     },
                     cx,
                 );
-            }),
+            },
             cx,
         ))
         .into_any_element()
 }
 
-fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
-    root: &Path,
-    cx: &mut Context<T>,
-) -> AnyElement {
+fn remotes_modal_body(root: &Path, cx: &mut App) -> AnyElement {
     let (name, url, remotes) = {
         let state = cx.global::<GitUiState>();
         (
@@ -220,19 +197,19 @@ fn remotes_modal_body<T: PaneDelegate + SettingsDelegate>(
             "git-add-remote",
             "Add Remote",
             false,
-            cx.listener(move |_, _, _, cx| {
+            move |_, _, cx| {
                 let name_value = name.read(cx).value().to_string();
                 let url_value = url.read(cx).value().to_string();
                 if name_value.trim().is_empty() || url_value.trim().is_empty() {
                     return;
                 }
-                run_modal_action(
+                run_modal_action_app(
                     root_add.clone(),
                     GitModal::Remotes,
                     move |root| kosmos_git::add_remote(root, name_value.trim(), url_value.trim()),
                     cx,
                 );
-            }),
+            },
             cx,
         )))
         .child(section_label("Existing Remotes", theme))

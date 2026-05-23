@@ -155,6 +155,10 @@ impl AssetSource for AppAssets {
             return Ok(Some(Cow::Borrowed(bytes)));
         }
 
+        if let Some(svg) = component_compat_icon(path) {
+            return Ok(Some(Cow::Owned(svg.into_bytes())));
+        }
+
         let Some(icon) = IconName::from_path(path) else {
             return Ok(None);
         };
@@ -178,6 +182,19 @@ impl AssetSource for AppAssets {
             .map(SharedString::from)
             .collect())
     }
+}
+
+fn component_compat_icon(path: &str) -> Option<String> {
+    let icon = match path {
+        "icons/circle-check.svg" => IconName::Pass,
+        "icons/circle-x.svg" => IconName::Error,
+        "icons/info.svg" => IconName::Info,
+        "icons/minus.svg" => IconName::Remove,
+        "icons/plus.svg" => IconName::Add,
+        "icons/triangle-alert.svg" => IconName::Warning,
+        _ => return None,
+    };
+    icon.to_svg()
 }
 
 fn brand_asset(path: &str) -> Option<&'static [u8]> {

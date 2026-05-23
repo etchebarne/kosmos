@@ -1,17 +1,29 @@
 use std::{
-    cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
 };
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Corner, Entity, Global, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, SharedString, Task, Window, anchored, deferred, div, prelude::*,
-    rems, rgb,
+    Anchor, App, ClickEvent, Entity, IntoElement, MouseButton, Pixels, SharedString, Task, div,
+    prelude::*, rems, rgb,
 };
 
 use file_tree::ActiveFileTree;
+use gpui_component::{
+    Disableable, Icon as ComponentIcon, Sizable, Size, WindowExt,
+    alert::Alert,
+    button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+    dialog::Dialog,
+    input::{Input, InputState},
+    list::ListItem,
+    menu::{DropdownMenu, PopupMenuItem},
+    notification::Notification,
+    separator::Separator,
+    tag::Tag as ComponentTag,
+    tree::{TreeEntry, TreeItem, TreeState, tree as component_tree},
+};
 use icons::{Icon, IconName};
 use kosmos_git::{
     Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
@@ -19,43 +31,25 @@ use kosmos_git::{
 use tabs::registry;
 use theme::ActiveTheme;
 
-use crate::components::{TextArea, TextInput, Tooltip, TooltipPosition, ValueChanged, modal, toast};
-use crate::delegate::{PaneDelegate, SettingsDelegate};
+type PopupMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-thread_local! {
-    static GIT_UI_NAMESPACE: RefCell<Vec<SharedString>> = const { RefCell::new(Vec::new()) };
+fn component_icon(icon: IconName) -> ComponentIcon {
+    ComponentIcon::empty().path(icon.path())
 }
 
-pub fn with_git_ui_namespace<R>(namespace: impl Into<SharedString>, f: impl FnOnce() -> R) -> R {
-    let _guard = GitUiNamespaceGuard::new(namespace.into());
-    f()
+fn error_alert(id: impl Into<gpui::ElementId>, message: impl Into<SharedString>) -> AnyElement {
+    Alert::error(id, message.into())
+        .with_size(Size::Small)
+        .icon(component_icon(IconName::Close))
+        .into_any_element()
 }
 
-struct GitUiNamespaceGuard;
-
-impl GitUiNamespaceGuard {
-    fn new(namespace: SharedString) -> Self {
-        GIT_UI_NAMESPACE.with(|stack| stack.borrow_mut().push(namespace));
-        Self
-    }
-}
-
-impl Drop for GitUiNamespaceGuard {
-    fn drop(&mut self) {
-        GIT_UI_NAMESPACE.with(|stack| {
-            stack.borrow_mut().pop();
-        });
-    }
-}
-
-fn current_git_ui_namespace() -> SharedString {
-    GIT_UI_NAMESPACE.with(|stack| {
-        stack
-            .borrow()
-            .last()
-            .cloned()
-            .unwrap_or_else(|| SharedString::new_static("git"))
-    })
+fn metric_tag(label: impl Into<SharedString>, color: gpui::Rgba) -> AnyElement {
+    let color = gpui::Hsla::from(color);
+    ComponentTag::custom(color.opacity(0.12), color, color.opacity(0.28))
+        .with_size(Size::Small)
+        .child(label.into())
+        .into_any_element()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -88,16 +82,6 @@ impl GitSyncAction {
         Self::Push,
         Self::ForcePush,
     ];
-
-    fn id(self) -> &'static str {
-        match self {
-            Self::Fetch => "git-sync-menu-fetch",
-            Self::Pull => "git-sync-menu-pull",
-            Self::PullRebase => "git-sync-menu-pull-rebase",
-            Self::Push => "git-sync-menu-push",
-            Self::ForcePush => "git-sync-menu-force-push",
-        }
-    }
 
     fn label(self) -> &'static str {
         match self {
@@ -150,12 +134,9 @@ struct GitUiState {
     loading: bool,
     refresh_generation: u64,
     refresh_task: Option<Task<()>>,
+    change_tree_state: Option<Entity<TreeState>>,
     watch_generation: u64,
     watch_task: Option<Task<()>>,
-    menu_position: Option<Point<Pixels>>,
-    menu_namespace: Option<SharedString>,
-    sync_menu_position: Option<Point<Pixels>>,
-    sync_menu_namespace: Option<SharedString>,
     modal: Option<GitModal>,
     last_error: Option<String>,
     pending_conflict_paths: Vec<String>,
@@ -167,14 +148,14 @@ struct GitUiState {
     collapsed_change_dirs: std::collections::HashSet<String>,
     tags: Vec<Tag>,
     branches: Vec<Branch>,
-    commit_message: Option<Entity<TextArea>>,
-    branch_search: Option<Entity<TextInput>>,
-    branch_name: Option<Entity<TextInput>>,
-    remote_name: Option<Entity<TextInput>>,
-    remote_url: Option<Entity<TextInput>>,
-    tag_name: Option<Entity<TextInput>>,
-    tag_message: Option<Entity<TextInput>>,
-    tag_sha: Option<Entity<TextInput>>,
+    commit_message: Option<Entity<InputState>>,
+    branch_search: Option<Entity<InputState>>,
+    branch_name: Option<Entity<InputState>>,
+    remote_name: Option<Entity<InputState>>,
+    remote_url: Option<Entity<InputState>>,
+    tag_name: Option<Entity<InputState>>,
+    tag_message: Option<Entity<InputState>>,
+    tag_sha: Option<Entity<InputState>>,
 }
 
 impl Global for GitUiState {}
@@ -193,11 +174,13 @@ const COMMIT_MESSAGE_PADDING_TOP_REM: f32 = 1.25;
 const COMMIT_MESSAGE_PADDING_BOTTOM_REM: f32 = 0.5;
 const COMMIT_CONTROLS_INSET_X_REM: f32 = 1.0;
 const SYNC_PANEL_INSET_X_REM: f32 = 0.5;
-const SYNC_MENU_GAP_REM: f32 = 0.5;
 const COMMIT_CONTROLS_INSET_BOTTOM_REM: f32 = 1.0;
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    ensure_state(cx);
+pub fn render_git<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    ensure_state(window, cx);
     let theme = *cx.theme();
     let Some(root) = cx
         .file_tree()
@@ -207,31 +190,14 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
     };
 
     ensure_summary(&root, cx);
-    let namespace = current_git_ui_namespace();
-
-    let (summary, can_initialize_repository, loading, menu_position, sync_menu_position) = {
+    let (summary, can_initialize_repository, loading) = {
         let state = cx.global::<GitUiState>();
         (
             state.summary.clone(),
             state.can_initialize_repository,
             state.loading,
-            state
-                .menu_namespace
-                .as_ref()
-                .filter(|active| *active == &namespace)
-                .and(state.menu_position),
-            state
-                .sync_menu_namespace
-                .as_ref()
-                .filter(|active| *active == &namespace)
-                .and(state.sync_menu_position),
         )
     };
-    let dismiss_layer = (menu_position.is_some() || sync_menu_position.is_some())
-        .then(|| menu_dismiss_layer::<T>(cx));
-    let menu_overlay = menu_position.map(|position| more_menu::<T>(&root, position, cx));
-    let sync_menu_overlay =
-        sync_menu_position.map(|position| sync_action_menu::<T>(&root, position, cx));
 
     div()
         .relative()
@@ -270,27 +236,30 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyEle
                 .and_then(|summary| summary.latest_commit.clone()),
             |this, commit| this.child(latest_commit_panel(commit, cx)),
         )
-        .when_some(dismiss_layer, |this, layer| this.child(layer))
-        .when_some(menu_overlay, |this, menu| this.child(menu))
-        .when_some(sync_menu_overlay, |this, menu| this.child(menu))
         .into_any_element()
 }
 
-pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
-    let modal = cx
+pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let has_modal = cx
         .try_global::<GitUiState>()
-        .and_then(|state| Some((state.root.clone()?, state.modal?)));
+        .is_some_and(|state| state.root.is_some() && state.modal.is_some());
+    if has_modal && !window.has_active_dialog(cx) {
+        window.defer(cx, |window, cx| {
+            let has_modal = cx
+                .try_global::<GitUiState>()
+                .is_some_and(|state| state.root.is_some() && state.modal.is_some());
+            if has_modal && !window.has_active_dialog(cx) {
+                window.open_dialog(cx, |dialog, window, cx| {
+                    render_git_modal(dialog, window, cx)
+                });
+            }
+        });
+    }
 
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .right_0()
-        .bottom_0()
-        .when_some(modal, |this, (root, modal_state)| {
-            this.child(render_git_modal(&root, modal_state, cx))
-        })
-        .into_any_element()
+    div().into_any_element()
 }
 
 fn header<T: PaneDelegate + SettingsDelegate>(
@@ -331,11 +300,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     },
                     cx,
                 ))
-                .child(change_count(
-                    summary,
-                    loading,
-                    cx,
-                ))
+                .child(change_count(summary, loading, cx))
                 .when_some(summary, |this, summary| this.child(diff_stats(summary, cx))),
         )
         .child(
@@ -371,7 +336,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     },
                     cx,
                 ))
-                .child(more_button(cx)),
+                .child(more_button(root, cx)),
         )
         .into_any_element()
 }

@@ -1,337 +1,242 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, rc::Rc};
 
-use gpui::{
-    AnyElement, App, Context, Entity, IntoElement, MouseButton, Pixels, Point, SharedString,
-    Window, anchored, deferred, div, prelude::*, rems,
+use gpui::{App, ClickEvent, Context, Entity, Window, div, prelude::*, rems};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    menu::{PopupMenu, PopupMenuItem},
 };
 
 use file_tree::{ClipboardOp, FileTree, NodeKind};
-use icons::{Icon, IconName};
+use icons::IconName;
 use theme::ActiveTheme;
 
-use crate::delegate::{PaneDelegate, SettingsDelegate};
 use crate::tabs::file_tree::actions;
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(
-    entity: &Entity<FileTree>,
-    target: Option<PathBuf>,
-    position: Point<Pixels>,
-    has_clipboard: bool,
-    cut_active: bool,
+const MENU_WIDTH_REM: f32 = 13.0;
+
+type FileTreeMenuHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+pub fn build<T: 'static>(
+    entity: Entity<FileTree>,
+    target: PathBuf,
+    menu: PopupMenu,
+    window: &mut Window,
     cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let target_is_some = target.is_some();
-    let target_for_paste = target.clone();
+) -> PopupMenu {
+    select_context_target(&entity, &target, cx);
 
     // Operations apply to the full multi-selection if the right-clicked target
     // belongs to it; otherwise they apply only to the target.
-    let op_paths: Vec<PathBuf> = {
+    let (op_paths, has_clipboard, cut_active) = {
         let tree = entity.read(cx);
-        match &target {
-            Some(t) if tree.is_selected(t) && tree.selected_count() > 1 => {
-                tree.selected_paths().iter().cloned().collect()
-            }
-            Some(t) => vec![t.clone()],
-            None => Vec::new(),
-        }
+        let op_paths = if tree.is_selected(&target) && tree.selected_count() > 1 {
+            tree.selected_paths().iter().cloned().collect()
+        } else {
+            vec![target.clone()]
+        };
+        let clipboard = tree.clipboard().map(|(op, _)| op);
+        (
+            op_paths,
+            clipboard.is_some(),
+            matches!(clipboard, Some(ClipboardOp::Cut)),
+        )
     };
     let multi = op_paths.len() > 1;
-    let any_target = !op_paths.is_empty();
+    let menu_width = rems(MENU_WIDTH_REM).to_pixels(window.rem_size());
 
-    let mut items: Vec<AnyElement> = Vec::new();
-
-    items.push(menu_item::<T>(
-        "ft-menu-new-file",
-        IconName::FileAdd,
-        "New File",
-        true,
-        {
-            let entity = entity.clone();
-            let target = target.clone();
-            cx.listener(move |_, _, window, cx| {
-                cx.stop_propagation();
-                let anchor = target.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.start_new_entry(anchor.as_deref(), NodeKind::File, cx);
-                });
-                actions::focus_new_entry_input(window, cx);
-            })
-        },
-        cx,
-    ));
-
-    items.push(menu_item::<T>(
-        "ft-menu-new-folder",
-        IconName::FolderAdd,
-        "New Folder",
-        true,
-        {
-            let entity = entity.clone();
-            let target = target.clone();
-            cx.listener(move |_, _, window, cx| {
-                cx.stop_propagation();
-                let anchor = target.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.start_new_entry(anchor.as_deref(), NodeKind::Directory, cx);
-                });
-                actions::focus_new_entry_input(window, cx);
-            })
-        },
-        cx,
-    ));
-
-    items.push(separator(theme));
-
-    items.push(menu_item::<T>(
-        "ft-menu-cut",
-        IconName::Edit,
-        if multi { "Cut Selection" } else { "Cut" },
-        any_target,
-        {
-            let entity = entity.clone();
-            let paths = op_paths.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                if paths.is_empty() {
-                    return;
-                }
-                let paths = paths.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.cut(paths, cx);
-                });
-            })
-        },
-        cx,
-    ));
-
-    items.push(menu_item::<T>(
-        "ft-menu-copy",
-        IconName::Copy,
-        if multi { "Copy Selection" } else { "Copy" },
-        any_target,
-        {
-            let entity = entity.clone();
-            let paths = op_paths.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                if paths.is_empty() {
-                    return;
-                }
-                let paths = paths.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.copy(paths, cx);
-                });
-            })
-        },
-        cx,
-    ));
-
-    items.push(menu_item::<T>(
-        "ft-menu-paste",
-        IconName::Clippy,
-        if cut_active { "Paste (move)" } else { "Paste" },
-        has_clipboard,
-        {
-            let entity = entity.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                let dest = match &target_for_paste {
-                    Some(path) => path.clone(),
-                    None => match entity.read(cx).root() {
-                        Some(root) => root.to_path_buf(),
-                        None => return,
-                    },
-                };
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.paste_into(dest, cx);
-                });
-            })
-        },
-        cx,
-    ));
-
-    items.push(separator(theme));
-
-    items.push(menu_item::<T>(
-        "ft-menu-rename",
-        IconName::Edit,
-        "Rename",
-        target_is_some && !multi,
-        {
-            let entity = entity.clone();
-            let target = target.clone();
-            cx.listener(move |_, _, window, cx| {
-                cx.stop_propagation();
-                let Some(path) = target.clone() else { return };
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                });
-                actions::begin_rename(path, &entity, window, cx);
-            })
-        },
-        cx,
-    ));
-
-    items.push(menu_item::<T>(
-        "ft-menu-reveal",
-        IconName::Folder,
-        "Reveal in File Explorer",
-        target_is_some,
-        {
-            let entity = entity.clone();
-            let target = target.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                let Some(path) = target.clone() else { return };
-                entity.update(cx, |tree, cx| tree.close_context_menu(cx));
-                cx.reveal_path(&path);
-            })
-        },
-        cx,
-    ));
-
-    items.push(separator(theme));
-
-    items.push(menu_item::<T>(
-        "ft-menu-trash",
-        IconName::Trash,
-        "Move to Trash",
-        any_target,
-        {
-            let entity = entity.clone();
-            let paths = op_paths.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                if paths.is_empty() {
-                    return;
-                }
-                let paths = paths.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.trash(paths, cx);
-                });
-            })
-        },
-        cx,
-    ));
-
-    items.push(menu_item::<T>(
-        "ft-menu-delete",
-        IconName::Close,
-        "Delete Permanently",
-        any_target,
-        {
-            let entity = entity.clone();
-            let paths = op_paths.clone();
-            cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                let entity = entity.clone();
-                if paths.is_empty() {
-                    return;
-                }
-                let paths = paths.clone();
-                entity.update(cx, |tree, cx| {
-                    tree.close_context_menu(cx);
-                    tree.delete(paths, cx);
-                });
-            })
-        },
-        cx,
-    ));
-
-    let _ = ClipboardOp::Cut;
-
-    deferred(
-        anchored().position(position).snap_to_window().child(
-            div()
-                .id("file-tree-context-menu")
-                .min_w(rems(13.0))
-                .p_1()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .rounded(rems(0.375))
-                .border_1()
-                .border_color(theme.border_strong)
-                .bg(theme.bg_elevated)
-                .shadow_lg()
-                .text_sm()
-                .text_color(theme.text)
-                .block_mouse_except_scroll()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .children(items),
-        ),
-    )
-    .with_priority(2)
-    .into_any_element()
+    menu.min_w(menu_width)
+        .item(menu_item(
+            IconName::FileAdd,
+            "New File",
+            true,
+            false,
+            new_entry_handler(entity.clone(), target.clone(), NodeKind::File),
+        ))
+        .item(menu_item(
+            IconName::FolderAdd,
+            "New Folder",
+            true,
+            false,
+            new_entry_handler(entity.clone(), target.clone(), NodeKind::Directory),
+        ))
+        .separator()
+        .item(menu_item(
+            IconName::Edit,
+            if multi { "Cut Selection" } else { "Cut" },
+            !op_paths.is_empty(),
+            false,
+            cut_handler(entity.clone(), op_paths.clone()),
+        ))
+        .item(menu_item(
+            IconName::Copy,
+            if multi { "Copy Selection" } else { "Copy" },
+            !op_paths.is_empty(),
+            false,
+            copy_handler(entity.clone(), op_paths.clone()),
+        ))
+        .item(menu_item(
+            IconName::Clippy,
+            if cut_active { "Paste (move)" } else { "Paste" },
+            has_clipboard,
+            false,
+            paste_handler(entity.clone(), target.clone()),
+        ))
+        .separator()
+        .item(menu_item(
+            IconName::Edit,
+            "Rename",
+            !multi,
+            false,
+            rename_handler(entity.clone(), target.clone()),
+        ))
+        .item(menu_item(
+            IconName::Folder,
+            "Reveal in File Explorer",
+            true,
+            false,
+            reveal_handler(target.clone()),
+        ))
+        .separator()
+        .item(menu_item(
+            IconName::Trash,
+            "Move to Trash",
+            !op_paths.is_empty(),
+            true,
+            trash_handler(entity.clone(), op_paths.clone()),
+        ))
+        .item(menu_item(
+            IconName::Close,
+            "Delete Permanently",
+            !op_paths.is_empty(),
+            true,
+            delete_handler(entity, op_paths),
+        ))
 }
 
-fn menu_item<T: PaneDelegate + SettingsDelegate>(
-    id: &'static str,
+fn select_context_target<T: 'static>(
+    entity: &Entity<FileTree>,
+    target: &PathBuf,
+    cx: &mut Context<T>,
+) {
+    entity.update(cx, |tree, cx| {
+        if !tree.is_selected(target) {
+            tree.select(target.clone(), cx);
+        }
+    });
+}
+
+fn new_entry_handler(
+    entity: Entity<FileTree>,
+    target: PathBuf,
+    kind: NodeKind,
+) -> FileTreeMenuHandler {
+    Rc::new(move |_, window, cx| {
+        cx.stop_propagation();
+        entity.update(cx, |tree, cx| {
+            tree.start_new_entry(Some(&target), kind, cx);
+        });
+        actions::focus_new_entry_input(window, cx);
+    })
+}
+
+fn cut_handler(entity: Entity<FileTree>, paths: Vec<PathBuf>) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        if !paths.is_empty() {
+            entity.update(cx, |tree, cx| tree.cut(paths.clone(), cx));
+        }
+    })
+}
+
+fn copy_handler(entity: Entity<FileTree>, paths: Vec<PathBuf>) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        if !paths.is_empty() {
+            entity.update(cx, |tree, cx| tree.copy(paths.clone(), cx));
+        }
+    })
+}
+
+fn paste_handler(entity: Entity<FileTree>, target: PathBuf) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        entity.update(cx, |tree, cx| tree.paste_into(target.clone(), cx));
+    })
+}
+
+fn rename_handler(entity: Entity<FileTree>, target: PathBuf) -> FileTreeMenuHandler {
+    Rc::new(move |_, window, cx| {
+        cx.stop_propagation();
+        actions::begin_rename(target.clone(), &entity, window, cx);
+    })
+}
+
+fn reveal_handler(target: PathBuf) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        cx.reveal_path(&target);
+    })
+}
+
+fn trash_handler(entity: Entity<FileTree>, paths: Vec<PathBuf>) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        if !paths.is_empty() {
+            entity.update(cx, |tree, cx| tree.trash(paths.clone(), cx));
+        }
+    })
+}
+
+fn delete_handler(entity: Entity<FileTree>, paths: Vec<PathBuf>) -> FileTreeMenuHandler {
+    Rc::new(move |_, _, cx| {
+        cx.stop_propagation();
+        if !paths.is_empty() {
+            entity.update(cx, |tree, cx| tree.delete(paths.clone(), cx));
+        }
+    })
+}
+
+fn menu_item(
     icon: IconName,
     label: &'static str,
     enabled: bool,
-    listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let hover_bg = theme.bg_selected;
-    let hover_text = theme.text_emphasis;
-    let text_color = if enabled {
-        theme.text
-    } else {
-        theme.text_subtle
-    };
-    let icon_color = if enabled {
-        theme.text_muted
-    } else {
-        theme.text_subtle
-    };
-    let label_text: SharedString = label.into();
-    let _ = cx;
+    danger: bool,
+    listener: FileTreeMenuHandler,
+) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| {
+        let theme = *cx.theme();
+        let text_color = if !enabled {
+            theme.text_subtle
+        } else if danger {
+            theme.danger
+        } else {
+            theme.text
+        };
+        let icon_color = if !enabled {
+            theme.text_subtle
+        } else if danger {
+            theme.danger
+        } else {
+            theme.text_muted
+        };
 
-    let mut row = div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_2()
-        .h(rems(1.625))
-        .px_2()
-        .rounded(rems(0.25))
-        .text_color(text_color)
-        .child(
-            div()
-                .w(rems(1.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Icon::new(icon).size(14.0).color(icon_color)),
-        )
-        .child(label_text);
-    if enabled {
-        row = row
-            .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-            .on_click(listener);
-    }
-    row.into_any_element()
-}
-
-fn separator(theme: theme::Theme) -> AnyElement {
-    div()
-        .h(rems(0.0625))
-        .my(rems(0.25))
-        .bg(theme.border_subtle)
-        .into_any_element()
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_color(text_color)
+            .child(
+                div()
+                    .w(rems(1.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(icon_color)
+                    .child(ComponentIcon::empty().path(icon.path()).small()),
+            )
+            .child(label)
+    })
+    .disabled(!enabled)
+    .on_click(move |event, window, cx| listener(event, window, cx))
 }

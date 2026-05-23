@@ -3,17 +3,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{App, Context, Global, Pixels, Point, ScrollHandle, Window};
+use gpui::{App, Context, Global, ScrollHandle, Window};
 use pane_tree::DropZone;
 use settings::SettingValue;
 
 use crate::drag::TabDrag;
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkspaceMenuState {
-    pub id: usize,
-    pub position: Point<Pixels>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabAnimationPhase {
@@ -88,13 +82,10 @@ pub trait WorkspaceDelegate: Sized + 'static {
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>);
     fn move_workspace_before(&mut self, drag_id: usize, target_id: usize, cx: &mut Context<Self>);
     fn move_workspace_to_end(&mut self, drag_id: usize, cx: &mut Context<Self>);
-    fn open_workspace_menu(&mut self, id: usize, position: Point<Pixels>, cx: &mut Context<Self>);
-    fn close_workspace_menu(&mut self, cx: &mut Context<Self>);
     fn close_workspace(&mut self, id: usize, cx: &mut Context<Self>);
 }
 
 pub trait HeaderDelegate: WorkspaceDelegate {
-    fn toggle_header_menu(&mut self, menu: HeaderMenu, cx: &mut Context<Self>);
     fn activate_header_menu_action(
         &mut self,
         action: HeaderMenuAction,

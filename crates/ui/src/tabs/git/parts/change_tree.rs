@@ -4,48 +4,69 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let tree = build_change_tree(&summary.files);
+    let change_tree = build_change_tree(&summary.files);
+    let Some(tree_state) = cx.global::<GitUiState>().change_tree_state.clone() else {
+        return div().into_any_element();
+    };
+
+    let items = change_tree_items(&change_tree, cx);
+    tree_state.update(cx, |state, cx| state.set_items(items, cx));
+
+    let file_changes = summary
+        .files
+        .iter()
+        .cloned()
+        .map(|change| (change.path.clone(), change))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let root_path = root.to_path_buf();
+
     div()
         .id("git-change-list")
+        .relative()
         .flex_1()
         .min_h_0()
         .bg(theme.bg_surface)
-        .overflow_y_scroll()
-        .when(summary.files.is_empty(), |this| {
-            this.flex().items_center().justify_center()
-        })
-        .when(!summary.files.is_empty(), |this| {
-            this.child(
-                div()
-                    .flex_none()
-                    .px_4()
-                    .pt_3()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(theme.text_subtle)
-                    .child("TRACKED"),
-            )
-        })
-        .when(summary.files.is_empty(), |this| {
-            this.child(
-                div()
-                    .text_sm()
-                    .text_color(theme.text_subtle)
-                    .child("No changes"),
-            )
-        })
-        .children(
-            tree.dirs
-                .into_values()
-                .map(|node| change_dir_row(root.to_path_buf(), node, 0, true, cx)),
-        )
-        .children(
-            tree.files
-                .into_iter()
-                .map(|change| change_file_row(root.to_path_buf(), change, 0, cx)),
+        .child(
+            div()
+                .id("git-change-list-scroll")
+                .size_full()
+                .when(summary.files.is_empty(), |this| {
+                    this.flex().flex_col().items_center().justify_center()
+                })
+                .when(!summary.files.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .flex_none()
+                            .px_4()
+                            .pt_3()
+                            .pb_2()
+                            .text_xs()
+                            .text_color(theme.text_subtle)
+                            .child("TRACKED"),
+                    )
+                })
+                .when(summary.files.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_subtle)
+                            .child("No changes"),
+                    )
+                })
+                .when(!summary.files.is_empty(), |this| {
+                    this.child(
+                        component_tree(&tree_state, move |ix, entry, _, _, cx| {
+                            change_tree_row(ix, entry, root_path.clone(), file_changes.clone(), cx)
+                        })
+                        .size_full(),
+                    )
+                }),
         )
         .into_any_element()
 }
+
+const CHANGE_DIR_PREFIX: &str = "dir:";
+const CHANGE_FILE_PREFIX: &str = "file:";
 
 #[derive(Default)]
 struct ChangeTreeNode {
@@ -91,224 +112,278 @@ fn build_change_tree(files: &[FileChange]) -> ChangeTreeNode {
     root
 }
 
-fn change_dir_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    mut node: ChangeTreeNode,
-    depth: usize,
+fn change_tree_items<T: PaneDelegate + SettingsDelegate>(
+    node: &ChangeTreeNode,
+    cx: &mut Context<T>,
+) -> Vec<TreeItem> {
+    let mut items = Vec::new();
+    items.extend(
+        node.dirs
+            .values()
+            .map(|child| change_dir_tree_item(child, true, cx)),
+    );
+    items.extend(node.files.iter().map(change_file_tree_item));
+    items
+}
+
+fn change_dir_tree_item<T: PaneDelegate + SettingsDelegate>(
+    node: &ChangeTreeNode,
     keep_separate: bool,
     cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
+) -> TreeItem {
     let mut label = node.name.clone();
-    while !keep_separate && node.files.is_empty() && node.dirs.len() == 1 {
-        let (_, child) = node.dirs.into_iter().next().unwrap();
+    let mut display_node = node;
+    while !keep_separate && display_node.files.is_empty() && display_node.dirs.len() == 1 {
+        let child = display_node.dirs.values().next().unwrap();
         label = format!("{label}/{}", child.name);
-        node = child;
+        display_node = child;
     }
-    let stats = node_stats(&node);
-    let path = node.path.clone();
+
     let is_expanded = !cx
         .global::<GitUiState>()
         .collapsed_change_dirs
-        .contains(&path);
-    let toggle_path = path.clone();
+        .contains(&display_node.path);
+    let children = display_node
+        .dirs
+        .values()
+        .map(|child| change_dir_tree_item(child, false, cx))
+        .chain(display_node.files.iter().map(change_file_tree_item));
 
-    div()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .h(rems(CHANGE_ROW_HEIGHT_REM))
-                .px(rems(CHANGE_ROW_PADDING_REM))
-                .hover(move |this| this.bg(theme.bg_hover))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |_, _, _, cx| {
-                        toggle_change_dir(&toggle_path, cx);
-                    }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .items_center()
-                        .child(change_indent_guides(depth, theme))
-                        .child(
-                            div()
-                                .w(rems(CHANGE_ICON_WIDTH_REM))
-                                .h(rems(CHANGE_ROW_HEIGHT_REM))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    Icon::new(if is_expanded {
-                                        IconName::FolderOpened
-                                    } else {
-                                        IconName::Folder
-                                    })
-                                    .size(14.0)
-                                    .color(theme.text_muted),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .pl(rems(CHANGE_LABEL_PADDING_REM))
-                                .text_sm()
-                                .text_color(theme.text)
-                                .child(label),
-                        ),
-                )
-                .child(stage_checkbox(
-                    SharedString::from(format!("git-folder-toggle:{path}")),
-                    stats.staged == stats.total,
-                    stats.conflict_paths.clone(),
-                    root.clone(),
-                    path,
-                    cx,
-                )),
-        )
-        .when(is_expanded, |this| {
-            this.children(
-                node.dirs
-                    .into_values()
-                    .map(|child| change_dir_row(root.clone(), child, depth + 1, false, cx)),
-            )
-            .children(
-                node.files
-                    .into_iter()
-                    .map(|change| change_file_row(root.clone(), change, depth + 1, cx)),
-            )
-        })
-        .into_any_element()
+    TreeItem::new(format!("{CHANGE_DIR_PREFIX}{}", display_node.path), label)
+        .expanded(is_expanded)
+        .children(children)
 }
 
-fn change_file_row<T: PaneDelegate + SettingsDelegate>(
-    root: PathBuf,
-    change: FileChange,
-    depth: usize,
-    cx: &mut Context<T>,
-) -> AnyElement {
-    let theme = *cx.theme();
-    let name = change
-        .path
-        .rsplit_once('/')
-        .map(|(_, name)| name.to_string())
-        .unwrap_or_else(|| change.path.clone());
-    let icon_name = icon_for_git_file(Path::new(&change.path));
-    let icon_color = match change.kind {
-        FileChangeKind::Created => rgb(0x22c55e),
-        FileChangeKind::Modified => theme.text_muted,
-        FileChangeKind::Deleted => theme.danger,
-        FileChangeKind::Renamed => rgb(0xa855f7),
-        FileChangeKind::Conflicted => rgb(0xa855f7),
-    };
+fn change_file_tree_item(change: &FileChange) -> TreeItem {
+    TreeItem::new(
+        format!("{CHANGE_FILE_PREFIX}{}", change.path),
+        change
+            .path
+            .rsplit_once('/')
+            .map(|(_, name)| name.to_string())
+            .unwrap_or_else(|| change.path.clone()),
+    )
+}
 
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
+fn change_tree_row(
+    ix: usize,
+    entry: &TreeEntry,
+    root: PathBuf,
+    file_changes: std::collections::BTreeMap<String, FileChange>,
+    cx: &mut App,
+) -> ListItem {
+    let item = entry.item();
+    let id = item.id.as_str();
+    if let Some(path) = id.strip_prefix(CHANGE_DIR_PREFIX) {
+        let path = path.to_string();
+        return change_tree_dir_row(ix, entry, root, path, cx);
+    }
+
+    let path = id.strip_prefix(CHANGE_FILE_PREFIX).unwrap_or(id);
+    let change = file_changes.get(path).cloned();
+    change_tree_file_row(ix, entry, root, change, cx)
+}
+
+fn change_tree_dir_row(
+    ix: usize,
+    entry: &TreeEntry,
+    root: PathBuf,
+    path: String,
+    cx: &mut App,
+) -> ListItem {
+    let stats = cx
+        .global::<GitUiState>()
+        .summary
+        .as_ref()
+        .map(|summary| node_stats_for_path(&summary.files, &path))
+        .unwrap_or_default();
+    let icon = if entry.is_expanded() {
+        IconName::FolderOpened
+    } else {
+        IconName::Folder
+    };
+    let toggle_path = path.clone();
+
+    ListItem::new(ix)
         .h(rems(CHANGE_ROW_HEIGHT_REM))
         .px(rems(CHANGE_ROW_PADDING_REM))
-        .hover(move |this| this.bg(theme.bg_hover))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .child(change_indent_guides(depth, theme))
-                .child(
-                    div()
-                        .w(rems(CHANGE_ICON_WIDTH_REM))
-                        .h(rems(CHANGE_ROW_HEIGHT_REM))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(Icon::new(icon_name).size(14.0).color(icon_color)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .pl(rems(CHANGE_LABEL_PADDING_REM))
-                        .text_sm()
-                        .text_color(if change.kind == FileChangeKind::Deleted {
-                            theme.text_subtle
-                        } else {
-                            theme.text
-                        })
-                        .child(name),
-                ),
-        )
-        .child(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap_3()
-                .child(change_stats(&change, theme))
-                .child(stage_checkbox(
+        .py_0()
+        .child(change_row_label(
+            entry.depth(),
+            icon,
+            entry.item().label.clone(),
+            cx,
+        ))
+        .suffix(move |_, cx| {
+            stage_checkbox_app(
+                SharedString::from(format!("git-folder-toggle:{path}")),
+                stats.staged == stats.total,
+                stats.conflict_paths.clone(),
+                root.clone(),
+                path.clone(),
+                cx,
+            )
+        })
+        .on_click(move |_, _, cx| toggle_change_dir_app(&toggle_path, cx))
+}
+
+fn change_tree_file_row(
+    ix: usize,
+    entry: &TreeEntry,
+    root: PathBuf,
+    change: Option<FileChange>,
+    cx: &mut App,
+) -> ListItem {
+    let theme = *cx.theme();
+    let path = change
+        .as_ref()
+        .map(|change| change.path.clone())
+        .unwrap_or_else(|| entry.item().label.to_string());
+    let icon_name = icon_for_git_file(Path::new(&path));
+    let icon_color = change
+        .as_ref()
+        .map(|change| match change.kind {
+            FileChangeKind::Created => rgb(0x22c55e),
+            FileChangeKind::Modified => theme.text_muted,
+            FileChangeKind::Deleted => theme.danger,
+            FileChangeKind::Renamed => rgb(0xa855f7),
+            FileChangeKind::Conflicted => rgb(0xa855f7),
+        })
+        .unwrap_or(theme.text_muted);
+
+    ListItem::new(ix)
+        .h(rems(CHANGE_ROW_HEIGHT_REM))
+        .px(rems(CHANGE_ROW_PADDING_REM))
+        .py_0()
+        .child(change_row_label_with_color(
+            entry.depth(),
+            icon_name,
+            icon_color.into(),
+            entry.item().label.clone(),
+            cx,
+        ))
+        .when_some(change, |this, change| {
+            this.suffix(move |_, cx| {
+                stage_checkbox_app(
                     SharedString::from(format!("git-file-toggle:{}", change.path)),
                     change.staged,
-                    conflict_paths_for_change(&change),
-                    root,
-                    change.path,
+                    (change.kind == FileChangeKind::Conflicted)
+                        .then(|| vec![change.path.clone()])
+                        .unwrap_or_default(),
+                    root.clone(),
+                    change.path.clone(),
                     cx,
-                )),
-        )
-        .into_any_element()
+                )
+            })
+        })
 }
 
 #[derive(Default)]
 struct ChangeNodeStats {
-    total: usize,
     staged: usize,
+    total: usize,
     conflict_paths: Vec<String>,
 }
 
-fn node_stats(node: &ChangeTreeNode) -> ChangeNodeStats {
-    let stats = node.files.iter().fold(ChangeNodeStats::default(), |mut stats, file| {
-        stats.total += 1;
-        if file.staged {
-            stats.staged += 1;
-        }
-        if file.kind == FileChangeKind::Conflicted {
-            stats.conflict_paths.push(file.path.clone());
-        }
-        stats
-    });
-
-    node.dirs.values().fold(stats, |mut stats, child| {
-        let child_stats = node_stats(child);
-        stats.total += child_stats.total;
-        stats.staged += child_stats.staged;
-        stats.conflict_paths.extend(child_stats.conflict_paths);
-        stats
-    })
+fn node_stats_for_path(files: &[FileChange], path: &str) -> ChangeNodeStats {
+    let prefix = format!("{path}/");
+    files
+        .iter()
+        .filter(|file| file.path.starts_with(&prefix))
+        .fold(ChangeNodeStats::default(), |mut stats, file| {
+            stats.total += 1;
+            if file.staged {
+                stats.staged += 1;
+            }
+            if file.kind == FileChangeKind::Conflicted {
+                stats.conflict_paths.push(file.path.clone());
+            }
+            stats
+        })
 }
 
-fn conflict_paths_for_change(change: &FileChange) -> Vec<String> {
-    if change.kind == FileChangeKind::Conflicted {
-        vec![change.path.clone()]
-    } else {
-        Vec::new()
-    }
+fn change_row_label(
+    depth: usize,
+    icon_name: IconName,
+    label: SharedString,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = *cx.theme();
+    change_row_label_with_color(depth, icon_name, theme.text_muted, label, cx)
+}
+
+fn change_row_label_with_color(
+    depth: usize,
+    icon_name: IconName,
+    icon_color: gpui::Rgba,
+    label: SharedString,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .child(change_indent_guides(depth, theme))
+        .child(
+            div()
+                .w(rems(CHANGE_ICON_WIDTH_REM))
+                .h(rems(CHANGE_ROW_HEIGHT_REM))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(icon_name).size_rem(0.875).color(icon_color)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .pl(rems(CHANGE_LABEL_PADDING_REM))
+                .text_sm()
+                .text_color(theme.text)
+                .child(label),
+        )
+        .into_any_element()
+}
+
+fn stage_checkbox_app(
+    id: SharedString,
+    staged: bool,
+    conflict_paths: Vec<String>,
+    root: PathBuf,
+    path: String,
+    _cx: &mut App,
+) -> AnyElement {
+    Checkbox::new(id)
+        .large()
+        .flex_none()
+        .tab_stop(false)
+        .checked(staged)
+        .on_click(move |_: &bool, _, cx| {
+            cx.stop_propagation();
+            let path = path.clone();
+            if staged {
+                run_git_action_app(
+                    root.clone(),
+                    move |root| kosmos_git::unstage_file(root, &path),
+                    cx,
+                );
+            } else if !conflict_paths.is_empty() {
+                open_resolve_conflicts_modal_app(root.clone(), conflict_paths.clone(), false, cx);
+            } else {
+                run_git_action_app(
+                    root.clone(),
+                    move |root| kosmos_git::stage_file(root, &path),
+                    cx,
+                );
+            }
+        })
+        .into_any_element()
 }
 
 fn change_indent_guides(depth: usize, theme: theme::Theme) -> AnyElement {
@@ -348,44 +423,4 @@ fn icon_for_git_file(path: &Path) -> IconName {
     language::from_path(path)
         .and_then(|id| IconName::for_language(id.as_str()))
         .unwrap_or(IconName::File)
-}
-
-fn change_stats(change: &FileChange, theme: theme::Theme) -> AnyElement {
-    if change.kind == FileChangeKind::Conflicted {
-        let conflict_color = rgb(0xa855f7);
-        return div()
-            .rounded(rems(0.25))
-            .bg(gpui::Hsla::from(conflict_color).opacity(0.12))
-            .px_1p5()
-            .py_0p5()
-            .text_xs()
-            .text_color(conflict_color)
-            .child("Conflict")
-            .into_any_element();
-    }
-
-    let added = rgb(0x22c55e);
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .text_sm()
-        .when(change.insertions > 0, |this| {
-            this.child(
-                div()
-                    .text_color(added)
-                    .child(format!("+{}", change.insertions)),
-            )
-        })
-        .when(change.deletions > 0, |this| {
-            this.child(
-                div()
-                    .text_color(theme.danger)
-                    .child(format!("-{}", change.deletions)),
-            )
-        })
-        .when(change.insertions == 0 && change.deletions == 0, |this| {
-            this.child(div().text_color(theme.text_subtle).child("0"))
-        })
-        .into_any_element()
 }

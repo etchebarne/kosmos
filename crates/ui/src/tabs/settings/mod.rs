@@ -6,13 +6,13 @@ pub mod state;
 
 pub use state::SettingsInputs;
 
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*};
+use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*};
 
 use settings::{Settings, registry};
 
 use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
 
-pub fn render<T: SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
+pub fn render<T: SettingsDelegate>(window: &mut Window, cx: &mut Context<T>) -> AnyElement {
     let (active_id, open_dropdown) = {
         let state = cx.settings_ui();
         (state.active_category, state.open_dropdown)
@@ -27,6 +27,6 @@ pub fn render<T: SettingsDelegate>(cx: &mut Context<T>) -> AnyElement {
         .flex()
         .flex_row()
         .child(sidebar::render(active.id, cx))
-        .child(content::render(active, open_dropdown, cx))
+        .child(content::render(active, open_dropdown, window, cx))
         .into_any_element()
 }

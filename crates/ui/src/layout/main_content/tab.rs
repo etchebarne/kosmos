@@ -5,6 +5,10 @@ use gpui::{
     Animation, AnimationExt, AnyElement, Context, IntoElement, MouseButton, SharedString, Window,
     div, ease_in_out, prelude::*, rems, rgb,
 };
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+};
 
 use file_editor::BufferStore;
 use icons::{Icon, IconName};
@@ -57,7 +61,7 @@ pub fn render<T: PaneDelegate>(
         .px_2()
         .child(
             Icon::new(icon_name)
-                .size(16.0)
+                .size_rem(1.0)
                 .color(if is_active {
                     theme.text
                 } else {
@@ -83,25 +87,19 @@ pub fn render<T: PaneDelegate>(
             )
         })
         .child(
-            div()
-                .id(("close-tab", id))
+            Button::new(("close-tab", id))
+                .ghost()
+                .tab_stop(false)
                 .size(rems(1.25))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .text_color(theme.text)
                 .invisible()
                 .when(can_close, |this| {
-                    let close_hover_bg = theme.bg_close_hover;
                     this.group_hover(hover_group.clone(), |this| this.visible())
-                        .hover(move |this| this.bg(close_hover_bg))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.close_tab(pane_id, id, cx);
                         }))
                 })
-                .child(Icon::new(IconName::Close).size(14.0).color(theme.text)),
+                .child(ComponentIcon::empty().path(IconName::Close.path()).small()),
         );
     let content = if let Some(phase) = animation_phase {
         let animation_id = SharedString::from(format!(

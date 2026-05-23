@@ -1,4 +1,5 @@
-use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
+use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
+use gpui_component::scroll::ScrollableElement;
 
 use registry::ToolKind;
 use settings::{ActiveSettings, Category, Setting};
@@ -10,6 +11,7 @@ use crate::tabs::settings::{cards, controls};
 pub fn render<T: SettingsDelegate>(
     category: &'static Category,
     open_dropdown: Option<&'static str>,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -17,7 +19,7 @@ pub fn render<T: SettingsDelegate>(
         "language_servers" => cards::render_marketplace(ToolKind::Lsp, cx),
         "formatters" => cards::render_marketplace(ToolKind::Formatter, cx),
         "linters" => cards::render_marketplace(ToolKind::Linter, cx),
-        _ => render_rows(category, open_dropdown, cx),
+        _ => render_rows(category, open_dropdown, window, cx),
     };
 
     div()
@@ -25,7 +27,6 @@ pub fn render<T: SettingsDelegate>(
         .flex_1()
         .min_w_0()
         .h_full()
-        .overflow_y_scroll()
         .p(rems(1.5))
         .flex()
         .flex_col()
@@ -37,12 +38,14 @@ pub fn render<T: SettingsDelegate>(
                 .child(category.name),
         )
         .child(body)
+        .overflow_y_scrollbar()
         .into_any_element()
 }
 
 fn render_rows<T: SettingsDelegate>(
     category: &'static Category,
     open_dropdown: Option<&'static str>,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -55,7 +58,7 @@ fn render_rows<T: SettingsDelegate>(
                 rows.push(render_group_header(group, theme));
             }
         }
-        rows.push(render_row(setting, open_dropdown, cx));
+        rows.push(render_row(setting, open_dropdown, window, cx));
     }
     div()
         .flex()
@@ -78,6 +81,7 @@ fn render_group_header(name: &'static str, theme: theme::Theme) -> AnyElement {
 fn render_row<T: SettingsDelegate>(
     setting: &'static Setting,
     open_dropdown: Option<&'static str>,
+    window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -93,7 +97,7 @@ fn render_row<T: SettingsDelegate>(
     div()
         .flex()
         .flex_row()
-        .items_start()
+        .items_center()
         .justify_between()
         .gap_4()
         .py_2()
@@ -114,7 +118,7 @@ fn render_row<T: SettingsDelegate>(
                 .flex_none()
                 .flex()
                 .items_center()
-                .child(controls::render(setting, &value, open_dropdown, cx)),
+                .child(controls::render(setting, &value, open_dropdown, window, cx)),
         )
         .into_any_element()
 }

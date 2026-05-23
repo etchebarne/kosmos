@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{App, Entity, Focusable, Window};
+use gpui::{App, Entity, Window};
 
 use file_tree::FileTree;
 
@@ -24,17 +24,17 @@ pub fn begin_rename(
 
     if let Some(input) = cx.file_tree_ui().map(|ui| ui.input()) {
         input.update(cx, |input, cx| {
-            input.set_value(original, cx);
+            input.set_value(original, window, cx);
+            input.focus(window, cx);
         });
-        input.focus_handle(cx).focus(window);
     }
 }
 
 pub fn focus_new_entry_input(window: &mut Window, cx: &mut App) {
     if let Some(input) = cx.file_tree_ui().map(|ui| ui.input()) {
         input.update(cx, |input, cx| {
-            input.set_value("", cx);
+            input.set_value("", window, cx);
+            input.focus(window, cx);
         });
-        input.focus_handle(cx).focus(window);
     }
 }

@@ -1,9 +1,9 @@
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
+use gpui_component::{Icon as ComponentIcon, button::Button};
 
 use icons::IconName;
 use theme::ActiveTheme;
 
-use crate::components::action_button;
 use crate::delegate::WorkspaceDelegate;
 
 pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
@@ -27,8 +27,10 @@ pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
                 .child("Open your first workspace to get started"),
         )
         .child(
-            action_button::render(IconName::Add, "Open Workspace", theme)
-                .id("landing-open-workspace")
+            Button::new("landing-open-workspace")
+                .outline()
+                .icon(ComponentIcon::empty().path(IconName::Add.path()))
+                .label("Open Workspace")
                 .mt_2()
                 .on_click(cx.listener(|this, _, _, cx| {
                     cx.stop_propagation();

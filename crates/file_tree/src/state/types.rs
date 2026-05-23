@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
-use gpui::{App, Context, Entity, EventEmitter, Global, Pixels, Point, SharedString, Task};
+use gpui::{App, Context, Entity, EventEmitter, Global, SharedString, Task};
 
 use crate::ops::{self, ClipboardOp};
 use crate::watcher::{self, FsEvents};
@@ -33,12 +33,6 @@ pub struct NewEntryDraft {
     pub kind: NodeKind,
 }
 
-#[derive(Clone, Debug)]
-pub struct ContextMenuState {
-    pub target: Option<PathBuf>,
-    pub position: Point<Pixels>,
-}
-
 pub struct FileTree {
     root: Option<PathBuf>,
     children: HashMap<PathBuf, Vec<Node>>,
@@ -49,7 +43,6 @@ pub struct FileTree {
     error: Option<SharedString>,
     rename: Option<RenameTarget>,
     new_entry: Option<NewEntryDraft>,
-    context_menu: Option<ContextMenuState>,
 
     // Watcher resources kept alive for the lifetime of the active root.
     watcher: Option<notify::RecommendedWatcher>,
@@ -61,4 +54,3 @@ pub struct FileTree {
 pub enum FileTreeEvent {
     FsChanged { paths: Vec<PathBuf> },
 }
-

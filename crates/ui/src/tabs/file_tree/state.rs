@@ -1,30 +1,53 @@
-use gpui::{App, AppContext, Entity, Global, ScrollHandle};
+use std::path::PathBuf;
 
-use crate::components::TextInput;
+use file_tree::FileTree;
+use gpui::{App, AppContext, Bounds, Entity, Global, Pixels};
+use gpui_component::{input::InputState, tree::TreeState};
 
-/// Holds the single rename / new-entry text input plus the persistent scroll
-/// handle for the file tree. We keep these out of the render so they survive
-/// re-renders triggered by file system updates.
+pub(crate) struct PendingFileTreeDrop {
+    pub tree: Entity<FileTree>,
+    pub paths: Vec<PathBuf>,
+    pub destination: PathBuf,
+    pub bounds: Bounds<Pixels>,
+}
+
+/// Holds stateful file tree UI components so they survive re-renders triggered
+/// by file system updates.
 pub struct FileTreeUi {
-    input: Entity<TextInput>,
-    scroll: ScrollHandle,
+    input: Entity<InputState>,
+    tree: Entity<TreeState>,
+    pending_drop: Option<PendingFileTreeDrop>,
 }
 
 impl FileTreeUi {
-    pub fn install(cx: &mut App) {
-        let input = cx.new(|cx| TextInput::new("", "", cx));
+    pub fn install(window: &mut gpui::Window, cx: &mut App) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        let tree = cx.new(|cx| TreeState::new(cx));
         cx.set_global(FileTreeUi {
             input,
-            scroll: ScrollHandle::new(),
+            tree,
+            pending_drop: None,
         });
     }
 
-    pub fn input(&self) -> Entity<TextInput> {
+    pub fn input(&self) -> Entity<InputState> {
         self.input.clone()
     }
 
-    pub fn scroll(&self) -> ScrollHandle {
-        self.scroll.clone()
+    pub fn tree(&self) -> Entity<TreeState> {
+        self.tree.clone()
+    }
+
+    pub(crate) fn set_pending_drop(&mut self, pending_drop: PendingFileTreeDrop) {
+        self.pending_drop = Some(pending_drop);
+    }
+
+    pub(crate) fn clear_pending_drop(&mut self) {
+        self.pending_drop = None;
+    }
+
+    pub(crate) fn take_pending_drop(&mut self) -> Option<PendingFileTreeDrop> {
+        self.pending_drop.take()
     }
 }
 

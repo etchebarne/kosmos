@@ -2,8 +2,14 @@ use std::path::Path;
 
 use file_tree::NodeKind;
 use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
+use gpui_component::{
+    Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+    scroll::{Scrollbar, ScrollbarShow},
+    separator::Separator,
+};
 
-use icons::{Icon, IconName};
+use icons::IconName;
 use pane_tree::{DropZone, PaneTree};
 use panes::Pane;
 use theme::ActiveTheme;
@@ -36,14 +42,19 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         if i > 0 {
             let prev_tab = &tabs[i - 1];
             let show_divider = prev_tab.id != active_tab_id && t.id != active_tab_id;
-            tab_elements.push(
+            let divider = if show_divider {
+                Separator::vertical()
+                    .h(rems(1.0))
+                    .color(gpui::Hsla::from(theme.border_strong))
+                    .into_any_element()
+            } else {
                 div()
                     .w(rems(0.0625))
                     .h(rems(1.0))
                     .flex_none()
-                    .when(show_divider, |this| this.bg(theme.border_strong))
-                    .into_any_element(),
-            );
+                    .into_any_element()
+            };
+            tab_elements.push(divider);
         }
         tab_elements.push(tab::render(workspace_id, pane, t, can_close, window, cx));
     }
@@ -86,17 +97,36 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .overflow_hidden()
                 .child(
                     div()
-                        .id(("tab-scroll", pane_id))
+                        .relative()
                         .flex_1()
                         .min_w_0()
-                        .flex()
-                        .items_center()
-                        .gap(rems(0.125))
-                        .overflow_x_scroll()
-                        .track_scroll(&scroll_handle)
-                        .children(tab_elements)
-                        .child(render_add_tab_button(pane_id, cx))
-                        .child(render_tab_end_drop_zone(pane_id, cx)),
+                        .h_full()
+                        .child(
+                            div()
+                                .id(("tab-scroll", pane_id))
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .gap(rems(0.125))
+                                .overflow_x_scroll()
+                                .track_scroll(&scroll_handle)
+                                .children(tab_elements)
+                                .child(render_add_tab_button(pane_id, cx))
+                                .child(render_tab_end_drop_zone(pane_id, cx)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(
+                                    Scrollbar::horizontal(&scroll_handle)
+                                        .id(("tab-scrollbar", pane_id))
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                        ),
                 ),
         )
         .child(body)
@@ -192,21 +222,14 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>
 }
 
 fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .id(("add-tab", pane_id))
+    Button::new(("add-tab", pane_id))
+        .ghost()
+        .tab_stop(false)
         .size(rems(2.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems(0.375))
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(theme.bg_hover).text_color(theme.text_emphasis))
+        .child(ComponentIcon::empty().path(IconName::Add.path()).small())
         .on_click(cx.listener(move |this, _, _, cx| {
             this.add_tab(pane_id, tabs::registry::BLANK.id, cx);
         }))
-        .child(Icon::new(IconName::Add).color(theme.text_muted))
         .into_any_element()
 }
 

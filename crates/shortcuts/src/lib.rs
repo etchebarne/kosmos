@@ -60,19 +60,13 @@ pub const DEFAULTS: &[ShortcutBinding] = &[
     ShortcutBinding::new("ctrl-+", "zoom::ZoomIn"),
     ShortcutBinding::new("ctrl--", "zoom::ZoomOut"),
     ShortcutBinding::new("ctrl-0", "zoom::ResetZoom"),
-    ShortcutBinding::in_context("ctrl-a", "text_input::SelectAll", "TextInput"),
-    ShortcutBinding::in_context("ctrl-c", "text_input::Copy", "TextInput"),
-    ShortcutBinding::in_context("ctrl-v", "text_input::Paste", "TextInput"),
-    ShortcutBinding::in_context("ctrl-x", "text_input::Cut", "TextInput"),
-    ShortcutBinding::in_context("ctrl-z", "text_input::Undo", "TextInput"),
-    ShortcutBinding::in_context("ctrl-y", "text_input::Redo", "TextInput"),
-    ShortcutBinding::in_context("ctrl-shift-z", "text_input::Redo", "TextInput"),
-    ShortcutBinding::in_context("alt-shift-up", "text_input::DuplicateLineUp", "TextInput"),
-    ShortcutBinding::in_context(
-        "alt-shift-down",
-        "text_input::DuplicateLineDown",
-        "TextInput",
-    ),
+    ShortcutBinding::in_context("ctrl-a", "input::SelectAll", "Input"),
+    ShortcutBinding::in_context("ctrl-c", "input::Copy", "Input"),
+    ShortcutBinding::in_context("ctrl-v", "input::Paste", "Input"),
+    ShortcutBinding::in_context("ctrl-x", "input::Cut", "Input"),
+    ShortcutBinding::in_context("ctrl-z", "input::Undo", "Input"),
+    ShortcutBinding::in_context("ctrl-y", "input::Redo", "Input"),
+    ShortcutBinding::in_context("ctrl-shift-z", "input::Redo", "Input"),
 ];
 
 /// Install a list of shortcut bindings into the app keymap. Bindings whose action
@@ -201,7 +195,7 @@ mod tests {
             Some("Ctrl+S".to_string())
         );
         assert_eq!(
-            primary_label_for_action_in(DEFAULTS, "text_input::Redo"),
+            primary_label_for_action_in(DEFAULTS, "input::Redo"),
             Some("Ctrl+Y".to_string())
         );
     }

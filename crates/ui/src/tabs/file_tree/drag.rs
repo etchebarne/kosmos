@@ -2,11 +2,13 @@ use std::path::PathBuf;
 
 use file_tree::NodeKind;
 use gpui::{
-    Context, IntoElement, Pixels, Point, Render, SharedString, Window, div, prelude::*, rems,
+    Context, IntoElement, MouseButton, Pixels, Point, Render, SharedString, Window, div,
+    prelude::*, rems,
 };
-
 use icons::{Icon, IconName};
 use theme::ActiveTheme;
+
+use super::FileTreeUi;
 
 #[derive(Clone)]
 pub struct FileNodeDrag {
@@ -53,6 +55,20 @@ impl Render for FileNodeDrag {
         div()
             .pl(self.position.x - rems(0.5).to_pixels(rem))
             .pt(self.position.y - rems(0.75).to_pixels(rem))
+            .on_mouse_up(MouseButton::Left, |_, window, cx| {
+                let Some(pending_drop) =
+                    cx.update_global::<FileTreeUi, _>(|ui, _| ui.take_pending_drop())
+                else {
+                    return;
+                };
+                if !pending_drop.bounds.contains(&window.mouse_position()) {
+                    return;
+                }
+                cx.stop_propagation();
+                pending_drop.tree.update(cx, |tree, cx| {
+                    tree.move_into(pending_drop.paths, pending_drop.destination, cx);
+                });
+            })
             .child(
                 div()
                     .h(rems(1.625))
@@ -67,7 +83,7 @@ impl Render for FileNodeDrag {
                     .shadow_lg()
                     .child(
                         Icon::new(self.icon)
-                            .size(14.0)
+                            .size_rem(0.875)
                             .color(theme.text)
                             .into_any_element(),
                     )

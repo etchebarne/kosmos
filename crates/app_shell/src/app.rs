@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
+    Anchor, App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
     prelude::*,
 };
 
@@ -12,10 +12,7 @@ use gpui::BorrowAppContext;
 use pane_tree::{PaneNode, PaneTree};
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
-use ui::delegate::{
-    HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles,
-    WorkspaceMenuState,
-};
+use ui::delegate::{HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
 use ui::tabs::settings::SettingsInputs;
@@ -36,12 +33,18 @@ fn apply_theme(cx: &mut App) {
         .find(|c| c.id == raw)
         .map(|c| c.id)
         .unwrap_or(theme::DEFAULT_ID);
-    cx.set_global(Theme::by_id(id));
+    let theme = Theme::by_id(id);
+    let component_theme_mode = if theme.is_dark {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    };
+    cx.set_global(theme);
+    gpui_component::Theme::change(component_theme_mode, None, cx);
+    gpui_component::Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 }
 
 pub(crate) struct KosmosApp {
-    pub(crate) active_menu: Option<HeaderMenu>,
-    pub(crate) workspace_menu: Option<WorkspaceMenuState>,
     pub(crate) workspaces: WorkspaceManager,
     pub(crate) tab_scrolls: TabScrollHandles,
     pub(crate) file_tree: Entity<FileTree>,
@@ -56,13 +59,12 @@ pub(crate) struct KosmosApp {
 }
 
 impl KosmosApp {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
-        SettingsInputs::install(cx);
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        ui::tabs::file_tree::FileTreeUi::install(window, cx);
+        SettingsInputs::install(window, cx);
         let workspaces = persistence::load();
         let file_tree = Self::create_file_tree(cx);
         let mut app = Self {
-            active_menu: None,
-            workspace_menu: None,
             workspaces,
             tab_scrolls: TabScrollHandles::new(),
             file_tree,
@@ -190,7 +192,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.observe_window_bounds(window, |_, window, _| {
             persistence::save_window_bounds(window.window_bounds());
         })
@@ -284,10 +286,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
-        let mut changed = self.active_menu.take().is_some();
-        if self.workspace_menu.take().is_some() {
-            changed = true;
-        }
+        let mut changed = false;
         cx.update_global::<SettingsUiState, _>(|state, _| {
             if state.open_dropdown.take().is_some() {
                 changed = true;
@@ -427,7 +426,7 @@ impl KosmosApp {
             return;
         };
         let focus_handle = view.read(cx).focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         view.update(cx, |view, cx| match action {
             HeaderMenuAction::Undo => view.undo(window, cx),
             HeaderMenuAction::Redo => view.redo(window, cx),
@@ -471,9 +470,7 @@ impl Render for KosmosApp {
             .bg(theme.bg_root)
             .on_click(cx.listener(|this, _, _, cx| this.close_menu(cx)))
             .child(layout::header::render(
-                self.active_menu,
                 &self.workspaces,
-                self.workspace_menu,
                 header_menu_availability,
                 window,
                 cx,
@@ -485,9 +482,21 @@ impl Render for KosmosApp {
                 cx,
             )))
             .child(layout::bottom_bar::render(&theme))
-            .child(ui::tabs::git::render_modal_overlay(cx))
-            .child(ui::components::toast::render(cx))
+            .child(ui::tabs::git::render_modal_overlay(window, cx))
+            .child(render_component_layers(window, cx))
     }
+}
+
+fn render_component_layers(window: &mut Window, cx: &mut App) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .children(gpui_component::Root::render_sheet_layer(window, cx))
+        .children(gpui_component::Root::render_dialog_layer(window, cx))
+        .children(gpui_component::Root::render_notification_layer(window, cx))
 }
 
 fn terminal_tab_ids(node: &PaneNode) -> Vec<usize> {

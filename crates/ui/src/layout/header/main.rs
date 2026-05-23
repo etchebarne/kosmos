@@ -1,9 +1,13 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, IntoElement, MouseButton, MouseDownEvent,
-    SharedString, Window, WindowControlArea, anchored, deferred, div, ease_in_out, prelude::*,
-    rems, svg,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, IntoElement, MouseButton,
+    SharedString, Window, WindowControlArea, div, ease_in_out, prelude::*, rems, svg,
+};
+use gpui_component::{
+    Disableable, Icon as ComponentIcon, Sizable,
+    button::{Button, ButtonVariants},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
 };
 
 use icons::{Icon, IconName};
@@ -12,14 +16,11 @@ use workspace::{Workspace, WorkspaceManager};
 
 use crate::delegate::{
     HeaderDelegate, HeaderMenu, HeaderMenuAction, HeaderMenuAvailability, WorkspaceDelegate,
-    WorkspaceMenuState,
 };
 use crate::drag::WorkspaceDrag;
 
 pub fn render<T: HeaderDelegate>(
-    active_menu: Option<HeaderMenu>,
     workspace_manager: &WorkspaceManager,
-    workspace_menu: Option<WorkspaceMenuState>,
     menu_availability: HeaderMenuAvailability,
     window: &mut Window,
     cx: &mut Context<T>,
@@ -68,21 +69,18 @@ pub fn render<T: HeaderDelegate>(
                         ),
                 )
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::File,
                     "File",
                     menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::Edit,
                     "Edit",
                     menu_availability,
                     cx,
                 ))
                 .child(render_menu_button::<T>(
-                    active_menu,
                     HeaderMenu::Selection,
                     "Selection",
                     menu_availability,
@@ -95,12 +93,7 @@ pub fn render<T: HeaderDelegate>(
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
-        .child(render_workspace_bar(
-            workspace_manager,
-            workspace_menu,
-            window,
-            cx,
-        ))
+        .child(render_workspace_bar(workspace_manager, window, cx))
         .child(
             div()
                 .flex_1()

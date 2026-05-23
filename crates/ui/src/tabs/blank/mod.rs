@@ -1,9 +1,9 @@
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui_component::{Icon as ComponentIcon, button::Button};
 
 use tabs::{TabKind, registry};
 use theme::ActiveTheme;
 
-use crate::components::action_button;
 use crate::delegate::PaneDelegate;
 
 pub fn render<T: PaneDelegate>(pane_id: usize, tab_id: usize, cx: &mut Context<T>) -> AnyElement {
@@ -49,10 +49,11 @@ fn render_button<T: PaneDelegate>(
     kind: &'static TabKind,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    let theme = *cx.theme();
     let kind_id = kind.id;
-    action_button::render(super::icon_for_kind(kind.id), kind.name, theme)
-        .id(SharedString::new_static(kind_id))
+    Button::new(SharedString::new_static(kind_id))
+        .outline()
+        .icon(ComponentIcon::empty().path(super::icon_for_kind(kind.id).path()))
+        .label(kind.name)
         .on_click(cx.listener(move |this, _, _, cx| {
             this.replace_tab_kind(pane_id, tab_id, kind_id, cx);
         }))

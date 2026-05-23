@@ -1,5 +1,7 @@
-use gpui::{
-    AnyElement, Context, ElementId, IntoElement, MouseButton, SharedString, div, prelude::*, rems,
+use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
+use gpui_component::{
+    Disableable, Sizable,
+    button::{Button, ButtonVariants},
 };
 
 use registry::{RegistryEntry, ToolKind};
@@ -47,7 +49,7 @@ fn render_tool_card<T: SettingsDelegate>(
         .join(" · ")
         .into();
 
-    let action = install_action(entry.id, installed, installing, theme, cx);
+    let action = install_action(entry.id, installed, installing, cx);
 
     let header = div()
         .flex()
@@ -120,64 +122,32 @@ fn install_action<T: SettingsDelegate>(
     tool_id: &'static str,
     installed: bool,
     installing: bool,
-    theme: theme::Theme,
     cx: &mut Context<T>,
 ) -> AnyElement {
     if installing {
-        return div()
-            .px_3()
-            .py_1()
-            .rounded(rems(0.375))
-            .border_1()
-            .border_color(theme.border_subtle)
-            .text_xs()
-            .text_color(theme.text_subtle)
-            .child("Installing…")
+        return Button::new(SharedString::from(format!("install-{tool_id}")))
+            .outline()
+            .small()
+            .disabled(true)
+            .label("Installing…")
             .into_any_element();
     }
 
     let entry = registry::get(tool_id).expect("tool id must exist in registry");
     let label = if installed { "Remove" } else { "Install" };
-    let resting_text = if installed {
-        theme.text_muted
-    } else {
-        theme.accent
-    };
 
-    let base = div()
-        .id(ElementId::Name(format!("install-{tool_id}").into()))
-        .px_3()
-        .py_1()
-        .rounded(rems(0.375))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.bg_elevated)
-        .text_xs()
-        .text_color(resting_text);
-
-    let styled = if installed {
-        base.hover(move |this| {
-            this.bg(theme.bg_hover)
-                .border_color(theme.danger)
-                .text_color(theme.danger)
-        })
-    } else {
-        base.hover(move |this| {
-            this.bg(theme.bg_hover)
-                .border_color(theme.accent)
-                .text_color(theme.accent)
-        })
-    };
-
-    styled
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    Button::new(SharedString::from(format!("install-{tool_id}")))
+        .outline()
+        .small()
+        .when(installed, |this| this.danger())
+        .label(label)
         .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
             if installed {
                 this.uninstall_tool(entry, cx);
             } else {
                 this.install_tool(entry, cx);
             }
         }))
-        .child(label)
         .into_any_element()
 }
