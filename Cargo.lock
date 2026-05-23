@@ -4076,10 +4076,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infinity"
-version = "0.4.0"
-
-[[package]]
 name = "inotify"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7882,7 +7878,6 @@ dependencies = [
  "gpui-component",
  "highlight",
  "icons",
- "infinity",
  "installer",
  "language",
  "lsp",

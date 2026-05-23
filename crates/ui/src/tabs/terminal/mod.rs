@@ -2076,18 +2076,21 @@ fn render_shell_picker(
     .h(rems(BOTTOM_BAR_BUTTON_SIZE_REM))
     .label(selected_label.clone())
     .dropdown_caret(true)
-    .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-        options.iter().fold(menu, |menu, (shell_id, label)| {
-            let shell_id = shell_id.clone();
-            let session = session.clone();
-            menu.item(
-                PopupMenuItem::new(label.clone())
-                    .checked(label == &selected_label)
-                    .on_click(move |_, _, cx| {
-                        session.update(cx, |session, cx| session.select_shell(&shell_id, cx));
-                    }),
-            )
-        })
+    .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
+        let menu_width = rems(SHELL_PICKER_WIDTH_REM).to_pixels(window.rem_size());
+        options
+            .iter()
+            .fold(menu.min_w(menu_width), |menu, (shell_id, label)| {
+                let shell_id = shell_id.clone();
+                let session = session.clone();
+                menu.item(
+                    PopupMenuItem::new(label.clone())
+                        .checked(label == &selected_label)
+                        .on_click(move |_, _, cx| {
+                            session.update(cx, |session, cx| session.select_shell(&shell_id, cx));
+                        }),
+                )
+            })
     })
     .into_any_element()
 }

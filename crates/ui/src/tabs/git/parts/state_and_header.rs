@@ -1,4 +1,8 @@
-use std::{path::{Path, PathBuf}, rc::Rc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 use gpui::{
     Anchor, App, ClickEvent, Entity, IntoElement, MouseButton, Pixels, SharedString, Task, div,
@@ -6,12 +10,8 @@ use gpui::{
 };
 
 use file_tree::ActiveFileTree;
-use icons::{Icon, IconName};
-use kosmos_git::{
-    Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
-};
 use gpui_component::{
-    Size,
+    Disableable, Icon as ComponentIcon, Sizable, Size, WindowExt,
     alert::Alert,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
@@ -22,8 +22,11 @@ use gpui_component::{
     notification::Notification,
     separator::Separator,
     tag::Tag as ComponentTag,
-    tree::{tree as component_tree, TreeEntry, TreeItem, TreeState},
-    Disableable, Icon as ComponentIcon, Sizable, WindowExt,
+    tree::{TreeEntry, TreeItem, TreeState, tree as component_tree},
+};
+use icons::{Icon, IconName};
+use kosmos_git::{
+    Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
 };
 use tabs::registry;
 use theme::ActiveTheme;
@@ -249,7 +252,9 @@ pub fn render_modal_overlay<T: PaneDelegate + SettingsDelegate>(
                 .try_global::<GitUiState>()
                 .is_some_and(|state| state.root.is_some() && state.modal.is_some());
             if has_modal && !window.has_active_dialog(cx) {
-                window.open_dialog(cx, |dialog, window, cx| render_git_modal(dialog, window, cx));
+                window.open_dialog(cx, |dialog, window, cx| {
+                    render_git_modal(dialog, window, cx)
+                });
             }
         });
     }
@@ -295,11 +300,7 @@ fn header<T: PaneDelegate + SettingsDelegate>(
                     },
                     cx,
                 ))
-                .child(change_count(
-                    summary,
-                    loading,
-                    cx,
-                ))
+                .child(change_count(summary, loading, cx))
                 .when_some(summary, |this, summary| this.child(diff_stats(summary, cx))),
         )
         .child(

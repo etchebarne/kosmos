@@ -30,7 +30,10 @@ impl SettingsInputs {
             }
         }
 
-        let mut inputs = Self { configs, entities: HashMap::new() };
+        let mut inputs = Self {
+            configs,
+            entities: HashMap::new(),
+        };
 
         for setting_id in inputs.configs.keys().copied().collect::<Vec<_>>() {
             let (initial, placeholder) = inputs.configs.get(setting_id).unwrap();

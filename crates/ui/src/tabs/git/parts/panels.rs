@@ -175,10 +175,16 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(
         .into_iter()
         .map(|action| {
             let root = root.clone();
-            let listener: PopupMenuHandler = Rc::new(cx.listener(move |_, _, _, cx| {
-                run_sync_action(root.clone(), action, true, cx)
-            }));
-            (action.icon(), action.label(), true, action.is_danger(), listener)
+            let listener: PopupMenuHandler = Rc::new(
+                cx.listener(move |_, _, _, cx| run_sync_action(root.clone(), action, true, cx)),
+            );
+            (
+                action.icon(),
+                action.label(),
+                true,
+                action.is_danger(),
+                listener,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -363,9 +369,9 @@ fn more_button<T: PaneDelegate + SettingsDelegate>(
             "Tags",
             true,
             false,
-            Rc::new(cx.listener(move |_, _, _, cx| {
-                open_modal(root_tags.clone(), GitModal::Tags, cx)
-            })) as PopupMenuHandler,
+            Rc::new(
+                cx.listener(move |_, _, _, cx| open_modal(root_tags.clone(), GitModal::Tags, cx)),
+            ) as PopupMenuHandler,
         ),
     ];
     let danger_items = vec![

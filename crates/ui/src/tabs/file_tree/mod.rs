@@ -15,7 +15,7 @@ use file_tree::{ActiveFileTree, FileTree, NewEntryDraft, NodeKind};
 use gpui_component::{
     Icon as ComponentIcon, Sizable, Size,
     alert::Alert,
-    tree::{tree as component_tree, TreeEntry, TreeItem},
+    tree::{TreeEntry, TreeItem, tree as component_tree},
 };
 use icons::IconName;
 use tabs::registry;
@@ -62,7 +62,14 @@ fn render_content<T: PaneDelegate + SettingsDelegate>(
     let Some(tree_state) = cx.file_tree_ui().map(|ui| ui.tree()) else {
         return empty_state(cx);
     };
-    let root_item = build_tree_item(&entity, &root, root_label, NodeKind::Directory, &new_entry, cx);
+    let root_item = build_tree_item(
+        &entity,
+        &root,
+        root_label,
+        NodeKind::Directory,
+        &new_entry,
+        cx,
+    );
     tree_state.update(cx, |state, cx| state.set_items(vec![root_item], cx));
     let delegate = cx.entity().clone();
     let entity_for_rows = entity.clone();
@@ -77,38 +84,31 @@ fn render_content<T: PaneDelegate + SettingsDelegate>(
         .bg(theme.bg_surface)
         .child(error_banner(error.clone(), &entity, cx))
         .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    div()
-                        .id("file-tree-scroll")
-                        .size_full()
-                        .child(
-                            component_tree(&tree_state, move |ix, entry, _, window, cx| {
-                                row::render_tree_entry::<T>(
-                                    ix,
-                                    entry,
-                                    &entity_for_rows,
-                                    &delegate,
-                                    &new_entry_for_rows,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .context_menu({
-                                let entity = entity.clone();
-                                move |_, entry, popup_menu, window, cx| {
-                                    let Some(path) = entry_path(entry) else {
-                                        return popup_menu;
-                                    };
-                                    menu::build(entity.clone(), path, popup_menu, window, cx)
-                                }
-                            })
-                            .size_full(),
-                        ),
+            div().relative().flex_1().min_h_0().child(
+                div().id("file-tree-scroll").size_full().child(
+                    component_tree(&tree_state, move |ix, entry, _, window, cx| {
+                        row::render_tree_entry::<T>(
+                            ix,
+                            entry,
+                            &entity_for_rows,
+                            &delegate,
+                            &new_entry_for_rows,
+                            window,
+                            cx,
+                        )
+                    })
+                    .context_menu({
+                        let entity = entity.clone();
+                        move |_, entry, popup_menu, window, cx| {
+                            let Some(path) = entry_path(entry) else {
+                                return popup_menu;
+                            };
+                            menu::build(entity.clone(), path, popup_menu, window, cx)
+                        }
+                    })
+                    .size_full(),
                 ),
+            ),
         )
         .into_any_element()
 }
@@ -147,9 +147,13 @@ fn build_tree_item<T: PaneDelegate + SettingsDelegate>(
 
     let snapshot = {
         let tree = entity.read(cx);
-        tree.children_of(path).map(|c| c.to_vec()).unwrap_or_default()
+        tree.children_of(path)
+            .map(|c| c.to_vec())
+            .unwrap_or_default()
     };
-    let new_here = new_entry.as_ref().filter(|draft| draft.parent.as_path() == path);
+    let new_here = new_entry
+        .as_ref()
+        .filter(|draft| draft.parent.as_path() == path);
     let mut children = Vec::new();
     if let Some(draft) = new_here.filter(|draft| draft.kind == NodeKind::Directory) {
         children.push(new_entry_tree_item(draft));
