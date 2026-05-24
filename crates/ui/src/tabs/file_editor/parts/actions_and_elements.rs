@@ -1,532 +1,365 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, Context, CursorStyle, Element, ElementId,
-    ElementInputHandler, Entity, FocusHandle, GlobalElementId, HighlightStyle, InteractiveText,
-    IntoElement, KeyBinding, LayoutId, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, Rgba, SharedString, Size, Style, StyledText, TextLayout,
-    TextRun, UniformListScrollHandle, Window, actions, canvas, div, fill, point, prelude::*, px,
-    relative, rems, size, uniform_list,
+    AnyElement, App, AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Global,
+    IntoElement, KeyBinding, SharedString, Task, Window, div, prelude::*, rems,
 };
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    popover::Popover,
-    scroll::{Scrollbar, ScrollbarHandle, ScrollbarShow, ScrollableElement},
+use gpui_component::input::{
+    HoverProvider, Input, InputEvent, InputState, Rope, RopeExt, TabSize,
 };
 
-use file_editor::{
-    BOTTOM_SPACER_LINES, Buffer, BufferStore, EditorHoverStatus, EditorInputLayout,
-    EditorLineInputLayout, EditorView, EditorViewStore, VirtualListState, soft_wrap_enabled,
-    virtual_list,
-};
+use file_editor::{Buffer, BufferId, BufferStore, soft_wrap_enabled};
 use file_tree::ActiveFileTree;
-use highlight::HighlightId;
 use icons::{Icon, IconName};
-use syntax::{SyntaxSnapshot, SyntaxStore};
 use tabs::{Tab, registry};
-use theme::{ActiveTheme, SyntaxStyles, Theme};
+use theme::{ActiveTheme, Theme};
 
-use self::markdown::render_markdown;
-
-pub const EDITOR_KEY_CONTEXT: &str = "TextInput";
-const TEXT_CURSOR_WIDTH_REM: f32 = 0.0625;
-const TEXT_CURSOR_HEIGHT_FRACTION: f32 = 0.78;
-const TEXT_CURSOR_BLINK_PERIOD_MS: u128 = 1_000;
-const TEXT_CURSOR_BLINK_VISIBLE_MS: u128 = 530;
-
-const GUTTER_WIDTH_REM: f32 = 3.5;
-const GUTTER_PADDING_REM: f32 = 0.5;
-const GUTTER_FOLD_COLUMN_REM: f32 = 0.5;
-const GUTTER_TOTAL_WIDTH_REM: f32 = GUTTER_WIDTH_REM + GUTTER_FOLD_COLUMN_REM;
-const GUTTER_HOVER_RIGHT_SLOP_REM: f32 = 1.25;
-const GUTTER_FOLD_HOVER_LEFT_REM: f32 = GUTTER_WIDTH_REM - GUTTER_PADDING_REM;
-const GUTTER_FOLD_HOVER_RIGHT_SLOP_REM: f32 = 0.5;
-const GUTTER_FOLD_HOVER_WIDTH_REM: f32 =
-    GUTTER_TOTAL_WIDTH_REM + GUTTER_FOLD_HOVER_RIGHT_SLOP_REM - GUTTER_FOLD_HOVER_LEFT_REM;
-const BODY_PADDING_LEFT_REM: f32 = 0.75;
+const COMPONENT_INPUT_KEY_CONTEXT: &str = "Input";
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
-const DEFAULT_INDENT_GUIDE_COLUMNS: usize = 4;
 const TAB_SIZE_COLUMNS: usize = 4;
-const MONOSPACE_CHAR_WIDTH_REM: f32 = 0.525;
-const INDENT_GUIDE_WIDTH_REM: f32 = 0.0625;
-/// Fixed row height. Pinning this lets `uniform_list::measure_item` return a
-/// stable row height regardless of how it lays out our flex_row at
-/// MinContent — otherwise the reported content size jitters between renders.
-const ROW_HEIGHT_REM: f32 = 1.4;
-const HOVER_DEBOUNCE: Duration = Duration::from_millis(500);
-const HOVER_HIDE_DELAY: Duration = Duration::from_millis(180);
 
-actions!(
-    text_input,
-    [
-        Backspace,
-        Delete,
-        Left,
-        Right,
-        Up,
-        Down,
-        WordLeft,
-        WordRight,
-        SelectLeft,
-        SelectRight,
-        SelectUp,
-        SelectDown,
-        SelectWordLeft,
-        SelectWordRight,
-        SelectAll,
-        Enter,
-        Home,
-        End,
-        Paste,
-        Cut,
-        Copy,
-        Undo,
-        Redo,
-        DuplicateLineUp,
-        DuplicateLineDown
-    ]
-);
-
-pub fn install_default_keybindings(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("backspace", Backspace, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("delete", Delete, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("left", Left, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("right", Right, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("up", Up, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("down", Down, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("alt-left", WordLeft, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("alt-right", WordRight, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("shift-left", SelectLeft, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("shift-right", SelectRight, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("shift-up", SelectUp, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("shift-down", SelectDown, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("alt-shift-left", SelectWordLeft, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("alt-shift-right", SelectWordRight, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("enter", Enter, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("home", Home, Some(EDITOR_KEY_CONTEXT)),
-        KeyBinding::new("end", End, Some(EDITOR_KEY_CONTEXT)),
-    ]);
+#[derive(Default)]
+struct ComponentEditorStore {
+    inputs: HashMap<usize, ComponentEditorInput>,
 }
 
-fn text_cursor_bounds(
-    origin: Point<Pixels>,
-    line_height: Pixels,
-    window: &Window,
-) -> Bounds<Pixels> {
-    let height = (line_height * TEXT_CURSOR_HEIGHT_FRACTION).round();
-    let top = origin.y + ((line_height - height) / 2.0).round();
-    Bounds::new(
-        point(origin.x.round(), top),
-        size(
-            rems(TEXT_CURSOR_WIDTH_REM).to_pixels(window.rem_size()),
-            height,
-        ),
-    )
-}
-
-fn should_paint_text_cursor(window: &mut Window) -> bool {
-    window.request_animation_frame();
-
-    static BLINK_START: OnceLock<Instant> = OnceLock::new();
-    let elapsed = BLINK_START.get_or_init(Instant::now).elapsed().as_millis();
-    elapsed % TEXT_CURSOR_BLINK_PERIOD_MS < TEXT_CURSOR_BLINK_VISIBLE_MS
-}
-
-#[derive(Clone)]
-struct LineHover {
-    line_index: usize,
-    buffer: Entity<Buffer>,
-    view: Entity<EditorView>,
+struct ComponentEditorInput {
+    input: Entity<InputState>,
+    buffer_id: BufferId,
+    soft_wrap: bool,
     root: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy)]
-struct VisibleIndentRow {
-    index: usize,
-    top: Pixels,
-    bottom: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct ActiveIndentGuideRun {
-    column: usize,
-    top: Pixels,
-}
-
-#[derive(Clone, Default)]
-struct EditLineState {
-    selection: Option<LineSelection>,
-    cursor: Option<usize>,
-}
-
 #[derive(Clone)]
-struct VirtualListScrollbarHandle {
-    state: VirtualListState,
+struct ComponentHoverProvider {
+    buffer: Entity<Buffer>,
+    root: Option<PathBuf>,
 }
 
-impl VirtualListScrollbarHandle {
-    fn new(state: VirtualListState) -> Self {
-        Self { state }
-    }
-}
-
-impl ScrollbarHandle for VirtualListScrollbarHandle {
-    fn offset(&self) -> Point<Pixels> {
-        point(Pixels::ZERO, -self.state.scroll_y())
-    }
-
-    fn set_offset(&self, offset: Point<Pixels>) {
-        self.state.set_scroll_y(-offset.y);
-    }
-
-    fn content_size(&self) -> Size<Pixels> {
-        let viewport_size = self.state.viewport_size();
-        size(viewport_size.width, self.state.content_height())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LineSelection {
-    range: Range<usize>,
-    includes_line_break: bool,
-}
-
-#[derive(Clone, Copy, Default)]
-struct SoftWrapLineMetrics {
-    content_chars: usize,
-    indent_columns: usize,
-}
-
-struct EditorInputElement {
-    view: Entity<EditorView>,
-}
-
-struct CursorElement {
-    text_layout: TextLayout,
-    cursor: usize,
-    color: Rgba,
-    focus_handle: FocusHandle,
-}
-
-struct SoftWrapSelectionElement {
-    line: SharedString,
-    text_layout: TextLayout,
-    display_byte_offset: usize,
-    selection: LineSelection,
-    color: gpui::Hsla,
-}
-
-impl IntoElement for CursorElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Element for CursorElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+impl ComponentEditorStore {
+    fn input_for_tab(
+        tab_id: usize,
+        buffer: &Entity<Buffer>,
+        root: Option<PathBuf>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.size.width = Pixels::ZERO.into();
-        style.size.height = Pixels::ZERO.into();
-        (window.request_layout(style, [], cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        _cx: &mut App,
-    ) {
-        if !self.focus_handle.is_focused(window) || !should_paint_text_cursor(window) {
-            return;
+    ) -> Entity<InputState> {
+        if cx.try_global::<Self>().is_none() {
+            cx.set_global(Self::default());
         }
 
-        let Some(position) = self.text_layout.position_for_index(self.cursor) else {
-            return;
+        let buffer_id = buffer.read(cx).id();
+        let soft_wrap = soft_wrap_enabled(cx);
+
+        if let Some((input, previous_soft_wrap, previous_root)) = cx
+            .global::<Self>()
+            .inputs
+            .get(&tab_id)
+            .filter(|existing| existing.buffer_id == buffer_id)
+            .map(|existing| {
+                (
+                    existing.input.clone(),
+                    existing.soft_wrap,
+                    existing.root.clone(),
+                )
+            })
+        {
+            Self::sync_soft_wrap(tab_id, &input, previous_soft_wrap, soft_wrap, window, cx);
+            Self::sync_hover_provider(tab_id, &input, buffer, previous_root, root, cx);
+            Self::sync_from_buffer(&input, buffer, window, cx);
+            return input;
+        }
+
+        let (initial, language) = {
+            let buffer = buffer.read(cx);
+            (
+                buffer.content().to_string(),
+                buffer
+                    .language()
+                    .map(|language| component_editor_language(language.as_str()).to_string())
+                    .unwrap_or_else(|| "plaintext".to_string()),
+            )
         };
-        window.paint_quad(fill(
-            text_cursor_bounds(
-                point(position.x, position.y),
-                self.text_layout.line_height(),
-                window,
-            ),
-            self.color,
-        ));
+
+        let hover_provider: Rc<dyn HoverProvider> = Rc::new(ComponentHoverProvider {
+            buffer: buffer.clone(),
+            root: root.clone(),
+        });
+        let input = cx.new(|cx| {
+            let mut input = InputState::new(window, cx)
+                .code_editor(language)
+                .multi_line(true)
+                .soft_wrap(soft_wrap)
+                .tab_size(TabSize {
+                    tab_size: TAB_SIZE_COLUMNS,
+                    ..Default::default()
+                })
+                .default_value(initial);
+            input.lsp.hover_provider = Some(hover_provider);
+            input
+        });
+
+        let input_for_sub = input.clone();
+        let buffer_for_sub = buffer.clone();
+        cx.subscribe(&input, move |_, event: &InputEvent, cx| {
+            if !matches!(event, InputEvent::Change) {
+                return;
+            }
+            let value = input_for_sub.read(cx).value().to_string();
+            buffer_for_sub.update(cx, |buffer, cx| {
+                let current_len = buffer.content().len();
+                if buffer.content() != value {
+                    buffer.replace_range(0..current_len, &value, cx);
+                }
+            });
+        })
+        .detach();
+
+        cx.update_global::<Self, _>(|store, _| {
+            store.inputs.insert(
+                tab_id,
+                ComponentEditorInput {
+                    input: input.clone(),
+                    buffer_id,
+                    soft_wrap,
+                    root,
+                },
+            );
+        });
+
+        input
     }
-}
 
-impl IntoElement for SoftWrapSelectionElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Element for SoftWrapSelectionElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
+    fn drop_tab(tab_id: usize, cx: &mut App) {
+        if cx.try_global::<Self>().is_none() {
+            return;
+        }
+        cx.update_global::<Self, _>(|store, _| {
+            store.inputs.remove(&tab_id);
+        });
     }
 
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+    fn sync_soft_wrap(
+        tab_id: usize,
+        input: &Entity<InputState>,
+        previous: bool,
+        current: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.size.width = Pixels::ZERO.into();
-        style.size.height = Pixels::ZERO.into();
-        (window.request_layout(style, [], cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        _cx: &mut App,
     ) {
-        for bounds in soft_wrap_selection_extra_bounds(
-            self.line.as_ref(),
-            &self.text_layout,
-            self.display_byte_offset,
-            &self.selection,
-            window,
-        ) {
-            window.paint_quad(fill(bounds, self.color));
+        if previous == current {
+            return;
+        }
+
+        input.update(cx, |input, cx| input.set_soft_wrap(current, window, cx));
+        cx.update_global::<Self, _>(|store, _| {
+            if let Some(existing) = store.inputs.get_mut(&tab_id) {
+                existing.soft_wrap = current;
+            }
+        });
+    }
+
+    fn sync_hover_provider(
+        tab_id: usize,
+        input: &Entity<InputState>,
+        buffer: &Entity<Buffer>,
+        previous_root: Option<PathBuf>,
+        current_root: Option<PathBuf>,
+        cx: &mut App,
+    ) {
+        if previous_root == current_root {
+            return;
+        }
+
+        let hover_provider: Rc<dyn HoverProvider> = Rc::new(ComponentHoverProvider {
+            buffer: buffer.clone(),
+            root: current_root.clone(),
+        });
+        input.update(cx, |input, _| {
+            input.lsp.hover_provider = Some(hover_provider);
+        });
+        cx.update_global::<Self, _>(|store, _| {
+            if let Some(existing) = store.inputs.get_mut(&tab_id) {
+                existing.root = current_root;
+            }
+        });
+    }
+
+    fn sync_from_buffer(
+        input: &Entity<InputState>,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let buffer_text = buffer.read(cx).content().to_string();
+        if input.read(cx).value().as_ref() != buffer_text.as_str() {
+            input.update(cx, |input, cx| input.set_value(buffer_text, window, cx));
         }
     }
 }
 
-impl IntoElement for EditorInputElement {
-    type Element = Self;
+impl Global for ComponentEditorStore {}
 
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Element for EditorInputElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
-        (window.request_layout(style, [], cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+impl HoverProvider for ComponentHoverProvider {
+    fn hover(
+        &self,
+        text: &Rope,
+        offset: usize,
         _window: &mut Window,
-        _cx: &mut App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
         cx: &mut App,
-    ) {
-        let focus_handle = self.view.read(cx).focus_handle();
-        window.handle_input(
-            &focus_handle,
-            ElementInputHandler::new(bounds, self.view.clone()),
-            cx,
-        );
+    ) -> Task<anyhow::Result<Option<lsp_types::Hover>>> {
+        let content = text.to_string();
+        let position = text.offset_to_position(offset);
+        let request = {
+            let buffer = self.buffer.read(cx);
+            let Some(language) = buffer.language() else {
+                return Task::ready(Ok(None));
+            };
+            let language_id = language.as_str().to_string();
+            if !lsp::has_installed_server(&language_id) {
+                return Task::ready(Ok(None));
+            }
+            let path = buffer.path().to_path_buf();
+            let Some(root) = self
+                .root
+                .clone()
+                .or_else(|| path.parent().map(Path::to_path_buf))
+            else {
+                return Task::ready(Ok(None));
+            };
+
+            lsp::HoverRequest {
+                root,
+                path,
+                language_id,
+                content,
+                position: lsp::Position {
+                    line: position.line,
+                    character: position.character,
+                },
+            }
+        };
+
+        cx.background_executor().spawn(async move {
+            let hover = lsp::hover(request).map_err(anyhow::Error::from)?;
+            Ok(hover.map(|hover| lsp_types::Hover {
+                contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
+                    hover.contents,
+                )),
+                range: None,
+            }))
+        })
     }
 }
 
-fn wire_editor_actions<T: 'static, E: gpui::InteractiveElement + 'static>(
-    element: E,
-    view: &Entity<EditorView>,
-    cx: &mut Context<T>,
-) -> E {
-    let backspace = view.clone();
-    let delete = view.clone();
-    let enter = view.clone();
-    let left = view.clone();
-    let right = view.clone();
-    let up = view.clone();
-    let down = view.clone();
-    let word_left = view.clone();
-    let word_right = view.clone();
-    let select_left = view.clone();
-    let select_right = view.clone();
-    let select_up = view.clone();
-    let select_down = view.clone();
-    let select_word_left = view.clone();
-    let select_word_right = view.clone();
-    let select_all = view.clone();
-    let home = view.clone();
-    let end = view.clone();
-    let copy = view.clone();
-    let cut = view.clone();
-    let paste = view.clone();
-    let undo = view.clone();
-    let redo = view.clone();
-    let duplicate_line_up = view.clone();
-    let duplicate_line_down = view.clone();
+fn component_editor_language(language: &str) -> &str {
+    match language {
+        "shellscript" => "bash",
+        "typescriptreact" => "tsx",
+        // gpui-component does not currently ship a separate JSX language.
+        "javascriptreact" => "javascript",
+        other => other,
+    }
+}
 
-    element
-        .on_action(cx.listener(move |_, _: &Backspace, window, cx| {
-            backspace.update(cx, |view, cx| view.backspace(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Delete, window, cx| {
-            delete.update(cx, |view, cx| view.delete(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Enter, window, cx| {
-            enter.update(cx, |view, cx| view.enter(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Left, window, cx| {
-            left.update(cx, |view, cx| view.left(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Right, window, cx| {
-            right.update(cx, |view, cx| view.right(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Up, window, cx| {
-            up.update(cx, |view, cx| view.up(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Down, window, cx| {
-            down.update(cx, |view, cx| view.down(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &WordLeft, window, cx| {
-            word_left.update(cx, |view, cx| view.word_left(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &WordRight, window, cx| {
-            word_right.update(cx, |view, cx| view.word_right(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectLeft, window, cx| {
-            select_left.update(cx, |view, cx| view.select_left(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectRight, window, cx| {
-            select_right.update(cx, |view, cx| view.select_right(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectUp, window, cx| {
-            select_up.update(cx, |view, cx| view.select_up(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectDown, window, cx| {
-            select_down.update(cx, |view, cx| view.select_down(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectWordLeft, window, cx| {
-            select_word_left.update(cx, |view, cx| view.select_word_left(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectWordRight, window, cx| {
-            select_word_right.update(cx, |view, cx| view.select_word_right(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &SelectAll, window, cx| {
-            select_all.update(cx, |view, cx| view.select_all(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Home, window, cx| {
-            home.update(cx, |view, cx| view.home(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &End, window, cx| {
-            end.update(cx, |view, cx| view.end(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Copy, window, cx| {
-            copy.update(cx, |view, cx| view.copy(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Cut, window, cx| {
-            cut.update(cx, |view, cx| view.cut(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Paste, window, cx| {
-            paste.update(cx, |view, cx| view.paste(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Undo, window, cx| {
-            undo.update(cx, |view, cx| view.undo(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &Redo, window, cx| {
-            redo.update(cx, |view, cx| view.redo(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &DuplicateLineUp, window, cx| {
-            duplicate_line_up.update(cx, |view, cx| view.duplicate_line_up(window, cx));
-        }))
-        .on_action(cx.listener(move |_, _: &DuplicateLineDown, window, cx| {
-            duplicate_line_down.update(cx, |view, cx| view.duplicate_line_down(window, cx));
-        }))
+fn copy_current_component_line<T: 'static>(input: &Entity<InputState>, cx: &mut Context<T>) {
+    let Some((content, range)) = current_component_line_range(input, cx) else {
+        return;
+    };
+    if range.is_empty() {
+        return;
+    }
+
+    cx.write_to_clipboard(ClipboardItem::new_string(content[range].to_string()));
+    cx.stop_propagation();
+}
+
+fn cut_current_component_line<T: 'static>(
+    input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) {
+    let Some((content, range)) = current_component_line_range(input, cx) else {
+        return;
+    };
+    if range.is_empty() {
+        return;
+    }
+
+    cx.write_to_clipboard(ClipboardItem::new_string(content[range.clone()].to_string()));
+    let utf16_range = component_range_to_utf16(&content, &range);
+    input.update(cx, |input, cx| {
+        EntityInputHandler::replace_text_in_range(input, Some(utf16_range), "", window, cx);
+    });
+    cx.stop_propagation();
+}
+
+fn current_component_line_range<T: 'static>(
+    input: &Entity<InputState>,
+    cx: &Context<T>,
+) -> Option<(String, Range<usize>)> {
+    let input = input.read(cx);
+    let selection = input.selected_range();
+    if !selection.is_empty() {
+        return None;
+    }
+
+    let content = input.value().to_string();
+    let range = component_line_range_for_offset(&content, selection.start);
+    Some((content, range))
+}
+
+fn component_line_range_for_offset(content: &str, offset: usize) -> Range<usize> {
+    let offset = offset.min(content.len());
+    let start = content[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let end = content[offset..]
+        .find('\n')
+        .map_or(content.len(), |index| offset + index + 1);
+    start..end
+}
+
+fn component_range_to_utf16(content: &str, range: &Range<usize>) -> Range<usize> {
+    component_offset_to_utf16(content, range.start)..component_offset_to_utf16(content, range.end)
+}
+
+fn component_offset_to_utf16(content: &str, offset: usize) -> usize {
+    let mut utf16_offset = 0usize;
+    let mut utf8_offset = 0usize;
+    for ch in content.chars() {
+        if utf8_offset >= offset {
+            break;
+        }
+        utf8_offset += ch.len_utf8();
+        utf16_offset += ch.len_utf16();
+    }
+    utf16_offset
+}
+
+pub fn install_default_keybindings(cx: &mut App) {
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([
+        KeyBinding::new(
+            "alt-left",
+            gpui_component::input::MoveToPreviousWord,
+            Some(COMPONENT_INPUT_KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-right",
+            gpui_component::input::MoveToNextWord,
+            Some(COMPONENT_INPUT_KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-shift-left",
+            gpui_component::input::SelectToPreviousWordStart,
+            Some(COMPONENT_INPUT_KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-shift-right",
+            gpui_component::input::SelectToNextWordEnd,
+            Some(COMPONENT_INPUT_KEY_CONTEXT),
+        ),
+    ]);
 }

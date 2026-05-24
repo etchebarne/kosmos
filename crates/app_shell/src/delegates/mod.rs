@@ -123,7 +123,7 @@ impl KosmosApp {
             cx.notify();
             self.persist_workspace(workspace_id, cx);
             if is_editor_tab {
-                file_editor::EditorViewStore::drop_tab(tab_id, cx);
+                ui::tabs::drop_file_editor_tab(tab_id, cx);
             }
             if let Some(key) = terminal_key {
                 terminal::TerminalStore::drop_tab(key, cx);

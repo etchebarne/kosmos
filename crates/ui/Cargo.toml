@@ -4,6 +4,7 @@ version = "0.4.1"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 file_editor = { path = "../file_editor" }
 file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
@@ -14,6 +15,7 @@ installer = { path = "../installer" }
 kosmos_git = { package = "git", path = "../git" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
+lsp-types = "0.97"
 registry = { path = "../registry" }
 settings = { path = "../settings" }
 shortcuts = { path = "../shortcuts" }

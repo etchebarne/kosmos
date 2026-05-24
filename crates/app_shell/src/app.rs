@@ -9,6 +9,7 @@ use gpui::{
 use file_editor::BufferStore;
 use file_tree::{FileTree, FileTreeEvent, FileTreeState};
 use gpui::BorrowAppContext;
+use gpui_component::input as component_input;
 use pane_tree::{PaneNode, PaneTree};
 use settings::{ActiveSettings, SettingValue};
 use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
@@ -41,7 +42,11 @@ fn apply_theme(cx: &mut App) {
     };
     cx.set_global(theme);
     gpui_component::Theme::change(component_theme_mode, None, cx);
-    gpui_component::Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
+    let component_theme = gpui_component::Theme::global_mut(cx);
+    component_theme.notification.placement = Anchor::BottomRight;
+    let mut highlight_theme = (*component_theme.highlight_theme).clone();
+    highlight_theme.style.editor_background = Some(gpui::transparent_black());
+    component_theme.highlight_theme = std::sync::Arc::new(highlight_theme);
 }
 
 pub(crate) struct KosmosApp {
@@ -366,6 +371,8 @@ impl KosmosApp {
         };
 
         availability.active_editor = true;
+        availability.can_undo = true;
+        availability.can_redo = true;
         availability.can_cut = true;
         availability.can_copy = true;
         availability.can_paste = true;
@@ -375,28 +382,7 @@ impl KosmosApp {
             availability.active_editor_dirty = BufferStore::is_path_dirty(path, cx);
         }
 
-        if let Some(view) = file_editor::EditorViewStore::get(tab.id, cx) {
-            let view = view.read(cx);
-            availability.can_undo = view.can_undo(cx);
-            availability.can_redo = view.can_redo(cx);
-            availability.can_cut = view.can_cut(cx);
-            availability.can_copy = view.can_copy(cx);
-            availability.can_paste = view.can_paste();
-            availability.can_select_all = view.can_select_all(cx);
-        }
-
         availability
-    }
-
-    fn active_editor_view(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<file_editor::EditorView>> {
-        let (tab_id, path) = self.active_editor_tab_parts()?;
-        let buffer = BufferStore::open(path, cx);
-        let view = file_editor::EditorViewStore::for_tab(tab_id, &buffer, cx);
-        view.update(cx, |view, cx| view.set_buffer(buffer, cx));
-        Some(view)
     }
 
     pub(crate) fn save_active_editor(&mut self, cx: &mut Context<Self>) {
@@ -422,24 +408,21 @@ impl KosmosApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.active_editor_view(cx) else {
-            return;
-        };
-        let focus_handle = view.read(cx).focus_handle();
-        window.focus(&focus_handle, cx);
-        view.update(cx, |view, cx| match action {
-            HeaderMenuAction::Undo => view.undo(window, cx),
-            HeaderMenuAction::Redo => view.redo(window, cx),
-            HeaderMenuAction::Cut => view.cut(window, cx),
-            HeaderMenuAction::Copy => view.copy(window, cx),
-            HeaderMenuAction::Paste => view.paste(window, cx),
-            HeaderMenuAction::SelectAll => view.select_all(window, cx),
+        match action {
+            HeaderMenuAction::Undo => window.dispatch_action(Box::new(component_input::Undo), cx),
+            HeaderMenuAction::Redo => window.dispatch_action(Box::new(component_input::Redo), cx),
+            HeaderMenuAction::Cut => window.dispatch_action(Box::new(component_input::Cut), cx),
+            HeaderMenuAction::Copy => window.dispatch_action(Box::new(component_input::Copy), cx),
+            HeaderMenuAction::Paste => window.dispatch_action(Box::new(component_input::Paste), cx),
+            HeaderMenuAction::SelectAll => {
+                window.dispatch_action(Box::new(component_input::SelectAll), cx)
+            }
             HeaderMenuAction::OpenFolder
             | HeaderMenuAction::Save
             | HeaderMenuAction::SaveAll
             | HeaderMenuAction::ExpandSelection
             | HeaderMenuAction::ShrinkSelection => {}
-        });
+        }
         cx.notify();
     }
 

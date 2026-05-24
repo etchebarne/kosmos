@@ -37,7 +37,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "file_search" => file_search::render(cx),
         "git" => git::render(window, cx),
         "settings" => settings::render(window, cx),
-        "file_editor" => file_editor::render(tab, cx),
+        "file_editor" => file_editor::render(tab, window, cx),
         _ => div().into_any_element(),
     }
 }
@@ -45,6 +45,10 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
 pub fn install_keybindings(cx: &mut App) {
     file_editor::install_default_keybindings(cx);
     terminal::install_default_keybindings(cx);
+}
+
+pub fn drop_file_editor_tab(tab_id: usize, cx: &mut App) {
+    file_editor::drop_tab(tab_id, cx);
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {

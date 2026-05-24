@@ -34,7 +34,6 @@ fn install_globals(cx: &mut App) {
 fn install_feature_state(cx: &mut App) {
     ui::tabs::terminal::TerminalUi::install(cx);
     file_editor::BufferStore::install(cx);
-    file_editor::EditorViewStore::install(cx);
     terminal::TerminalStore::install(cx);
     syntax::SyntaxRegistry::install(cx);
     syntax::SyntaxStore::install(cx);

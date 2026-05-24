@@ -246,12 +246,12 @@ impl HeaderMenuAction {
     pub fn shortcut_action_name(self) -> Option<&'static str> {
         match self {
             Self::Save => Some("file_editor::Save"),
-            Self::Undo => Some("text_input::Undo"),
-            Self::Redo => Some("text_input::Redo"),
-            Self::Cut => Some("text_input::Cut"),
-            Self::Copy => Some("text_input::Copy"),
-            Self::Paste => Some("text_input::Paste"),
-            Self::SelectAll => Some("text_input::SelectAll"),
+            Self::Undo => Some("input::Undo"),
+            Self::Redo => Some("input::Redo"),
+            Self::Cut => Some("input::Cut"),
+            Self::Copy => Some("input::Copy"),
+            Self::Paste => Some("input::Paste"),
+            Self::SelectAll => Some("input::SelectAll"),
             Self::OpenFolder | Self::SaveAll | Self::ExpandSelection | Self::ShrinkSelection => {
                 None
             }
