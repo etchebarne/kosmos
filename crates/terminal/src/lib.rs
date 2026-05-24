@@ -2110,6 +2110,7 @@ fn encode_key_input(input: &TerminalKeyInput, mode: TermMode) -> Option<String> 
 
     let key = input.key.as_str();
     let encoded = match key {
+        "enter" if input.alt => "\x1b\r".to_string(),
         "enter" => "\r".to_string(),
         "tab" if input.shift => "\x1b[Z".to_string(),
         "tab" => "\t".to_string(),
@@ -2269,6 +2270,20 @@ mod tests {
         assert_eq!(
             encode_key_input(&input, TermMode::default()),
             Some("\x1b[1;6A".to_string())
+        );
+    }
+
+    #[test]
+    fn encodes_alt_enter() {
+        let input = TerminalKeyInput {
+            key: "enter".to_string(),
+            alt: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            encode_key_input(&input, TermMode::default()),
+            Some("\x1b\r".to_string())
         );
     }
 
