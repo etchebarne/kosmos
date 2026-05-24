@@ -9,7 +9,6 @@ file_editor = { path = "../file_editor" }
 file_tree = { path = "../file_tree" }
 gpui = { workspace = true }
 gpui-component = { workspace = true }
-highlight = { path = "../highlight" }
 icons = { path = "../icons" }
 installer = { path = "../installer" }
 kosmos_git = { package = "git", path = "../git" }
@@ -19,12 +18,9 @@ lsp-types = "0.97"
 registry = { path = "../registry" }
 settings = { path = "../settings" }
 shortcuts = { path = "../shortcuts" }
-syntax = { path = "../syntax" }
 theme = { path = "../theme" }
 terminal = { path = "../terminal" }
-unicode-segmentation = "1.12"
 workspace = { path = "../workspace" }
 pane_tree = { path = "../pane_tree" }
 panes = { path = "../panes" }
-pulldown-cmark = "0.13"
 tabs = { path = "../tabs" }

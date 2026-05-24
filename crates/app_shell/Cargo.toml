@@ -16,7 +16,6 @@ persistence = { path = "../persistence" }
 registry = { path = "../registry" }
 settings = { path = "../settings" }
 shortcuts = { path = "../shortcuts" }
-syntax = { path = "../syntax" }
 tabs = { path = "../tabs" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }

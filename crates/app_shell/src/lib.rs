@@ -35,8 +35,6 @@ fn install_feature_state(cx: &mut App) {
     ui::tabs::terminal::TerminalUi::install(cx);
     file_editor::BufferStore::install(cx);
     terminal::TerminalStore::install(cx);
-    syntax::SyntaxRegistry::install(cx);
-    syntax::SyntaxStore::install(cx);
 }
 
 fn install_keybindings(cx: &mut App) {
