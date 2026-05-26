@@ -2,6 +2,7 @@ use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems
 use gpui_component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
+    label::Label,
 };
 
 use registry::{RegistryEntry, ToolKind};
@@ -9,8 +10,14 @@ use theme::ActiveTheme;
 
 use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
 
-pub fn render_marketplace<T: SettingsDelegate>(kind: ToolKind, cx: &mut Context<T>) -> AnyElement {
+pub fn render_marketplace<T: SettingsDelegate>(
+    kind: ToolKind,
+    query: &str,
+    include_all: bool,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let cards: Vec<AnyElement> = registry::by_kind(kind)
+        .filter(|entry| include_all || tool_matches(entry, query))
         .map(|entry| render_tool_card(entry, cx))
         .collect();
     div()
@@ -20,6 +27,10 @@ pub fn render_marketplace<T: SettingsDelegate>(kind: ToolKind, cx: &mut Context<
         .min_w_0()
         .children(cards)
         .into_any_element()
+}
+
+pub fn has_match(kind: ToolKind, query: &str) -> bool {
+    registry::by_kind(kind).any(|entry| tool_matches(entry, query))
 }
 
 fn render_tool_card<T: SettingsDelegate>(
@@ -63,12 +74,11 @@ fn render_tool_card<T: SettingsDelegate>(
                 .flex_col()
                 .gap_1()
                 .child(
-                    div()
+                    Label::new(entry.id)
                         .text_lg()
-                        .text_color(theme.text_emphasis)
-                        .child(entry.id),
+                        .text_color(theme.text_emphasis),
                 )
-                .child(div().text_xs().text_color(theme.text_subtle).child(kinds)),
+                .child(Label::new(kinds).text_xs().text_color(theme.text_subtle)),
         )
         .child(action);
 
@@ -81,10 +91,9 @@ fn render_tool_card<T: SettingsDelegate>(
         .gap_y_1()
         .min_w_0()
         .child(
-            div()
+            Label::new("Supports:")
                 .text_xs()
-                .text_color(theme.text_subtle)
-                .child("Supports:"),
+                .text_color(theme.text_subtle),
         )
         .children(names.into_iter().map(|name| {
             div()
@@ -116,6 +125,31 @@ fn render_tool_card<T: SettingsDelegate>(
     }
 
     card.into_any_element()
+}
+
+fn tool_matches(entry: &RegistryEntry, query: &str) -> bool {
+    query.is_empty()
+        || text_matches(entry.id, query)
+        || entry.languages.iter().any(|language_id| {
+            text_matches(language_id, query)
+                || language::info(language_id).is_some_and(|info| text_matches(info.name, query))
+        })
+        || entry
+            .kinds
+            .iter()
+            .any(|kind| text_matches(tool_kind_label(*kind), query))
+}
+
+fn tool_kind_label(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Lsp => "LSP",
+        ToolKind::Formatter => "Formatter",
+        ToolKind::Linter => "Linter",
+    }
+}
+
+fn text_matches(text: &str, query: &str) -> bool {
+    text.to_lowercase().contains(query)
 }
 
 fn install_action<T: SettingsDelegate>(

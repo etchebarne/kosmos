@@ -1,32 +1,24 @@
 mod cards;
 mod content;
 mod controls;
-mod sidebar;
 pub mod state;
 
 pub use state::SettingsInputs;
 
 use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*};
 
-use settings::{Settings, registry};
-
 use crate::delegate::{ActiveSettingsUi, SettingsDelegate};
+use crate::tabs::settings::state::ActiveSettingsInputs;
 
 pub fn render<T: SettingsDelegate>(window: &mut Window, cx: &mut Context<T>) -> AnyElement {
-    let (active_id, open_dropdown) = {
-        let state = cx.settings_ui();
-        (state.active_category, state.open_dropdown)
-    };
-    let active = registry::category(active_id)
-        .or_else(|| Settings::categories().first().copied())
-        .expect("settings registry has at least one category");
+    let open_dropdown = cx.settings_ui().open_dropdown;
+    let search = cx.settings_inputs().search();
 
     div()
         .flex_1()
         .min_h_0()
         .flex()
-        .flex_row()
-        .child(sidebar::render(active.id, cx))
-        .child(content::render(active, open_dropdown, window, cx))
+        .flex_col()
+        .child(content::render(search, open_dropdown, window, cx))
         .into_any_element()
 }
