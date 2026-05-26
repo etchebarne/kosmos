@@ -644,12 +644,16 @@ fn run_git_action_with_toast<T: PaneDelegate + SettingsDelegate>(
         root,
         action,
         move |root, cx| {
+            cx.update_global::<GitUiState, _>(|state, _| {
+                state.sync_action_running = None;
+            });
             show_git_success(cx, success_title);
             refresh_summary(root, true, true, cx);
         },
         move |error, cx| {
             cx.update_global::<GitUiState, _>(|state, _| {
                 state.loading = false;
+                state.sync_action_running = None;
             });
             show_git_error(cx, error_title, git_error_message(error));
             cx.notify();
@@ -689,11 +693,12 @@ fn run_sync_action<T: PaneDelegate + SettingsDelegate>(
     remember: bool,
     cx: &mut Context<T>,
 ) {
-    if remember {
-        cx.update_global::<GitUiState, _>(|state, _| {
+    cx.update_global::<GitUiState, _>(|state, _| {
+        if remember {
             state.last_sync_action = action;
-        });
-    }
+        }
+        state.sync_action_running = Some(action);
+    });
 
     run_git_action_with_toast(
         root,

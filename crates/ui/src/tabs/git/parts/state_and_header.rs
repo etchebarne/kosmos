@@ -26,7 +26,8 @@ use gpui_component::{
 };
 use icons::{Icon, IconName};
 use kosmos_git::{
-    Branch, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary, Stash, Tag,
+    Branch, BranchSyncStatus, CommitInfo, FileChange, FileChangeKind, Remote, RepositorySummary,
+    Stash, Tag,
 };
 use tabs::registry;
 use theme::ActiveTheme;
@@ -142,6 +143,7 @@ struct GitUiState {
     pending_conflict_paths: Vec<String>,
     pending_conflict_resolution_stages_all: bool,
     last_sync_action: GitSyncAction,
+    sync_action_running: Option<GitSyncAction>,
     remotes: Vec<Remote>,
     stashes: Vec<Stash>,
     expanded_stashes: std::collections::HashSet<String>,

@@ -7,11 +7,24 @@ pub struct RepositorySummary {
     pub work_dir: PathBuf,
     pub git_dir: PathBuf,
     pub branch: Option<String>,
+    pub branch_sync: BranchSyncStatus,
     pub changes: usize,
     pub insertions: usize,
     pub deletions: usize,
     pub files: Vec<FileChange>,
     pub latest_commit: Option<CommitInfo>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BranchSyncStatus {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+impl BranchSyncStatus {
+    pub fn is_synced(self) -> bool {
+        self.ahead == 0 && self.behind == 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +98,7 @@ impl RepositorySummary {
             stats.deletions += file.deletions;
             stats
         });
+        let branch_sync = read_branch_sync_status(path.as_ref()).unwrap_or_default();
         let latest_commit = read_latest_commit(path.as_ref()).ok().flatten();
 
         Ok(Self {
@@ -94,6 +108,7 @@ impl RepositorySummary {
                 .unwrap_or_else(|| repo.path().to_path_buf()),
             git_dir: repo.path().to_path_buf(),
             branch,
+            branch_sync,
             changes,
             insertions: stats.insertions,
             deletions: stats.deletions,
@@ -216,6 +231,21 @@ fn normalize_numstat_path(path: &str) -> String {
     path.rsplit_once(" => ")
         .map(|(_, after)| after.trim_matches(['{', '}']).to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+fn read_branch_sync_status(path: &Path) -> Result<BranchSyncStatus, Error> {
+    let output = git_output(
+        path,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )?;
+    Ok(parse_branch_sync_status(&output).unwrap_or_default())
+}
+
+fn parse_branch_sync_status(output: &str) -> Option<BranchSyncStatus> {
+    let mut parts = output.split_whitespace();
+    let ahead = parts.next()?.parse().ok()?;
+    let behind = parts.next()?.parse().ok()?;
+    Some(BranchSyncStatus { ahead, behind })
 }
 
 fn read_latest_commit(path: &Path) -> Result<Option<CommitInfo>, Error> {
@@ -607,6 +637,18 @@ mod tests {
             })
         );
         assert!(stats.contains_key("new.rs"));
+    }
+
+    #[test]
+    fn parses_branch_sync_status() {
+        assert_eq!(
+            parse_branch_sync_status("2\t3\n"),
+            Some(BranchSyncStatus {
+                ahead: 2,
+                behind: 3,
+            })
+        );
+        assert_eq!(parse_branch_sync_status("bad\t3\n"), None);
     }
 
     #[test]

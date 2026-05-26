@@ -73,7 +73,11 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let action = cx.global::<GitUiState>().last_sync_action;
+    let (action, sync_action_running) = {
+        let state = cx.global::<GitUiState>();
+        (state.last_sync_action, state.sync_action_running.is_some())
+    };
+    let branch_sync = summary.map(|summary| summary.branch_sync);
     let branch = summary
         .and_then(|summary| summary.branch.as_deref())
         .unwrap_or("Detached HEAD")
@@ -110,10 +114,12 @@ fn sync_action_panel<T: PaneDelegate + SettingsDelegate>(
                 .child(sync_action_button(
                     "git-sync-primary-action",
                     action,
+                    branch_sync,
+                    sync_action_running,
                     move |_, _, cx| run_sync_action(root_action.clone(), action, false, cx),
                     cx,
                 ))
-                .child(sync_more_button(root_more, cx)),
+                .child(sync_more_button(root_more, sync_action_running, cx)),
         )
         .into_any_element()
 }
@@ -152,14 +158,24 @@ fn branch_button<T: PaneDelegate + SettingsDelegate>(
 fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
     id: &'static str,
     action: GitSyncAction,
+    branch_sync: Option<BranchSyncStatus>,
+    loading: bool,
     listener: impl Fn(&ClickEvent, &mut Window, &mut Context<T>) + 'static,
     cx: &mut Context<T>,
 ) -> AnyElement {
+    let branch_sync = branch_sync.unwrap_or_default();
+    let indicators = (!branch_sync.is_synced()).then(|| sync_status_indicators(branch_sync));
+    let tooltip = sync_status_tooltip(branch_sync);
+
     Button::new(id)
         .outline()
         .when(action.is_danger(), |this| this.danger())
         .icon(component_icon(action.icon()))
+        .loading_icon(component_icon(IconName::Refresh))
         .label(action.label())
+        .loading(loading)
+        .when_some(indicators, |this, indicators| this.child(indicators))
+        .when_some(tooltip, |this, tooltip| this.tooltip(tooltip))
         .on_click(cx.listener(move |_, event: &ClickEvent, window, cx| {
             cx.stop_propagation();
             listener(event, window, cx);
@@ -167,8 +183,58 @@ fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
+fn sync_status_indicators(branch_sync: BranchSyncStatus) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_1()
+        .when(branch_sync.ahead > 0, |this| {
+            this.child(sync_status_indicator(IconName::ArrowUp, branch_sync.ahead))
+        })
+        .when(branch_sync.behind > 0, |this| {
+            this.child(sync_status_indicator(IconName::ArrowDown, branch_sync.behind))
+        })
+        .into_any_element()
+}
+
+fn sync_status_indicator(icon: IconName, count: usize) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_0p5()
+        .opacity(0.6)
+        .child(component_icon(icon).xsmall())
+        .child(div().text_xs().child(count.to_string()))
+        .into_any_element()
+}
+
+fn sync_status_tooltip(branch_sync: BranchSyncStatus) -> Option<String> {
+    if branch_sync.is_synced() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    if branch_sync.ahead > 0 {
+        parts.push(format!(
+            "{} commit{} to push",
+            branch_sync.ahead,
+            plural(branch_sync.ahead)
+        ));
+    }
+    if branch_sync.behind > 0 {
+        parts.push(format!(
+            "{} commit{} to pull",
+            branch_sync.behind,
+            plural(branch_sync.behind)
+        ));
+    }
+    Some(parts.join(", "))
+}
+
 fn sync_more_button<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
+    disabled: bool,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let actions = GitSyncAction::ALL
@@ -191,6 +257,7 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(
     Button::new("git-sync-more")
         .outline()
         .tab_stop(false)
+        .disabled(disabled)
         .icon(component_icon(IconName::Ellipsis))
         .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
             let menu_width = rems(11.0).to_pixels(window.rem_size());
