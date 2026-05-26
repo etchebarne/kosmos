@@ -30,6 +30,9 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
             div()
                 .id("git-change-list-scroll")
                 .size_full()
+                .min_h_0()
+                .flex()
+                .flex_col()
                 .when(summary.files.is_empty(), |this| {
                     this.flex().flex_col().items_center().justify_center()
                 })
@@ -55,10 +58,22 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
                 })
                 .when(!summary.files.is_empty(), |this| {
                     this.child(
-                        component_tree(&tree_state, move |ix, entry, _, _, cx| {
-                            change_tree_row(ix, entry, root_path.clone(), file_changes.clone(), cx)
-                        })
-                        .size_full(),
+                        div()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .child(
+                            component_tree(&tree_state, move |ix, entry, _, _, cx| {
+                                change_tree_row(
+                                    ix,
+                                    entry,
+                                    root_path.clone(),
+                                    file_changes.clone(),
+                                    cx,
+                                )
+                            })
+                            .size_full(),
+                        ),
                     )
                 }),
         )
