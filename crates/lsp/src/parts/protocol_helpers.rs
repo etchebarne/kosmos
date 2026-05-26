@@ -119,6 +119,14 @@ fn hover_text(result: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+fn completion_response(result: Value) -> Result<Option<lsp_types::CompletionResponse>, Error> {
+    if result.is_null() {
+        return Ok(None);
+    }
+
+    serde_json::from_value(result).map(Some).map_err(Error::from)
+}
+
 fn collect_hover_parts(value: &Value, parts: &mut Vec<String>) {
     match value {
         Value::String(text) => parts.push(text.clone()),
@@ -148,4 +156,3 @@ fn normalize_hover_text(text: String) -> String {
     }
     text.trim().to_string()
 }
-

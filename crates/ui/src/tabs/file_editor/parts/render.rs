@@ -9,13 +9,16 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
         .and_then(|tree| tree.read(cx).root().map(Path::to_path_buf));
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
     let buffer = BufferStore::open(path, cx);
-    let input = ComponentEditorStore::input_for_tab(
+    let editor_state = ComponentEditorStore::state_for_tab(
         tab.id,
         &buffer,
         file_tree_root.clone(),
         window,
         cx,
     );
+    let input = editor_state.input;
+    let completions = editor_state.completions;
+    let input_focus = input.focus_handle(cx);
     let input_for_copy = input.clone();
     let input_for_cut = input.clone();
 
@@ -33,6 +36,66 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                 .flex_1()
                 .min_h_0()
                 .min_w_0()
+                .track_focus(&input_focus)
+                .capture_action(cx.listener({
+                    let completions = completions.clone();
+                    move |_, _: &gpui_component::input::Enter, window, cx| {
+                        let handled = completions.update(cx, |menu, cx| {
+                            menu.accept_selected(window, cx)
+                        });
+                        if handled {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                }))
+                .capture_action(cx.listener({
+                    let completions = completions.clone();
+                    move |_, _: &gpui_component::input::IndentInline, window, cx| {
+                        let handled = completions.update(cx, |menu, cx| {
+                            menu.accept_selected(window, cx)
+                        });
+                        if handled {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                }))
+                .capture_action(cx.listener({
+                    let completions = completions.clone();
+                    move |_, _: &gpui_component::input::Escape, _, cx| {
+                        let handled = completions.update(cx, |menu, cx| menu.hide(cx));
+                        if handled {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                }))
+                .capture_action(cx.listener({
+                    let completions = completions.clone();
+                    move |_, _: &gpui_component::input::MoveUp, _, cx| {
+                        let handled = completions.update(cx, |menu, cx| menu.select_previous(cx));
+                        if handled {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                }))
+                .capture_action(cx.listener({
+                    let completions = completions.clone();
+                    move |_, _: &gpui_component::input::MoveDown, _, cx| {
+                        let handled = completions.update(cx, |menu, cx| menu.select_next(cx));
+                        if handled {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                }))
                 .on_action(cx.listener(move |_, _: &gpui_component::input::Copy, _, cx| {
                     copy_current_component_line(&input_for_copy, cx);
                 }))
@@ -42,13 +105,19 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                     },
                 ))
                 .child(
-                    Input::new(&input)
-                        .appearance(false)
-                        .bordered(false)
-                        .focus_bordered(false)
-                        .font_family(FONT_FAMILY)
-                        .text_size(rems(0.875))
-                        .size_full(),
+                    div()
+                        .relative()
+                        .size_full()
+                        .child(
+                            Input::new(&input)
+                                .appearance(false)
+                                .bordered(false)
+                                .focus_bordered(false)
+                                .font_family(FONT_FAMILY)
+                                .text_size(rems(0.875))
+                                .size_full(),
+                        )
+                        .child(completions),
                 ),
         )
         .into_any_element()

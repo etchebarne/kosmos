@@ -14,9 +14,19 @@ use url::Url;
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const HOVER_TIMEOUT: Duration = Duration::from_secs(2);
+const COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct HoverRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub language_id: String,
+    pub content: String,
+    pub position: Position,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompletionRequest {
     pub root: PathBuf,
     pub path: PathBuf,
     pub language_id: String,
@@ -114,6 +124,33 @@ pub fn hover(request: HoverRequest) -> Result<Option<Hover>, Error> {
     Ok(None)
 }
 
+pub fn completion(
+    request: CompletionRequest,
+) -> Result<Option<lsp_types::CompletionResponse>, Error> {
+    let mut errors = Vec::new();
+    let mut attempted = false;
+    let mut answered = false;
+
+    for entry in registry::for_language(&request.language_id, ToolKind::Lsp) {
+        if !installer::is_installed(entry) {
+            continue;
+        }
+        attempted = true;
+
+        match session(entry, &request.root).and_then(|client| client.completion(entry, &request)) {
+            Ok(Some(response)) => return Ok(Some(response)),
+            Ok(None) => answered = true,
+            Err(err) => errors.push(format!("{}: {err}", entry.id)),
+        }
+    }
+
+    if attempted && !answered && !errors.is_empty() {
+        return Err(Error::AllFailed(errors.join("; ")));
+    }
+
+    Ok(None)
+}
+
 #[derive(Clone, Eq, PartialEq, Hash)]
 struct SessionKey {
     server_id: &'static str,
@@ -173,4 +210,3 @@ impl Drop for ClientInner {
         let _ = self.child.lock().unwrap().kill();
     }
 }
-

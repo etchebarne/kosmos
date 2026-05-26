@@ -4576,6 +4576,7 @@ name = "lsp"
 version = "0.4.2"
 dependencies = [
  "installer",
+ "lsp-types",
  "registry",
  "serde_json",
  "url",

@@ -68,6 +68,18 @@ impl Client {
                             "dynamicRegistration": false,
                             "contentFormat": ["markdown", "plaintext"],
                         },
+                        "completion": {
+                            "dynamicRegistration": false,
+                            "contextSupport": true,
+                            "completionItem": {
+                                "documentationFormat": ["markdown", "plaintext"],
+                                "deprecatedSupport": true,
+                                "insertReplaceSupport": true,
+                                "labelDetailsSupport": true,
+                                "preselectSupport": true,
+                                "snippetSupport": false,
+                            },
+                        },
                         "synchronization": {
                             "dynamicRegistration": false,
                             "willSave": false,
@@ -95,7 +107,7 @@ impl Client {
         request: &HoverRequest,
     ) -> Result<Option<String>, Error> {
         let uri = file_uri(&request.path)?;
-        self.ensure_document(entry, request, &uri)?;
+        self.ensure_document(entry, &request.language_id, &request.content, &uri)?;
 
         let result = self.request(
             "textDocument/hover",
@@ -112,10 +124,34 @@ impl Client {
         Ok(hover_text(&result))
     }
 
+    fn completion(
+        &self,
+        entry: &'static RegistryEntry,
+        request: &CompletionRequest,
+    ) -> Result<Option<lsp_types::CompletionResponse>, Error> {
+        let uri = file_uri(&request.path)?;
+        self.ensure_document(entry, &request.language_id, &request.content, &uri)?;
+
+        let result = self.request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": {
+                    "line": request.position.line,
+                    "character": request.position.character,
+                },
+            }),
+            COMPLETION_TIMEOUT,
+        )?;
+
+        completion_response(result)
+    }
+
     fn ensure_document(
         &self,
         entry: &'static RegistryEntry,
-        request: &HoverRequest,
+        language_id: &str,
+        content: &str,
         uri: &str,
     ) -> Result<(), Error> {
         enum SyncAction {
@@ -127,10 +163,10 @@ impl Client {
         let action = {
             let mut documents = self.inner.documents.lock().unwrap();
             match documents.get_mut(uri) {
-                Some(state) if state.content == request.content => SyncAction::None,
+                Some(state) if state.content == content => SyncAction::None,
                 Some(state) => {
                     state.version += 1;
-                    state.content = request.content.clone();
+                    state.content = content.to_string();
                     SyncAction::Change {
                         version: state.version,
                     }
@@ -140,7 +176,7 @@ impl Client {
                         uri.to_string(),
                         DocumentState {
                             version: 1,
-                            content: request.content.clone(),
+                            content: content.to_string(),
                         },
                     );
                     SyncAction::Open { version: 1 }
@@ -154,9 +190,9 @@ impl Client {
                 json!({
                     "textDocument": {
                         "uri": uri,
-                        "languageId": request.language_id.as_str(),
+                        "languageId": language_id,
                         "version": version,
-                        "text": request.content.as_str(),
+                        "text": content,
                     },
                 }),
             ),
@@ -167,7 +203,7 @@ impl Client {
                         "uri": uri,
                         "version": version,
                     },
-                    "contentChanges": [{ "text": request.content.as_str() }],
+                    "contentChanges": [{ "text": content }],
                 }),
             ),
             SyncAction::None => Ok(()),
@@ -232,4 +268,3 @@ impl Client {
         self.inner.send(value)
     }
 }
-
