@@ -7269,6 +7269,7 @@ name = "theme"
 version = "0.4.2"
 dependencies = [
  "gpui",
+ "gpui-component",
 ]
 
 [[package]]

@@ -36,9 +36,18 @@ impl SettingsDelegate for KosmosApp {
         value: SettingValue,
         cx: &mut Context<Self>,
     ) {
+        let theme_id = (key == theme::SETTING_ID).then(|| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| theme::DEFAULT_ID.to_string())
+        });
         cx.update_global::<Settings, _>(|settings, _| {
             settings.set(key, value);
         });
+        if let Some(theme_id) = theme_id {
+            theme::apply(&theme_id, cx);
+        }
         cx.notify();
     }
 

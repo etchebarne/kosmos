@@ -3,7 +3,7 @@ use std::time::Duration;
 use file_tree::NodeKind;
 use gpui::{
     Animation, AnimationExt, AnyElement, Context, IntoElement, MouseButton, SharedString, Window,
-    div, ease_in_out, prelude::*, rems, rgb,
+    div, ease_in_out, prelude::*, rems,
 };
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
@@ -83,7 +83,7 @@ pub fn render<T: PaneDelegate>(
                     .size(rems(0.375))
                     .flex_none()
                     .rounded_full()
-                    .bg(rgb(0xffffff)),
+                    .bg(theme.dirty),
             )
         })
         .child(

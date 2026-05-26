@@ -285,13 +285,12 @@ fn diff_stats<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let added = rgb(0x22c55e);
     div()
         .flex()
         .items_center()
         .gap_1()
         .when(summary.insertions > 0, |this| {
-            this.child(metric_tag(format!("+{}", summary.insertions), added))
+            this.child(metric_tag(format!("+{}", summary.insertions), theme.success))
         })
         .when(summary.deletions > 0, |this| {
             this.child(metric_tag(format!("-{}", summary.deletions), theme.danger))

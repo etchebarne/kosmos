@@ -61,6 +61,7 @@ pub fn render<T: SettingsDelegate>(
 
         SettingControl::Dropdown { options, .. } => {
             let current = SharedString::from(value.as_str().unwrap_or(""));
+            let delegate = cx.entity().clone();
             let label = options
                 .iter()
                 .find(|option| option.id == current.as_ref())
@@ -78,15 +79,16 @@ pub fn render<T: SettingsDelegate>(
                         .iter()
                         .fold(menu.min_w(menu_width).max_w(menu_width), |menu, option| {
                             let checked = option.id == current.as_ref();
+                            let delegate = delegate.clone();
                             menu.item(PopupMenuItem::new(option.label).checked(checked).on_click(
                                 move |_, _, cx| {
-                                    cx.update_global::<Settings, _>(|settings, _| {
-                                        settings.set(
+                                    delegate.update(cx, |this, cx| {
+                                        this.set_setting_value(
                                             setting_id,
                                             SettingValue::String(option.id.into()),
+                                            cx,
                                         );
                                     });
-                                    cx.refresh_windows();
                                 },
                             ))
                         })

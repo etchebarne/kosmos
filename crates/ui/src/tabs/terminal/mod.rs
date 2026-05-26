@@ -118,8 +118,8 @@ pub fn render<T: 'static>(
 fn terminal_theme(theme: Theme) -> TerminalTheme {
     TerminalTheme::new(
         TerminalPalette::for_dark_theme(theme.is_dark),
-        terminal_color_from_rgba(theme.text),
-        terminal_color_from_rgba(theme.bg_surface),
+        terminal_color_from_rgba(theme.terminal_foreground),
+        terminal_color_from_rgba(theme.terminal_background),
     )
 }
 
@@ -2059,14 +2059,14 @@ fn render_bottom_bar<T: 'static>(
                         zoom_in.update(cx, |session, cx| session.zoom_in(cx));
                     },
                 ))
-                .child(render_separator())
+                .child(render_separator(theme))
                 .child(render_shell_picker(
                     key,
                     &snapshot.selected_shell_label,
                     &snapshot.shells,
                     session,
                 ))
-                .child(render_separator())
+                .child(render_separator(theme))
                 .child(icon_button(
                     format!("{id_prefix}-reload"),
                     IconName::Refresh,
@@ -2166,10 +2166,10 @@ fn component_icon(icon: IconName) -> ComponentIcon {
     ComponentIcon::empty().path(icon.path())
 }
 
-fn render_separator() -> AnyElement {
+fn render_separator(theme: Theme) -> AnyElement {
     Separator::vertical()
         .h(rems(1.0))
-        .color(gpui::Hsla::from(rgb(0x363636)))
+        .color(gpui::Hsla::from(theme.terminal_separator))
         .into_any_element()
 }
 

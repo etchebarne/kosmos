@@ -5,6 +5,7 @@ use gpui::{
     App, AppContext, Bounds, Pixels, WindowBounds, WindowDecorations, WindowOptions, px, size,
 };
 use icons::AppAssets;
+use settings::SettingValue;
 
 use crate::app::KosmosApp;
 
@@ -25,10 +26,26 @@ pub fn run() {
 
 fn install_globals(cx: &mut App) {
     gpui_component::init(cx);
-    cx.set_global(theme::Theme::dark());
     cx.set_global(settings::Settings::load());
+    install_theme(cx);
     cx.set_global(ui::delegate::SettingsUiState::new());
     cx.set_global(ui::delegate::TabAnimationState::default());
+}
+
+fn install_theme(cx: &mut App) {
+    theme::install(selected_theme_id(cx), cx);
+    cx.observe_global::<settings::Settings>(|cx| {
+        theme::apply(selected_theme_id(cx), cx);
+    })
+    .detach();
+}
+
+fn selected_theme_id(cx: &App) -> &'static str {
+    cx.global::<settings::Settings>()
+        .get(theme::SETTING_ID)
+        .and_then(SettingValue::as_str)
+        .map(theme::Theme::normalize_id)
+        .unwrap_or(theme::DEFAULT_ID)
 }
 
 fn install_feature_state(cx: &mut App) {

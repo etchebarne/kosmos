@@ -86,7 +86,7 @@ pub const APPEARANCE: Category = Category {
             description: Some("Color theme used across the interface."),
             group: None,
             control: SettingControl::Dropdown {
-                default: "dark",
+                default: theme::DEFAULT_ID,
                 options: theme::REGISTRY,
             },
         },

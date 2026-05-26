@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    Anchor, App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
+    App, AppContext, Context, Entity, FocusHandle, IntoElement, Render, Task, Window, div,
     prelude::*,
 };
 
@@ -11,8 +11,7 @@ use file_tree::{FileTree, FileTreeEvent, FileTreeState};
 use gpui::BorrowAppContext;
 use gpui_component::input as component_input;
 use pane_tree::{PaneNode, PaneTree};
-use settings::{ActiveSettings, SettingValue};
-use theme::{ActiveTheme, REGISTRY as THEME_REGISTRY, SETTING_ID as THEME_SETTING_ID, Theme};
+use theme::ActiveTheme;
 use ui::delegate::{HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
@@ -21,33 +20,6 @@ use workspace::WorkspaceManager;
 use zoom::WireZoomActions;
 
 const TERMINAL_CWD_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
-
-/// Sync the global `Theme` with the user's chosen theme setting.
-fn apply_theme(cx: &mut App) {
-    let raw = cx
-        .settings()
-        .get(THEME_SETTING_ID)
-        .and_then(SettingValue::as_str)
-        .unwrap_or(theme::DEFAULT_ID);
-    let id = THEME_REGISTRY
-        .iter()
-        .find(|c| c.id == raw)
-        .map(|c| c.id)
-        .unwrap_or(theme::DEFAULT_ID);
-    let theme = Theme::by_id(id);
-    let component_theme_mode = if theme.is_dark {
-        gpui_component::ThemeMode::Dark
-    } else {
-        gpui_component::ThemeMode::Light
-    };
-    cx.set_global(theme);
-    gpui_component::Theme::change(component_theme_mode, None, cx);
-    let component_theme = gpui_component::Theme::global_mut(cx);
-    component_theme.notification.placement = Anchor::BottomRight;
-    let mut highlight_theme = (*component_theme.highlight_theme).clone();
-    highlight_theme.style.editor_background = Some(gpui::transparent_black());
-    component_theme.highlight_theme = std::sync::Arc::new(highlight_theme);
-}
 
 pub(crate) struct KosmosApp {
     pub(crate) workspaces: WorkspaceManager,
@@ -433,7 +405,6 @@ impl KosmosApp {
 
 impl Render for KosmosApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        apply_theme(cx);
         let theme = *cx.theme();
         let header_menu_availability = self.header_menu_availability(cx);
         zoom::apply(window, cx);

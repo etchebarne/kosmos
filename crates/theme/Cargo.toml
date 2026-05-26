@@ -4,4 +4,5 @@ version = "0.4.2"
 edition = "2024"
 
 [dependencies]
+gpui-component = { workspace = true }
 gpui = { workspace = true }

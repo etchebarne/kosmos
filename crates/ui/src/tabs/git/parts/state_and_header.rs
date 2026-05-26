@@ -6,7 +6,7 @@ use std::{
 
 use gpui::{
     Anchor, App, ClickEvent, Entity, IntoElement, MouseButton, Pixels, SharedString, Task, div,
-    prelude::*, rems, rgb,
+    prelude::*, rems,
 };
 
 use file_tree::ActiveFileTree;

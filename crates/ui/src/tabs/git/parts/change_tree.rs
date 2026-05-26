@@ -243,11 +243,11 @@ fn change_tree_file_row(
     let icon_color = change
         .as_ref()
         .map(|change| match change.kind {
-            FileChangeKind::Created => rgb(0x22c55e),
+            FileChangeKind::Created => theme.success,
             FileChangeKind::Modified => theme.text_muted,
             FileChangeKind::Deleted => theme.danger,
-            FileChangeKind::Renamed => rgb(0xa855f7),
-            FileChangeKind::Conflicted => rgb(0xa855f7),
+            FileChangeKind::Renamed => theme.accent_secondary,
+            FileChangeKind::Conflicted => theme.accent_secondary,
         })
         .unwrap_or(theme.text_muted);
 
