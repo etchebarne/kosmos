@@ -279,18 +279,37 @@ fn change_tree_file_row(
         ))
         .when_some(change, |this, change| {
             this.suffix(move |_, cx| {
-                stage_checkbox_app(
-                    SharedString::from(format!("git-file-toggle:{}", change.path)),
-                    change.staged,
-                    (change.kind == FileChangeKind::Conflicted)
-                        .then(|| vec![change.path.clone()])
-                        .unwrap_or_default(),
-                    root.clone(),
-                    change.path.clone(),
-                    cx,
-                )
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .child(file_diff_stats(&change, cx))
+                    .child(stage_checkbox_app(
+                        SharedString::from(format!("git-file-toggle:{}", change.path)),
+                        change.staged,
+                        (change.kind == FileChangeKind::Conflicted)
+                            .then(|| vec![change.path.clone()])
+                            .unwrap_or_default(),
+                        root.clone(),
+                        change.path.clone(),
+                        cx,
+                    ))
+                    .into_any_element()
             })
         })
+}
+
+fn file_diff_stats(change: &FileChange, cx: &mut App) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1()
+        .child(diff_stat_text(format!("+{}", change.insertions), theme.success))
+        .child(diff_stat_text(format!("-{}", change.deletions), theme.danger))
+        .into_any_element()
 }
 
 #[derive(Default)]

@@ -357,11 +357,19 @@ fn diff_stats<T: PaneDelegate + SettingsDelegate>(
         .items_center()
         .gap_1()
         .when(summary.insertions > 0, |this| {
-            this.child(metric_tag(format!("+{}", summary.insertions), theme.success))
+            this.child(diff_stat_text(format!("+{}", summary.insertions), theme.success))
         })
         .when(summary.deletions > 0, |this| {
-            this.child(metric_tag(format!("-{}", summary.deletions), theme.danger))
+            this.child(diff_stat_text(format!("-{}", summary.deletions), theme.danger))
         })
+        .into_any_element()
+}
+
+fn diff_stat_text(label: impl Into<SharedString>, color: gpui::Rgba) -> AnyElement {
+    div()
+        .text_xs()
+        .text_color(color)
+        .child(label.into())
         .into_any_element()
 }
 
