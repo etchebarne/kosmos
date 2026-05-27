@@ -133,13 +133,41 @@ impl KosmosApp {
     }
 }
 
-fn scroll_tabs_to_end(tab_scrolls: &TabScrollHandles, pane_id: usize, tab_count: usize) {
+fn scroll_tabs_to_end(tab_scrolls: &TabScrollHandles, pane_id: usize, tab_count: usize) -> bool {
     if tab_count == 0 {
+        return false;
+    }
+    // The scrollable strip is: tab, divider, tab, ..., tab.
+    // `n` tabs + `n - 1` dividers = `2 * n - 1` children.
+    let scroll_index = 2 * tab_count - 2;
+    tab_scrolls.scroll_to_index(pane_id, scroll_index);
+    true
+}
+
+fn anchor_tabs_to_end_during_open_animation(
+    tab_scrolls: &TabScrollHandles,
+    pane_id: usize,
+    tab_count: usize,
+    cx: &mut Context<KosmosApp>,
+) {
+    if !scroll_tabs_to_end(tab_scrolls, pane_id, tab_count) {
         return;
     }
-    // The scrollable strip is: tab, divider, tab, ..., tab, plus-button:
-    // `n` tabs + `n - 1` dividers + 1 plus button = `2 * n` children.
-    tab_scrolls.scroll_to_index(pane_id, 2 * tab_count - 1);
+
+    tab_scrolls.start_end_anchor(pane_id);
+    cx.notify();
+
+    let tab_scrolls = tab_scrolls.clone();
+    cx.spawn(async move |this, cx| {
+        cx.background_executor()
+            .timer(Duration::from_millis(TAB_ANIMATION_DURATION_MS))
+            .await;
+        let _ = this.update(cx, move |_, cx| {
+            tab_scrolls.finish_end_anchor(pane_id);
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 fn terminal_tab_key(

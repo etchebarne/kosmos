@@ -4,7 +4,7 @@ use ui::pane_tree_actions::PaneTreeActionDelegate;
 
 use crate::app::KosmosApp;
 
-use super::scroll_tabs_to_end;
+use super::anchor_tabs_to_end_during_open_animation;
 
 impl PaneTreeActionDelegate for KosmosApp {
     fn with_active_tree(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut PaneTree) -> bool) {
@@ -30,6 +30,6 @@ impl PaneTreeActionDelegate for KosmosApp {
         cx: &mut Context<Self>,
     ) {
         self.start_tab_open_animation(pane_id, tab_id, cx);
-        scroll_tabs_to_end(&self.tab_scrolls, pane_id, new_tab_count);
+        anchor_tabs_to_end_during_open_animation(&self.tab_scrolls, pane_id, new_tab_count, cx);
     }
 }

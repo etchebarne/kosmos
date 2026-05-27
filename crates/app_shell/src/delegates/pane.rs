@@ -8,8 +8,8 @@ use ui::drag::TabDrag;
 use crate::app::KosmosApp;
 
 use super::{
-    file_editor_tab, is_file_editor_tab, scroll_tabs_to_end, tab_count, terminal_tab,
-    terminal_tab_key,
+    anchor_tabs_to_end_during_open_animation, file_editor_tab, is_file_editor_tab,
+    scroll_tabs_to_end, tab_count, terminal_tab, terminal_tab_key,
 };
 
 impl PaneDelegate for KosmosApp {
@@ -48,7 +48,7 @@ impl PaneDelegate for KosmosApp {
             self.start_tab_open_animation(pane_id, tab_id, cx);
         }
         if let Some(count) = new_count {
-            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+            anchor_tabs_to_end_during_open_animation(&self.tab_scrolls, pane_id, count, cx);
         }
     }
 

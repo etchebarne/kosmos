@@ -5,7 +5,6 @@ use gpui::{AnyElement, Context, IntoElement, Window, div, prelude::*, rems};
 use gpui_component::{
     Icon as ComponentIcon, Sizable,
     button::{Button, ButtonVariants},
-    scroll::{Scrollbar, ScrollbarShow},
     separator::Separator,
 };
 
@@ -16,7 +15,7 @@ use theme::ActiveTheme;
 
 use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles};
 use crate::drag::TabDrag;
-use crate::metrics::{PANE_HEADER_HEIGHT, TAB_HEIGHT};
+use crate::metrics::PANE_HEADER_HEIGHT;
 use crate::tabs as tab_views;
 use crate::tabs::file_tree::drag::FileNodeDrag;
 
@@ -61,6 +60,9 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
 
     let pane_id = pane.id();
     let scroll_handle = tab_scrolls.handle(pane_id);
+    if tab_scrolls.is_end_anchored(pane_id) && !tabs.is_empty() {
+        tab_scrolls.scroll_to_index(pane_id, last_tab_scroll_index(tabs.len()));
+    }
     let accept_file_drops = active_tab
         .as_ref()
         .map(|t| t.kind.as_str() != tabs::registry::FILE_TREE.id)
@@ -97,37 +99,18 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
                 .overflow_hidden()
                 .child(
                     div()
-                        .relative()
-                        .flex_1()
-                        .min_w_0()
+                        .id(("tab-scroll", pane_id))
                         .h_full()
-                        .child(
-                            div()
-                                .id(("tab-scroll", pane_id))
-                                .size_full()
-                                .flex()
-                                .items_center()
-                                .gap(rems(0.125))
-                                .overflow_x_scroll()
-                                .track_scroll(&scroll_handle)
-                                .children(tab_elements)
-                                .child(render_add_tab_button(pane_id, cx))
-                                .child(render_tab_end_drop_zone(pane_id, cx)),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .right_0()
-                                .bottom_0()
-                                .child(
-                                    Scrollbar::horizontal(&scroll_handle)
-                                        .id(("tab-scrollbar", pane_id))
-                                        .scrollbar_show(ScrollbarShow::Always),
-                                ),
-                        ),
-                ),
+                        .flex()
+                        .flex_initial()
+                        .min_w_0()
+                        .items_center()
+                        .gap(rems(0.125))
+                        .overflow_x_scroll()
+                        .track_scroll(&scroll_handle)
+                        .children(tab_elements),
+                )
+                .child(render_add_tab_button(pane_id, cx)),
         )
         .child(body)
         .child(
@@ -171,18 +154,17 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
+fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
     let theme = *cx.theme();
-    let group_name = format!("tab-end-drop-{pane_id}");
+    let group_name = format!("add-tab-drop-{pane_id}");
     let accent = theme.accent;
 
     div()
-        .id(("tab-end-drop", pane_id))
+        .id(("add-tab-drop", pane_id))
         .group(group_name.clone())
         .relative()
-        .flex_1()
-        .min_w(rems(1.25))
-        .h(TAB_HEIGHT)
+        .flex_none()
+        .size(rems(2.0))
         .can_drop(|drag, _, _| {
             if drag.downcast_ref::<TabDrag>().is_some() {
                 return true;
@@ -205,11 +187,9 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>
             this.open_file_in_pane(path, pane_id, cx);
         }))
         .child(
-            // Indicator sits in the gap between the last tab and the add button:
-            // -(gap + add-button width + gap) = -(2 + 32 + 2) = -36.
             div()
                 .absolute()
-                .left(rems(-2.25))
+                .left(rems(-0.125))
                 .top(rems(0.25))
                 .bottom(rems(0.25))
                 .w(rems(0.125))
@@ -218,19 +198,23 @@ fn render_tab_end_drop_zone<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>
                 .group_drag_over::<TabDrag>(group_name.clone(), move |s| s.bg(accent))
                 .group_drag_over::<FileNodeDrag>(group_name, move |s| s.bg(accent)),
         )
+        .child(
+            Button::new(("add-tab", pane_id))
+                .ghost()
+                .tab_stop(false)
+                .size(rems(2.0))
+                .child(ComponentIcon::empty().path(IconName::Add.path()).small())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.add_tab(pane_id, tabs::registry::BLANK.id, cx);
+                })),
+        )
         .into_any_element()
 }
 
-fn render_add_tab_button<T: PaneDelegate>(pane_id: usize, cx: &mut Context<T>) -> AnyElement {
-    Button::new(("add-tab", pane_id))
-        .ghost()
-        .tab_stop(false)
-        .size(rems(2.0))
-        .child(ComponentIcon::empty().path(IconName::Add.path()).small())
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.add_tab(pane_id, tabs::registry::BLANK.id, cx);
-        }))
-        .into_any_element()
+fn last_tab_scroll_index(tab_count: usize) -> usize {
+    // The scrollable strip is: tab, divider, tab, ..., tab.
+    // `n` tabs + `n - 1` dividers = `2 * n - 1` children.
+    2 * tab_count - 2
 }
 
 fn drop_zone_group_name(pane_id: usize, drop_zone: DropZone) -> String {

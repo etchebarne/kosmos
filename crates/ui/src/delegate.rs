@@ -192,7 +192,10 @@ impl ActiveSettingsUi for App {
 }
 
 #[derive(Clone, Default)]
-pub struct TabScrollHandles(Rc<RefCell<HashMap<usize, ScrollHandle>>>);
+pub struct TabScrollHandles {
+    handles: Rc<RefCell<HashMap<usize, ScrollHandle>>>,
+    end_anchor_counts: Rc<RefCell<HashMap<usize, usize>>>,
+}
 
 impl TabScrollHandles {
     pub fn new() -> Self {
@@ -200,13 +203,40 @@ impl TabScrollHandles {
     }
 
     pub fn handle(&self, pane_id: usize) -> ScrollHandle {
-        self.0.borrow_mut().entry(pane_id).or_default().clone()
+        self.handles
+            .borrow_mut()
+            .entry(pane_id)
+            .or_default()
+            .clone()
     }
 
     pub fn scroll_to_index(&self, pane_id: usize, index: usize) {
-        if let Some(handle) = self.0.borrow().get(&pane_id) {
+        if let Some(handle) = self.handles.borrow().get(&pane_id) {
             handle.scroll_to_item(index);
         }
+    }
+
+    pub fn start_end_anchor(&self, pane_id: usize) {
+        *self
+            .end_anchor_counts
+            .borrow_mut()
+            .entry(pane_id)
+            .or_default() += 1;
+    }
+
+    pub fn finish_end_anchor(&self, pane_id: usize) {
+        let mut anchors = self.end_anchor_counts.borrow_mut();
+        let Some(count) = anchors.get_mut(&pane_id) else {
+            return;
+        };
+        *count = (*count).saturating_sub(1);
+        if *count == 0 {
+            anchors.remove(&pane_id);
+        }
+    }
+
+    pub fn is_end_anchored(&self, pane_id: usize) -> bool {
+        self.end_anchor_counts.borrow().contains_key(&pane_id)
     }
 }
 
