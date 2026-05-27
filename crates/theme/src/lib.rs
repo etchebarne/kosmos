@@ -4,6 +4,7 @@ use gpui::{Anchor, App, Global, Hsla, Rgba, rgb};
 
 pub const SETTING_ID: &str = "appearance.theme";
 pub const DARK_ID: &str = "dark";
+pub const NEUTRAL_ID: &str = "neutral";
 pub const LIGHT_ID: &str = "light";
 pub const DEFAULT_ID: &str = DARK_ID;
 
@@ -47,17 +48,17 @@ impl Theme {
         Self {
             id: DARK_ID,
             is_dark: true,
-            bg_root: rgb(0x0d0d0d),
-            bg_surface: rgb(0x161616),
-            bg_elevated: rgb(0x1c1c1c),
-            bg_hover: rgb(0x252525),
-            bg_selected: rgb(0x2e2e2e),
-            bg_hover_strong: rgb(0x383838),
-            bg_close_hover: rgb(0x404040),
+            bg_root: rgb(0x000000),
+            bg_surface: rgb(0x000000),
+            bg_elevated: rgb(0x000000),
+            bg_hover: rgb(0x171717),
+            bg_selected: rgb(0x202020),
+            bg_hover_strong: rgb(0x282828),
+            bg_close_hover: rgb(0x303030),
 
-            border: rgb(0x262626),
-            border_subtle: rgb(0x1f1f1f),
-            border_strong: rgb(0x363636),
+            border: rgb(0x1a1a1a),
+            border_subtle: rgb(0x141414),
+            border_strong: rgb(0x292929),
 
             text: rgb(0xe5e5e5),
             text_muted: rgb(0xb8b8b8),
@@ -73,8 +74,8 @@ impl Theme {
 
             dirty: rgb(0xffffff),
             terminal_foreground: rgb(0xe5e5e5),
-            terminal_background: rgb(0x161616),
-            terminal_separator: rgb(0x363636),
+            terminal_background: rgb(0x000000),
+            terminal_separator: rgb(0x242424),
         }
     }
 
@@ -113,9 +114,45 @@ impl Theme {
         }
     }
 
+    pub fn neutral() -> Self {
+        Self {
+            id: NEUTRAL_ID,
+            is_dark: true,
+            bg_root: rgb(0x262626),
+            bg_surface: rgb(0x262626),
+            bg_elevated: rgb(0x262626),
+            bg_hover: rgb(0x303030),
+            bg_selected: rgb(0x383838),
+            bg_hover_strong: rgb(0x424242),
+            bg_close_hover: rgb(0x4a4a4a),
+
+            border: rgb(0x3a3a3a),
+            border_subtle: rgb(0x303030),
+            border_strong: rgb(0x4a4a4a),
+
+            text: rgb(0xe5e5e5),
+            text_muted: rgb(0xb8b8b8),
+            text_subtle: rgb(0x8f8f8f),
+            text_emphasis: rgb(0xffffff),
+            text_header: rgb(0xd4d4d4),
+
+            accent: rgb(0x3b82f6),
+            accent_secondary: rgb(0xa855f7),
+            danger: rgb(0xdc2626),
+            success: rgb(0x22c55e),
+            warning: rgb(0xf59e0b),
+
+            dirty: rgb(0xffffff),
+            terminal_foreground: rgb(0xe5e5e5),
+            terminal_background: rgb(0x262626),
+            terminal_separator: rgb(0x404040),
+        }
+    }
+
     pub fn by_id(id: &str) -> Self {
         match Self::normalize_id(id) {
             LIGHT_ID => Self::light(),
+            NEUTRAL_ID => Self::neutral(),
             _ => Self::dark(),
         }
     }
@@ -123,6 +160,7 @@ impl Theme {
     pub fn normalize_id(id: &str) -> &'static str {
         match id {
             LIGHT_ID => LIGHT_ID,
+            NEUTRAL_ID => NEUTRAL_ID,
             DARK_ID => DARK_ID,
             _ => DEFAULT_ID,
         }
@@ -187,7 +225,7 @@ fn sync_component_theme(theme: Theme, cx: &mut App) {
     component_theme.colors.accent = hsla(theme.bg_hover);
     component_theme.colors.accent_foreground = hsla(theme.text_emphasis);
     component_theme.colors.selection =
-        hsla(theme.accent).opacity(if theme.is_dark { 0.35 } else { 0.25 });
+        hsla(theme.accent).opacity(if theme.is_dark { 0.28 } else { 0.25 });
 
     component_theme.colors.danger = hsla(theme.danger);
     component_theme.colors.danger_foreground = hsla(rgb(0xffffff));
@@ -211,8 +249,9 @@ fn sync_component_theme(theme: Theme, cx: &mut App) {
     component_theme.colors.list_even = hsla(theme.bg_surface);
     component_theme.colors.list_hover = hsla(theme.bg_hover);
     component_theme.colors.list_active =
-        hsla(theme.accent).opacity(if theme.is_dark { 0.22 } else { 0.16 });
-    component_theme.colors.list_active_border = hsla(theme.accent).opacity(0.55);
+        hsla(theme.accent).opacity(if theme.is_dark { 0.18 } else { 0.16 });
+    component_theme.colors.list_active_border =
+        hsla(theme.accent).opacity(if theme.is_dark { 0.42 } else { 0.55 });
     component_theme.colors.table = hsla(theme.bg_surface);
     component_theme.colors.table_head = hsla(theme.bg_elevated);
     component_theme.colors.table_head_foreground = hsla(theme.text_subtle);
@@ -281,10 +320,14 @@ pub struct DropdownOption {
 pub const REGISTRY: &[DropdownOption] = &[
     DropdownOption {
         id: DARK_ID,
-        label: "Dark",
+        label: "Kosmos Dark",
+    },
+    DropdownOption {
+        id: NEUTRAL_ID,
+        label: "Kosmos Neutral",
     },
     DropdownOption {
         id: LIGHT_ID,
-        label: "Light",
+        label: "Kosmos Light",
     },
 ];
