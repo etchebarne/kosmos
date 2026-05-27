@@ -263,6 +263,50 @@ pub(super) static ENTRIES: &[RegistryEntry] = &[
             env: &[],
         },
     },
+    RegistryEntry {
+        id: "zls",
+        kinds: &[ToolKind::Lsp],
+        languages: &["zig"],
+        install: InstallSource::GithubRelease {
+            repo: "zigtools/zls",
+            assets: &[
+                GithubAsset {
+                    target: Target::LinuxX64Gnu,
+                    file: "zls-x86_64-linux.tar.xz",
+                    bin: "zls",
+                },
+                GithubAsset {
+                    target: Target::LinuxArm64Gnu,
+                    file: "zls-aarch64-linux.tar.xz",
+                    bin: "zls",
+                },
+                GithubAsset {
+                    target: Target::DarwinX64,
+                    file: "zls-x86_64-macos.tar.xz",
+                    bin: "zls",
+                },
+                GithubAsset {
+                    target: Target::DarwinArm64,
+                    file: "zls-aarch64-macos.tar.xz",
+                    bin: "zls",
+                },
+                GithubAsset {
+                    target: Target::WinX64,
+                    file: "zls-x86_64-windows.zip",
+                    bin: "zls.exe",
+                },
+                GithubAsset {
+                    target: Target::WinArm64,
+                    file: "zls-aarch64-windows.zip",
+                    bin: "zls.exe",
+                },
+            ],
+        },
+        launch: LaunchSpec {
+            args: &[],
+            env: &[],
+        },
+    },
     // ─── Formatters (npm) ─────────────────────────────────────────────────
     RegistryEntry {
         id: "prettier",

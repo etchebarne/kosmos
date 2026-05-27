@@ -350,7 +350,7 @@ pub fn from_extension(ext: &str) -> Option<LanguageId> {
         "go" => "go",
         "c" | "h" => "c",
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
-        "zig" => "zig",
+        "zig" | "zon" => "zig",
         "d" => "d",
         "v" => "v",
         "nim" => "nim",

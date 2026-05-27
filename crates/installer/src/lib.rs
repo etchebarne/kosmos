@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -264,6 +264,23 @@ fn ensure_github_release(
                 })?;
         let mut out = fs::File::create(&bin_path)?;
         io::copy(&mut entry_file, &mut out)?;
+    } else if asset.file.ends_with(".tar.xz") {
+        let tmp_path = tempfile_path(dir, asset.file);
+        {
+            let mut tmp = tempfile_at(&tmp_path)?;
+            io::copy(&mut body, &mut tmp)?;
+            tmp.flush()?;
+        }
+
+        let mut cmd = Command::new("tar");
+        cmd.arg("-xJf")
+            .arg(&tmp_path)
+            .arg("-C")
+            .arg(dir)
+            .arg(asset.bin);
+        let result = run(&mut cmd, "tar");
+        let _ = fs::remove_file(&tmp_path);
+        result?;
     } else {
         let mut out = fs::File::create(&bin_path)?;
         io::copy(&mut body, &mut out)?;
@@ -286,10 +303,15 @@ fn set_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-use std::io::Seek;
-
 fn tempfile_in(dir: &Path, file_name: &str) -> io::Result<fs::File> {
-    let path = dir.join(format!(".download-{file_name}"));
+    tempfile_at(&tempfile_path(dir, file_name))
+}
+
+fn tempfile_path(dir: &Path, file_name: &str) -> PathBuf {
+    dir.join(format!(".download-{file_name}"))
+}
+
+fn tempfile_at(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
         .read(true)
         .write(true)
