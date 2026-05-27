@@ -479,7 +479,7 @@ fn more_button<T: PaneDelegate + SettingsDelegate>(
         .tab_stop(false)
         .size(rems(1.375))
         .icon(component_icon(IconName::Ellipsis))
-        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
+        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, window, _| {
             let menu_width = rems(11.0).to_pixels(window.rem_size());
             let menu = items.iter().fold(
                 menu.min_w(menu_width),
