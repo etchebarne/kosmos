@@ -223,22 +223,28 @@ fn change_tree_dir_row(
         .h(rems(CHANGE_ROW_HEIGHT_REM))
         .px(rems(CHANGE_ROW_PADDING_REM))
         .py_0()
-        .child(change_row_label(
-            entry.depth(),
-            icon,
-            entry.item().label.clone(),
-            cx,
-        ))
-        .suffix(move |_, cx| {
-            stage_checkbox_app(
-                SharedString::from(format!("git-folder-toggle:{path}")),
-                stats.staged == stats.total,
-                stats.conflict_paths.clone(),
-                root.clone(),
-                path.clone(),
-                cx,
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(change_row_label(
+                    entry.depth(),
+                    icon,
+                    entry.item().label.clone(),
+                    cx,
+                ))
+                .child(stage_checkbox_app(
+                    SharedString::from(format!("git-folder-toggle:{path}")),
+                    stats.staged == stats.total,
+                    stats.conflict_paths.clone(),
+                    root.clone(),
+                    path.clone(),
+                    cx,
+                )),
             )
-        })
         .on_click(move |_, _, cx| toggle_change_dir_app(&toggle_path, cx))
 }
 
@@ -270,34 +276,41 @@ fn change_tree_file_row(
         .h(rems(CHANGE_ROW_HEIGHT_REM))
         .px(rems(CHANGE_ROW_PADDING_REM))
         .py_0()
-        .child(change_row_label_with_color(
-            entry.depth(),
-            icon_name,
-            icon_color.into(),
-            entry.item().label.clone(),
-            cx,
-        ))
-        .when_some(change, |this, change| {
-            this.suffix(move |_, cx| {
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_1()
-                    .child(file_diff_stats(&change, cx))
-                    .child(stage_checkbox_app(
-                        SharedString::from(format!("git-file-toggle:{}", change.path)),
-                        change.staged,
-                        (change.kind == FileChangeKind::Conflicted)
-                            .then(|| vec![change.path.clone()])
-                            .unwrap_or_default(),
-                        root.clone(),
-                        change.path.clone(),
-                        cx,
-                    ))
-                    .into_any_element()
-            })
-        })
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(change_row_label_with_color(
+                    entry.depth(),
+                    icon_name,
+                    icon_color.into(),
+                    entry.item().label.clone(),
+                    cx,
+                ))
+                .when_some(change, |this, change| {
+                    this.child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_1()
+                            .child(file_diff_stats(&change, cx))
+                            .child(stage_checkbox_app(
+                                SharedString::from(format!("git-file-toggle:{}", change.path)),
+                                change.staged,
+                                (change.kind == FileChangeKind::Conflicted)
+                                    .then(|| vec![change.path.clone()])
+                                    .unwrap_or_default(),
+                                root.clone(),
+                                change.path.clone(),
+                                cx,
+                            )),
+                    )
+                }),
+        )
 }
 
 fn file_diff_stats(change: &FileChange, cx: &mut App) -> AnyElement {
