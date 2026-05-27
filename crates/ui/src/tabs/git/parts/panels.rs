@@ -130,7 +130,7 @@ fn branch_button<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     Button::new("git-current-branch")
-        .outline()
+        .secondary()
         .min_w_0()
         .max_w(rems(12.0))
         .on_click(cx.listener(move |_, _, _, cx| {
@@ -168,7 +168,7 @@ fn sync_action_button<T: PaneDelegate + SettingsDelegate>(
     let tooltip = sync_status_tooltip(branch_sync);
 
     Button::new(id)
-        .outline()
+        .secondary()
         .when(action.is_danger(), |this| this.danger())
         .icon(component_icon(action.icon()))
         .loading_icon(component_icon(IconName::Refresh))
@@ -255,7 +255,7 @@ fn sync_more_button<T: PaneDelegate + SettingsDelegate>(
         .collect::<Vec<_>>();
 
     Button::new("git-sync-more")
-        .outline()
+        .secondary()
         .tab_stop(false)
         .disabled(disabled)
         .icon(component_icon(IconName::Ellipsis))
@@ -338,7 +338,7 @@ fn init_repository_panel<T: PaneDelegate + SettingsDelegate>(
         .justify_center()
         .child(
             Button::new("git-init-repository")
-                .outline()
+                .secondary()
                 .label("Initialize Repository")
                 .on_click(cx.listener(move |_, _, _, cx| {
                     run_git_action(root.clone(), kosmos_git::init, cx);

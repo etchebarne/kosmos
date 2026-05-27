@@ -1,5 +1,8 @@
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, rems};
-use gpui_component::{Icon as ComponentIcon, button::Button};
+use gpui_component::{
+    Icon as ComponentIcon,
+    button::{Button, ButtonVariants},
+};
 
 use icons::IconName;
 use theme::ActiveTheme;
@@ -28,7 +31,7 @@ pub fn render<T: WorkspaceDelegate>(cx: &mut Context<T>) -> AnyElement {
         )
         .child(
             Button::new("landing-open-workspace")
-                .outline()
+                .secondary()
                 .icon(ComponentIcon::empty().path(IconName::Add.path()))
                 .label("Open Workspace")
                 .mt_2()

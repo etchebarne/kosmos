@@ -5,7 +5,7 @@ use gpui::{
     Subscription, Window, div, prelude::*, rems,
 };
 use gpui_component::{
-    button::Button,
+    button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     menu::{DropdownMenu, PopupMenuItem},
     popover::Popover,
@@ -69,7 +69,7 @@ pub fn render<T: SettingsDelegate>(
                 .unwrap_or(current.as_ref());
 
             Button::new(make_id("setting-dropdown", setting_id))
-                .outline()
+                .secondary()
                 .label(label)
                 .dropdown_caret(true)
                 .w(rems(SETTING_DROPDOWN_WIDTH_REM))
@@ -163,7 +163,7 @@ fn render_multi_select<T: SettingsDelegate>(
         this.toggle_settings_dropdown(setting_id, cx);
     });
     let trigger = Button::new(make_id("setting-multi-select", setting_id))
-        .outline()
+        .secondary()
         .w(rems(SETTING_MULTI_SELECT_WIDTH_REM))
         .label(summary)
         .dropdown_caret(true);

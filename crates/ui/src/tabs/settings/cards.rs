@@ -160,7 +160,7 @@ fn install_action<T: SettingsDelegate>(
 ) -> AnyElement {
     if installing {
         return Button::new(SharedString::from(format!("install-{tool_id}")))
-            .outline()
+            .secondary()
             .small()
             .disabled(true)
             .label("Installing…")
@@ -171,7 +171,7 @@ fn install_action<T: SettingsDelegate>(
     let label = if installed { "Remove" } else { "Install" };
 
     Button::new(SharedString::from(format!("install-{tool_id}")))
-        .outline()
+        .secondary()
         .small()
         .when(installed, |this| this.danger())
         .label(label)

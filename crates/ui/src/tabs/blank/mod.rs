@@ -1,5 +1,8 @@
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*, rems};
-use gpui_component::{Icon as ComponentIcon, button::Button};
+use gpui_component::{
+    Icon as ComponentIcon,
+    button::{Button, ButtonVariants},
+};
 
 use tabs::{TabKind, registry};
 use theme::ActiveTheme;
@@ -51,7 +54,7 @@ fn render_button<T: PaneDelegate>(
 ) -> AnyElement {
     let kind_id = kind.id;
     Button::new(SharedString::new_static(kind_id))
-        .outline()
+        .secondary()
         .icon(ComponentIcon::empty().path(super::icon_for_kind(kind.id).path()))
         .label(kind.name)
         .on_click(cx.listener(move |this, _, _, cx| {

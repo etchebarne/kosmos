@@ -107,7 +107,7 @@ fn action_button(
 ) -> AnyElement {
     let _ = cx;
     Button::new(id)
-        .outline()
+        .secondary()
         .when(danger, |this| this.danger())
         .label(label)
         .on_click(listener)
