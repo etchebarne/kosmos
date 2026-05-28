@@ -297,6 +297,7 @@ impl ComponentCompletionMenu {
 
             let query = completion_filter_query(&raw_query);
             let replace_range = offset.saturating_sub(query.len())..offset;
+            menu.replace_range = replace_range.clone();
             let position = Rope::from(content.as_str()).offset_to_position(offset);
             let request = {
                 let buffer = menu.buffer.read(cx);
@@ -388,12 +389,16 @@ impl ComponentCompletionMenu {
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {
+        self.clear_without_notify();
+        cx.notify();
+    }
+
+    fn clear_without_notify(&mut self) {
         self.request_id += 1;
         self.items.clear();
         self.width = None;
         self.selected = 0;
         self.first_visible = 0;
-        cx.notify();
     }
 
     fn is_open(&self) -> bool {
@@ -503,6 +508,11 @@ impl Render for ComponentCompletionMenu {
         let input = self.input.read(cx);
         let content = input.value().to_string();
         let cursor = input.cursor();
+        if cursor != self.replace_range.end {
+            self.clear_without_notify();
+            return div().into_any_element();
+        }
+
         let raw_query = completion_raw_query_for_offset(&content, cursor);
         let query = completion_filter_query(&raw_query);
         let visual_query = if query.is_empty() { &raw_query } else { &query };
