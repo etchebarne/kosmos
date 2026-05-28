@@ -53,8 +53,21 @@ impl HoverPopover {
         })
     }
 
+    pub(crate) fn set_hover(
+        &mut self,
+        symbol_range: Range<usize>,
+        diagnostic_range: Option<Range<usize>>,
+        hover: &lsp_types::Hover,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.symbol_range = symbol_range;
+        self.diagnostic_range = diagnostic_range;
+        self.hover = Some(Rc::new(hover.clone()));
+        cx.notify();
+    }
+
     pub(crate) fn is_same(&self, offset: usize) -> bool {
-        self.symbol_range.contains(&offset)
+        range_contains_offset(&self.symbol_range, offset)
     }
 
     pub(crate) fn has_hover(&self) -> bool {
@@ -83,6 +96,10 @@ impl HoverPopover {
 
         diagnostics
     }
+}
+
+fn range_contains_offset(range: &Range<usize>, offset: usize) -> bool {
+    range.contains(&offset) || range.end == offset
 }
 
 impl Render for HoverPopover {

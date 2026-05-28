@@ -51,7 +51,7 @@ impl InputState {
             .and_then(|set| set.for_offset(offset))
             .map(|diagnostic| diagnostic.range.clone());
         let editor = cx.entity();
-        let should_delay = self.hover_popover.is_none();
+        let should_delay = self.hover_popover.is_none() && active_diagnostic_range.is_none();
         self.lsp._hover_task = cx.spawn_in(window, async move |_, cx| {
             if should_delay {
                 cx.background_executor()
@@ -61,36 +61,67 @@ impl InputState {
 
             let result = task.await?;
 
-            _ = editor.update(cx, |editor, cx| match result {
-                Some(hover) => {
-                    if let Some(range) = hover.range {
-                        let start = editor.text.position_to_offset(&range.start);
-                        let end = editor.text.position_to_offset(&range.end);
-                        symbol_range = start..end;
+            _ = editor.update(cx, |editor, cx| {
+                match result {
+                    Some(hover) => {
+                        if let Some(range) = hover.range {
+                            let start = editor.text.position_to_offset(&range.start);
+                            let end = editor.text.position_to_offset(&range.end);
+                            symbol_range = start..end;
+                        }
+                        let existing_hover_popover = editor
+                            .hover_popover
+                            .as_ref()
+                            .filter(|popover| popover.read(cx).is_same(offset))
+                            .cloned();
+
+                        if let Some(hover_popover) = existing_hover_popover {
+                            hover_popover.update(cx, |popover, cx| {
+                                popover.set_hover(symbol_range, active_diagnostic_range, &hover, cx)
+                            });
+                        } else {
+                            let hover_popover = HoverPopover::new(
+                                cx.entity(),
+                                symbol_range,
+                                active_diagnostic_range,
+                                &hover,
+                                cx,
+                            );
+                            editor.hover_popover = Some(hover_popover);
+                        }
                     }
-                    let hover_popover = HoverPopover::new(
-                        cx.entity(),
-                        symbol_range,
-                        active_diagnostic_range,
-                        &hover,
-                        cx,
-                    );
-                    editor.hover_popover = Some(hover_popover);
+                    None => {
+                        let diagnostic_range = editor
+                            .diagnostics()
+                            .and_then(|set| set.for_offset(offset))
+                            .map(|diagnostic| diagnostic.range.clone());
+
+                        if let Some(range) = diagnostic_range {
+                            let current_hover_matches = editor
+                                .hover_popover
+                                .as_ref()
+                                .map(|popover| popover.read(cx).is_same(offset))
+                                .unwrap_or(false);
+                            if !current_hover_matches {
+                                let symbol_range = editor
+                                    .text
+                                    .word_range(offset)
+                                    .filter(|range| !range.is_empty())
+                                    .unwrap_or_else(|| range.clone());
+                                editor.hover_popover = Some(HoverPopover::new_diagnostics(
+                                    cx.entity(),
+                                    symbol_range,
+                                    range,
+                                    cx,
+                                ));
+                            }
+                        } else {
+                            editor.hover_popover = None;
+                        }
+                    }
                 }
-                None => {
-                    let diagnostic_range = editor
-                        .diagnostics()
-                        .and_then(|set| set.for_offset(offset))
-                        .map(|diagnostic| diagnostic.range.clone());
-                    editor.hover_popover = diagnostic_range.map(|range| {
-                        let symbol_range = editor
-                            .text
-                            .word_range(offset)
-                            .filter(|range| !range.is_empty())
-                            .unwrap_or_else(|| range.clone());
-                        HoverPopover::new_diagnostics(cx.entity(), symbol_range, range, cx)
-                    });
-                }
+
+                cx.notify();
             });
 
             Ok(())
