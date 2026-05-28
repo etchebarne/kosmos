@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable,
-    Global, IntoElement, KeyBinding, MouseButton, Pixels, Render, SharedString, Task, Window, div,
-    prelude::*, px, rems,
+    Global, IntoElement, KeyBinding, KeyDownEvent, MouseButton, Pixels, Render, SharedString, Task,
+    Window, div, prelude::*, px, rems,
 };
 use gpui_component::input::{
     HoverProvider, Input, InputEvent, InputState, Rope, RopeExt, TabSize,
@@ -23,7 +23,8 @@ const COMPONENT_INPUT_KEY_CONTEXT: &str = "Input";
 const FONT_FAMILY: &str = "DejaVu Sans Mono";
 const FONT_SIZE_REM: f32 = 0.875;
 const TAB_SIZE_COLUMNS: usize = 4;
-const COMPLETION_MENU_MAX_ITEMS: usize = 12;
+const COMPLETION_MENU_MAX_ITEMS: usize = 50;
+const COMPLETION_MENU_VISIBLE_ITEMS: usize = 11;
 const COMPLETION_MENU_MIN_WIDTH: Pixels = px(180.0);
 const COMPLETION_MENU_MAX_WIDTH: Pixels = px(520.0);
 const COMPLETION_MENU_CHAR_WIDTH: f32 = 7.0;
@@ -64,6 +65,7 @@ struct ComponentCompletionMenu {
     replace_range: Range<usize>,
     width: Option<Pixels>,
     selected: usize,
+    first_visible: usize,
     request_id: u64,
     suppress_next_request: bool,
 }
@@ -268,6 +270,7 @@ impl ComponentCompletionMenu {
             replace_range: 0..0,
             width: None,
             selected: 0,
+            first_visible: 0,
             request_id: 0,
             suppress_next_request: false,
         }
@@ -380,6 +383,7 @@ impl ComponentCompletionMenu {
             );
         }
         self.selected = 0;
+        self.first_visible = 0;
         cx.notify();
     }
 
@@ -388,6 +392,7 @@ impl ComponentCompletionMenu {
         self.items.clear();
         self.width = None;
         self.selected = 0;
+        self.first_visible = 0;
         cx.notify();
     }
 
@@ -400,6 +405,7 @@ impl ComponentCompletionMenu {
             return false;
         }
         self.selected = self.selected.saturating_sub(1);
+        self.keep_selected_visible();
         cx.notify();
         true
     }
@@ -409,8 +415,36 @@ impl ComponentCompletionMenu {
             return false;
         }
         self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
+        self.keep_selected_visible();
         cx.notify();
         true
+    }
+
+    fn scroll(&mut self, lines: i32, cx: &mut Context<Self>) -> bool {
+        if !self.is_open() || self.items.len() <= COMPLETION_MENU_VISIBLE_ITEMS || lines == 0 {
+            return false;
+        }
+
+        let max_first = self.items.len().saturating_sub(COMPLETION_MENU_VISIBLE_ITEMS);
+        self.first_visible = (self.first_visible as i32 + lines)
+            .clamp(0, max_first as i32) as usize;
+        self.selected = self
+            .selected
+            .clamp(self.first_visible, self.last_visible().saturating_sub(1));
+        cx.notify();
+        true
+    }
+
+    fn keep_selected_visible(&mut self) {
+        if self.selected < self.first_visible {
+            self.first_visible = self.selected;
+        } else if self.selected >= self.last_visible() {
+            self.first_visible = self.selected + 1 - COMPLETION_MENU_VISIBLE_ITEMS;
+        }
+    }
+
+    fn last_visible(&self) -> usize {
+        (self.first_visible + COMPLETION_MENU_VISIBLE_ITEMS).min(self.items.len())
     }
 
     fn hide(&mut self, cx: &mut Context<Self>) -> bool {
@@ -441,6 +475,7 @@ impl ComponentCompletionMenu {
             return false;
         }
         self.selected = index;
+        self.keep_selected_visible();
         self.accept_selected(window, cx)
     }
 
@@ -492,6 +527,9 @@ impl Render for ComponentCompletionMenu {
             .unwrap_or_else(|| completion_menu_desired_width(&self.items));
         let width = completion_menu_width(desired_width, window, left);
 
+        let first_visible = self.first_visible;
+        let last_visible = self.last_visible();
+
         div()
             .absolute()
             .left(left)
@@ -508,7 +546,21 @@ impl Render for ComponentCompletionMenu {
             .p(rems(0.25))
             .text_xs()
             .font_family(FONT_FAMILY)
-            .children(self.items.iter().enumerate().map(|(index, item)| {
+            .on_scroll_wheel(cx.listener(|menu, event: &gpui::ScrollWheelEvent, _, cx| {
+                let delta = event.delta.pixel_delta(px(16.0)).y;
+                let lines = if delta < Pixels::ZERO {
+                    1
+                } else if delta > Pixels::ZERO {
+                    -1
+                } else {
+                    0
+                };
+                if menu.scroll(lines, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .children(self.items[first_visible..last_visible].iter().enumerate().map(|(visible_index, item)| {
+                let index = first_visible + visible_index;
                 let selected = index == self.selected;
                 div()
                     .id(index)
@@ -1010,12 +1062,12 @@ fn cut_current_component_line<T: 'static>(
     input: &Entity<InputState>,
     window: &mut Window,
     cx: &mut Context<T>,
-) {
+) -> bool {
     let Some((content, range)) = current_component_line_range(input, cx) else {
-        return;
+        return false;
     };
     if range.is_empty() {
-        return;
+        return false;
     }
 
     cx.write_to_clipboard(ClipboardItem::new_string(content[range.clone()].to_string()));
@@ -1023,7 +1075,53 @@ fn cut_current_component_line<T: 'static>(
     input.update(cx, |input, cx| {
         EntityInputHandler::replace_text_in_range(input, Some(utf16_range), "", window, cx);
     });
-    cx.stop_propagation();
+    true
+}
+
+fn insert_component_auto_pair(
+    input: &Entity<InputState>,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if event.keystroke.modifiers.control
+        || event.keystroke.modifiers.alt
+        || event.keystroke.modifiers.platform
+    {
+        return false;
+    }
+
+    let Some((open, close)) = component_auto_pair(event.keystroke.key.as_str()) else {
+        return false;
+    };
+
+    input.update(cx, |input, cx| {
+        let content = input.value().to_string();
+        let selected_range = input.selected_range();
+        if !selected_range.is_empty() {
+            return false;
+        }
+
+        let utf16_range = component_range_to_utf16(&content, &selected_range);
+        let replacement = format!("{open}{close}");
+        EntityInputHandler::replace_text_in_range(input, Some(utf16_range), &replacement, window, cx);
+
+        let position = input.text().offset_to_position(selected_range.start + open.len_utf8());
+        input.set_cursor_position(position, window, cx);
+        true
+    })
+}
+
+fn component_auto_pair(key: &str) -> Option<(char, char)> {
+    match key {
+        "(" => Some(('(', ')')),
+        "[" => Some(('[', ']')),
+        "{" => Some(('{', '}')),
+        "\"" => Some(('\"', '\"')),
+        "'" => Some(('\'', '\'')),
+        "`" => Some(('`', '`')),
+        _ => None,
+    }
 }
 
 fn current_component_line_range<T: 'static>(

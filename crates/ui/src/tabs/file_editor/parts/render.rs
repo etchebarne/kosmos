@@ -21,6 +21,7 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
     let input_focus = input.focus_handle(cx);
     let input_for_copy = input.clone();
     let input_for_cut = input.clone();
+    let input_for_auto_pair = input.clone();
 
     div()
         .size_full()
@@ -99,11 +100,20 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                 .on_action(cx.listener(move |_, _: &gpui_component::input::Copy, _, cx| {
                     copy_current_component_line(&input_for_copy, cx);
                 }))
-                .on_action(cx.listener(
+                .capture_action(cx.listener(
                     move |_, _: &gpui_component::input::Cut, window, cx| {
-                        cut_current_component_line(&input_for_cut, window, cx);
+                        if cut_current_component_line(&input_for_cut, window, cx) {
+                            cx.stop_propagation();
+                        } else {
+                            cx.propagate();
+                        }
                     },
                 ))
+                .capture_key_down(move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                    if insert_component_auto_pair(&input_for_auto_pair, event, window, cx) {
+                        cx.stop_propagation();
+                    }
+                })
                 .child(
                     div()
                         .relative()

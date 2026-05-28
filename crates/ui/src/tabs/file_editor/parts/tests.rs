@@ -8,6 +8,23 @@ mod tests {
     }
 
     #[test]
+    fn component_line_range_covers_current_line_for_cut() {
+        assert_eq!(component_line_range_for_offset("one\ntwo\nthree", 5), 4..8);
+        assert_eq!(component_line_range_for_offset("one\ntwo\nthree", 9), 8..13);
+    }
+
+    #[test]
+    fn component_auto_pair_maps_opening_delimiters() {
+        assert_eq!(component_auto_pair("("), Some(('(', ')')));
+        assert_eq!(component_auto_pair("["), Some(('[', ']')));
+        assert_eq!(component_auto_pair("{"), Some(('{', '}')));
+        assert_eq!(component_auto_pair("\""), Some(('\"', '\"')));
+        assert_eq!(component_auto_pair("'"), Some(('\'', '\'')));
+        assert_eq!(component_auto_pair("`"), Some(('`', '`')));
+        assert_eq!(component_auto_pair(")"), None);
+    }
+
+    #[test]
     fn component_utf16_range_counts_wide_characters() {
         assert_eq!(component_range_to_utf16("a💝b", &(0..5)), 0..3);
     }
