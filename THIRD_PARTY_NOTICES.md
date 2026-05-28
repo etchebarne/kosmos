@@ -72,3 +72,13 @@ SOFTWARE.
 The icon content is licensed under the Creative Commons Attribution 4.0
 International Public License. The full license text is available at
 https://creativecommons.org/licenses/by/4.0/legalcode.
+
+---
+
+## gpui-component
+
+UI component library vendored and locally patched under `vendor/gpui-component`.
+
+- Source: https://github.com/longbridge/gpui-component
+- License: Apache-2.0
+- License text: `vendor/gpui-component/LICENSE-APACHE`
