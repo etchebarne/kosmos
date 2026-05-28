@@ -35,6 +35,9 @@ impl Client {
             stdin: Mutex::new(stdin),
             pending: Mutex::new(HashMap::new()),
             documents: Mutex::new(HashMap::new()),
+            sync_kind: Mutex::new(lsp_types::TextDocumentSyncKind::FULL),
+            diagnostics: Mutex::new(HashMap::new()),
+            diagnostics_changed: Condvar::new(),
             next_id: AtomicU64::new(1),
         });
 
@@ -48,7 +51,7 @@ impl Client {
     fn initialize(&self, entry: &'static RegistryEntry, root: &Path) -> Result<(), Error> {
         let root_uri = file_uri(root)?;
         let root_path = root.to_string_lossy().to_string();
-        self.request(
+        let result = self.request(
             "initialize",
             json!({
                 "processId": std::process::id(),
@@ -84,7 +87,15 @@ impl Client {
                             "dynamicRegistration": false,
                             "willSave": false,
                             "willSaveWaitUntil": false,
-                            "didSave": false,
+                            "didSave": true,
+                        },
+                        "publishDiagnostics": {
+                            "dynamicRegistration": false,
+                            "relatedInformation": true,
+                            "versionSupport": true,
+                            "tagSupport": { "valueSet": [1, 2] },
+                            "codeDescriptionSupport": true,
+                            "dataSupport": true,
                         },
                     },
                     "workspace": {
@@ -95,6 +106,8 @@ impl Client {
             }),
             INITIALIZE_TIMEOUT,
         )?;
+        self.inner
+            .set_sync_kind(text_document_sync_kind(&result));
         self.notify("initialized", json!({}))?;
 
         eprintln!("kosmos: started LSP {} for {}", entry.id, root.display());
@@ -147,28 +160,78 @@ impl Client {
         completion_response(result)
     }
 
+    fn diagnostics(
+        &self,
+        entry: &'static RegistryEntry,
+        request: &DiagnosticsRequest,
+    ) -> Result<DiagnosticsResponse, Error> {
+        let uri = file_uri(&request.path)?;
+        let previous_epoch = self.inner.diagnostics_epoch(&uri);
+        let sync = self.ensure_document(entry, &request.language_id, &request.content, &uri)?;
+        let minimum_epoch = if sync.changed || previous_epoch == 0 {
+            Some(previous_epoch)
+        } else {
+            request.previous_epoch
+        };
+
+        if let Some(minimum_epoch) = minimum_epoch {
+            self.inner
+                .wait_for_diagnostics(&uri, sync.version, minimum_epoch, DIAGNOSTIC_TIMEOUT);
+        }
+
+        Ok(self.inner.diagnostics_for(&uri, sync.version, minimum_epoch))
+    }
+
+    fn did_save(
+        &self,
+        entry: &'static RegistryEntry,
+        request: &SaveRequest,
+    ) -> Result<(), Error> {
+        let uri = file_uri(&request.path)?;
+        self.ensure_document(entry, &request.language_id, &request.content, &uri)?;
+        self.notify(
+            "textDocument/didSave",
+            json!({
+                "textDocument": { "uri": uri },
+                "text": request.content,
+            }),
+        )
+        .map_err(|err| Error::Response {
+            server: entry.id,
+            message: err.to_string(),
+        })
+    }
+
     fn ensure_document(
         &self,
         entry: &'static RegistryEntry,
         language_id: &str,
         content: &str,
         uri: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<DocumentSync, Error> {
         enum SyncAction {
             Open { version: i32 },
-            Change { version: i32 },
-            None,
+            Change {
+                version: i32,
+                change: lsp_types::TextDocumentContentChangeEvent,
+            },
+            None { version: i32 },
         }
 
+        let sync_kind = self.inner.sync_kind();
         let action = {
             let mut documents = self.inner.documents.lock().unwrap();
             match documents.get_mut(uri) {
-                Some(state) if state.content == content => SyncAction::None,
+                Some(state) if state.content == content => SyncAction::None {
+                    version: state.version,
+                },
                 Some(state) => {
                     state.version += 1;
+                    let change = text_document_content_change(sync_kind, &state.content, content);
                     state.content = content.to_string();
                     SyncAction::Change {
                         version: state.version,
+                        change,
                     }
                 }
                 None => {
@@ -184,7 +247,7 @@ impl Client {
             }
         };
 
-        match action {
+        let result = match action {
             SyncAction::Open { version } => self.notify(
                 "textDocument/didOpen",
                 json!({
@@ -196,21 +259,34 @@ impl Client {
                     },
                 }),
             ),
-            SyncAction::Change { version } => self.notify(
+            SyncAction::Change { version, ref change } => self.notify(
                 "textDocument/didChange",
                 json!({
                     "textDocument": {
                         "uri": uri,
                         "version": version,
                     },
-                    "contentChanges": [{ "text": content }],
+                    "contentChanges": [change],
                 }),
             ),
-            SyncAction::None => Ok(()),
+            SyncAction::None { .. } => Ok(()),
         }
         .map_err(|err| Error::Response {
             server: entry.id,
             message: err.to_string(),
+        });
+
+        result?;
+
+        Ok(match action {
+            SyncAction::Open { version } | SyncAction::Change { version, .. } => DocumentSync {
+                version,
+                changed: true,
+            },
+            SyncAction::None { version } => DocumentSync {
+                version,
+                changed: false,
+            },
         })
     }
 

@@ -2,16 +2,21 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable,
-    Global, IntoElement, KeyBinding, KeyDownEvent, MouseButton, Pixels, Render, SharedString, Task,
-    Window, div, prelude::*, px, rems,
+    Global, IntoElement, KeyBinding, KeyDownEvent, MouseButton, Pixels, Render, SharedString,
+    Subscription, Task, Window, div, prelude::*, px, rems,
 };
 use gpui_component::input::{
     HoverProvider, Input, InputEvent, InputState, Rope, RopeExt, TabSize,
 };
-use lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, Documentation};
+use gpui_component::highlighter::Diagnostic as ComponentDiagnostic;
+use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
+    Diagnostic as LspDiagnostic, Documentation, Position as LspPosition,
+};
 
 use file_editor::{Buffer, BufferId, BufferStore, soft_wrap_enabled};
 use file_tree::ActiveFileTree;
@@ -31,6 +36,10 @@ const COMPLETION_MENU_CHAR_WIDTH: f32 = 7.0;
 const COMPLETION_CURSOR_CHAR_WIDTH_FACTOR: f32 = 0.62;
 const COMPLETION_MENU_HORIZONTAL_PADDING: Pixels = px(48.0);
 const MAX_COMPLETION_DETAIL_CHARS: usize = 56;
+const DIAGNOSTIC_REQUEST_DEBOUNCE: Duration = Duration::from_millis(250);
+// rust-analyzer can publish cargo-check diagnostics well after didChange.
+const DIAGNOSTIC_FOLLOW_UP_DELAY: Duration = Duration::from_millis(100);
+const DIAGNOSTIC_FOLLOW_UP_REQUESTS: usize = 30;
 
 #[derive(Default)]
 struct ComponentEditorStore {
@@ -40,6 +49,8 @@ struct ComponentEditorStore {
 struct ComponentEditorInput {
     input: Entity<InputState>,
     completions: Entity<ComponentCompletionMenu>,
+    diagnostics: Entity<ComponentDiagnostics>,
+    _buffer_observer: Subscription,
     buffer_id: BufferId,
     soft_wrap: bool,
     root: Option<PathBuf>,
@@ -70,6 +81,15 @@ struct ComponentCompletionMenu {
     suppress_next_request: bool,
 }
 
+struct ComponentDiagnostics {
+    input: Entity<InputState>,
+    buffer: Entity<Buffer>,
+    root: Option<PathBuf>,
+    request_id: u64,
+    last_epoch: u64,
+    buffer_was_dirty: bool,
+}
+
 #[derive(Clone)]
 struct ComponentCompletionItem {
     item: CompletionItem,
@@ -92,7 +112,7 @@ impl ComponentEditorStore {
         let buffer_id = buffer.read(cx).id();
         let soft_wrap = soft_wrap_enabled(cx);
 
-        if let Some((input, completions, previous_soft_wrap, previous_root)) = cx
+        if let Some((input, completions, diagnostics, previous_soft_wrap, previous_root)) = cx
             .global::<Self>()
             .inputs
             .get(&tab_id)
@@ -101,6 +121,7 @@ impl ComponentEditorStore {
                 (
                     existing.input.clone(),
                     existing.completions.clone(),
+                    existing.diagnostics.clone(),
                     existing.soft_wrap,
                     existing.root.clone(),
                 )
@@ -111,12 +132,15 @@ impl ComponentEditorStore {
                 tab_id,
                 &input,
                 &completions,
+                &diagnostics,
                 buffer,
                 previous_root,
                 root,
                 cx,
             );
-            Self::sync_from_buffer(&input, buffer, window, cx);
+            if Self::sync_from_buffer(&input, buffer, window, cx) {
+                ComponentDiagnostics::request(&diagnostics, cx);
+            }
             return ComponentEditorEntities { input, completions };
         }
 
@@ -148,11 +172,28 @@ impl ComponentEditorStore {
             input.lsp.hover_provider = Some(lsp_provider);
             input
         });
-        let completions = cx.new(|_| ComponentCompletionMenu::new(input.clone(), buffer.clone(), root.clone()));
+        let completions = cx
+            .new(|_| ComponentCompletionMenu::new(input.clone(), buffer.clone(), root.clone()));
+        let buffer_was_dirty = buffer.read(cx).is_dirty();
+        let diagnostics = cx.new(|_| {
+            ComponentDiagnostics::new(
+                input.clone(),
+                buffer.clone(),
+                root.clone(),
+                buffer_was_dirty,
+            )
+        });
+        let diagnostics_for_buffer = diagnostics.clone();
+        let buffer_observer = cx.observe(buffer, move |_, cx| {
+            diagnostics_for_buffer.update(cx, |diagnostics, cx| {
+                diagnostics.handle_buffer_change(cx)
+            });
+        });
 
         let input_for_sub = input.clone();
         let buffer_for_sub = buffer.clone();
         let completions_for_sub = completions.clone();
+        let diagnostics_for_sub = diagnostics.clone();
         cx.subscribe(&input, move |_, event: &InputEvent, cx| {
             if !matches!(event, InputEvent::Change) {
                 return;
@@ -165,6 +206,7 @@ impl ComponentEditorStore {
                 }
             });
             ComponentCompletionMenu::request(&completions_for_sub, cx);
+            ComponentDiagnostics::request(&diagnostics_for_sub, cx);
         })
         .detach();
 
@@ -174,12 +216,16 @@ impl ComponentEditorStore {
                 ComponentEditorInput {
                     input: input.clone(),
                     completions: completions.clone(),
+                    diagnostics: diagnostics.clone(),
+                    _buffer_observer: buffer_observer,
                     buffer_id,
                     soft_wrap,
                     root,
                 },
             );
         });
+
+        ComponentDiagnostics::request(&diagnostics, cx);
 
         ComponentEditorEntities { input, completions }
     }
@@ -217,6 +263,7 @@ impl ComponentEditorStore {
         tab_id: usize,
         input: &Entity<InputState>,
         completions: &Entity<ComponentCompletionMenu>,
+        diagnostics: &Entity<ComponentDiagnostics>,
         buffer: &Entity<Buffer>,
         previous_root: Option<PathBuf>,
         current_root: Option<PathBuf>,
@@ -238,11 +285,17 @@ impl ComponentEditorStore {
             menu.root = current_root.clone();
             menu.clear(cx);
         });
+        diagnostics.update(cx, |diagnostics, cx| {
+            diagnostics.buffer = buffer.clone();
+            diagnostics.root = current_root.clone();
+            diagnostics.clear(cx);
+        });
         cx.update_global::<Self, _>(|store, _| {
             if let Some(existing) = store.inputs.get_mut(&tab_id) {
                 existing.root = current_root;
             }
         });
+        ComponentDiagnostics::request(diagnostics, cx);
     }
 
     fn sync_from_buffer(
@@ -250,11 +303,13 @@ impl ComponentEditorStore {
         buffer: &Entity<Buffer>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> bool {
         let buffer_text = buffer.read(cx).content().to_string();
         if input.read(cx).value().as_ref() != buffer_text.as_str() {
             input.update(cx, |input, cx| input.set_value(buffer_text, window, cx));
+            return true;
         }
+        false
     }
 }
 
@@ -499,6 +554,254 @@ impl ComponentCompletionMenu {
     }
 }
 
+impl ComponentDiagnostics {
+    fn new(
+        input: Entity<InputState>,
+        buffer: Entity<Buffer>,
+        root: Option<PathBuf>,
+        buffer_was_dirty: bool,
+    ) -> Self {
+        Self {
+            input,
+            buffer,
+            root,
+            request_id: 0,
+            last_epoch: 0,
+            buffer_was_dirty,
+        }
+    }
+
+    fn handle_buffer_change(&mut self, cx: &mut Context<Self>) {
+        let is_dirty = self.buffer.read(cx).is_dirty();
+        if is_dirty {
+            self.buffer_was_dirty = true;
+            return;
+        }
+
+        if self.buffer_was_dirty {
+            self.buffer_was_dirty = false;
+            self.did_save(cx);
+        }
+    }
+
+    fn did_save(&mut self, cx: &mut Context<Self>) {
+        let content = self.input.read(cx).value().to_string();
+        let Some(request) = self.save_request_for_content(content, cx) else {
+            return;
+        };
+        let previous_epoch = self.last_epoch;
+        let entity = cx.entity().clone();
+
+        cx.spawn(async move |_, cx| {
+            let _ = cx
+                .background_executor()
+                .spawn(async move { lsp::did_save(request) })
+                .await;
+            let _ = cx.update(|cx| {
+                Self::request_after(
+                    &entity,
+                    cx,
+                    Duration::ZERO,
+                    Some(previous_epoch),
+                    DIAGNOSTIC_FOLLOW_UP_REQUESTS,
+                    false,
+                );
+            });
+        })
+        .detach();
+    }
+
+    fn request(diagnostics: &Entity<Self>, cx: &mut App) {
+        Self::request_after(
+            diagnostics,
+            cx,
+            DIAGNOSTIC_REQUEST_DEBOUNCE,
+            None,
+            DIAGNOSTIC_FOLLOW_UP_REQUESTS,
+            true,
+        );
+    }
+
+    fn request_after(
+        diagnostics: &Entity<Self>,
+        cx: &mut App,
+        delay: Duration,
+        previous_epoch: Option<u64>,
+        follow_up_requests: usize,
+        clear_stale: bool,
+    ) {
+        let pending = diagnostics.update(cx, |diagnostics, cx| {
+            diagnostics.request_id += 1;
+            let request_id = diagnostics.request_id;
+            let content = diagnostics.input.read(cx).value().to_string();
+            if clear_stale {
+                diagnostics.clear_input(cx);
+            }
+            let request = diagnostics.request_for_content(content.clone(), previous_epoch, cx)?;
+
+            Some((request_id, content, request))
+        });
+
+        let Some((request_id, content, request)) = pending else {
+            return;
+        };
+
+        let diagnostics = diagnostics.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(delay).await;
+
+            let should_request = diagnostics.update(cx, |diagnostics, cx| {
+                diagnostics.request_id == request_id
+                    && diagnostics.input.read(cx).value().as_ref() == content.as_str()
+            });
+            if !should_request {
+                return;
+            }
+
+            let response = cx
+                .background_executor()
+                .spawn(async move { lsp::diagnostics(request) })
+                .await;
+
+            let response_epoch = diagnostics.update(cx, |diagnostics, cx| {
+                if diagnostics.request_id != request_id {
+                    return None;
+                }
+                if diagnostics.input.read(cx).value().as_ref() != content.as_str() {
+                    return None;
+                }
+
+                match response {
+                    Ok(response) => {
+                        let epoch = response.epoch;
+                        if response.fresh {
+                            diagnostics.apply(content.as_str(), response.diagnostics, epoch, cx);
+                        } else if previous_epoch.is_none() {
+                            diagnostics.clear_input(cx);
+                        }
+                        Some(epoch)
+                    }
+                    Err(_) => {
+                        if previous_epoch.is_none() {
+                            diagnostics.clear_input(cx);
+                        }
+                        None
+                    }
+                }
+            });
+
+            let next_previous_epoch = response_epoch.or(previous_epoch);
+            if follow_up_requests > 0 && next_previous_epoch.is_some() {
+                let diagnostics = diagnostics.clone();
+                let _ = cx.update(|cx| {
+                    Self::request_after(
+                        &diagnostics,
+                        cx,
+                        DIAGNOSTIC_FOLLOW_UP_DELAY,
+                        next_previous_epoch,
+                        follow_up_requests - 1,
+                        false,
+                    );
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn request_for_content(
+        &mut self,
+        content: String,
+        previous_epoch: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> Option<lsp::DiagnosticsRequest> {
+        let buffer = self.buffer.read(cx);
+        let Some(language) = buffer.language() else {
+            self.clear(cx);
+            return None;
+        };
+        let language_id = language.as_str().to_string();
+        if !lsp::has_installed_server(&language_id) {
+            self.clear(cx);
+            return None;
+        }
+
+        let path = buffer.path().to_path_buf();
+        let Some(root) = self.root.clone().or_else(|| path.parent().map(Path::to_path_buf)) else {
+            self.clear(cx);
+            return None;
+        };
+
+        Some(lsp::DiagnosticsRequest {
+            root,
+            path,
+            language_id,
+            content,
+            previous_epoch,
+        })
+    }
+
+    fn save_request_for_content(
+        &mut self,
+        content: String,
+        cx: &mut Context<Self>,
+    ) -> Option<lsp::SaveRequest> {
+        let buffer = self.buffer.read(cx);
+        let Some(language) = buffer.language() else {
+            return None;
+        };
+        let language_id = language.as_str().to_string();
+        if !lsp::has_installed_server(&language_id) {
+            return None;
+        }
+
+        let path = buffer.path().to_path_buf();
+        let Some(root) = self.root.clone().or_else(|| path.parent().map(Path::to_path_buf)) else {
+            return None;
+        };
+
+        Some(lsp::SaveRequest {
+            root,
+            path,
+            language_id,
+            content,
+        })
+    }
+
+    fn apply(
+        &mut self,
+        content: &str,
+        diagnostics: Vec<LspDiagnostic>,
+        epoch: u64,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_epoch = epoch;
+        let diagnostics = component_diagnostics_from_lsp(diagnostics, content);
+        self.input.update(cx, |input, cx| {
+            if let Some(set) = input.diagnostics_mut() {
+                set.clear();
+                set.extend(diagnostics);
+            }
+            cx.notify();
+        });
+    }
+
+    fn clear(&mut self, cx: &mut Context<Self>) {
+        self.request_id += 1;
+        self.clear_input(cx);
+    }
+
+    fn clear_input(&self, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            if let Some(set) = input.diagnostics_mut() {
+                if !set.is_empty() {
+                    set.clear();
+                    cx.notify();
+                }
+            }
+        });
+    }
+}
+
 impl Render for ComponentCompletionMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_open() || !self.input.focus_handle(cx).is_focused(window) {
@@ -681,6 +984,50 @@ fn component_editor_language(language: &str) -> &str {
         "javascriptreact" => "javascript",
         other => other,
     }
+}
+
+fn component_diagnostics_from_lsp(
+    diagnostics: Vec<LspDiagnostic>,
+    content: &str,
+) -> Vec<ComponentDiagnostic> {
+    let lines = content.split('\n').collect::<Vec<_>>();
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| component_diagnostic_from_lsp(diagnostic, &lines))
+        .collect()
+}
+
+fn component_diagnostic_from_lsp(
+    diagnostic: LspDiagnostic,
+    lines: &[&str],
+) -> ComponentDiagnostic {
+    let range = component_position_from_lsp(diagnostic.range.start, lines)
+        ..component_position_from_lsp(diagnostic.range.end, lines);
+    let mut diagnostic = ComponentDiagnostic::from(diagnostic);
+    diagnostic.range = range;
+    diagnostic
+}
+
+fn component_position_from_lsp(position: LspPosition, lines: &[&str]) -> LspPosition {
+    let line = lines.get(position.line as usize).copied().unwrap_or_default();
+    let byte_index = byte_index_for_utf16_column(line, position.character as usize);
+    let character = line[..byte_index].chars().count() as u32;
+    LspPosition::new(position.line, character)
+}
+
+fn byte_index_for_utf16_column(line: &str, utf16_column: usize) -> usize {
+    let mut current_column = 0;
+    for (byte_index, ch) in line.char_indices() {
+        let next_column = current_column + ch.len_utf16();
+        if next_column > utf16_column {
+            return byte_index;
+        }
+        if next_column == utf16_column {
+            return byte_index + ch.len_utf8();
+        }
+        current_column = next_column;
+    }
+    line.len()
 }
 
 fn empty_completion_response() -> CompletionResponse {

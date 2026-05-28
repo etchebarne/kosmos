@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use registry::{RegistryEntry, ToolKind};
 use serde_json::{Value, json};
@@ -15,6 +15,7 @@ use url::Url;
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const HOVER_TIMEOUT: Duration = Duration::from_secs(2);
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
+const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct HoverRequest {
@@ -32,6 +33,30 @@ pub struct CompletionRequest {
     pub language_id: String,
     pub content: String,
     pub position: Position,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiagnosticsRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub language_id: String,
+    pub content: String,
+    pub previous_epoch: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SaveRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub language_id: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiagnosticsResponse {
+    pub diagnostics: Vec<lsp_types::Diagnostic>,
+    pub epoch: u64,
+    pub fresh: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -151,6 +176,66 @@ pub fn completion(
     Ok(None)
 }
 
+pub fn diagnostics(request: DiagnosticsRequest) -> Result<DiagnosticsResponse, Error> {
+    let mut diagnostics = Vec::new();
+    let mut errors = Vec::new();
+    let mut attempted = false;
+    let mut answered = false;
+    let mut max_epoch = 0;
+    let mut all_fresh = true;
+
+    for entry in registry::for_language(&request.language_id, ToolKind::Lsp) {
+        if !installer::is_installed(entry) {
+            continue;
+        }
+        attempted = true;
+
+        match session(entry, &request.root).and_then(|client| client.diagnostics(entry, &request)) {
+            Ok(response) => {
+                answered = true;
+                max_epoch = max_epoch.max(response.epoch);
+                all_fresh &= response.fresh;
+                diagnostics.extend(response.diagnostics);
+            }
+            Err(err) => errors.push(format!("{}: {err}", entry.id)),
+        }
+    }
+
+    if attempted && !answered && !errors.is_empty() {
+        return Err(Error::AllFailed(errors.join("; ")));
+    }
+
+    Ok(DiagnosticsResponse {
+        diagnostics,
+        epoch: max_epoch,
+        fresh: answered && all_fresh,
+    })
+}
+
+pub fn did_save(request: SaveRequest) -> Result<(), Error> {
+    let mut errors = Vec::new();
+    let mut attempted = false;
+    let mut saved = false;
+
+    for entry in registry::for_language(&request.language_id, ToolKind::Lsp) {
+        if !installer::is_installed(entry) {
+            continue;
+        }
+        attempted = true;
+
+        match session(entry, &request.root).and_then(|client| client.did_save(entry, &request)) {
+            Ok(()) => saved = true,
+            Err(err) => errors.push(format!("{}: {err}", entry.id)),
+        }
+    }
+
+    if attempted && !saved && !errors.is_empty() {
+        return Err(Error::AllFailed(errors.join("; ")));
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Eq, PartialEq, Hash)]
 struct SessionKey {
     server_id: &'static str,
@@ -196,6 +281,9 @@ struct ClientInner {
     stdin: Mutex<ChildStdin>,
     pending: Mutex<HashMap<u64, SyncSender<Value>>>,
     documents: Mutex<HashMap<String, DocumentState>>,
+    sync_kind: Mutex<lsp_types::TextDocumentSyncKind>,
+    diagnostics: Mutex<HashMap<String, DiagnosticState>>,
+    diagnostics_changed: Condvar,
     next_id: AtomicU64,
 }
 
@@ -203,6 +291,19 @@ struct ClientInner {
 struct DocumentState {
     version: i32,
     content: String,
+}
+
+#[derive(Clone)]
+struct DiagnosticState {
+    version: Option<i32>,
+    diagnostics: Vec<lsp_types::Diagnostic>,
+    epoch: u64,
+}
+
+#[derive(Clone, Copy)]
+struct DocumentSync {
+    version: i32,
+    changed: bool,
 }
 
 impl Drop for ClientInner {

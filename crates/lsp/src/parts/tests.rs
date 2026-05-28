@@ -58,4 +58,77 @@ mod tests {
     fn ignores_null_completion() {
         assert!(completion_response(Value::Null).unwrap().is_none());
     }
+
+    #[test]
+    fn builds_incremental_content_change() {
+        let old = "fn main() {\n    let value = Ve::new();\n}\n";
+        let new = "fn main() {\n    let value = Vec::new();\n}\n";
+
+        let change = text_document_content_change(
+            lsp_types::TextDocumentSyncKind::INCREMENTAL,
+            old,
+            new,
+        );
+
+        assert_eq!(change.text, "c");
+        assert_eq!(change.range_length, Some(0));
+        assert_eq!(
+            change.range,
+            Some(lsp_types::Range::new(
+                lsp_types::Position::new(1, 18),
+                lsp_types::Position::new(1, 18),
+            ))
+        );
+    }
+
+    #[test]
+    fn incremental_content_change_uses_utf16_positions() {
+        let old = "fn main() {\n    let value = \"🦀\";\n}\n";
+        let new = "fn main() {\n    let value = \"🦀x\";\n}\n";
+
+        let change = text_document_content_change(
+            lsp_types::TextDocumentSyncKind::INCREMENTAL,
+            old,
+            new,
+        );
+
+        assert_eq!(change.text, "x");
+        assert_eq!(
+            change.range,
+            Some(lsp_types::Range::new(
+                lsp_types::Position::new(1, 19),
+                lsp_types::Position::new(1, 19),
+            ))
+        );
+    }
+
+    #[test]
+    fn builds_full_content_change_for_full_sync_servers() {
+        let change = text_document_content_change(
+            lsp_types::TextDocumentSyncKind::FULL,
+            "old",
+            "new",
+        );
+
+        assert_eq!(change.text, "new");
+        assert_eq!(change.range, None);
+        assert_eq!(change.range_length, None);
+    }
+
+    #[test]
+    fn parses_text_document_sync_kind_from_capabilities() {
+        let result = json!({
+            "capabilities": {
+                "textDocumentSync": {
+                    "openClose": true,
+                    "change": 2,
+                },
+            },
+        });
+
+        assert_eq!(
+            text_document_sync_kind(&result),
+            lsp_types::TextDocumentSyncKind::INCREMENTAL
+        );
+    }
 }
