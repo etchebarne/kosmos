@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use gpui::{rgb, Anchor, App, Global, Hsla, Rgba};
+use gpui::{Anchor, App, Global, Hsla, Rgba, rgb};
+use gpui_component::Colorize;
 
 pub const SETTING_ID: &str = "appearance.theme";
 pub const DARK_ID: &str = "dark";
@@ -211,7 +212,11 @@ fn sync_component_theme(theme: Theme, cx: &mut App) {
     component_theme.colors.background = hsla(theme.bg_surface);
     component_theme.colors.foreground = hsla(theme.text);
     component_theme.colors.border = hsla(theme.border);
-    component_theme.colors.input = hsla(theme.border_strong);
+    component_theme.colors.input = if theme.is_dark {
+        hsla(theme.bg_close_hover).lighten(0.04)
+    } else {
+        hsla(theme.border_strong)
+    };
     component_theme.colors.ring = hsla(theme.accent);
 
     component_theme.colors.muted = hsla(theme.bg_elevated);

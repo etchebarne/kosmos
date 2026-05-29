@@ -38,13 +38,6 @@ fn component_icon(icon: IconName) -> ComponentIcon {
     ComponentIcon::empty().path(icon.path())
 }
 
-fn error_alert(id: impl Into<gpui::ElementId>, message: impl Into<SharedString>) -> AnyElement {
-    Alert::error(id, message.into())
-        .with_size(Size::Small)
-        .icon(component_icon(IconName::Close))
-        .into_any_element()
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GitModal {
     Branches,

@@ -17,18 +17,19 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
         .justify_between()
         .gap_2()
         .rounded(rems(0.375))
-        .border_1()
-        .border_color(if is_current {
-            gpui::Hsla::from(theme.accent)
-        } else {
-            gpui::Hsla::from(theme.border_subtle)
-        })
         .p_2p5()
         .text_sm()
         .text_color(if is_current {
             theme.text_emphasis
         } else {
             theme.text
+        })
+        .when(is_current, |this| {
+            this.bg(gpui::Hsla::from(theme.accent).opacity(if theme.is_dark {
+                0.16
+            } else {
+                0.12
+            }))
         })
         .when(!is_current, |this| {
             this.hover(move |this| this.bg(theme.bg_hover))
@@ -53,10 +54,10 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
                 .flex_1()
                 .min_w_0()
                 .flex()
-                .items_start()
+                .items_center()
                 .gap_2()
                 .child(
-                    div().mt(rems(0.1875)).child(
+                    div().flex_none().flex().items_center().child(
                         Icon::new(IconName::SourceControl)
                             .size(14.0)
                             .color(theme.text_muted),
@@ -66,10 +67,12 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
                     div()
                         .min_w_0()
                         .flex()
-                        .flex_col()
-                        .gap_0p5()
+                        .items_center()
+                        .gap_1p5()
                         .child(
                             div()
+                                .min_w_0()
+                                .flex_1()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
@@ -77,10 +80,12 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
                         )
                         .when(is_remote, |this| {
                             this.child(
-                                ComponentTag::secondary()
-                                    .outline()
-                                    .with_size(Size::Small)
-                                    .child("Remote"),
+                                div().flex_none().child(
+                                    ComponentTag::secondary()
+                                        .with_size(Size::Small)
+                                        .border_0()
+                                        .child("Remote"),
+                                ),
                             )
                         }),
                 ),
@@ -104,22 +109,18 @@ fn branch_row(root: PathBuf, branch: Branch, cx: &mut App) -> AnyElement {
 }
 
 fn create_branch_modal_body(cx: &mut App) -> AnyElement {
-    let (branch_name, last_error) = {
-        let state = cx.global::<GitUiState>();
-        (
-            state.branch_name.as_ref().unwrap().clone(),
-            state.last_error.clone(),
-        )
-    };
+    let branch_name = cx
+        .global::<GitUiState>()
+        .branch_name
+        .as_ref()
+        .unwrap()
+        .clone();
 
     div()
         .flex()
         .flex_col()
         .gap_3()
         .child(input_row("Branch Name", branch_name))
-        .when_some(last_error, |this, error| {
-            this.child(error_alert("git-create-branch-error", error))
-        })
         .into_any_element()
 }
 
@@ -149,29 +150,28 @@ fn create_branch_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
             },
             cx,
         ))
-        .child(action_button(
-            "git-confirm-create-branch",
-            "Create",
-            false,
-            move |_, _, cx| {
-                let branch = create_input.read(cx).value().trim().to_string();
-                if branch.is_empty() {
-                    return;
-                }
-                run_modal_action_after_success_app(
-                    root_create.clone(),
-                    GitModal::Branches,
-                    move |root| kosmos_git::create_branch(root, &branch),
-                    move |cx| {
-                        cx.update_global::<GitUiState, _>(|state, _| {
-                            state.modal = Some(GitModal::Branches)
-                        });
-                    },
-                    cx,
-                );
-            },
-            cx,
-        ))
+        .child(
+            Button::new("git-confirm-create-branch")
+                .primary()
+                .label("Create")
+                .on_click(move |_, _, cx| {
+                    let branch = create_input.read(cx).value().trim().to_string();
+                    if branch.is_empty() {
+                        return;
+                    }
+                    run_modal_action_after_success_app(
+                        root_create.clone(),
+                        GitModal::Branches,
+                        move |root| kosmos_git::create_branch(root, &branch),
+                        move |cx| {
+                            cx.update_global::<GitUiState, _>(|state, _| {
+                                state.modal = Some(GitModal::Branches)
+                            });
+                        },
+                        cx,
+                    );
+                }),
+        )
         .into_any_element()
 }
 

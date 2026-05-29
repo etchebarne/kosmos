@@ -332,8 +332,10 @@ fn run_modal_action_after_success_app(
             }
             Err(error) => {
                 cx.update_global::<GitUiState, _>(|state, _| {
-                    state.last_error = Some(error.to_string())
+                    state.loading = false;
+                    state.last_error = None;
                 });
+                show_git_error(cx, "Git action failed", git_error_message(error));
                 cx.refresh_windows();
             }
         });

@@ -234,12 +234,11 @@ fn confirm_git_action_modal(
 }
 
 fn branches_modal_body(root: &Path, cx: &mut App) -> AnyElement {
-    let (branch_search, branches, last_error) = {
+    let (branch_search, branches) = {
         let state = cx.global::<GitUiState>();
         (
             state.branch_search.as_ref().unwrap().clone(),
             state.branches.clone(),
-            state.last_error.clone(),
         )
     };
     let theme = *cx.theme();
@@ -261,22 +260,16 @@ fn branches_modal_body(root: &Path, cx: &mut App) -> AnyElement {
         .flex()
         .flex_col()
         .gap_2()
-        .child(input_row("Search Branches", branch_search))
-        .when_some(last_error, |this, error| {
-            this.child(error_alert("git-branches-error", error))
-        })
+        .child(branch_search_row(root.to_path_buf(), branch_search, theme, cx))
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(create_branch_row(root.to_path_buf(), cx))
                 .when(branches.is_empty(), |this| {
                     this.child(
                         div()
                             .rounded(rems(0.375))
-                            .border_1()
-                            .border_color(theme.border_subtle)
                             .p_3()
                             .text_sm()
                             .text_color(theme.text_subtle)
@@ -298,54 +291,33 @@ fn branches_modal_body(root: &Path, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-fn create_branch_row(root: PathBuf, cx: &mut App) -> AnyElement {
-    let theme = *cx.theme();
+fn branch_search_row(
+    root: PathBuf,
+    input: Entity<InputState>,
+    theme: theme::Theme,
+    cx: &mut App,
+) -> AnyElement {
     let branch_name = cx
         .global::<GitUiState>()
         .branch_name
         .as_ref()
         .unwrap()
         .clone();
+
     div()
-        .id("git-create-branch-row")
         .flex()
-        .items_start()
+        .items_center()
         .gap_2()
-        .rounded(rems(0.375))
-        .border_1()
-        .border_color(theme.border_subtle)
-        .p_2p5()
-        .text_sm()
-        .text_color(theme.text)
-        .hover(move |this| this.bg(theme.bg_hover))
-        .on_click(move |_, window, cx| {
-            branch_name.update(cx, |input, cx| input.set_value("", window, cx));
-            open_modal_app(root.clone(), GitModal::CreateBranch, cx);
-        })
+        .mt(rems(0.25))
+        .child(div().flex_1().min_w_0().child(search_input(input, theme)))
         .child(
-            div()
-                .size(rems(1.25))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(rems(0.25))
-                .bg(gpui::Hsla::from(theme.accent).opacity(0.14))
-                .child(Icon::new(IconName::Add).size(14.0).color(theme.accent)),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .child(div().text_color(theme.text_emphasis).child("Create Branch"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_subtle)
-                        .child("Create a new local branch"),
-                ),
+            Button::new("git-new-branch")
+                .primary()
+                .label("New")
+                .on_click(move |_, window, cx| {
+                    branch_name.update(cx, |input, cx| input.set_value("", window, cx));
+                    open_modal_app(root.clone(), GitModal::CreateBranch, cx);
+                }),
         )
         .into_any_element()
 }

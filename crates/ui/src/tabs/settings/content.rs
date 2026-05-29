@@ -60,7 +60,7 @@ pub fn render<T: SettingsDelegate>(
                         .text_xl()
                         .text_color(theme.text_emphasis),
                 )
-                .child(render_search(search)),
+                .child(render_search(search, theme)),
         )
         .child(
             div().flex_1().min_h_0().child(
@@ -81,7 +81,7 @@ pub fn render<T: SettingsDelegate>(
         .into_any_element()
 }
 
-fn render_search(search: Option<Entity<InputState>>) -> AnyElement {
+fn render_search(search: Option<Entity<InputState>>, theme: theme::Theme) -> AnyElement {
     match search {
         Some(search) => div()
             .w_full()
@@ -89,7 +89,12 @@ fn render_search(search: Option<Entity<InputState>>) -> AnyElement {
             .max_w(rems(28.0))
             .child(
                 Input::new(&search)
-                    .prefix(ComponentIconName::Search)
+                    .bordered(false)
+                    .prefix(
+                        ComponentIcon::new(ComponentIconName::Search)
+                            .small()
+                            .text_color(gpui::Hsla::from(theme.text_muted)),
+                    )
                     .cleanable(true)
                     .w_full(),
             )

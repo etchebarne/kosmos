@@ -29,8 +29,6 @@ fn list_row(
         .justify_between()
         .gap_2()
         .rounded(rems(0.375))
-        .border_1()
-        .border_color(theme.border_subtle)
         .p_2()
         .child(
             div()
@@ -66,13 +64,14 @@ fn icon_action_button(
     listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut App,
 ) -> AnyElement {
-    let _ = cx;
+    let theme = *cx.theme();
     Button::new(id)
         .ghost()
         .small()
+        .size(rems(1.625))
         .tab_stop(false)
-        .size(rems(1.375))
         .text_color(color)
+        .hover(move |this| this.bg(theme.bg_hover))
         .icon(component_icon(icon))
         .on_click(move |event, window, cx| {
             cx.stop_propagation();

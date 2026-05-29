@@ -62,8 +62,6 @@ fn stashes_modal_body(root: &Path, cx: &mut App) -> AnyElement {
         body = body.child(
             div()
                 .rounded(rems(0.375))
-                .border_1()
-                .border_color(theme.border_subtle)
                 .p_3()
                 .text_sm()
                 .text_color(theme.text_subtle)
@@ -98,8 +96,6 @@ fn stash_row(
         .flex_col()
         .gap_2()
         .rounded(rems(0.375))
-        .border_1()
-        .border_color(theme.border_subtle)
         .p_2()
         .child(
             div()
@@ -209,7 +205,20 @@ fn input_row(label: &'static str, input: Entity<InputState>) -> AnyElement {
         .flex_col()
         .gap_1()
         .child(div().text_xs().child(label))
-        .child(Input::new(&input))
+        .child(Input::new(&input).bordered(false))
+        .into_any_element()
+}
+
+fn search_input(input: Entity<InputState>, theme: theme::Theme) -> AnyElement {
+    Input::new(&input)
+        .bordered(false)
+        .cleanable(true)
+        .prefix(
+            component_icon(IconName::Search)
+                .small()
+                .text_color(gpui::Hsla::from(theme.text_muted)),
+        )
+        .w_full()
         .into_any_element()
 }
 
