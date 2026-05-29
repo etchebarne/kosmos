@@ -176,47 +176,166 @@ fn create_branch_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
 }
 
 fn remotes_modal_body(root: &Path, cx: &mut App) -> AnyElement {
-    let (name, url, remotes) = {
+    let (remote_search, remotes) = {
+        let state = cx.global::<GitUiState>();
+        (
+            state.remote_search.as_ref().unwrap().clone(),
+            state.remotes.clone(),
+        )
+    };
+    let theme = *cx.theme();
+    let query = remote_search.read(cx).value().trim().to_lowercase();
+    let has_remotes = !remotes.is_empty();
+    let remotes = if query.is_empty() {
+        remotes
+    } else {
+        remotes
+            .into_iter()
+            .filter(|remote| {
+                remote.name.to_lowercase().contains(&query)
+                    || remote.url.to_lowercase().contains(&query)
+            })
+            .collect()
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(remote_search_row(root.to_path_buf(), remote_search, theme, cx))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .when(remotes.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .rounded(rems(0.375))
+                            .p_3()
+                            .text_sm()
+                            .text_color(theme.text_subtle)
+                            .child(if has_remotes {
+                                "No remotes match your search"
+                            } else {
+                                "No remotes"
+                            }),
+                    )
+                })
+                .when(!remotes.is_empty(), |this| {
+                    this.children(
+                        remotes
+                            .into_iter()
+                            .map(|remote| remote_row(root.to_path_buf(), remote, cx)),
+                    )
+                }),
+        )
+        .into_any_element()
+}
+
+fn remote_search_row(
+    root: PathBuf,
+    input: Entity<InputState>,
+    theme: theme::Theme,
+    cx: &mut App,
+) -> AnyElement {
+    let (remote_name, remote_url) = {
         let state = cx.global::<GitUiState>();
         (
             state.remote_name.as_ref().unwrap().clone(),
             state.remote_url.as_ref().unwrap().clone(),
-            state.remotes.clone(),
         )
     };
-    let root_add = root.to_path_buf();
-    let theme = *cx.theme();
+
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .mt(rems(0.25))
+        .child(div().flex_1().min_w_0().child(search_input(input, theme)))
+        .child(
+            Button::new("git-new-remote")
+                .primary()
+                .label("New")
+                .on_click(move |_, window, cx| {
+                    remote_name.update(cx, |input, cx| input.set_value("", window, cx));
+                    remote_url.update(cx, |input, cx| input.set_value("", window, cx));
+                    open_modal_app(root.clone(), GitModal::CreateRemote, cx);
+                }),
+        )
+        .into_any_element()
+}
+
+fn create_remote_modal_body(cx: &mut App) -> AnyElement {
+    let (name, url) = {
+        let state = cx.global::<GitUiState>();
+        (
+            state.remote_name.as_ref().unwrap().clone(),
+            state.remote_url.as_ref().unwrap().clone(),
+        )
+    };
 
     div()
         .flex()
         .flex_col()
         .gap_3()
-        .child(input_row("Remote Name", name.clone()))
-        .child(input_row("Remote URL", url.clone()))
-        .child(div().flex().justify_end().child(action_button(
-            "git-add-remote",
-            "Add Remote",
+        .child(input_row("Remote Name", name))
+        .child(input_row("Remote URL", url))
+        .into_any_element()
+}
+
+fn create_remote_modal_footer(root: &Path, cx: &mut App) -> AnyElement {
+    let (name, url) = {
+        let state = cx.global::<GitUiState>();
+        (
+            state.remote_name.as_ref().unwrap().clone(),
+            state.remote_url.as_ref().unwrap().clone(),
+        )
+    };
+    let root_cancel = root.to_path_buf();
+    let root_create = root.to_path_buf();
+    let cancel_name = name.clone();
+    let cancel_url = url.clone();
+    let create_name = name.clone();
+    let create_url = url.clone();
+
+    div()
+        .flex()
+        .justify_end()
+        .gap_2()
+        .child(action_button(
+            "git-cancel-create-remote",
+            "Cancel",
             false,
-            move |_, _, cx| {
-                let name_value = name.read(cx).value().to_string();
-                let url_value = url.read(cx).value().to_string();
-                if name_value.trim().is_empty() || url_value.trim().is_empty() {
-                    return;
-                }
-                run_modal_action_app(
-                    root_add.clone(),
-                    GitModal::Remotes,
-                    move |root| kosmos_git::add_remote(root, name_value.trim(), url_value.trim()),
-                    cx,
-                );
+            move |_, window, cx| {
+                cancel_name.update(cx, |input, cx| input.set_value("", window, cx));
+                cancel_url.update(cx, |input, cx| input.set_value("", window, cx));
+                open_modal_app(root_cancel.clone(), GitModal::Remotes, cx);
             },
             cx,
-        )))
-        .child(section_label("Existing Remotes", theme))
-        .children(
-            remotes
-                .into_iter()
-                .map(|remote| remote_row(root.to_path_buf(), remote, cx)),
+        ))
+        .child(
+            Button::new("git-confirm-create-remote")
+                .primary()
+                .label("Create")
+                .on_click(move |_, _, cx| {
+                    let name_value = create_name.read(cx).value().trim().to_string();
+                    let url_value = create_url.read(cx).value().trim().to_string();
+                    if name_value.is_empty() || url_value.is_empty() {
+                        return;
+                    }
+                    run_modal_action_after_success_app(
+                        root_create.clone(),
+                        GitModal::Remotes,
+                        move |root| kosmos_git::add_remote(root, &name_value, &url_value),
+                        move |cx| {
+                            cx.update_global::<GitUiState, _>(|state, _| {
+                                state.modal = Some(GitModal::Remotes)
+                            });
+                        },
+                        cx,
+                    );
+                }),
         )
         .into_any_element()
 }

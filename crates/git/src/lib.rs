@@ -69,7 +69,14 @@ pub struct Tag {
 pub struct Stash {
     pub id: String,
     pub message: String,
-    pub files: Vec<String>,
+    pub files: Vec<StashFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StashFile {
+    pub path: String,
+    pub insertions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -141,22 +148,21 @@ fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
 }
 
 fn parse_numstat(output: &str) -> HashMap<String, DiffStats> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split('\t');
-            let insertions = parts.next().unwrap_or_default();
-            let deletions = parts.next().unwrap_or_default();
-            let changed_path = parts.next_back().filter(|path| !path.is_empty())?;
-            Some((
-                normalize_numstat_path(changed_path),
-                DiffStats {
-                    insertions: insertions.parse::<usize>().unwrap_or(0),
-                    deletions: deletions.parse::<usize>().unwrap_or(0),
-                },
-            ))
-        })
-        .collect()
+    output.lines().filter_map(parse_numstat_line).collect()
+}
+
+fn parse_numstat_line(line: &str) -> Option<(String, DiffStats)> {
+    let mut parts = line.split('\t');
+    let insertions = parts.next().unwrap_or_default();
+    let deletions = parts.next().unwrap_or_default();
+    let changed_path = parts.next_back().filter(|path| !path.is_empty())?;
+    Some((
+        normalize_numstat_path(changed_path),
+        DiffStats {
+            insertions: insertions.parse::<usize>().unwrap_or(0),
+            deletions: deletions.parse::<usize>().unwrap_or(0),
+        },
+    ))
 }
 
 struct StatusEntry {
@@ -526,11 +532,16 @@ pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
         .lines()
         .filter_map(parse_stash_line)
         .map(|(stash_id, message)| {
-            let files = git_output(path, &["stash", "show", "--name-only", &stash_id])?
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .map(ToString::to_string)
-                .collect();
+            let files = parse_stash_files(&git_output(
+                path,
+                &[
+                    "stash",
+                    "show",
+                    "--include-untracked",
+                    "--numstat",
+                    &stash_id,
+                ],
+            )?);
             Ok(Stash {
                 id: stash_id,
                 message,
@@ -543,6 +554,18 @@ pub fn list_stashes(path: impl AsRef<Path>) -> Result<Vec<Stash>, Error> {
 fn parse_stash_line(line: &str) -> Option<(String, String)> {
     let (stash_id, message) = line.split_once(':')?;
     Some((stash_id.to_string(), message.trim().to_string()))
+}
+
+fn parse_stash_files(output: &str) -> Vec<StashFile> {
+    output
+        .lines()
+        .filter_map(parse_numstat_line)
+        .map(|(path, stats)| StashFile {
+            path,
+            insertions: stats.insertions,
+            deletions: stats.deletions,
+        })
+        .collect()
 }
 
 pub fn apply_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
@@ -637,6 +660,23 @@ mod tests {
             })
         );
         assert!(stats.contains_key("new.rs"));
+    }
+
+    #[test]
+    fn parses_stash_files_with_stats() {
+        let files =
+            parse_stash_files("3\t1\tsrc/lib.rs\n-\t-\tassets/logo.png\n2\t0\told => new.rs\n");
+
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].path, "src/lib.rs");
+        assert_eq!(files[0].insertions, 3);
+        assert_eq!(files[0].deletions, 1);
+        assert_eq!(files[1].path, "assets/logo.png");
+        assert_eq!(files[1].insertions, 0);
+        assert_eq!(files[1].deletions, 0);
+        assert_eq!(files[2].path, "new.rs");
+        assert_eq!(files[2].insertions, 2);
+        assert_eq!(files[2].deletions, 0);
     }
 
     #[test]

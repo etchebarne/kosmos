@@ -3,6 +3,7 @@ fn tag_row(root: PathBuf, tag: Tag, cx: &mut App) -> AnyElement {
     list_row(
         tag.name,
         tag.message,
+        true,
         move |_, _, cx| {
             let name = name.clone();
             run_modal_action_app(
@@ -19,6 +20,7 @@ fn tag_row(root: PathBuf, tag: Tag, cx: &mut App) -> AnyElement {
 fn list_row(
     title: String,
     subtitle: String,
+    highlight_on_hover: bool,
     delete: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut App,
 ) -> AnyElement {
@@ -30,6 +32,7 @@ fn list_row(
         .gap_2()
         .rounded(rems(0.375))
         .p_2()
+        .when(highlight_on_hover, |this| this.hover(move |this| this.bg(theme.bg_hover)))
         .child(
             div()
                 .min_w_0()

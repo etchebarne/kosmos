@@ -42,6 +42,8 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(
         });
         let branch_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search branches"));
         let branch_name = cx.new(|cx| InputState::new(window, cx).placeholder("feature/my-branch"));
+        let tag_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search tags"));
+        let remote_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search remotes"));
         let remote_name = cx.new(|cx| InputState::new(window, cx).placeholder("origin"));
         let remote_url = cx.new(|cx| InputState::new(window, cx).placeholder("https://github.com/user/repo.git"));
         let tag_name = cx.new(|cx| InputState::new(window, cx).placeholder("v1.0.0"));
@@ -52,6 +54,8 @@ fn ensure_state<T: PaneDelegate + SettingsDelegate>(
             commit_message: Some(commit_message),
             branch_search: Some(branch_search),
             branch_name: Some(branch_name),
+            tag_search: Some(tag_search),
+            remote_search: Some(remote_search),
             remote_name: Some(remote_name),
             remote_url: Some(remote_url),
             tag_name: Some(tag_name),
@@ -236,6 +240,8 @@ fn refresh_modal_data<T: PaneDelegate + SettingsDelegate>(
             });
         }
         GitModal::CreateBranch
+        | GitModal::CreateRemote
+        | GitModal::CreateTag
         | GitModal::ConfirmDiscardSelected
         | GitModal::ConfirmDiscard
         | GitModal::ConfirmResolveConflicts => {}
@@ -283,6 +289,8 @@ fn refresh_modal_data_app(root: PathBuf, modal: GitModal, cx: &mut App) {
                 });
             }
             GitModal::CreateBranch
+            | GitModal::CreateRemote
+            | GitModal::CreateTag
             | GitModal::ConfirmDiscardSelected
             | GitModal::ConfirmDiscard
             | GitModal::ConfirmResolveConflicts => {}

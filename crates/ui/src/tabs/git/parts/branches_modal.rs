@@ -48,6 +48,15 @@ fn render_git_modal(
             .footer(modal_footer(close_modal_button(cx), cx))
             .on_close(|_, _, cx| close_modal(cx))
             .child(remotes_modal_body(&root, cx)),
+        GitModal::CreateRemote => dialog
+            .margin_top(margin_top)
+            .w(width)
+            .max_h(max_height)
+            .overflow_hidden()
+            .title("Create Remote")
+            .footer(create_remote_modal_footer(&root, cx))
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(create_remote_modal_body(cx)),
         GitModal::Stashes => dialog
             .margin_top(margin_top)
             .w(width)
@@ -66,6 +75,15 @@ fn render_git_modal(
             .footer(modal_footer(close_modal_button(cx), cx))
             .on_close(|_, _, cx| close_modal(cx))
             .child(tags_modal_body(&root, cx)),
+        GitModal::CreateTag => dialog
+            .margin_top(margin_top)
+            .w(width)
+            .max_h(max_height)
+            .overflow_hidden()
+            .title("Create Tag")
+            .footer(create_tag_modal_footer(&root, cx))
+            .on_close(|_, _, cx| close_modal(cx))
+            .child(create_tag_modal_body(cx)),
         GitModal::ConfirmDiscardSelected => {
             let selected_paths = selected_change_paths(cx);
             let selected_count = selected_paths.len();
