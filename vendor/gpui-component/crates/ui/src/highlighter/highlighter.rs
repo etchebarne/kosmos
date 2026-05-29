@@ -1,6 +1,6 @@
 use crate::highlighter::{HighlightTheme, LanguageRegistry};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use gpui::{HighlightStyle, SharedString};
 
 use ropey::{ChunkCursor, Rope};
@@ -731,7 +731,8 @@ impl SyntaxHighlighter {
 
         for query_node in &query_nodes {
             let mut query_cursor = QueryCursor::new();
-            query_cursor.set_byte_range(range.clone());
+            // Include multiline captures that start before the visible range; styles are clipped later.
+            query_cursor.set_byte_range(query_node.start_byte().min(range.start)..range.end);
 
             let mut matches = query_cursor.matches(&query, *query_node, TextProvider(&source));
 
@@ -1129,6 +1130,28 @@ console.log(answer);
         assert!(
             has_highlight_covering(&highlights, html, "answer", "variable"),
             "JavaScript identifiers inside script elements should be highlighted"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "tree-sitter-languages")]
+    fn test_rust_block_comment_highlights_when_range_starts_inside_comment() {
+        let source = "fn main() {\n    /*\n    comment\n    */\n    let value = 1;\n}\n";
+        let rope = Rope::from_str(source);
+        let mut highlighter = SyntaxHighlighter::new("rust");
+        highlighter.update(None, &rope, None);
+
+        let visible_start = source.find("*/").unwrap();
+        let visible_end = source.find("let value").unwrap() + "let".len();
+        let highlights = highlighter.match_styles(visible_start..visible_end);
+
+        assert!(
+            has_highlight_covering(&highlights, source, "*/", "comment"),
+            "block comments should remain highlighted when the visible range starts inside them"
+        );
+        assert!(
+            has_highlight_covering(&highlights, source, "let", "keyword"),
+            "Rust code after the block comment should keep normal highlighting"
         );
     }
 

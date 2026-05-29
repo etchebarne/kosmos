@@ -1853,7 +1853,7 @@ impl Element for TextElement {
 
         window.handle_input(
             &focus_handle,
-            ElementInputHandler::new(bounds, self.state.clone()),
+            ElementInputHandler::new(input_bounds, self.state.clone()),
             cx,
         );
 
