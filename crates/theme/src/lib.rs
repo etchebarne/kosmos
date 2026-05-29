@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Anchor, App, Global, Hsla, Rgba, rgb};
+use gpui::{rgb, Anchor, App, Global, Hsla, Rgba};
 
 pub const SETTING_ID: &str = "appearance.theme";
 pub const DARK_ID: &str = "dark";
@@ -165,6 +165,14 @@ impl Theme {
             _ => DEFAULT_ID,
         }
     }
+
+    fn syntax_palette(self) -> &'static str {
+        match self.id {
+            LIGHT_ID => LIGHT_SYNTAX_PALETTE,
+            NEUTRAL_ID => NEUTRAL_SYNTAX_PALETTE,
+            _ => DARK_SYNTAX_PALETTE,
+        }
+    }
 }
 
 impl Global for Theme {}
@@ -292,12 +300,125 @@ fn sync_component_theme(theme: Theme, cx: &mut App) {
 
     let mut highlight_theme = (*component_theme.highlight_theme).clone();
     highlight_theme.style.editor_background = Some(gpui::transparent_black());
+    highlight_theme.style.syntax = syntax_colors(theme);
     component_theme.highlight_theme = Arc::new(highlight_theme);
+}
+
+fn syntax_colors(theme: Theme) -> gpui_component::highlighter::SyntaxColors {
+    serde_json::from_str(theme.syntax_palette()).expect("Kosmos syntax palette should be valid")
 }
 
 fn hsla(color: Rgba) -> Hsla {
     Hsla::from(color)
 }
+
+const DARK_SYNTAX_PALETTE: &str = r##"
+{
+  "attribute": { "color": "#D19A66" },
+  "boolean": { "color": "#D19A66" },
+  "comment": { "color": "#7F848E", "font_style": "italic" },
+  "comment.doc": { "color": "#7F848E", "font_style": "italic" },
+  "constant": { "color": "#D19A66" },
+  "constructor": { "color": "#E5C07B" },
+  "embedded": { "color": "#ABB2BF" },
+  "emphasis": { "font_style": "italic" },
+  "emphasis.strong": { "font_weight": 700 },
+  "function": { "color": "#61AFEF" },
+  "keyword": { "color": "#C678DD" },
+  "link_text": { "color": "#61AFEF", "font_style": "normal" },
+  "link_uri": { "color": "#7FAEF9", "font_style": "italic" },
+  "number": { "color": "#D19A66" },
+  "operator": { "color": "#56B6C2" },
+  "punctuation": { "color": "#ABB2BF" },
+  "punctuation.bracket": { "color": "#ABB2BF" },
+  "punctuation.delimiter": { "color": "#ABB2BF" },
+  "string": { "color": "#98C379" },
+  "string.escape": { "color": "#56B6C2" },
+  "string.regex": { "color": "#98C379" },
+  "string.special": { "color": "#E06C75" },
+  "string.special.symbol": { "color": "#E06C75" },
+  "tag": { "color": "#E06C75" },
+  "text.literal": { "color": "#98C379" },
+  "text.code.span": { "color": "#98C379" },
+  "title": { "color": "#61AFEF", "font_weight": 600 },
+  "type": { "color": "#E5C07B" },
+  "property": { "color": "#E06C75" },
+  "variable": { "color": "#ABB2BF" },
+  "variable.special": { "color": "#E06C75" }
+}
+"##;
+
+const NEUTRAL_SYNTAX_PALETTE: &str = r##"
+{
+  "attribute": { "color": "#E0A969" },
+  "boolean": { "color": "#E0A969" },
+  "comment": { "color": "#A3A3A3", "font_style": "italic" },
+  "comment.doc": { "color": "#A3A3A3", "font_style": "italic" },
+  "constant": { "color": "#E0A969" },
+  "constructor": { "color": "#E6C36A" },
+  "embedded": { "color": "#E5E5E5" },
+  "emphasis": { "font_style": "italic" },
+  "emphasis.strong": { "font_weight": 700 },
+  "function": { "color": "#93C5FD" },
+  "keyword": { "color": "#C084FC" },
+  "link_text": { "color": "#93C5FD", "font_style": "normal" },
+  "link_uri": { "color": "#A5B4FC", "font_style": "italic" },
+  "number": { "color": "#E0A969" },
+  "operator": { "color": "#67E8F9" },
+  "punctuation": { "color": "#D4D4D4" },
+  "punctuation.bracket": { "color": "#D4D4D4" },
+  "punctuation.delimiter": { "color": "#D4D4D4" },
+  "string": { "color": "#86EFAC" },
+  "string.escape": { "color": "#67E8F9" },
+  "string.regex": { "color": "#86EFAC" },
+  "string.special": { "color": "#FCA5A5" },
+  "string.special.symbol": { "color": "#FCA5A5" },
+  "tag": { "color": "#FCA5A5" },
+  "text.literal": { "color": "#86EFAC" },
+  "text.code.span": { "color": "#86EFAC" },
+  "title": { "color": "#93C5FD", "font_weight": 600 },
+  "type": { "color": "#E6C36A" },
+  "property": { "color": "#FCA5A5" },
+  "variable": { "color": "#E5E5E5" },
+  "variable.special": { "color": "#FCA5A5" }
+}
+"##;
+
+const LIGHT_SYNTAX_PALETTE: &str = r##"
+{
+  "attribute": { "color": "#B45309" },
+  "boolean": { "color": "#B45309" },
+  "comment": { "color": "#6B7280", "font_style": "italic" },
+  "comment.doc": { "color": "#6B7280", "font_style": "italic" },
+  "constant": { "color": "#B45309" },
+  "constructor": { "color": "#7C3AED" },
+  "embedded": { "color": "#1F2937" },
+  "emphasis": { "font_style": "italic" },
+  "emphasis.strong": { "font_weight": 700 },
+  "function": { "color": "#2563EB" },
+  "keyword": { "color": "#9333EA" },
+  "link_text": { "color": "#2563EB", "font_style": "normal" },
+  "link_uri": { "color": "#4F46E5", "font_style": "italic" },
+  "number": { "color": "#B45309" },
+  "operator": { "color": "#0F766E" },
+  "punctuation": { "color": "#4B5563" },
+  "punctuation.bracket": { "color": "#4B5563" },
+  "punctuation.delimiter": { "color": "#4B5563" },
+  "string": { "color": "#15803D" },
+  "string.escape": { "color": "#0F766E" },
+  "string.regex": { "color": "#15803D" },
+  "string.special": { "color": "#DC2626" },
+  "string.special.symbol": { "color": "#DC2626" },
+  "tag": { "color": "#DC2626" },
+  "text.literal": { "color": "#15803D" },
+  "text.code.span": { "color": "#15803D" },
+  "title": { "color": "#2563EB", "font_weight": 600 },
+  "type": { "color": "#7C3AED" },
+  "property": { "color": "#DC2626" },
+  "variable": { "color": "#1F2937" },
+  "variable.special": { "color": "#DC2626" }
+}
+"##;
 
 pub trait ActiveTheme {
     fn theme(&self) -> &Theme;
@@ -331,3 +452,15 @@ pub const REGISTRY: &[DropdownOption] = &[
         label: "Kosmos Light",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn syntax_palettes_are_valid() {
+        for theme in [Theme::dark(), Theme::neutral(), Theme::light()] {
+            syntax_colors(theme);
+        }
+    }
+}
