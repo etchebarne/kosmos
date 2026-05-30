@@ -807,7 +807,7 @@ impl TextElement {
         style: &TextStyle,
         window: &mut Window,
     ) -> (Pixels, usize) {
-        let total_lines = text.lines_len();
+        let total_lines = text.lines_len().saturating_add(state.line_number_start);
         let line_number_len = match total_lines {
             0..=9999 => 5,
             10000..=99999 => 6,
@@ -1773,8 +1773,12 @@ impl Element for TextElement {
                 .iter()
                 .zip(last_layout.visible_buffer_lines.iter())
             {
-                let line_no: SharedString =
-                    format!("{:>width$}", buffer_line + 1, width = line_number_len).into();
+                let line_no: SharedString = format!(
+                    "{:>width$}",
+                    buffer_line + 1 + state.line_number_start,
+                    width = line_number_len
+                )
+                .into();
 
                 let runs = if current_row == Some(buffer_line) {
                     &current_line_runs

@@ -7,9 +7,11 @@ use std::{
 
 use fff_search::{
     FFFMode, FilePicker, FilePickerOptions, FileSearchConfig, FrecencyTracker, FuzzySearchOptions,
-    PaginationArgs, QueryParser, QueryTracker, SharedFilePicker, SharedFrecency,
-    SharedQueryTracker,
+    GrepConfig, GrepMode, GrepSearchOptions, PaginationArgs, QueryParser, QueryTracker,
+    SharedFilePicker, SharedFrecency, SharedQueryTracker,
 };
+
+const CONTENT_SEARCH_TIME_BUDGET_MS: u64 = 150;
 
 #[derive(Debug)]
 pub enum Error {
@@ -55,6 +57,34 @@ pub struct FileSearchSnapshot {
     pub results: Vec<FileSearchResult>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ContentSearchResult {
+    pub name: String,
+    pub relative_path: String,
+    pub absolute_path: PathBuf,
+    pub line_number: u64,
+    pub column: usize,
+    pub byte_offset: u64,
+    pub line_content: String,
+    pub match_byte_offsets: Vec<(u32, u32)>,
+    pub size: u64,
+    pub is_binary: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContentSearchSnapshot {
+    pub query: String,
+    pub total_files: usize,
+    pub scanned_files_count: usize,
+    pub is_scanning: bool,
+    pub is_watcher_ready: bool,
+    pub total_files_searched: usize,
+    pub filtered_file_count: usize,
+    pub files_with_matches: usize,
+    pub regex_fallback_error: Option<String>,
+    pub results: Vec<ContentSearchResult>,
+}
+
 pub struct FileSearchIndex {
     root: PathBuf,
     picker: SharedFilePicker,
@@ -79,7 +109,7 @@ impl FileSearchIndex {
                 watch: true,
                 follow_symlinks: false,
                 enable_mmap_cache: false,
-                enable_content_indexing: false,
+                enable_content_indexing: true,
                 ..Default::default()
             },
         )?;
@@ -161,6 +191,88 @@ impl FileSearchIndex {
         })
     }
 
+    pub fn content_status(&self, query: &str) -> Result<ContentSearchSnapshot, Error> {
+        let picker_guard = self.picker.read()?;
+        let picker = picker_guard.as_ref().ok_or(Error::FilePickerMissing)?;
+        let progress = picker.get_scan_progress();
+
+        Ok(ContentSearchSnapshot {
+            query: query.to_string(),
+            total_files: picker.live_file_count(),
+            scanned_files_count: progress.scanned_files_count,
+            is_scanning: progress.is_scanning || picker.is_post_scan_active(),
+            is_watcher_ready: progress.is_watcher_ready,
+            total_files_searched: 0,
+            filtered_file_count: 0,
+            files_with_matches: 0,
+            regex_fallback_error: None,
+            results: Vec::new(),
+        })
+    }
+
+    pub fn search_content(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<ContentSearchSnapshot, Error> {
+        if query.trim().is_empty() {
+            return self.content_status(query);
+        }
+
+        let picker_guard = self.picker.read()?;
+        let picker = picker_guard.as_ref().ok_or(Error::FilePickerMissing)?;
+        let progress = picker.get_scan_progress();
+        let parser: QueryParser<GrepConfig> = QueryParser::new(GrepConfig);
+        let parsed_query = parser.parse(query);
+        let result = picker.grep(
+            &parsed_query,
+            &GrepSearchOptions {
+                page_limit: limit,
+                max_matches_per_file: 4,
+                mode: GrepMode::PlainText,
+                time_budget_ms: content_search_time_budget(limit),
+                ..Default::default()
+            },
+        );
+
+        let results = result
+            .matches
+            .iter()
+            .filter_map(|item_match| {
+                let item = result.files.get(item_match.file_index)?;
+                Some(ContentSearchResult {
+                    name: item.file_name(picker),
+                    relative_path: item.relative_path(picker),
+                    absolute_path: item.absolute_path(picker, picker.base_path()),
+                    line_number: item_match.line_number,
+                    column: item_match.col,
+                    byte_offset: item_match.byte_offset,
+                    line_content: item_match.line_content.clone(),
+                    match_byte_offsets: item_match
+                        .match_byte_offsets
+                        .iter()
+                        .map(|range| (range.0, range.1))
+                        .collect(),
+                    size: item.size,
+                    is_binary: item.is_binary(),
+                })
+            })
+            .collect();
+
+        Ok(ContentSearchSnapshot {
+            query: query.to_string(),
+            total_files: result.total_files,
+            scanned_files_count: progress.scanned_files_count,
+            is_scanning: progress.is_scanning || picker.is_post_scan_active(),
+            is_watcher_ready: progress.is_watcher_ready,
+            total_files_searched: result.total_files_searched,
+            filtered_file_count: result.filtered_file_count,
+            files_with_matches: result.files_with_matches,
+            regex_fallback_error: result.regex_fallback_error,
+            results,
+        })
+    }
+
     pub fn track_open(&self, query: &str, path: &Path) {
         if let Ok(frecency_guard) = self.frecency.read()
             && let Some(frecency) = frecency_guard.as_ref()
@@ -188,6 +300,13 @@ impl FileSearchIndex {
 
 fn search_threads() -> usize {
     1
+}
+
+fn content_search_time_budget(limit: usize) -> u64 {
+    let extra_pages = (limit / 50).saturating_sub(1) as u64;
+    CONTENT_SEARCH_TIME_BUDGET_MS
+        .saturating_add(extra_pages.saturating_mul(75))
+        .min(750)
 }
 
 fn install_persistent_trackers(

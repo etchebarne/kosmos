@@ -377,6 +377,8 @@ pub struct InputState {
     pub(crate) scroll_handle: ScrollHandle,
     /// The deferred scroll offset to apply on next layout.
     pub(crate) deferred_scroll_offset: Option<Point<Pixels>>,
+    /// Zero-based line number offset used when rendering line numbers.
+    pub(crate) line_number_start: usize,
     /// The size of the scrollable content.
     pub(crate) scroll_size: gpui::Size<Pixels>,
     pub(super) editor_scrollbar_paddings: Cell<Edges<Pixels>>,
@@ -492,6 +494,7 @@ impl InputState {
             last_cursor: None,
             scroll_handle: ScrollHandle::new(),
             scroll_size: gpui::size(px(0.), px(0.)),
+            line_number_start: 0,
             editor_scrollbar_paddings: Cell::new(Edges {
                 top: px(0.),
                 right: px(0.),
@@ -627,6 +630,16 @@ impl InputState {
         if let InputMode::CodeEditor { line_number: l, .. } = &mut self.mode {
             *l = line_number;
         }
+        cx.notify();
+    }
+
+    /// Set the zero-based line number offset for rendered line numbers.
+    pub fn set_line_number_start(&mut self, start: usize, cx: &mut Context<Self>) {
+        if self.line_number_start == start {
+            return;
+        }
+
+        self.line_number_start = start;
         cx.notify();
     }
 
@@ -1004,6 +1017,23 @@ impl InputState {
         self.move_to(offset, None, cx);
         self.update_preferred_column();
         self.focus(window, cx);
+    }
+
+    /// Set (0-based) [`Position`] of the cursor without changing focus or scrolling.
+    pub fn set_cursor_position_without_focus(
+        &mut self,
+        position: impl Into<Position>,
+        cx: &mut Context<Self>,
+    ) {
+        let position: Position = position.into();
+        let offset = self.text.position_to_offset(&position).clamp(0, self.text.len());
+
+        self.cursor_line_end_affinity = false;
+        self.selected_range = (offset..offset).into();
+        self.selection_reversed = false;
+        self.selected_word_range = None;
+        self.update_preferred_column();
+        cx.notify();
     }
 
     /// Focus the input field.
@@ -1785,6 +1815,38 @@ impl InputState {
     /// Current scroll offset of the editor viewport.
     pub fn scroll_offset(&self) -> gpui::Point<gpui::Pixels> {
         self.scroll_handle.offset()
+    }
+
+    /// Set the editor viewport scroll offset for the next layout pass.
+    pub fn set_scroll_offset(
+        &mut self,
+        offset: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.deferred_scroll_offset = Some(offset);
+        cx.notify();
+    }
+
+    /// Center the current cursor's visual row in the viewport for the next layout pass.
+    pub fn center_cursor_in_view(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(last_layout) = self.last_layout.as_ref() else {
+            return false;
+        };
+        let Some(bounds) = self.last_bounds.as_ref() else {
+            return false;
+        };
+
+        let wrap_point = self.display_map.offset_to_wrap_display_point(self.cursor());
+        let display_row = self
+            .display_map
+            .wrap_row_to_display_row(wrap_point.row)
+            .unwrap_or_else(|| self.display_map.nearest_visible_display_row(wrap_point.row));
+
+        let cursor_mid_y = last_layout.line_height * display_row as f32 + last_layout.line_height.half();
+        let top = (cursor_mid_y - bounds.size.height.half()).max(px(0.0));
+        self.deferred_scroll_offset = Some(point(px(0.0), -top));
+        cx.notify();
+        true
     }
 
     /// Laid-out line height; `None` before first layout.
