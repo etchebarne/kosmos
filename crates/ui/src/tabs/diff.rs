@@ -20,6 +20,7 @@ use kosmos_git::{
     ConflictBlock, ConflictLine, ConflictResolution, DiffLine, DiffLineKind, FileChangeKind,
     RepositoryDiff,
 };
+use settings::{ActiveSettings, SettingValue};
 use tabs::Tab;
 use theme::ActiveTheme;
 
@@ -34,6 +35,8 @@ const DIFF_GAP_ROW_HEIGHT_REM: f32 = 2.0;
 const LINE_NUMBER_WIDTH_REM: f32 = 3.0;
 const SIGN_WIDTH_REM: f32 = 1.25;
 const CARD_MARGIN_X_REM: f32 = 0.5;
+const DIFF_CODE_TEXT_SIZE_REM: f32 = 0.8125;
+const DIFF_MONO_CHAR_WIDTH_FACTOR: f32 = 0.62;
 
 type LineHighlightKey = (u8, Option<usize>, Option<usize>);
 type LineHighlights = Vec<(Range<usize>, HighlightStyle)>;
@@ -49,6 +52,7 @@ struct DiffUiState {
     pending_focus: Option<String>,
     active_file: Option<String>,
     highlight_cache: Rc<DiffHighlightCache>,
+    wrap_width_px: Option<f32>,
 }
 
 impl Default for DiffUiState {
@@ -64,6 +68,7 @@ impl Default for DiffUiState {
             pending_focus: None,
             active_file: None,
             highlight_cache: Rc::default(),
+            wrap_width_px: None,
         }
     }
 }
@@ -176,6 +181,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
         .as_ref()
         .map(|diff| ensure_highlight_cache(diff, theme.id, cx))
         .unwrap_or_default();
+    let soft_wrap = diff_soft_wrap_enabled(cx);
     let rows = Rc::new(rows);
     let delegate = cx.entity().clone();
 
@@ -199,6 +205,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
                 highlight_cache,
                 delegate,
                 active_file,
+                soft_wrap,
                 window,
                 cx,
             ),
@@ -373,6 +380,13 @@ fn apply_pending_focus<T: PaneDelegate + SettingsDelegate>(
         state.pending_focus = None;
         state.active_file = Some(path);
     });
+}
+
+fn diff_soft_wrap_enabled<T>(cx: &mut Context<T>) -> bool {
+    cx.settings()
+        .get(file_editor::SOFT_WRAP_SETTING_ID)
+        .and_then(SettingValue::as_bool)
+        .unwrap_or(false)
 }
 
 fn ensure_highlight_cache<T: PaneDelegate + SettingsDelegate>(
@@ -719,17 +733,25 @@ fn diff_rows<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
     active_file: Option<String>,
+    soft_wrap: bool,
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let rem_size = window.rem_size();
+    let measured_width = cx.global::<DiffUiState>().wrap_width_px;
+    let wrap_columns = diff_wrap_columns(window, measured_width);
     let item_sizes = Rc::new(
         rows.iter()
-            .map(|row| size(px(0.0), rems(diff_row_height(row)).to_pixels(rem_size)))
+            .map(|row| {
+                size(
+                    px(0.0),
+                    rems(diff_row_height(row, soft_wrap, wrap_columns)).to_pixels(rem_size),
+                )
+            })
             .collect::<Vec<_>>(),
     );
 
-    v_virtual_list(cx.entity().clone(), "diff-rows", item_sizes, {
+    let list = v_virtual_list(cx.entity().clone(), "diff-rows", item_sizes, {
         move |_, range, _window, cx| {
             range
                 .map(|ix| {
@@ -740,6 +762,8 @@ fn diff_rows<T: PaneDelegate + SettingsDelegate + gpui::Render>(
                         highlight_cache.clone(),
                         delegate.clone(),
                         active_file.clone(),
+                        soft_wrap,
+                        wrap_columns,
                         cx,
                     )
                 })
@@ -749,20 +773,147 @@ fn diff_rows<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     .flex_grow()
     .size_full()
     .track_scroll(&scroll_handle)
-    .with_sizing_behavior(ListSizingBehavior::Auto)
-    .into_any_element()
+    .with_sizing_behavior(ListSizingBehavior::Auto);
+
+    div()
+        .size_full()
+        .min_w_0()
+        .min_h_0()
+        .child(list)
+        .on_children_prepainted(|bounds, _, cx| {
+            let Some(bounds) = bounds.first().copied() else {
+                return;
+            };
+            update_diff_wrap_width(f32::from(bounds.size.width), cx);
+        })
+        .into_any_element()
 }
 
-fn diff_row_height(row: &DiffRow) -> f32 {
+fn diff_row_height(row: &DiffRow, soft_wrap: bool, wrap_columns: usize) -> f32 {
     match row {
         DiffRow::File { .. } => DIFF_FILE_ROW_HEIGHT_REM,
         DiffRow::Unchanged { .. } => DIFF_GAP_ROW_HEIGHT_REM,
         DiffRow::ConflictActions { .. } => DIFF_ROW_HEIGHT_REM,
-        DiffRow::ConflictMarker { .. } => DIFF_ROW_HEIGHT_REM,
-        DiffRow::ConflictLine { .. } => DIFF_ROW_HEIGHT_REM,
-        DiffRow::Message { .. } => DIFF_ROW_HEIGHT_REM,
-        DiffRow::Line { .. } => DIFF_ROW_HEIGHT_REM,
+        DiffRow::ConflictMarker { text, .. } => diff_text_row_height(text, soft_wrap, wrap_columns),
+        DiffRow::ConflictLine { line, .. } => {
+            diff_text_row_height(&line.text, soft_wrap, wrap_columns)
+        }
+        DiffRow::Message { text, .. } => diff_text_row_height(text, soft_wrap, wrap_columns),
+        DiffRow::Line { line, .. } => diff_text_row_height(&line.text, soft_wrap, wrap_columns),
     }
+}
+
+fn diff_text_row_height(text: &str, soft_wrap: bool, wrap_columns: usize) -> f32 {
+    DIFF_ROW_HEIGHT_REM * diff_wrap_rows(text, soft_wrap, wrap_columns) as f32
+}
+
+fn diff_wrap_rows(text: &str, soft_wrap: bool, wrap_columns: usize) -> usize {
+    if !soft_wrap {
+        return 1;
+    }
+
+    let limit = wrap_columns.max(1);
+    let mut rows = 1;
+    let mut width = 0;
+
+    for ch in text.chars() {
+        let ch_width = if ch == '\t' { 4 } else { 1 };
+        if width > 0 && width + ch_width > limit {
+            rows += 1;
+            width = 0;
+        }
+        width += ch_width;
+    }
+
+    rows
+}
+
+fn update_diff_wrap_width(width_px: f32, cx: &mut App) {
+    let changed = cx.update_global::<DiffUiState, _>(|state, _| {
+        let width_px = width_px.round();
+        let changed = state
+            .wrap_width_px
+            .is_none_or(|current| (current - width_px).abs() >= 1.0);
+        if changed {
+            state.wrap_width_px = Some(width_px);
+        }
+        changed
+    });
+
+    if changed {
+        cx.refresh_windows();
+    }
+}
+
+#[derive(Clone)]
+struct DiffTextSegment {
+    text: String,
+    range: Range<usize>,
+}
+
+fn wrap_diff_text(text: &str, soft_wrap: bool, wrap_columns: usize) -> Vec<DiffTextSegment> {
+    if !soft_wrap || text.is_empty() {
+        return vec![DiffTextSegment {
+            text: text.to_string(),
+            range: 0..text.len(),
+        }];
+    }
+
+    let limit = wrap_columns.max(1);
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut width = 0;
+
+    for (ix, ch) in text.char_indices() {
+        let ch_width = if ch == '\t' { 4 } else { 1 };
+        if width > 0 && width + ch_width > limit {
+            segments.push(DiffTextSegment {
+                text: text[start..ix].to_string(),
+                range: start..ix,
+            });
+            start = ix;
+            width = 0;
+        }
+        width += ch_width;
+    }
+
+    segments.push(DiffTextSegment {
+        text: text[start..].to_string(),
+        range: start..text.len(),
+    });
+    segments
+}
+
+fn highlights_for_segment(
+    highlights: Option<&[LineHighlightsItem]>,
+    segment: &Range<usize>,
+) -> LineHighlights {
+    let Some(highlights) = highlights else {
+        return Vec::new();
+    };
+
+    highlights
+        .iter()
+        .filter_map(|(range, style)| {
+            let start = range.start.max(segment.start);
+            let end = range.end.min(segment.end);
+            (start < end).then(|| (start - segment.start..end - segment.start, style.clone()))
+        })
+        .collect()
+}
+
+fn diff_wrap_columns(window: &Window, measured_width: Option<f32>) -> usize {
+    let rem_size = window.rem_size();
+    let reserved =
+        rems(CARD_MARGIN_X_REM * 2.0 + LINE_NUMBER_WIDTH_REM + SIGN_WIDTH_REM + 0.125 + 1.0)
+            .to_pixels(rem_size);
+    let width = measured_width
+        .map(px)
+        .unwrap_or_else(|| window.bounds().size.width);
+    let available = (width - reserved).max(px(120.0));
+    let char_width = f32::from(rem_size) * DIFF_CODE_TEXT_SIZE_REM * DIFF_MONO_CHAR_WIDTH_FACTOR;
+
+    (f32::from(available) / char_width).floor().max(20.0) as usize
 }
 
 fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
@@ -772,6 +923,8 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
     active_file: Option<String>,
+    soft_wrap: bool,
+    wrap_columns: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
     match row {
@@ -808,6 +961,8 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
             root,
             highlight_cache,
             delegate,
+            soft_wrap,
+            wrap_columns,
             cx,
         ),
         DiffRow::ConflictActions {
@@ -826,11 +981,20 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
         ),
         DiffRow::ConflictMarker {
             line, text, side, ..
-        } => render_conflict_marker_row(ix, line, text, side, cx),
-        DiffRow::ConflictLine { path, side, line } => {
-            render_conflict_line_row(ix, path, side, line, root, highlight_cache, delegate, cx)
-        }
-        DiffRow::Message { text, .. } => render_message_row(ix, text, cx),
+        } => render_conflict_marker_row(ix, line, text, side, soft_wrap, wrap_columns, cx),
+        DiffRow::ConflictLine { path, side, line } => render_conflict_line_row(
+            ix,
+            path,
+            side,
+            line,
+            root,
+            highlight_cache,
+            delegate,
+            soft_wrap,
+            wrap_columns,
+            cx,
+        ),
+        DiffRow::Message { text, .. } => render_message_row(ix, text, soft_wrap, wrap_columns, cx),
     }
 }
 
@@ -1066,9 +1230,13 @@ fn render_conflict_marker_row<T: 'static>(
     line: usize,
     text: String,
     side: Option<ConflictSide>,
+    soft_wrap: bool,
+    wrap_columns: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
+    let segments = wrap_diff_text(&text, soft_wrap, wrap_columns);
+    let segment_count = segments.len().max(1);
     let (bg, color) = match side {
         Some(ConflictSide::Current) => (
             gpui::Hsla::from(theme.success).opacity(0.22),
@@ -1084,25 +1252,38 @@ fn render_conflict_marker_row<T: 'static>(
     div()
         .id(("diff-conflict-marker", ix))
         .mx(rems(CARD_MARGIN_X_REM))
-        .h(rems(DIFF_ROW_HEIGHT_REM))
+        .h(rems(DIFF_ROW_HEIGHT_REM * segment_count as f32))
         .w_full()
         .min_w_0()
         .flex()
-        .items_center()
+        .flex_col()
         .bg(bg)
         .font_family(FONT_FAMILY)
-        .text_size(rems(0.8125))
+        .text_size(rems(DIFF_CODE_TEXT_SIZE_REM))
         .text_color(color)
-        .child(diff_line_marker(DiffLineKind::Context, theme))
-        .child(line_number_cell(Some(line), theme))
-        .child(div().w(rems(SIGN_WIDTH_REM)).flex_none())
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(text),
+        .children(
+            segments
+                .into_iter()
+                .enumerate()
+                .map(|(segment_ix, segment)| {
+                    div()
+                        .h(rems(DIFF_ROW_HEIGHT_REM))
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .child(diff_line_marker(DiffLineKind::Context, theme))
+                        .child(line_number_cell((segment_ix == 0).then_some(line), theme))
+                        .child(div().w(rems(SIGN_WIDTH_REM)).flex_none())
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(segment.text),
+                        )
+                }),
         )
         .into_any_element()
 }
@@ -1115,6 +1296,8 @@ fn render_conflict_line_row<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
+    soft_wrap: bool,
+    wrap_columns: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -1129,19 +1312,21 @@ fn render_conflict_line_row<T: PaneDelegate + SettingsDelegate>(
     let line_number = line.line;
     let key = conflict_line_highlight_key(side, line_number);
     let highlights = highlight_cache.highlights(&path, &key);
+    let segments = wrap_diff_text(&line.text, soft_wrap, wrap_columns);
+    let segment_count = segments.len().max(1);
     let absolute_path = root.join(path);
 
     div()
         .id(("diff-conflict-line", ix))
         .mx(rems(CARD_MARGIN_X_REM))
-        .h(rems(DIFF_ROW_HEIGHT_REM))
+        .h(rems(DIFF_ROW_HEIGHT_REM * segment_count as f32))
         .w_full()
         .min_w_0()
         .flex()
-        .items_center()
+        .flex_col()
         .bg(bg)
         .font_family(FONT_FAMILY)
-        .text_size(rems(0.8125))
+        .text_size(rems(DIFF_CODE_TEXT_SIZE_REM))
         .text_color(theme.text)
         .hover(move |this| this.bg(theme.bg_hover))
         .cursor_pointer()
@@ -1151,22 +1336,42 @@ fn render_conflict_line_row<T: PaneDelegate + SettingsDelegate>(
                 delegate.open_file_at(path, line_number, 0, cx)
             });
         })
-        .child(diff_line_marker(DiffLineKind::Context, theme))
-        .child(line_number_cell(Some(line_number), theme))
-        .child(
-            div()
-                .w(rems(SIGN_WIDTH_REM))
-                .flex_none()
-                .text_color(side_color)
-                .child("|"),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(highlighted_code_text(line.text, highlights)),
+        .children(
+            segments
+                .into_iter()
+                .enumerate()
+                .map(|(segment_ix, segment)| {
+                    let segment_highlights = highlights_for_segment(highlights, &segment.range);
+                    div()
+                        .h(rems(DIFF_ROW_HEIGHT_REM))
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .child(diff_line_marker(DiffLineKind::Context, theme))
+                        .child(line_number_cell(
+                            (segment_ix == 0).then_some(line_number),
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .w(rems(SIGN_WIDTH_REM))
+                                .flex_none()
+                                .text_color(side_color)
+                                .child(if segment_ix == 0 { "|" } else { " " }),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(highlighted_code_text(
+                                    segment.text,
+                                    Some(&segment_highlights),
+                                )),
+                        )
+                }),
         )
         .into_any_element()
 }
@@ -1179,6 +1384,8 @@ fn render_line_row<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
+    soft_wrap: bool,
+    wrap_columns: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = *cx.theme();
@@ -1200,18 +1407,20 @@ fn render_line_row<T: PaneDelegate + SettingsDelegate>(
     let absolute_path = root.join(&path);
     let display_line = line.new_line.or(line.old_line);
     let highlights = highlight_cache.highlights(&path, &line_highlight_key);
+    let segments = wrap_diff_text(&line.text, soft_wrap, wrap_columns);
+    let segment_count = segments.len().max(1);
 
     div()
         .id(("diff-line", ix))
         .mx(rems(CARD_MARGIN_X_REM))
-        .h(rems(DIFF_ROW_HEIGHT_REM))
+        .h(rems(DIFF_ROW_HEIGHT_REM * segment_count as f32))
         .w_full()
         .min_w_0()
         .flex()
-        .items_center()
+        .flex_col()
         .bg(bg)
         .font_family(FONT_FAMILY)
-        .text_size(rems(0.8125))
+        .text_size(rems(DIFF_CODE_TEXT_SIZE_REM))
         .text_color(text_color)
         .hover(move |this| this.bg(theme.bg_hover))
         .when(can_open && target_line.is_some(), |this| {
@@ -1223,45 +1432,87 @@ fn render_line_row<T: PaneDelegate + SettingsDelegate>(
                 delegate.update(cx, |delegate, cx| delegate.open_file_at(path, line, 0, cx));
             })
         })
-        .child(diff_line_marker(line.kind, theme))
-        .child(line_number_cell(display_line, theme))
-        .child(
-            div()
-                .w(rems(SIGN_WIDTH_REM))
-                .flex_none()
-                .text_color(match line.kind {
-                    DiffLineKind::Added => theme.success,
-                    DiffLineKind::Removed => theme.danger,
-                    DiffLineKind::Context => theme.text_subtle,
-                })
-                .child(sign.to_string()),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(highlighted_code_text(line.text, highlights)),
+        .children(
+            segments
+                .into_iter()
+                .enumerate()
+                .map(|(segment_ix, segment)| {
+                    let segment_highlights = highlights_for_segment(highlights, &segment.range);
+                    div()
+                        .h(rems(DIFF_ROW_HEIGHT_REM))
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .child(diff_line_marker(line.kind, theme))
+                        .child(line_number_cell(
+                            (segment_ix == 0).then_some(display_line).flatten(),
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .w(rems(SIGN_WIDTH_REM))
+                                .flex_none()
+                                .text_color(match line.kind {
+                                    DiffLineKind::Added => theme.success,
+                                    DiffLineKind::Removed => theme.danger,
+                                    DiffLineKind::Context => theme.text_subtle,
+                                })
+                                .child(if segment_ix == 0 {
+                                    sign.to_string()
+                                } else {
+                                    " ".to_string()
+                                }),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(highlighted_code_text(
+                                    segment.text,
+                                    Some(&segment_highlights),
+                                )),
+                        )
+                }),
         )
         .into_any_element()
 }
 
-fn render_message_row<T: 'static>(ix: usize, text: String, cx: &mut Context<T>) -> AnyElement {
+fn render_message_row<T: 'static>(
+    ix: usize,
+    text: String,
+    soft_wrap: bool,
+    wrap_columns: usize,
+    cx: &mut Context<T>,
+) -> AnyElement {
     let theme = *cx.theme();
+    let segments = wrap_diff_text(&text, soft_wrap, wrap_columns);
+    let segment_count = segments.len().max(1);
     div()
         .id(("diff-message", ix))
         .mx(rems(CARD_MARGIN_X_REM))
-        .h(rems(DIFF_ROW_HEIGHT_REM))
+        .h(rems(DIFF_ROW_HEIGHT_REM * segment_count as f32))
         .w_full()
         .flex()
-        .items_center()
+        .flex_col()
         .px_3()
         .rounded(rems(0.375))
         .bg(gpui::Hsla::from(theme.bg_hover).opacity(0.35))
         .text_sm()
         .text_color(theme.text_subtle)
-        .child(text)
+        .overflow_hidden()
+        .children(segments.into_iter().map(|segment| {
+            div()
+                .h(rems(DIFF_ROW_HEIGHT_REM))
+                .w_full()
+                .flex()
+                .items_center()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(segment.text)
+        }))
         .into_any_element()
 }
 
