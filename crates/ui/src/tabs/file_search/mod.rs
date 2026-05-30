@@ -17,7 +17,7 @@ use gpui_component::{
     VirtualListScrollHandle,
     alert::Alert,
     button::{Button, ButtonGroup},
-    input::{Input, InputEvent, InputState},
+    input::{IndentInline, Input, InputEvent, InputState, OutdentInline},
     list::ListItem,
     v_virtual_list,
 };
@@ -938,8 +938,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
             match event.keystroke.key.as_str() {
                 "tab" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.alt => {
                     cx.stop_propagation();
-                    cx.update_global::<FileSearchUi, _>(|state, _| state.toggle_mode());
-                    cx.notify();
+                    toggle_search_mode(cx);
                 }
                 "up" => {
                     cx.stop_propagation();
@@ -970,12 +969,25 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
                 _ => {}
             }
         }))
+        .capture_action(cx.listener(|_, _: &IndentInline, _, cx| {
+            cx.stop_propagation();
+            toggle_search_mode(cx);
+        }))
+        .capture_action(cx.listener(|_, _: &OutdentInline, _, cx| {
+            cx.stop_propagation();
+            toggle_search_mode(cx);
+        }))
         .child(header(&input, mode, cx))
         .when_some(view.error.clone(), |this, error| {
             this.child(error_banner(error, cx))
         })
         .child(results(&view, focus_handle, window, cx))
         .into_any_element()
+}
+
+fn toggle_search_mode<T: 'static>(cx: &mut Context<T>) {
+    cx.update_global::<FileSearchUi, _>(|state, _| state.toggle_mode());
+    cx.notify();
 }
 
 fn header<T: PaneDelegate + SettingsDelegate>(
@@ -1018,7 +1030,7 @@ fn search_mode_switch(mode: SearchMode) -> AnyElement {
     ButtonGroup::new("file-search-mode")
         .compact()
         .outline()
-        .small()
+        .with_size(Size::Medium)
         .child(
             Button::new("file-search-mode-name")
                 .label("Name")
