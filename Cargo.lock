@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "ai"
-version = "0.4.6"
+version = "0.4.7"
 
 [[package]]
 name = "alacritty_terminal"
@@ -122,7 +122,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app_shell"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "file_editor",
  "file_tree",
@@ -1955,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "file_editor"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "language",
@@ -1964,14 +1964,14 @@ dependencies = [
 
 [[package]]
 name = "file_search"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "fff-search",
 ]
 
 [[package]]
 name = "file_tree"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "notify 8.2.0",
@@ -2394,7 +2394,7 @@ checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "git"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gix",
 ]
@@ -4136,7 +4136,7 @@ dependencies = [
 
 [[package]]
 name = "icons"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "icondata_core",
@@ -4373,7 +4373,7 @@ dependencies = [
 
 [[package]]
 name = "installer"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "flate2",
  "registry",
@@ -4597,7 +4597,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kosmos"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "app_shell",
 ]
@@ -4653,7 +4653,7 @@ dependencies = [
 
 [[package]]
 name = "language"
-version = "0.4.6"
+version = "0.4.7"
 
 [[package]]
 name = "lazy_static"
@@ -4844,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "lsp"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "installer",
  "lsp-types",
@@ -5693,7 +5693,7 @@ dependencies = [
 
 [[package]]
 name = "pane_tree"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "panes",
  "tabs",
@@ -5701,7 +5701,7 @@ dependencies = [
 
 [[package]]
 name = "panes"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "tabs",
 ]
@@ -5800,7 +5800,7 @@ dependencies = [
 
 [[package]]
 name = "persistence"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "pane_tree",
@@ -6502,7 +6502,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "registry"
-version = "0.4.6"
+version = "0.4.7"
 
 [[package]]
 name = "renderdoc-sys"
@@ -7055,7 +7055,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "icons",
@@ -7136,7 +7136,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shortcuts"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
 ]
@@ -7324,7 +7324,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "rusqlite",
 ]
@@ -7581,7 +7581,7 @@ dependencies = [
 
 [[package]]
 name = "tabs"
-version = "0.4.6"
+version = "0.4.7"
 
 [[package]]
 name = "taffy"
@@ -7648,7 +7648,7 @@ dependencies = [
 
 [[package]]
 name = "terminal"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "alacritty_terminal",
  "gpui",
@@ -7657,7 +7657,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "gpui-component",
@@ -8408,7 +8408,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "file_editor",
@@ -9922,7 +9922,7 @@ dependencies = [
 
 [[package]]
 name = "workspace"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "pane_tree",
 ]
@@ -10398,7 +10398,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zoom"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "gpui",
  "settings",
