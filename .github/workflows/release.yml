@@ -29,10 +29,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config gettext-base llvm curl rpm desktop-file-utils \
+            build-essential pkg-config gettext-base llvm clang libclang-dev curl rpm desktop-file-utils \
             libssl-dev libfontconfig-dev libxkbcommon-dev \
             libxcb1-dev libxkbcommon-x11-dev \
             libwayland-dev libvulkan-dev
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Install AppImage tooling
         run: |

@@ -55,11 +55,6 @@ pub fn render<T: SettingsDelegate>(
                 .pb_4()
                 .border_b_1()
                 .border_color(theme.border_subtle)
-                .child(
-                    Label::new("Settings")
-                        .text_xl()
-                        .text_color(theme.text_emphasis),
-                )
                 .child(render_search(search, theme)),
         )
         .child(

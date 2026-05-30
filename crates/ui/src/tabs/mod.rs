@@ -1,10 +1,9 @@
 mod blank;
 mod diff;
 mod file_editor;
-mod file_search;
+pub mod file_search;
 pub mod file_tree;
 pub mod git;
-mod placeholder;
 pub mod settings;
 pub mod terminal;
 
@@ -35,7 +34,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
             cx,
         ),
         "file_tree" => file_tree::render(window, cx),
-        "file_search" => file_search::render(cx),
+        "file_search" => file_search::render(workspace_path, window, cx),
         "git" => git::render(window, cx),
         "diff" => diff::render(workspace_path, tab, window, cx),
         "settings" => settings::render(window, cx),

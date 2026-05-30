@@ -15,6 +15,7 @@ use theme::ActiveTheme;
 use ui::delegate::{HeaderMenuAction, HeaderMenuAvailability, SettingsUiState, TabScrollHandles};
 use ui::layout;
 use ui::pane_tree_actions::WirePaneTreeActions;
+use ui::tabs::file_search::FileSearchUi;
 use ui::tabs::settings::SettingsInputs;
 use workspace::WorkspaceManager;
 use zoom::WireZoomActions;
@@ -38,6 +39,7 @@ pub(crate) struct KosmosApp {
 impl KosmosApp {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         ui::tabs::file_tree::FileTreeUi::install(window, cx);
+        FileSearchUi::install(window, cx);
         SettingsInputs::install(window, cx);
         let workspaces = persistence::load();
         let file_tree = Self::create_file_tree(cx);
