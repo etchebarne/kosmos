@@ -203,6 +203,12 @@ fn file_editor_tab(tab_id: usize, path: PathBuf) -> Tab {
         .with_path(path)
 }
 
+fn diff_tab(tab_id: usize, root: PathBuf) -> Tab {
+    Tab::new(tab_id, &tabs::registry::DIFF)
+        .with_title("Diff")
+        .with_path(root)
+}
+
 fn terminal_tab(tab_id: usize, cwd: PathBuf) -> Tab {
     Tab::new(tab_id, &tabs::registry::TERMINAL).with_path(cwd)
 }

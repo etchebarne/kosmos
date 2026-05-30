@@ -60,6 +60,44 @@ impl BufferStore {
             .is_some_and(|buffer| buffer.read(cx).is_dirty())
     }
 
+    pub fn content_for_path(path: &Path, cx: &App) -> Option<String> {
+        cx.try_global::<Self>()
+            .and_then(|store| {
+                store
+                    .by_path
+                    .get(path)
+                    .and_then(|id| store.by_id.get(id))
+                    .cloned()
+            })
+            .map(|buffer| buffer.read(cx).content().to_string())
+    }
+
+    pub fn write_path_content(
+        path: &Path,
+        content: impl Into<String>,
+        cx: &mut App,
+    ) -> std::io::Result<()> {
+        let content = content.into();
+        let buffer = cx.try_global::<Self>().and_then(|store| {
+            store
+                .by_path
+                .get(path)
+                .and_then(|id| store.by_id.get(id))
+                .cloned()
+        });
+
+        if let Some(buffer) = buffer {
+            buffer.update(cx, |buffer, cx| {
+                let len = buffer.content().len();
+                buffer.replace_range(0..len, &content, cx);
+                buffer.save(cx)
+            })?;
+            return Ok(());
+        }
+
+        std::fs::write(path, content)
+    }
+
     pub fn has_dirty_buffers(cx: &App) -> bool {
         cx.try_global::<Self>().is_some_and(|store| {
             store

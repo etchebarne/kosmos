@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -51,6 +52,71 @@ pub enum FileChangeKind {
     Deleted,
     Renamed,
     Conflicted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryDiff {
+    pub work_dir: PathBuf,
+    pub files: Vec<FileDiff>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiff {
+    pub old_path: Option<String>,
+    pub path: String,
+    pub kind: FileChangeKind,
+    pub binary: bool,
+    pub hunks: Vec<DiffHunk>,
+    pub conflicts: Vec<ConflictBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffHunk {
+    pub old_start: usize,
+    pub old_lines: usize,
+    pub new_start: usize,
+    pub new_lines: usize,
+    pub header: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    pub old_line: Option<usize>,
+    pub new_line: Option<usize>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineKind {
+    Context,
+    Added,
+    Removed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictBlock {
+    pub start_line: usize,
+    pub separator_line: usize,
+    pub end_line: usize,
+    pub current_label: String,
+    pub incoming_label: String,
+    pub current: Vec<ConflictLine>,
+    pub incoming: Vec<ConflictLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictLine {
+    pub line: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictResolution {
+    Current,
+    Incoming,
+    Both,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +195,40 @@ impl RepositorySummary {
     }
 }
 
+impl RepositoryDiff {
+    pub fn discover(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let work_dir = git_work_dir(path.as_ref())?;
+        let has_head = git_output(&work_dir, &["rev-parse", "--verify", "HEAD"]).is_ok();
+        let output = if has_head {
+            git_output(
+                &work_dir,
+                &[
+                    "diff",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--find-renames",
+                    "--unified=3",
+                    "HEAD",
+                    "--",
+                ],
+            )?
+        } else {
+            String::new()
+        };
+        let mut files = parse_unified_diff(&output);
+        let changes = file_changes(&work_dir).unwrap_or_default();
+        apply_status_to_file_diffs(&mut files, &work_dir, &changes);
+        synthesize_created_file_diffs(&mut files, &work_dir, &changes);
+        synthesize_conflicted_file_diffs(&mut files, &work_dir, &changes);
+
+        Ok(Self { work_dir, files })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct DiffStats {
     insertions: usize,
@@ -145,6 +245,443 @@ fn file_changes(path: &Path) -> Result<Vec<FileChange>, Error> {
         .map(|numstat| parse_numstat(&numstat))
         .unwrap_or_default();
     Ok(parse_status_changes(&status, &work_dir, &mut stats_by_path))
+}
+
+struct ParsedHunk {
+    hunk: DiffHunk,
+    old_line: usize,
+    new_line: usize,
+}
+
+fn parse_unified_diff(output: &str) -> Vec<FileDiff> {
+    let mut files = Vec::new();
+    let mut current_file: Option<FileDiff> = None;
+    let mut current_hunk: Option<ParsedHunk> = None;
+
+    for line in output.lines() {
+        if line.starts_with("diff --git ") {
+            finish_diff_file(&mut files, &mut current_file, &mut current_hunk);
+            current_file = Some(parse_diff_git_header(line));
+            continue;
+        }
+
+        let Some(file) = current_file.as_mut() else {
+            continue;
+        };
+
+        if let Some((old_start, old_lines, new_start, new_lines, header)) = parse_hunk_header(line)
+        {
+            finish_hunk(file, &mut current_hunk);
+            current_hunk = Some(ParsedHunk {
+                hunk: DiffHunk {
+                    old_start,
+                    old_lines,
+                    new_start,
+                    new_lines,
+                    header,
+                    lines: Vec::new(),
+                },
+                old_line: old_start,
+                new_line: new_start,
+            });
+            continue;
+        }
+
+        if let Some(hunk) = current_hunk.as_mut() {
+            if parse_diff_line(line, hunk) {
+                continue;
+            }
+        }
+
+        parse_file_header_line(file, line);
+    }
+
+    finish_diff_file(&mut files, &mut current_file, &mut current_hunk);
+    files
+}
+
+fn finish_diff_file(
+    files: &mut Vec<FileDiff>,
+    current_file: &mut Option<FileDiff>,
+    current_hunk: &mut Option<ParsedHunk>,
+) {
+    if let Some(file) = current_file.as_mut() {
+        finish_hunk(file, current_hunk);
+    }
+    if let Some(file) = current_file.take() {
+        if file.binary || !file.hunks.is_empty() {
+            files.push(file);
+        }
+    }
+}
+
+fn finish_hunk(file: &mut FileDiff, current_hunk: &mut Option<ParsedHunk>) {
+    if let Some(parsed) = current_hunk.take()
+        && !parsed.hunk.lines.is_empty()
+    {
+        file.hunks.push(parsed.hunk);
+    }
+}
+
+fn parse_diff_git_header(line: &str) -> FileDiff {
+    let rest = line.trim_start_matches("diff --git ");
+    let (old_path, path) = rest
+        .split_once(" b/")
+        .map(|(old, new)| {
+            (
+                normalize_diff_path(old),
+                normalize_diff_path(&format!("b/{new}")),
+            )
+        })
+        .unwrap_or_else(|| (String::new(), normalize_diff_path(rest)));
+
+    FileDiff {
+        old_path: (old_path != path).then_some(old_path),
+        path,
+        kind: FileChangeKind::Modified,
+        binary: false,
+        hunks: Vec::new(),
+        conflicts: Vec::new(),
+    }
+}
+
+fn normalize_diff_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .strip_prefix("a/")
+        .or_else(|| path.trim().trim_matches('"').strip_prefix("b/"))
+        .unwrap_or_else(|| path.trim().trim_matches('"'))
+        .to_string()
+}
+
+fn parse_file_header_line(file: &mut FileDiff, line: &str) {
+    if line.starts_with("new file mode ") {
+        file.kind = FileChangeKind::Created;
+    } else if line.starts_with("deleted file mode ") {
+        file.kind = FileChangeKind::Deleted;
+    } else if let Some(path) = line.strip_prefix("rename from ") {
+        file.kind = FileChangeKind::Renamed;
+        file.old_path = Some(normalize_diff_path(path));
+    } else if let Some(path) = line.strip_prefix("rename to ") {
+        file.kind = FileChangeKind::Renamed;
+        file.path = normalize_diff_path(path);
+    } else if let Some(path) = line.strip_prefix("--- ") {
+        let path = normalize_diff_path(path);
+        if path == "/dev/null" {
+            file.kind = FileChangeKind::Created;
+            file.old_path = None;
+        } else {
+            file.old_path = (path != file.path).then_some(path);
+        }
+    } else if let Some(path) = line.strip_prefix("+++ ") {
+        let path = normalize_diff_path(path);
+        if path == "/dev/null" {
+            file.kind = FileChangeKind::Deleted;
+        } else {
+            file.path = path;
+        }
+    } else if line.starts_with("Binary files ") {
+        file.binary = true;
+    }
+}
+
+fn parse_hunk_header(line: &str) -> Option<(usize, usize, usize, usize, String)> {
+    let rest = line.strip_prefix("@@ ")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let mut parts = ranges.split_whitespace();
+    let old = parts.next()?.strip_prefix('-')?;
+    let new = parts.next()?.strip_prefix('+')?;
+    let (old_start, old_lines) = parse_hunk_range(old)?;
+    let (new_start, new_lines) = parse_hunk_range(new)?;
+    Some((old_start, old_lines, new_start, new_lines, line.to_string()))
+}
+
+fn parse_hunk_range(range: &str) -> Option<(usize, usize)> {
+    let (start, lines) = range.split_once(',').unwrap_or((range, "1"));
+    Some((start.parse().ok()?, lines.parse().ok()?))
+}
+
+fn parse_diff_line(line: &str, hunk: &mut ParsedHunk) -> bool {
+    let Some(prefix) = line.chars().next() else {
+        return false;
+    };
+    let text = line.get(1..).unwrap_or_default().to_string();
+    match prefix {
+        ' ' => {
+            hunk.hunk.lines.push(DiffLine {
+                kind: DiffLineKind::Context,
+                old_line: Some(hunk.old_line),
+                new_line: Some(hunk.new_line),
+                text,
+            });
+            hunk.old_line += 1;
+            hunk.new_line += 1;
+            true
+        }
+        '+' => {
+            hunk.hunk.lines.push(DiffLine {
+                kind: DiffLineKind::Added,
+                old_line: None,
+                new_line: Some(hunk.new_line),
+                text,
+            });
+            hunk.new_line += 1;
+            true
+        }
+        '-' => {
+            hunk.hunk.lines.push(DiffLine {
+                kind: DiffLineKind::Removed,
+                old_line: Some(hunk.old_line),
+                new_line: None,
+                text,
+            });
+            hunk.old_line += 1;
+            true
+        }
+        '\\' => true,
+        _ => false,
+    }
+}
+
+fn apply_status_to_file_diffs(files: &mut [FileDiff], work_dir: &Path, changes: &[FileChange]) {
+    for file in files {
+        let Some(change) = changes.iter().find(|change| {
+            change.path == file.path || file.old_path.as_deref() == Some(&change.path)
+        }) else {
+            continue;
+        };
+
+        file.kind = change.kind;
+        if change.kind == FileChangeKind::Conflicted {
+            file.conflicts = read_conflicts(work_dir.join(&file.path));
+        }
+    }
+}
+
+fn synthesize_conflicted_file_diffs(
+    files: &mut Vec<FileDiff>,
+    work_dir: &Path,
+    changes: &[FileChange],
+) {
+    let existing_paths = files
+        .iter()
+        .flat_map(|file| file.old_path.iter().chain(std::iter::once(&file.path)))
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    for change in changes {
+        if change.kind != FileChangeKind::Conflicted || existing_paths.contains(&change.path) {
+            continue;
+        }
+        files.push(synthesize_conflicted_file_diff(work_dir, &change.path));
+    }
+}
+
+fn synthesize_conflicted_file_diff(work_dir: &Path, path: &str) -> FileDiff {
+    let conflicts = read_conflicts(work_dir.join(path));
+    FileDiff {
+        old_path: None,
+        path: path.to_string(),
+        kind: FileChangeKind::Conflicted,
+        binary: conflicts.is_empty(),
+        hunks: Vec::new(),
+        conflicts,
+    }
+}
+
+fn read_conflicts(path: impl AsRef<Path>) -> Vec<ConflictBlock> {
+    std::fs::read_to_string(path)
+        .map(|content| parse_conflicts(&content))
+        .unwrap_or_default()
+}
+
+fn parse_conflicts(content: &str) -> Vec<ConflictBlock> {
+    enum ParsedConflict {
+        Current {
+            start_line: usize,
+            current_label: String,
+            current: Vec<ConflictLine>,
+        },
+        Incoming {
+            start_line: usize,
+            separator_line: usize,
+            current_label: String,
+            current: Vec<ConflictLine>,
+            incoming: Vec<ConflictLine>,
+        },
+    }
+
+    let mut conflicts = Vec::new();
+    let mut current_conflict: Option<ParsedConflict> = None;
+
+    for (ix, line) in content.lines().enumerate() {
+        let line_number = ix + 1;
+        if let Some(label) = conflict_marker_label(line, "<<<<<<<") {
+            current_conflict = Some(ParsedConflict::Current {
+                start_line: line_number,
+                current_label: label,
+                current: Vec::new(),
+            });
+            continue;
+        }
+
+        if line.starts_with("=======") {
+            if let Some(ParsedConflict::Current {
+                start_line,
+                current_label,
+                current,
+            }) = current_conflict.take()
+            {
+                current_conflict = Some(ParsedConflict::Incoming {
+                    start_line,
+                    separator_line: line_number,
+                    current_label,
+                    current,
+                    incoming: Vec::new(),
+                });
+            }
+            continue;
+        }
+
+        if let Some(label) = conflict_marker_label(line, ">>>>>>>") {
+            if let Some(ParsedConflict::Incoming {
+                start_line,
+                separator_line,
+                current_label,
+                current,
+                incoming,
+            }) = current_conflict.take()
+            {
+                conflicts.push(ConflictBlock {
+                    start_line,
+                    separator_line,
+                    end_line: line_number,
+                    current_label,
+                    incoming_label: label,
+                    current,
+                    incoming,
+                });
+            }
+            continue;
+        }
+
+        match current_conflict.as_mut() {
+            Some(ParsedConflict::Current { current, .. }) => current.push(ConflictLine {
+                line: line_number,
+                text: line.to_string(),
+            }),
+            Some(ParsedConflict::Incoming { incoming, .. }) => incoming.push(ConflictLine {
+                line: line_number,
+                text: line.to_string(),
+            }),
+            None => {}
+        }
+    }
+
+    conflicts
+}
+
+fn conflict_marker_label(line: &str, marker: &str) -> Option<String> {
+    line.strip_prefix(marker)
+        .map(str::trim)
+        .map(ToString::to_string)
+}
+
+pub fn resolve_conflict_content(
+    content: &str,
+    start_line: usize,
+    resolution: ConflictResolution,
+) -> Option<String> {
+    let conflicts = parse_conflicts(content);
+    let conflict = conflicts
+        .into_iter()
+        .find(|conflict| conflict.start_line == start_line)?;
+    let mut lines = content.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let replacement = match resolution {
+        ConflictResolution::Current => conflict.current,
+        ConflictResolution::Incoming => conflict.incoming,
+        ConflictResolution::Both => conflict
+            .current
+            .into_iter()
+            .chain(conflict.incoming)
+            .collect::<Vec<_>>(),
+    };
+    let replacement = replacement
+        .into_iter()
+        .map(|line| line.text)
+        .collect::<Vec<_>>();
+
+    lines.splice(conflict.start_line - 1..conflict.end_line, replacement);
+    let mut resolved = lines.join("\n");
+    if content.ends_with('\n') {
+        resolved.push('\n');
+    }
+    Some(resolved)
+}
+
+fn synthesize_created_file_diffs(
+    files: &mut Vec<FileDiff>,
+    work_dir: &Path,
+    changes: &[FileChange],
+) {
+    let existing_paths = files
+        .iter()
+        .flat_map(|file| file.old_path.iter().chain(std::iter::once(&file.path)))
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    for change in changes {
+        if change.kind != FileChangeKind::Created || existing_paths.contains(&change.path) {
+            continue;
+        }
+        files.push(synthesize_created_file_diff(work_dir, &change.path));
+    }
+}
+
+fn synthesize_created_file_diff(work_dir: &Path, path: &str) -> FileDiff {
+    let Ok(content) = std::fs::read_to_string(work_dir.join(path)) else {
+        return FileDiff {
+            old_path: None,
+            path: path.to_string(),
+            kind: FileChangeKind::Created,
+            binary: true,
+            hunks: Vec::new(),
+            conflicts: Vec::new(),
+        };
+    };
+
+    let lines = content.lines().collect::<Vec<_>>();
+    let diff_lines = lines
+        .iter()
+        .enumerate()
+        .map(|(ix, line)| DiffLine {
+            kind: DiffLineKind::Added,
+            old_line: None,
+            new_line: Some(ix + 1),
+            text: (*line).to_string(),
+        })
+        .collect::<Vec<_>>();
+    let hunks = if diff_lines.is_empty() {
+        Vec::new()
+    } else {
+        vec![DiffHunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: diff_lines.len(),
+            header: format!("@@ -0,0 +1,{} @@", diff_lines.len()),
+            lines: diff_lines,
+        }]
+    };
+
+    FileDiff {
+        old_path: None,
+        path: path.to_string(),
+        kind: FileChangeKind::Created,
+        binary: false,
+        hunks,
+        conflicts: Vec::new(),
+    }
 }
 
 fn parse_numstat(output: &str) -> HashMap<String, DiffStats> {
@@ -663,6 +1200,54 @@ mod tests {
     }
 
     #[test]
+    fn parses_unified_diff_hunks() {
+        let files = parse_unified_diff(concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "index 111..222 100644\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1,3 +1,4 @@\n",
+            " one\n",
+            "-two\n",
+            "+two changed\n",
+            "+three\n",
+            " four\n",
+        ));
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/lib.rs");
+        assert_eq!(files[0].kind, FileChangeKind::Modified);
+        assert_eq!(files[0].hunks.len(), 1);
+        assert_eq!(files[0].hunks[0].old_start, 1);
+        assert_eq!(files[0].hunks[0].new_start, 1);
+        assert_eq!(files[0].hunks[0].lines.len(), 5);
+        assert_eq!(files[0].hunks[0].lines[1].kind, DiffLineKind::Removed);
+        assert_eq!(files[0].hunks[0].lines[1].old_line, Some(2));
+        assert_eq!(files[0].hunks[0].lines[2].kind, DiffLineKind::Added);
+        assert_eq!(files[0].hunks[0].lines[2].new_line, Some(2));
+    }
+
+    #[test]
+    fn parses_renamed_diff_paths() {
+        let files = parse_unified_diff(concat!(
+            "diff --git a/old.rs b/new.rs\n",
+            "similarity index 90%\n",
+            "rename from old.rs\n",
+            "rename to new.rs\n",
+            "--- a/old.rs\n",
+            "+++ b/new.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+        ));
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].kind, FileChangeKind::Renamed);
+        assert_eq!(files[0].old_path.as_deref(), Some("old.rs"));
+        assert_eq!(files[0].path, "new.rs");
+    }
+
+    #[test]
     fn parses_stash_files_with_stats() {
         let files =
             parse_stash_files("3\t1\tsrc/lib.rs\n-\t-\tassets/logo.png\n2\t0\told => new.rs\n");
@@ -746,6 +1331,57 @@ mod tests {
         assert!(!changes[1].staged);
         assert_eq!(changes[2].kind, FileChangeKind::Conflicted);
         assert!(!changes[2].staged);
+    }
+
+    #[test]
+    fn parses_conflict_blocks() {
+        let conflicts = parse_conflicts(concat!(
+            "before\n",
+            "<<<<<<< HEAD\n",
+            "current one\n",
+            "current two\n",
+            "=======\n",
+            "incoming one\n",
+            ">>>>>>> feature/auth\n",
+            "after\n",
+        ));
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].start_line, 2);
+        assert_eq!(conflicts[0].separator_line, 5);
+        assert_eq!(conflicts[0].end_line, 7);
+        assert_eq!(conflicts[0].current_label, "HEAD");
+        assert_eq!(conflicts[0].incoming_label, "feature/auth");
+        assert_eq!(conflicts[0].current[0].line, 3);
+        assert_eq!(conflicts[0].current[0].text, "current one");
+        assert_eq!(conflicts[0].incoming[0].line, 6);
+        assert_eq!(conflicts[0].incoming[0].text, "incoming one");
+    }
+
+    #[test]
+    fn resolves_conflict_content() {
+        let content = concat!(
+            "before\n",
+            "<<<<<<< HEAD\n",
+            "current\n",
+            "=======\n",
+            "incoming\n",
+            ">>>>>>> feature\n",
+            "after\n",
+        );
+
+        assert_eq!(
+            resolve_conflict_content(content, 2, ConflictResolution::Current).as_deref(),
+            Some("before\ncurrent\nafter\n"),
+        );
+        assert_eq!(
+            resolve_conflict_content(content, 2, ConflictResolution::Incoming).as_deref(),
+            Some("before\nincoming\nafter\n"),
+        );
+        assert_eq!(
+            resolve_conflict_content(content, 2, ConflictResolution::Both).as_deref(),
+            Some("before\ncurrent\nincoming\nafter\n"),
+        );
     }
 
     #[test]

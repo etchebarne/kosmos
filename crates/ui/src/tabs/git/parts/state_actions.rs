@@ -447,6 +447,7 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> bool {
     let mut changed = false;
+    let mut diff_should_refresh = false;
     let should_continue = cx.update_global::<GitUiState, _>(|state, _| {
         if state.watch_generation != generation || state.root.as_deref() != Some(root) {
             return false;
@@ -454,6 +455,9 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
 
         match result {
             Ok(summary) => {
+                diff_should_refresh = summary_diff_state_changed(state.summary.as_ref(), &summary)
+                    || state.last_error.is_some()
+                    || state.can_initialize_repository;
                 changed = state.summary.as_ref() != Some(&summary)
                     || state.last_error.is_some()
                     || state.can_initialize_repository;
@@ -467,6 +471,7 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
                 changed = state.summary.is_some()
                     || state.last_error.as_ref() != Some(&error)
                     || state.can_initialize_repository != is_missing_repository;
+                diff_should_refresh = changed;
                 state.summary = None;
                 state.last_error = Some(error);
                 state.can_initialize_repository = is_missing_repository;
@@ -475,11 +480,31 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
         true
     });
 
+    if diff_should_refresh {
+        super::refresh_diff_if_loaded(root.to_path_buf(), false, cx);
+    }
+
     if changed {
         cx.notify();
     }
 
     should_continue
+}
+
+fn summary_diff_state_changed(
+    previous: Option<&RepositorySummary>,
+    next: &RepositorySummary,
+) -> bool {
+    match previous {
+        Some(previous) => {
+            previous.work_dir != next.work_dir
+                || previous.changes != next.changes
+                || previous.insertions != next.insertions
+                || previous.deletions != next.deletions
+                || previous.files != next.files
+        }
+        None => true,
+    }
 }
 
 fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
@@ -506,6 +531,8 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
     if notify_now {
         cx.notify();
     }
+
+    super::refresh_diff_if_loaded(root.clone(), notify_now, cx);
 
     let task = cx.spawn(async move |this, cx| {
         let result = cx
@@ -608,6 +635,8 @@ fn refresh_summary_app(root: PathBuf, notify_now: bool, show_loading: bool, cx: 
     if notify_now {
         cx.refresh_windows();
     }
+
+    super::refresh_diff_if_loaded_app(root.clone(), notify_now, cx);
 
     cx.spawn(async move |cx| {
         let result = cx

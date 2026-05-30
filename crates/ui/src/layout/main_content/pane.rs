@@ -21,7 +21,7 @@ use crate::tabs::file_tree::drag::FileNodeDrag;
 
 use super::tab;
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(
+pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     tree: &PaneTree,
     pane: &Pane,
     workspace_id: usize,

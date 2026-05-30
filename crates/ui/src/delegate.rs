@@ -133,6 +133,8 @@ pub trait PaneDelegate: Sized + 'static {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     );
+    fn open_file_at(&mut self, path: PathBuf, line: usize, column: usize, cx: &mut Context<Self>);
+    fn open_diff_for_file(&mut self, root: PathBuf, file_path: String, cx: &mut Context<Self>);
     fn split_pane_with_file(
         &mut self,
         path: PathBuf,

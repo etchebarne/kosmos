@@ -9,7 +9,7 @@ use workspace::WorkspaceManager;
 use crate::delegate::{PaneDelegate, SettingsDelegate, TabScrollHandles, WorkspaceDelegate};
 use crate::layout::landing;
 
-pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate>(
+pub fn render<T: PaneDelegate + WorkspaceDelegate + SettingsDelegate + gpui::Render>(
     workspaces: &WorkspaceManager,
     tab_scrolls: &TabScrollHandles,
     window: &mut Window,

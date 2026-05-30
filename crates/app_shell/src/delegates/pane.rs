@@ -8,7 +8,7 @@ use ui::drag::TabDrag;
 use crate::app::KosmosApp;
 
 use super::{
-    anchor_tabs_to_end_during_open_animation, file_editor_tab, is_file_editor_tab,
+    anchor_tabs_to_end_during_open_animation, diff_tab, file_editor_tab, is_file_editor_tab,
     scroll_tabs_to_end, tab_count, terminal_tab, terminal_tab_key,
 };
 
@@ -233,6 +233,44 @@ impl PaneDelegate for KosmosApp {
             });
             if opened.is_some() {
                 new_tab = Some((target_pane_id, tab_id));
+            }
+            opened.is_some()
+        });
+        if let Some((pane_id, tab_id)) = new_tab {
+            self.start_tab_open_animation(pane_id, tab_id, cx);
+        }
+        if let Some((pane_id, count)) = opened {
+            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
+        }
+    }
+
+    fn open_file_at(&mut self, path: PathBuf, line: usize, column: usize, cx: &mut Context<Self>) {
+        ui::tabs::request_file_editor_reveal(path.clone(), line, column, cx);
+        self.open_file(path, cx);
+    }
+
+    fn open_diff_for_file(&mut self, root: PathBuf, file_path: String, cx: &mut Context<Self>) {
+        ui::tabs::request_diff_focus(root.clone(), file_path, cx);
+        let mut opened: Option<(usize, usize)> = None;
+        let mut new_tab: Option<(usize, usize)> = None;
+        self.mutate_active_tree(cx, |tree| {
+            if let Some((pane_id, tab_id)) = tree.find_tab(|tab| {
+                tab.kind.as_str() == tabs::registry::DIFF.id
+                    && tab.path.as_deref() == Some(root.as_path())
+            }) {
+                if !tree.select_tab(pane_id, tab_id) {
+                    return false;
+                }
+                opened = Some((pane_id, tab_count(tree, pane_id)));
+                return true;
+            }
+
+            let pane_id = tree.biggest_pane_id();
+            let tab_id = tree.next_tab_id();
+            let root = root.clone();
+            opened = tree.append_new_tab(pane_id, |id| diff_tab(id, root));
+            if opened.is_some() {
+                new_tab = Some((pane_id, tab_id));
             }
             opened.is_some()
         });

@@ -28,6 +28,12 @@ pub const GIT: TabKind = TabKind {
     is_hidden: false,
 };
 
+pub const DIFF: TabKind = TabKind {
+    id: "diff",
+    name: "Diff",
+    is_hidden: true,
+};
+
 pub const TERMINAL: TabKind = TabKind {
     id: "terminal",
     name: "Terminal",
@@ -51,6 +57,7 @@ pub const ALL: &[&TabKind] = &[
     &FILE_TREE,
     &FILE_SEARCH,
     &GIT,
+    &DIFF,
     &TERMINAL,
     &SETTINGS,
     &FILE_EDITOR,

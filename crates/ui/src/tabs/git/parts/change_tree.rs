@@ -19,6 +19,7 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
         .map(|change| (change.path.clone(), change))
         .collect::<std::collections::BTreeMap<_, _>>();
     let root_path = root.to_path_buf();
+    let delegate = cx.entity().clone();
 
     div()
         .id("git-change-list")
@@ -69,6 +70,7 @@ fn change_list<T: PaneDelegate + SettingsDelegate>(
                                     entry,
                                     root_path.clone(),
                                     file_changes.clone(),
+                                    delegate.clone(),
                                     cx,
                                 )
                             })
@@ -185,6 +187,7 @@ fn change_tree_row(
     entry: &TreeEntry,
     root: PathBuf,
     file_changes: std::collections::BTreeMap<String, FileChange>,
+    delegate: Entity<impl PaneDelegate + SettingsDelegate>,
     cx: &mut App,
 ) -> ListItem {
     let item = entry.item();
@@ -196,7 +199,7 @@ fn change_tree_row(
 
     let path = id.strip_prefix(CHANGE_FILE_PREFIX).unwrap_or(id);
     let change = file_changes.get(path).cloned();
-    change_tree_file_row(ix, entry, root, change, cx)
+    change_tree_file_row(ix, entry, root, change, delegate, cx)
 }
 
 fn change_tree_dir_row(
@@ -253,6 +256,7 @@ fn change_tree_file_row(
     entry: &TreeEntry,
     root: PathBuf,
     change: Option<FileChange>,
+    delegate: Entity<impl PaneDelegate + SettingsDelegate>,
     cx: &mut App,
 ) -> ListItem {
     let theme = *cx.theme();
@@ -271,6 +275,9 @@ fn change_tree_file_row(
             FileChangeKind::Conflicted => theme.accent_secondary,
         })
         .unwrap_or(theme.text_muted);
+    let path_for_click = path.clone();
+    let root_for_click = root.clone();
+    let delegate_for_click = delegate.clone();
 
     ListItem::new(ix)
         .h(rems(CHANGE_ROW_HEIGHT_REM))
@@ -311,6 +318,13 @@ fn change_tree_file_row(
                     )
                 }),
         )
+        .on_click(move |_, _, cx| {
+            let root = root_for_click.clone();
+            let path = path_for_click.clone();
+            delegate_for_click.update(cx, |delegate, cx| {
+                delegate.open_diff_for_file(root, path, cx)
+            });
+        })
 }
 
 fn file_diff_stats(change: &FileChange, cx: &mut App) -> AnyElement {

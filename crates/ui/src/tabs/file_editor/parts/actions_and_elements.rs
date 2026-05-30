@@ -44,6 +44,13 @@ const DIAGNOSTIC_FOLLOW_UP_REQUESTS: usize = 30;
 #[derive(Default)]
 struct ComponentEditorStore {
     inputs: HashMap<usize, ComponentEditorInput>,
+    pending_reveals: HashMap<PathBuf, EditorReveal>,
+}
+
+#[derive(Clone, Copy)]
+struct EditorReveal {
+    line: usize,
+    column: usize,
 }
 
 struct ComponentEditorInput {
@@ -237,6 +244,22 @@ impl ComponentEditorStore {
         cx.update_global::<Self, _>(|store, _| {
             store.inputs.remove(&tab_id);
         });
+    }
+
+    fn request_reveal(path: PathBuf, line: usize, column: usize, cx: &mut App) {
+        if cx.try_global::<Self>().is_none() {
+            cx.set_global(Self::default());
+        }
+        cx.update_global::<Self, _>(|store, _| {
+            store
+                .pending_reveals
+                .insert(path, EditorReveal { line, column });
+        });
+    }
+
+    fn take_pending_reveal(path: &Path, cx: &mut App) -> Option<EditorReveal> {
+        cx.try_global::<Self>()?;
+        cx.update_global::<Self, _>(|store, _| store.pending_reveals.remove(path))
     }
 
     fn sync_soft_wrap(

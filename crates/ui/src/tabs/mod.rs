@@ -1,4 +1,5 @@
 mod blank;
+mod diff;
 mod file_editor;
 mod file_search;
 pub mod file_tree;
@@ -16,7 +17,7 @@ use tabs::{Tab, registry};
 
 use crate::delegate::{PaneDelegate, SettingsDelegate};
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(
+pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     workspace_id: usize,
     workspace_path: &Path,
     pane_id: usize,
@@ -36,6 +37,7 @@ pub fn render<T: PaneDelegate + SettingsDelegate>(
         "file_tree" => file_tree::render(window, cx),
         "file_search" => file_search::render(cx),
         "git" => git::render(window, cx),
+        "diff" => diff::render(workspace_path, tab, window, cx),
         "settings" => settings::render(window, cx),
         "file_editor" => file_editor::render(tab, window, cx),
         _ => div().into_any_element(),
@@ -49,6 +51,31 @@ pub fn install_keybindings(cx: &mut App) {
 
 pub fn drop_file_editor_tab(tab_id: usize, cx: &mut App) {
     file_editor::drop_tab(tab_id, cx);
+}
+
+pub fn request_file_editor_reveal(
+    path: std::path::PathBuf,
+    line: usize,
+    column: usize,
+    cx: &mut App,
+) {
+    file_editor::request_reveal(path, line, column, cx);
+}
+
+pub fn request_diff_focus(root: std::path::PathBuf, file_path: String, cx: &mut App) {
+    diff::request_focus(root, file_path, cx);
+}
+
+pub fn refresh_diff_if_loaded<T: PaneDelegate + SettingsDelegate>(
+    root: std::path::PathBuf,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    diff::refresh_if_loaded(root, notify_now, cx);
+}
+
+pub fn refresh_diff_if_loaded_app(root: std::path::PathBuf, notify_now: bool, cx: &mut App) {
+    diff::refresh_if_loaded_app(root, notify_now, cx);
 }
 
 pub fn icon_for_tab(tab: &Tab) -> IconName {
@@ -67,6 +94,7 @@ pub fn icon_for_kind(kind_id: &str) -> IconName {
         id if id == registry::FILE_TREE.id => IconName::ListTree,
         id if id == registry::FILE_SEARCH.id => IconName::Search,
         id if id == registry::GIT.id => IconName::SourceControl,
+        id if id == registry::DIFF.id => IconName::Diff,
         id if id == registry::TERMINAL.id => IconName::Terminal,
         id if id == registry::SETTINGS.id => IconName::SettingsGear,
         id if id == registry::FILE_EDITOR.id => IconName::File,

@@ -8,7 +8,7 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
         .cloned()
         .and_then(|tree| tree.read(cx).root().map(Path::to_path_buf));
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
-    let buffer = BufferStore::open(path, cx);
+    let buffer = BufferStore::open(path.clone(), cx);
     let editor_state = ComponentEditorStore::state_for_tab(
         tab.id,
         &buffer,
@@ -17,6 +17,21 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
         cx,
     );
     let input = editor_state.input;
+    if let Some(reveal) = ComponentEditorStore::take_pending_reveal(&path, cx) {
+        let value = input.read(cx).value().to_string();
+        let lines = value.split('\n').collect::<Vec<_>>();
+        let line = reveal.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+        let column = reveal
+            .column
+            .min(lines.get(line).map(|line| line.chars().count()).unwrap_or(0));
+        input.update(cx, |input, cx| {
+            input.set_cursor_position(
+                gpui_component::input::Position::new(line as u32, column as u32),
+                window,
+                cx,
+            );
+        });
+    }
     let completions = editor_state.completions;
     let input_focus = input.focus_handle(cx);
     let input_for_copy = input.clone();

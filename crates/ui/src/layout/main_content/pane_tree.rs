@@ -12,7 +12,7 @@ use crate::drag::SplitResize;
 
 use super::pane;
 
-pub fn render<T: PaneDelegate + SettingsDelegate>(
+pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     tree: &PaneTree,
     node: &PaneNode,
     workspace_id: usize,
