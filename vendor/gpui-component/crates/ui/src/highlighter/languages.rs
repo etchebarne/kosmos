@@ -2,6 +2,13 @@ use gpui::SharedString;
 
 use crate::highlighter::LanguageConfig;
 
+#[cfg(feature = "tree-sitter-tsx")]
+const TSX_HIGHLIGHTS_QUERY: &str = concat!(
+    include_str!("languages/typescript/highlights.scm"),
+    "\n",
+    include_str!("languages/typescript/highlights-tsx.scm"),
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, enum_iterator::Sequence)]
 pub enum Language {
     Json,
@@ -537,7 +544,7 @@ impl Language {
             #[cfg(feature = "tree-sitter-tsx")]
             Self::Tsx => (
                 tree_sitter_typescript::LANGUAGE_TSX,
-                tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                TSX_HIGHLIGHTS_QUERY,
                 "",
                 tree_sitter_typescript::LOCALS_QUERY,
             ),

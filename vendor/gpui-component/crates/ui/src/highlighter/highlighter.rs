@@ -1135,6 +1135,43 @@ console.log(answer);
 
     #[test]
     #[cfg(feature = "tree-sitter-languages")]
+    fn test_tsx_uses_full_typescript_and_jsx_highlights() {
+        let tsx = r#"import { useState } from "react";
+
+type Props = { title: string };
+
+export default function Home({ title }: Props) {
+  const [isReady, setReady] = useState(false);
+  return <section className="hero">{title}</section>;
+}
+"#;
+
+        let rope = Rope::from_str(tsx);
+        let mut highlighter = SyntaxHighlighter::new("tsx");
+        highlighter.update(None, &rope, None);
+
+        let highlights = highlighter.match_styles(0..tsx.len());
+
+        assert!(
+            has_highlight_covering(&highlights, tsx, "import", "keyword"),
+            "TSX should highlight TypeScript/JavaScript keywords"
+        );
+        assert!(
+            has_highlight_covering(&highlights, tsx, "react", "string"),
+            "TSX should highlight string literals"
+        );
+        assert!(
+            has_highlight_covering(&highlights, tsx, "className", "attribute"),
+            "TSX should highlight JSX attributes"
+        );
+        assert!(
+            has_highlight_covering(&highlights, tsx, "section", "tag"),
+            "TSX should highlight intrinsic JSX tag names"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "tree-sitter-languages")]
     fn test_rust_block_comment_highlights_when_range_starts_inside_comment() {
         let source = "fn main() {\n    /*\n    comment\n    */\n    let value = 1;\n}\n";
         let rope = Rope::from_str(source);
