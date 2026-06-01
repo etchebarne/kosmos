@@ -15,38 +15,41 @@
 
 Most editors dictate where things go. Kosmos lets you treat every view as a tab you can place anywhere, split in any direction, and rearrange freely. Multiple workspaces stay alive in the background so you can context-switch without losing terminals, layouts, or in-progress work.
 
-## Features
-
-- **Everything is a tab** — file tree, terminal, git, settings. No fixed panels, no locked sidebars.
-- **Flexible layouts** — split panes horizontally or vertically. Drag any tab into any pane.
-- **Persistent workspaces** — switch between projects instantly. Every workspace keeps its state running in the background.
-- **Infinity Tab** — an infinite canvas where you can place any tab — editors, terminals, previews — and arrange them freely in open space.
-- **And more to come...**
-
 ## Platform support
 
 Kosmos only runs on Linux. Windows and macOS are not supported, and support for those platforms is not planned at this time.
 
 ## Installation
 
-**Quick install (any Linux distro)**
+Choose the install method that matches your Linux distribution or workflow.
+
+### Quick Install
+
+Use the install script for a distro-agnostic setup:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh | sh
 ```
 
-This downloads the latest release tarball, installs it under `~/.local/Kosmos.app/`, symlinks `kosmos` into `~/.local/bin`, and registers a desktop entry so the app shows up in your launcher.
+The script:
 
-**Manual download**
+- Downloads the latest release tarball
+- Installs Kosmos under `~/.local/Kosmos.app/`
+- Symlinks `kosmos` into `~/.local/bin`
+- Registers a desktop entry so Kosmos appears in your launcher
 
-Grab `kosmos-linux-x86_64.tar.gz` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+### Manual Tarball Install
+
+Use this if you already downloaded the release bundle.
+
+Download `kosmos-linux-x86_64.tar.gz` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then run:
 
 ```bash
 KOSMOS_BUNDLE_PATH=./kosmos-linux-x86_64.tar.gz \
     sh <(curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh)
 ```
 
-**Debian / Ubuntu**
+### Debian / Ubuntu
 
 Download `kosmos_<version>_amd64.deb` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
 
@@ -54,7 +57,7 @@ Download `kosmos_<version>_amd64.deb` from the [latest release](https://github.c
 sudo apt install ./kosmos_<version>_amd64.deb
 ```
 
-**Fedora / RPM distros**
+### Fedora / RPM Distros
 
 Download `kosmos-<version>-1.x86_64.rpm` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
 
@@ -62,7 +65,7 @@ Download `kosmos-<version>-1.x86_64.rpm` from the [latest release](https://githu
 sudo dnf install ./kosmos-<version>-1.x86_64.rpm
 ```
 
-**AppImage**
+### AppImage
 
 Download `Kosmos-<version>-x86_64.AppImage` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
 
@@ -71,28 +74,47 @@ chmod +x ./Kosmos-<version>-x86_64.AppImage
 ./Kosmos-<version>-x86_64.AppImage
 ```
 
-**Arch Linux (AUR)**
+### Arch Linux (AUR)
+
+Install the pre-built binary:
 
 ```bash
-yay -S kosmos-bin       # pre-built binary
-yay -S kosmos           # build from source
+yay -S kosmos-bin
+```
+
+Or build from source:
+
+```bash
+yay -S kosmos
 ```
 
 ## Uninstall
 
-If you installed via the script:
+Use the uninstall method that matches how you installed Kosmos.
+
+### Install Script
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/uninstall.sh | sh
 ```
 
-If you installed via the AUR:
+### Arch Linux (AUR)
+
+Remove the pre-built package:
 
 ```bash
-sudo pacman -R kosmos-bin   # or: sudo pacman -R kosmos
+sudo pacman -R kosmos-bin
 ```
 
-If you ran the AppImage and want to remove its desktop entry and icon:
+Or remove the source-built package:
+
+```bash
+sudo pacman -R kosmos
+```
+
+### AppImage
+
+Remove the AppImage desktop entry and icon:
 
 ```bash
 ./Kosmos-<version>-x86_64.AppImage --uninstall
@@ -102,7 +124,9 @@ Then delete the AppImage file itself.
 
 ## Building from source
 
-**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) (stable) and the GPUI system dependencies.
+Install [Rust](https://www.rust-lang.org/tools/install) stable and the GPUI system dependencies for your distro.
+
+### System Dependencies
 
 <details>
 <summary>Arch Linux</summary>
@@ -137,7 +161,7 @@ sudo dnf install gcc pkgconf openssl-devel fontconfig-devel \
 
 </details>
 
-Then:
+### Run From Source
 
 ```bash
 cargo run --release
@@ -145,4 +169,4 @@ cargo run --release
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
