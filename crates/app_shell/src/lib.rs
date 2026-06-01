@@ -1,9 +1,7 @@
 mod app;
 mod delegates;
 
-use gpui::{
-    App, AppContext, Bounds, Pixels, WindowBounds, WindowDecorations, WindowOptions, px, size,
-};
+use gpui::{App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size};
 use icons::AppAssets;
 use settings::SettingValue;
 
@@ -78,9 +76,7 @@ fn open_main_window(cx: &mut App) {
             window.set_window_title(APP_NAME);
             let entity = cx.new(|cx| KosmosApp::new(window, cx));
             entity.update(cx, |app, cx| app.start_observing_window(window, cx));
-            cx.new(|cx| {
-                gpui_component::Root::new(entity, window, cx).window_shadow_size(Pixels::ZERO)
-            })
+            cx.new(|cx| gpui_component::Root::new(entity, window, cx))
         },
     )
     .unwrap();
