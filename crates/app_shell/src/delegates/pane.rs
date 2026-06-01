@@ -157,8 +157,10 @@ impl PaneDelegate for KosmosApp {
         });
         if let Some((pane_id, tab_id)) = new_tab {
             self.start_tab_open_animation(pane_id, tab_id, cx);
-        }
-        if let Some((pane_id, count)) = opened {
+            if let Some((_, count)) = opened {
+                anchor_tabs_to_end_during_open_animation(&self.tab_scrolls, pane_id, count, cx);
+            }
+        } else if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
     }
@@ -191,8 +193,10 @@ impl PaneDelegate for KosmosApp {
         });
         if let Some((pane_id, tab_id)) = new_tab {
             self.start_tab_open_animation(pane_id, tab_id, cx);
-        }
-        if let Some((pane_id, count)) = opened {
+            if let Some((_, count)) = opened {
+                anchor_tabs_to_end_during_open_animation(&self.tab_scrolls, pane_id, count, cx);
+            }
+        } else if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
     }
@@ -204,7 +208,6 @@ impl PaneDelegate for KosmosApp {
         target_tab_id: usize,
         cx: &mut Context<Self>,
     ) {
-        let mut opened: Option<(usize, usize)> = None;
         let mut new_tab: Option<(usize, usize)> = None;
         self.mutate_active_tree(cx, |tree| {
             let Some(pane) = tree.pane(target_pane_id) else {
@@ -219,16 +222,12 @@ impl PaneDelegate for KosmosApp {
                 .find(|tab| is_file_editor_tab(tab, &path))
                 .map(|tab| tab.id);
             if let Some(tab_id) = existing {
-                if !tree.select_tab(target_pane_id, tab_id) {
-                    return false;
-                }
-                opened = Some((target_pane_id, tab_count(tree, target_pane_id)));
-                return true;
+                return tree.select_tab(target_pane_id, tab_id);
             }
 
             let tab_id = tree.next_tab_id();
             let path = path.clone();
-            opened = tree.insert_new_tab_before(target_pane_id, target_tab_id, |id| {
+            let opened = tree.insert_new_tab_before(target_pane_id, target_tab_id, |id| {
                 file_editor_tab(id, path)
             });
             if opened.is_some() {
@@ -238,9 +237,6 @@ impl PaneDelegate for KosmosApp {
         });
         if let Some((pane_id, tab_id)) = new_tab {
             self.start_tab_open_animation(pane_id, tab_id, cx);
-        }
-        if let Some((pane_id, count)) = opened {
-            scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
     }
 
@@ -276,8 +272,10 @@ impl PaneDelegate for KosmosApp {
         });
         if let Some((pane_id, tab_id)) = new_tab {
             self.start_tab_open_animation(pane_id, tab_id, cx);
-        }
-        if let Some((pane_id, count)) = opened {
+            if let Some((_, count)) = opened {
+                anchor_tabs_to_end_during_open_animation(&self.tab_scrolls, pane_id, count, cx);
+            }
+        } else if let Some((pane_id, count)) = opened {
             scroll_tabs_to_end(&self.tab_scrolls, pane_id, count);
         }
     }
