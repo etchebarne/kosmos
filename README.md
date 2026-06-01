@@ -23,9 +23,11 @@ Most editors dictate where things go. Kosmos lets you treat every view as a tab 
 - **Infinity Tab** — an infinite canvas where you can place any tab — editors, terminals, previews — and arrange them freely in open space.
 - **And more to come...**
 
-## Installation
+## Platform support
 
-Kosmos currently ships for Linux x86_64.
+Kosmos only runs on Linux. Windows and macOS are not supported, and support for those platforms is not planned at this time.
+
+## Installation
 
 **Quick install (any Linux distro)**
 
