@@ -437,7 +437,6 @@ impl Render for KosmosApp {
                 window,
                 cx,
             )))
-            .child(layout::bottom_bar::render(&theme))
             .child(ui::tabs::git::render_modal_overlay(window, cx))
             .child(render_component_layers(window, cx))
     }
