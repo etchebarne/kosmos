@@ -21,8 +21,8 @@ use icons::IconName;
 use terminal::{
     ShellProfile, TerminalCell, TerminalCellRun, TerminalColor, TerminalCursorShape, TerminalKey,
     TerminalKeyInput, TerminalMouseButton, TerminalMouseModifiers, TerminalPalette,
-    TerminalSelectionRange, TerminalSession, TerminalSnapshot, TerminalStatus, TerminalStore,
-    TerminalStyle, TerminalTheme,
+    TerminalSelectionMode, TerminalSelectionRange, TerminalSession, TerminalSnapshot,
+    TerminalStatus, TerminalStore, TerminalStyle, TerminalTheme,
 };
 use theme::{ActiveTheme, Theme};
 
@@ -466,10 +466,18 @@ fn render_screen<T: 'static>(
                 return;
             };
             let handled = session_for_mouse_down.update(cx, |session, cx| {
+                let selection_mode = if event.click_count >= 3 {
+                    TerminalSelectionMode::Line
+                } else if event.click_count == 2 {
+                    TerminalSelectionMode::Word
+                } else {
+                    TerminalSelectionMode::Cell
+                };
                 session.mouse_down(
                     row,
                     column,
                     button,
+                    selection_mode,
                     terminal_mouse_modifiers(event.modifiers),
                     cx,
                 )

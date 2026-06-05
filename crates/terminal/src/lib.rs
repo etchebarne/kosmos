@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
@@ -74,6 +75,13 @@ pub struct TerminalMouseModifiers {
     pub shift: bool,
     pub alt: bool,
     pub control: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalSelectionMode {
+    Cell,
+    Word,
+    Line,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -341,6 +349,8 @@ pub struct TerminalSession {
     theme: TerminalTheme,
     selection: Option<TerminalSelection>,
     selecting: bool,
+    selection_mode: TerminalSelectionMode,
+    selection_anchor: Option<TerminalSelection>,
     mouse_pressed_button: Option<TerminalMouseButton>,
     zoom_percent: i64,
     status: TerminalStatus,
@@ -379,6 +389,8 @@ impl TerminalSession {
             theme: TerminalTheme::for_palette(TerminalPalette::Dark),
             selection: None,
             selecting: false,
+            selection_mode: TerminalSelectionMode::Cell,
+            selection_anchor: None,
             mouse_pressed_button: None,
             zoom_percent: 100,
             status: TerminalStatus::Restarting,
@@ -439,7 +451,7 @@ impl TerminalSession {
         let display_offset = content.display_offset;
         let cursor_color = snapshot_cursor_color(content.colors, self.theme);
         let cursor = snapshot_cursor(content.cursor, display_offset, self.size);
-        let selection_ranges = selection_ranges(self.selection, self.size);
+        let selection_ranges = selection_ranges(self.selection, self.size, display_offset);
         let rows = snapshot_rows(content, self.size, self.theme);
         let selected_shell = self.selected_shell();
         TerminalSnapshot {
@@ -565,14 +577,22 @@ impl TerminalSession {
         row: usize,
         column: usize,
         button: TerminalMouseButton,
+        selection_mode: TerminalSelectionMode,
         modifiers: TerminalMouseModifiers,
         cx: &mut Context<Self>,
     ) -> bool {
-        let position = TerminalSelectionPoint::new(row, column, self.size);
+        let viewport_position = TerminalViewportPoint::new(row, column, self.size);
+        let position = self.selection_point_for_viewport(row, column);
         if self.should_report_mouse(modifiers, button) {
             self.selecting = false;
+            self.selection_mode = TerminalSelectionMode::Cell;
+            self.selection_anchor = None;
             self.mouse_pressed_button = Some(button);
-            self.write_mouse_event(TerminalMouseEventKind::Press(button), position, modifiers);
+            self.write_mouse_event(
+                TerminalMouseEventKind::Press(button),
+                viewport_position,
+                modifiers,
+            );
             return true;
         }
 
@@ -580,8 +600,24 @@ impl TerminalSession {
             return false;
         }
 
-        self.selection = Some(TerminalSelection::new(position));
-        self.selecting = true;
+        self.selection_mode = selection_mode;
+        self.selection_anchor = None;
+        match selection_mode {
+            TerminalSelectionMode::Cell => {
+                self.selection = Some(TerminalSelection::new(position));
+                self.selecting = true;
+            }
+            TerminalSelectionMode::Word => {
+                self.selection = self.word_selection_at(position);
+                self.selection_anchor = self.selection;
+                self.selecting = self.selection.is_some();
+            }
+            TerminalSelectionMode::Line => {
+                self.selection = Some(line_selection_at(position, self.size));
+                self.selection_anchor = self.selection;
+                self.selecting = true;
+            }
+        }
         self.invalidate_snapshot();
         cx.notify();
         true
@@ -594,22 +630,24 @@ impl TerminalSession {
         modifiers: TerminalMouseModifiers,
         cx: &mut Context<Self>,
     ) -> bool {
-        let position = TerminalSelectionPoint::new(row, column, self.size);
+        let viewport_position = TerminalViewportPoint::new(row, column, self.size);
+        let position = self.selection_point_for_viewport(row, column);
         if self.mouse_reporting_enabled()
             && self.mouse_move_reporting_enabled()
             && let Some(button) = self.mouse_pressed_button
         {
-            self.write_mouse_event(TerminalMouseEventKind::Move(button), position, modifiers);
+            self.write_mouse_event(
+                TerminalMouseEventKind::Move(button),
+                viewport_position,
+                modifiers,
+            );
             return true;
         }
 
         if !self.selecting {
             return false;
         }
-        let Some(selection) = self.selection.as_mut() else {
-            return false;
-        };
-        if selection.update_active(position) {
+        if self.update_selection_for_drag(position) {
             self.invalidate_snapshot();
             cx.notify();
         }
@@ -624,9 +662,14 @@ impl TerminalSession {
         modifiers: TerminalMouseModifiers,
         cx: &mut Context<Self>,
     ) -> bool {
-        let position = TerminalSelectionPoint::new(row, column, self.size);
+        let viewport_position = TerminalViewportPoint::new(row, column, self.size);
+        let position = self.selection_point_for_viewport(row, column);
         if self.mouse_reporting_enabled() && self.mouse_pressed_button.take().is_some() {
-            self.write_mouse_event(TerminalMouseEventKind::Release(button), position, modifiers);
+            self.write_mouse_event(
+                TerminalMouseEventKind::Release(button),
+                viewport_position,
+                modifiers,
+            );
             return true;
         }
 
@@ -634,11 +677,9 @@ impl TerminalSession {
             return false;
         }
         self.selecting = false;
-        let Some(selection) = self.selection.as_mut() else {
-            return false;
-        };
-        selection.update_active(position);
-        if selection.is_empty() {
+        self.update_selection_for_drag(position);
+        self.selection_anchor = None;
+        if self.selection.is_some_and(|selection| selection.is_empty()) {
             self.selection = None;
         }
         self.invalidate_snapshot();
@@ -658,7 +699,7 @@ impl TerminalSession {
             return false;
         }
         if self.mouse_reporting_enabled() && !modifiers.shift {
-            let position = TerminalSelectionPoint::new(row, column, self.size);
+            let position = TerminalViewportPoint::new(row, column, self.size);
             let direction = if lines > 0 {
                 TerminalMouseWheelDirection::Up
             } else {
@@ -679,30 +720,7 @@ impl TerminalSession {
     }
 
     pub fn selected_text(&mut self) -> Option<String> {
-        let selection = self.selection?.normalized(self.size)?;
-        let snapshot = self.snapshot();
-        let mut lines = Vec::new();
-
-        for row_index in selection.start.row..=selection.end.row {
-            let row = snapshot.rows.get(row_index)?;
-            let start_column = if row_index == selection.start.row {
-                selection.start.column
-            } else {
-                0
-            };
-            let end_column = if row_index == selection.end.row {
-                selection
-                    .end
-                    .column
-                    .saturating_add(1)
-                    .min(self.size.columns)
-            } else {
-                self.size.columns
-            };
-            lines.push(text_for_columns(row, start_column, end_column));
-        }
-
-        let text = lines.join("\n");
+        let text = self.text_for_selection(self.selection?, true)?;
         (!text.is_empty()).then_some(text)
     }
 
@@ -881,7 +899,25 @@ impl TerminalSession {
         if bytes.is_empty() {
             return;
         }
+        let mode_before = *self.term.mode();
+        let had_selection = self.selection.is_some();
+        let selected_before = self
+            .selection
+            .and_then(|selection| self.text_for_selection(selection, false));
         self.parser.advance(&mut self.term, bytes);
+        if had_selection {
+            let selected_after = self
+                .selection
+                .and_then(|selection| self.text_for_selection(selection, false));
+            if should_clear_selection_after_output(
+                mode_before,
+                *self.term.mode(),
+                selected_before.as_deref(),
+                selected_after.as_deref(),
+            ) {
+                self.clear_selection();
+            }
+        }
         self.invalidate_snapshot();
     }
 
@@ -1009,12 +1045,112 @@ impl TerminalSession {
     fn write_mouse_event(
         &mut self,
         kind: TerminalMouseEventKind,
-        position: TerminalSelectionPoint,
+        position: TerminalViewportPoint,
         modifiers: TerminalMouseModifiers,
     ) {
         if let Some(bytes) = encode_mouse_event(kind, position, modifiers, *self.term.mode()) {
             self.write_to_pty(&bytes);
         }
+    }
+
+    fn text_for_selection(
+        &self,
+        selection: TerminalSelection,
+        trim_trailing_spaces: bool,
+    ) -> Option<String> {
+        text_for_selection(
+            &self.term,
+            self.size,
+            self.theme,
+            selection,
+            trim_trailing_spaces,
+        )
+    }
+
+    fn selection_point_for_viewport(&self, row: usize, column: usize) -> TerminalSelectionPoint {
+        TerminalSelectionPoint::from_viewport(
+            row,
+            column,
+            self.term.grid().display_offset(),
+            self.size,
+        )
+    }
+
+    fn word_selection_at(&mut self, position: TerminalSelectionPoint) -> Option<TerminalSelection> {
+        let row = self.row_for_line(position.row)?;
+        let range = word_columns_for_row(&row, position.column)?;
+        Some(TerminalSelection::range(
+            TerminalSelectionPoint {
+                row: position.row,
+                column: range.start,
+            },
+            TerminalSelectionPoint {
+                row: position.row,
+                column: range.end.saturating_sub(1),
+            },
+        ))
+    }
+
+    fn update_selection_for_drag(&mut self, position: TerminalSelectionPoint) -> bool {
+        match self.selection_mode {
+            TerminalSelectionMode::Cell => self
+                .selection
+                .as_mut()
+                .is_some_and(|selection| selection.update_active(position)),
+            TerminalSelectionMode::Word => self.update_word_selection_for_drag(position),
+            TerminalSelectionMode::Line => self.update_line_selection_for_drag(position),
+        }
+    }
+
+    fn update_word_selection_for_drag(&mut self, position: TerminalSelectionPoint) -> bool {
+        let Some(anchor) = self.selection_anchor else {
+            return false;
+        };
+        let active = if let Some(active) = self.word_selection_at(position) {
+            active
+        } else if let Some(active) = self.empty_area_line_selection_at(position) {
+            active
+        } else {
+            return false;
+        };
+        self.set_selection(selection_spanning_units(anchor, active))
+    }
+
+    fn empty_area_line_selection_at(
+        &mut self,
+        position: TerminalSelectionPoint,
+    ) -> Option<TerminalSelection> {
+        let row = self.row_for_line(position.row)?;
+        line_selection_for_empty_area(&row, position, self.size)
+    }
+
+    fn row_for_line(&self, row: i32) -> Option<TerminalRow> {
+        row_for_line(&self.term, self.size, self.theme, row)
+    }
+
+    fn update_line_selection_for_drag(&mut self, position: TerminalSelectionPoint) -> bool {
+        let Some(anchor) = self.selection_anchor else {
+            return false;
+        };
+        self.set_selection(selection_spanning_units(
+            anchor,
+            line_selection_at(position, self.size),
+        ))
+    }
+
+    fn set_selection(&mut self, selection: TerminalSelection) -> bool {
+        if self.selection == Some(selection) {
+            return false;
+        }
+        self.selection = Some(selection);
+        true
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selecting = false;
+        self.selection_mode = TerminalSelectionMode::Cell;
+        self.selection_anchor = None;
     }
 }
 
@@ -1220,13 +1356,28 @@ impl Dimensions for TerminalSize {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct TerminalSelectionPoint {
-    row: usize,
+    row: i32,
     column: usize,
 }
 
 impl TerminalSelectionPoint {
+    fn from_viewport(row: usize, column: usize, display_offset: usize, size: TerminalSize) -> Self {
+        Self {
+            row: row.min(size.rows.saturating_sub(1)) as i32 - display_offset as i32,
+            column: column.min(size.columns.saturating_sub(1)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalViewportPoint {
+    row: usize,
+    column: usize,
+}
+
+impl TerminalViewportPoint {
     fn new(row: usize, column: usize, size: TerminalSize) -> Self {
         Self {
             row: row.min(size.rows.saturating_sub(1)),
@@ -1239,6 +1390,7 @@ impl TerminalSelectionPoint {
 struct TerminalSelection {
     anchor: TerminalSelectionPoint,
     active: TerminalSelectionPoint,
+    empty: bool,
 }
 
 impl TerminalSelection {
@@ -1246,33 +1398,183 @@ impl TerminalSelection {
         Self {
             anchor: position,
             active: position,
+            empty: true,
+        }
+    }
+
+    fn range(anchor: TerminalSelectionPoint, active: TerminalSelectionPoint) -> Self {
+        Self {
+            anchor,
+            active,
+            empty: false,
         }
     }
 
     fn update_active(&mut self, position: TerminalSelectionPoint) -> bool {
-        if self.active == position {
+        let empty = self.anchor == position;
+        if self.active == position && self.empty == empty {
             return false;
         }
         self.active = position;
+        self.empty = empty;
         true
     }
 
     fn is_empty(&self) -> bool {
-        self.anchor == self.active
+        self.empty
+    }
+
+    fn ordered_points(self) -> (TerminalSelectionPoint, TerminalSelectionPoint) {
+        if self.anchor <= self.active {
+            (self.anchor, self.active)
+        } else {
+            (self.active, self.anchor)
+        }
     }
 
     fn normalized(self, size: TerminalSize) -> Option<TerminalNormalizedSelection> {
         if self.is_empty() || size.rows == 0 || size.columns == 0 {
             return None;
         }
-        let (start, end) =
-            if (self.anchor.row, self.anchor.column) <= (self.active.row, self.active.column) {
-                (self.anchor, self.active)
-            } else {
-                (self.active, self.anchor)
-            };
+        let (start, end) = self.ordered_points();
         Some(TerminalNormalizedSelection { start, end })
     }
+}
+
+fn line_selection_at(position: TerminalSelectionPoint, size: TerminalSize) -> TerminalSelection {
+    TerminalSelection::range(
+        TerminalSelectionPoint {
+            row: position.row,
+            column: 0,
+        },
+        TerminalSelectionPoint {
+            row: position.row,
+            column: size.columns.saturating_sub(1),
+        },
+    )
+}
+
+fn selection_spanning_units(
+    anchor: TerminalSelection,
+    active: TerminalSelection,
+) -> TerminalSelection {
+    let (anchor_start, anchor_end) = anchor.ordered_points();
+    let (active_start, active_end) = active.ordered_points();
+    if active_start < anchor_start {
+        TerminalSelection::range(anchor_end, active_start)
+    } else {
+        TerminalSelection::range(anchor_start, active_end)
+    }
+}
+
+fn line_selection_for_empty_area(
+    row: &TerminalRow,
+    position: TerminalSelectionPoint,
+    size: TerminalSize,
+) -> Option<TerminalSelection> {
+    (!row_has_text_at_or_after(row, position.column)).then(|| line_selection_at(position, size))
+}
+
+fn word_columns_for_row(row: &TerminalRow, column: usize) -> Option<Range<usize>> {
+    let cell_index = cell_index_for_column(row, column)?;
+    if !is_terminal_word_cell(&row.cells[cell_index]) {
+        return None;
+    }
+
+    let mut start_index = cell_index;
+    while start_index > 0 && is_terminal_word_cell(&row.cells[start_index - 1]) {
+        start_index -= 1;
+    }
+
+    let mut end_index = cell_index + 1;
+    while end_index < row.cells.len() && is_terminal_word_cell(&row.cells[end_index]) {
+        end_index += 1;
+    }
+
+    let start = row.cells[start_index].column;
+    let last = &row.cells[end_index - 1];
+    let end = last.column + last.width;
+    (start < end).then_some(start..end)
+}
+
+fn cell_index_for_column(row: &TerminalRow, column: usize) -> Option<usize> {
+    row.cells.iter().position(|cell| {
+        let end = cell.column + cell.width;
+        cell.column <= column && column < end
+    })
+}
+
+fn is_terminal_word_cell(cell: &TerminalCell) -> bool {
+    cell.text.chars().any(|ch| !ch.is_whitespace())
+}
+
+fn row_has_text_at_or_after(row: &TerminalRow, column: usize) -> bool {
+    row.cells.iter().any(|cell| {
+        let end = cell.column + cell.width;
+        end > column && is_terminal_word_cell(cell)
+    })
+}
+
+fn text_for_selection<T>(
+    term: &Term<T>,
+    size: TerminalSize,
+    theme: TerminalTheme,
+    selection: TerminalSelection,
+    trim_trailing_spaces: bool,
+) -> Option<String> {
+    let selection = selection.normalized(size)?;
+    let mut lines = Vec::new();
+
+    for row_index in selection.start.row..=selection.end.row {
+        let row = row_for_line(term, size, theme, row_index)?;
+        let start_column = if row_index == selection.start.row {
+            selection.start.column
+        } else {
+            0
+        };
+        let end_column = if row_index == selection.end.row {
+            selection.end.column.saturating_add(1).min(size.columns)
+        } else {
+            size.columns
+        };
+        lines.push(text_for_columns(
+            &row,
+            start_column,
+            end_column,
+            trim_trailing_spaces,
+        ));
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn row_for_line<T>(
+    term: &Term<T>,
+    size: TerminalSize,
+    theme: TerminalTheme,
+    row: i32,
+) -> Option<TerminalRow> {
+    let line = Line(row);
+    let grid = term.grid();
+    if line < grid.topmost_line() || line > grid.bottommost_line() {
+        return None;
+    }
+    let cells = (0..size.columns)
+        .map(|column| grid[line][Column(column)].clone())
+        .collect();
+    Some(snapshot_row(cells, term.colors(), theme))
+}
+
+fn should_clear_selection_after_output(
+    mode_before: TermMode,
+    mode_after: TermMode,
+    selected_before: Option<&str>,
+    selected_after: Option<&str>,
+) -> bool {
+    if mode_before.contains(TermMode::ALT_SCREEN) != mode_after.contains(TermMode::ALT_SCREEN) {
+        return true;
+    }
+    selected_before.is_none() || selected_before != selected_after
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1776,12 +2078,20 @@ fn snapshot_cursor(
 fn selection_ranges(
     selection: Option<TerminalSelection>,
     size: TerminalSize,
+    display_offset: usize,
 ) -> Vec<TerminalSelectionRange> {
     let Some(selection) = selection.and_then(|selection| selection.normalized(size)) else {
         return Vec::new();
     };
+    let viewport_start = -(display_offset as i32);
+    let viewport_end = viewport_start + size.rows.saturating_sub(1) as i32;
+    let start_row = selection.start.row.max(viewport_start);
+    let end_row = selection.end.row.min(viewport_end);
+    if start_row > end_row {
+        return Vec::new();
+    }
 
-    (selection.start.row..=selection.end.row)
+    (start_row..=end_row)
         .filter_map(|row| {
             let start_column = if row == selection.start.row {
                 selection.start.column
@@ -1795,7 +2105,7 @@ fn selection_ranges(
             };
             let width = end_column.saturating_sub(start_column);
             (width > 0).then_some(TerminalSelectionRange {
-                row,
+                row: (row + display_offset as i32) as usize,
                 column: start_column,
                 width,
             })
@@ -1803,7 +2113,12 @@ fn selection_ranges(
         .collect()
 }
 
-fn text_for_columns(row: &TerminalRow, start_column: usize, end_column: usize) -> String {
+fn text_for_columns(
+    row: &TerminalRow,
+    start_column: usize,
+    end_column: usize,
+    trim_trailing_spaces: bool,
+) -> String {
     if start_column >= end_column {
         return String::new();
     }
@@ -1816,7 +2131,11 @@ fn text_for_columns(row: &TerminalRow, start_column: usize, end_column: usize) -
         }
         text.push_str(&cell.text);
     }
-    text.trim_end_matches(' ').to_string()
+    if trim_trailing_spaces {
+        text.trim_end_matches(' ').to_string()
+    } else {
+        text
+    }
 }
 
 fn style_for_cell(
@@ -2034,7 +2353,7 @@ fn rgb_from_u32(value: u32) -> Rgb {
 
 fn encode_mouse_event(
     kind: TerminalMouseEventKind,
-    position: TerminalSelectionPoint,
+    position: TerminalViewportPoint,
     modifiers: TerminalMouseModifiers,
     mode: TermMode,
 ) -> Option<Vec<u8>> {
@@ -2391,7 +2710,7 @@ mod tests {
     #[test]
     fn encodes_sgr_mouse_events() {
         let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
-        let position = TerminalSelectionPoint { row: 2, column: 4 };
+        let position = TerminalViewportPoint { row: 2, column: 4 };
 
         assert_eq!(
             encode_mouse_event(
@@ -2433,13 +2752,13 @@ mod tests {
             cell_width: DEFAULT_CELL_WIDTH_PX,
             cell_height: DEFAULT_CELL_HEIGHT_PX,
         };
-        let selection = TerminalSelection {
-            anchor: TerminalSelectionPoint { row: 0, column: 3 },
-            active: TerminalSelectionPoint { row: 2, column: 1 },
-        };
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 3 },
+            TerminalSelectionPoint { row: 2, column: 1 },
+        );
 
         assert_eq!(
-            selection_ranges(Some(selection), size),
+            selection_ranges(Some(selection), size, 0),
             vec![
                 TerminalSelectionRange {
                     row: 0,
@@ -2458,6 +2777,321 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn computes_selection_range_for_single_cell() {
+        let size = TerminalSize {
+            columns: 5,
+            rows: 1,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 2 },
+            TerminalSelectionPoint { row: 0, column: 2 },
+        );
+
+        assert_eq!(
+            selection_ranges(Some(selection), size, 0),
+            vec![TerminalSelectionRange {
+                row: 0,
+                column: 2,
+                width: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn selection_ranges_follow_display_offset() {
+        let size = TerminalSize {
+            columns: 5,
+            rows: 3,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 1 },
+            TerminalSelectionPoint { row: 0, column: 3 },
+        );
+
+        assert_eq!(
+            selection_ranges(Some(selection), size, 0),
+            vec![TerminalSelectionRange {
+                row: 0,
+                column: 1,
+                width: 3,
+            }]
+        );
+        assert_eq!(
+            selection_ranges(Some(selection), size, 2),
+            vec![TerminalSelectionRange {
+                row: 2,
+                column: 1,
+                width: 3,
+            }]
+        );
+        assert!(selection_ranges(Some(selection), size, 3).is_empty());
+    }
+
+    #[test]
+    fn selection_text_reflects_terminal_content_changes() {
+        let size = TerminalSize {
+            columns: 8,
+            rows: 1,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let theme = TerminalTheme::for_palette(TerminalPalette::Dark);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor = Processor::new();
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 0 },
+            TerminalSelectionPoint { row: 0, column: 4 },
+        );
+
+        parser.advance(&mut term, b"hello");
+        let before = text_for_selection(&term, size, theme, selection, false);
+        parser.advance(&mut term, b"\rhullo");
+        let after = text_for_selection(&term, size, theme, selection, false);
+
+        assert_eq!(before.as_deref(), Some("hello"));
+        assert_eq!(after.as_deref(), Some("hullo"));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn selection_text_keeps_spaces_for_change_detection() {
+        let size = TerminalSize {
+            columns: 4,
+            rows: 1,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let theme = TerminalTheme::for_palette(TerminalPalette::Dark);
+        let term = Term::new(Config::default(), &size, VoidListener);
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 0 },
+            TerminalSelectionPoint { row: 0, column: 2 },
+        );
+
+        assert_eq!(
+            text_for_selection(&term, size, theme, selection, false).as_deref(),
+            Some("   ")
+        );
+        assert_eq!(
+            text_for_selection(&term, size, theme, selection, true).as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn selection_clears_when_alt_screen_toggles() {
+        let mode_before = TermMode::default();
+        let mode_after = mode_before | TermMode::ALT_SCREEN;
+
+        assert!(should_clear_selection_after_output(
+            mode_before,
+            mode_after,
+            Some("same"),
+            Some("same")
+        ));
+    }
+
+    #[test]
+    fn alt_screen_escape_triggers_selection_clear_rule() {
+        let size = TerminalSize {
+            columns: 8,
+            rows: 2,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let theme = TerminalTheme::for_palette(TerminalPalette::Dark);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor = Processor::new();
+        let selection = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 0 },
+            TerminalSelectionPoint { row: 0, column: 3 },
+        );
+
+        parser.advance(&mut term, b"same");
+        let mode_before = *term.mode();
+        let selected_before = text_for_selection(&term, size, theme, selection, false);
+        parser.advance(&mut term, b"\x1b[?1049h");
+        let selected_after = text_for_selection(&term, size, theme, selection, false);
+
+        assert!(term.mode().contains(TermMode::ALT_SCREEN));
+        assert!(should_clear_selection_after_output(
+            mode_before,
+            *term.mode(),
+            selected_before.as_deref(),
+            selected_after.as_deref(),
+        ));
+    }
+
+    #[test]
+    fn spans_selection_units_forward_and_backward() {
+        let size = TerminalSize {
+            columns: 12,
+            rows: 1,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let start_word = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 2 },
+            TerminalSelectionPoint { row: 0, column: 4 },
+        );
+        let end_word = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 8 },
+            TerminalSelectionPoint { row: 0, column: 10 },
+        );
+
+        assert_eq!(
+            selection_ranges(
+                Some(selection_spanning_units(start_word, end_word)),
+                size,
+                0
+            ),
+            vec![TerminalSelectionRange {
+                row: 0,
+                column: 2,
+                width: 9,
+            }]
+        );
+        assert_eq!(
+            selection_ranges(
+                Some(selection_spanning_units(end_word, start_word)),
+                size,
+                0
+            ),
+            vec![TerminalSelectionRange {
+                row: 0,
+                column: 2,
+                width: 9,
+            }]
+        );
+    }
+
+    #[test]
+    fn spans_line_units_forward_and_backward() {
+        let size = TerminalSize {
+            columns: 5,
+            rows: 3,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let middle_line = line_selection_at(TerminalSelectionPoint { row: 1, column: 2 }, size);
+        let last_line = line_selection_at(TerminalSelectionPoint { row: 2, column: 1 }, size);
+        let first_line = line_selection_at(TerminalSelectionPoint { row: 0, column: 4 }, size);
+
+        assert_eq!(
+            selection_ranges(
+                Some(selection_spanning_units(middle_line, last_line)),
+                size,
+                0
+            ),
+            vec![
+                TerminalSelectionRange {
+                    row: 1,
+                    column: 0,
+                    width: 5,
+                },
+                TerminalSelectionRange {
+                    row: 2,
+                    column: 0,
+                    width: 5,
+                },
+            ]
+        );
+        assert_eq!(
+            selection_ranges(
+                Some(selection_spanning_units(middle_line, first_line)),
+                size,
+                0
+            ),
+            vec![
+                TerminalSelectionRange {
+                    row: 0,
+                    column: 0,
+                    width: 5,
+                },
+                TerminalSelectionRange {
+                    row: 1,
+                    column: 0,
+                    width: 5,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn treats_empty_drag_area_as_line_unit_for_word_selection() {
+        let size = TerminalSize {
+            columns: 8,
+            rows: 2,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let anchor_word = TerminalSelection::range(
+            TerminalSelectionPoint { row: 0, column: 1 },
+            TerminalSelectionPoint { row: 0, column: 3 },
+        );
+        let empty_row = test_terminal_row("        ");
+        let active_line = line_selection_for_empty_area(
+            &empty_row,
+            TerminalSelectionPoint { row: 1, column: 4 },
+            size,
+        )
+        .expect("blank rows should select as a line while word dragging");
+
+        assert_eq!(
+            selection_ranges(
+                Some(selection_spanning_units(anchor_word, active_line)),
+                size,
+                0
+            ),
+            vec![
+                TerminalSelectionRange {
+                    row: 0,
+                    column: 1,
+                    width: 7,
+                },
+                TerminalSelectionRange {
+                    row: 1,
+                    column: 0,
+                    width: 8,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn detects_empty_drag_area_only_after_remaining_text() {
+        let size = TerminalSize {
+            columns: 8,
+            rows: 1,
+            cell_width: DEFAULT_CELL_WIDTH_PX,
+            cell_height: DEFAULT_CELL_HEIGHT_PX,
+        };
+        let row = test_terminal_row("foo bar ");
+
+        assert_eq!(
+            line_selection_for_empty_area(&row, TerminalSelectionPoint { row: 0, column: 3 }, size),
+            None
+        );
+        assert!(
+            line_selection_for_empty_area(&row, TerminalSelectionPoint { row: 0, column: 7 }, size)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn finds_terminal_word_columns_for_path_like_tokens() {
+        let row = test_terminal_row("  ./foo-bar baz ");
+
+        assert_eq!(word_columns_for_row(&row, 5), Some(2..11));
+        assert_eq!(word_columns_for_row(&row, 12), Some(12..15));
+        assert_eq!(word_columns_for_row(&row, 1), None);
     }
 
     #[test]
@@ -2504,5 +3138,34 @@ mod tests {
         assert_eq!(style.foreground, theme.foreground);
         assert_eq!(style.background, theme.background);
         assert_eq!(cursor_color, theme.foreground);
+    }
+
+    fn test_terminal_row(text: &str) -> TerminalRow {
+        let style = TerminalStyle {
+            foreground: TerminalColor::rgb(0xffffff),
+            background: TerminalColor::rgb(0x000000),
+            bold: false,
+            italic: false,
+            underline: false,
+            dim: false,
+            strikeout: false,
+        };
+        let cells = text
+            .chars()
+            .enumerate()
+            .map(|(column, ch)| TerminalCell {
+                text: ch.to_string(),
+                style,
+                column,
+                width: 1,
+            })
+            .collect();
+
+        TerminalRow {
+            text: text.to_string(),
+            runs: Vec::new(),
+            cell_runs: Vec::new(),
+            cells,
+        }
     }
 }
