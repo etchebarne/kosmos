@@ -1884,12 +1884,23 @@ fn is_terminal_paste(event: &KeyDownEvent) -> bool {
 fn terminal_key_input(event: &KeyDownEvent) -> TerminalKeyInput {
     TerminalKeyInput {
         key: event.keystroke.key.clone(),
-        text: event.keystroke.key_char.clone(),
+        text: terminal_key_text(event),
         control: event.keystroke.modifiers.control,
         alt: event.keystroke.modifiers.alt,
         shift: event.keystroke.modifiers.shift,
         platform: event.keystroke.modifiers.platform,
     }
+}
+
+fn terminal_key_text(event: &KeyDownEvent) -> Option<String> {
+    if event.keystroke.modifiers.control
+        || event.keystroke.modifiers.alt
+        || event.keystroke.modifiers.platform
+    {
+        return event.keystroke.key_char.clone();
+    }
+
+    None
 }
 
 fn resize_terminal_to_bounds(

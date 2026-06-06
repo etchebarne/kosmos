@@ -359,6 +359,7 @@ pub struct TerminalSession {
     snapshot_cache: Option<Arc<TerminalSnapshot>>,
     snapshot_dirty: bool,
     last_bell: Option<Instant>,
+    ime_marked_text: Option<String>,
 }
 
 impl TerminalSession {
@@ -399,6 +400,7 @@ impl TerminalSession {
             snapshot_cache: None,
             snapshot_dirty: true,
             last_bell: None,
+            ime_marked_text: None,
         };
         session.start_process();
         session.start_poll_task(cx);
@@ -1195,10 +1197,14 @@ impl EntityInputHandler for TerminalSession {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        None
+        self.ime_marked_text
+            .as_ref()
+            .map(|text| 0..text.chars().map(char::len_utf16).sum())
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.ime_marked_text = None;
+    }
 
     fn replace_text_in_range(
         &mut self,
@@ -1207,18 +1213,23 @@ impl EntityInputHandler for TerminalSession {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+        self.ime_marked_text = None;
         self.write_text(new_text);
     }
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        range_utf16: Option<Range<usize>>,
+        _range_utf16: Option<Range<usize>>,
         new_text: &str,
         _new_selected_range_utf16: Option<Range<usize>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
-        self.replace_text_in_range(range_utf16, new_text, window, cx);
+        if new_text.is_empty() {
+            self.ime_marked_text = None;
+        } else {
+            self.ime_marked_text = Some(new_text.to_string());
+        }
     }
 
     fn bounds_for_range(
