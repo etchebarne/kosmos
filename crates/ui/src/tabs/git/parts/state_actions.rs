@@ -772,7 +772,7 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
     root: PathBuf,
     message: String,
     input: Entity<InputState>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<T>,
 ) {
     let message = message.trim().to_string();
@@ -785,7 +785,6 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
     }
 
     clear_error(cx);
-    input.update(cx, |input, cx| input.set_value("", window, cx));
     cx.update_global::<GitUiState, _>(|state, _| state.loading = true);
     cx.notify();
 
@@ -793,11 +792,38 @@ fn commit_tracked<T: PaneDelegate + SettingsDelegate>(
         root,
         move |root| kosmos_git::commit_staged(root, &message),
         move |root, cx| {
+            clear_commit_message_input(input, cx);
             refresh_summary(root, true, true, cx);
         },
-        apply_git_action_error,
+        apply_commit_error,
         cx,
     );
+}
+
+fn clear_commit_message_input(input: Entity<InputState>, cx: &mut App) {
+    let Some(window_handle) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
+        return;
+    };
+
+    let _ = window_handle.update(cx, move |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+    });
+}
+
+fn apply_commit_error<T: PaneDelegate + SettingsDelegate>(
+    error: kosmos_git::Error,
+    cx: &mut Context<T>,
+) {
+    let message = git_error_message(error.clone());
+    cx.update_global::<GitUiState, _>(|state, _| {
+        state.loading = false;
+        state.last_error = Some(error.to_string());
+    });
+    show_git_error(cx, "Commit failed", message);
+    cx.refresh_windows();
 }
 
 fn clear_error(cx: &mut App) {
