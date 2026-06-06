@@ -980,6 +980,11 @@ impl InputState {
         SharedString::new(self.text.to_string())
     }
 
+    /// Return whether the input currently has temporary IME/composition text.
+    pub fn has_marked_text(&self) -> bool {
+        self.ime_marked_range.is_some()
+    }
+
     /// Return the portion of the value within the input field that
     /// is selected by the user
     pub fn selected_value(&self) -> SharedString {

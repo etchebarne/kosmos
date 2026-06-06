@@ -328,7 +328,12 @@ impl ComponentEditorStore {
         cx: &mut App,
     ) -> bool {
         let buffer_text = buffer.read(cx).content().to_string();
-        if input.read(cx).value().as_ref() != buffer_text.as_str() {
+        let input_state = input.read(cx);
+        if input_state.has_marked_text() {
+            return false;
+        }
+
+        if input_state.value().as_ref() != buffer_text.as_str() {
             input.update(cx, |input, cx| input.set_value(buffer_text, window, cx));
             return true;
         }
