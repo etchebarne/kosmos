@@ -1,5 +1,6 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use gpui::{App, Context, FocusHandle, Focusable, actions};
 use language::LanguageId;
@@ -39,6 +40,13 @@ pub struct Buffer {
     language: Option<LanguageId>,
     content: String,
     saved_content: String,
+    disk_fingerprint: Option<DiskFingerprint>,
     dirty: bool,
     focus_handle: FocusHandle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DiskFingerprint {
+    len: u64,
+    modified: Option<SystemTime>,
 }

@@ -1,8 +1,6 @@
 impl Buffer {
     pub(crate) fn new(id: BufferId, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_default()
-            .replace("\r\n", "\n");
+        let (content, disk_fingerprint) = read_disk_state(&path).unwrap_or_default();
         let language = language::from_path(&path);
         Self {
             id,
@@ -10,6 +8,7 @@ impl Buffer {
             language,
             saved_content: content.clone(),
             content,
+            disk_fingerprint,
             dirty: false,
             focus_handle: cx.focus_handle(),
         }
@@ -57,6 +56,7 @@ impl Buffer {
     pub fn save(&mut self, cx: &mut Context<Self>) -> std::io::Result<()> {
         std::fs::write(&self.path, &self.content)?;
         self.saved_content = self.content.clone();
+        self.disk_fingerprint = disk_fingerprint(&self.path);
         if self.dirty {
             self.dirty = false;
             cx.notify();
@@ -64,23 +64,51 @@ impl Buffer {
         Ok(())
     }
 
+    fn refresh_from_disk_if_changed(&mut self, cx: &mut Context<Self>) {
+        if self.dirty {
+            return;
+        }
+
+        let disk_fingerprint = disk_fingerprint(&self.path);
+        if disk_fingerprint == self.disk_fingerprint {
+            return;
+        }
+
+        self.reload_from_disk(cx);
+    }
+
     fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
         if self.dirty {
             return;
         }
-        let Ok(content) = std::fs::read_to_string(&self.path) else {
+        let Ok((content, disk_fingerprint)) = read_disk_state(&self.path) else {
             return;
         };
-        let content = content.replace("\r\n", "\n");
         if content == self.content {
+            self.saved_content = self.content.clone();
+            self.disk_fingerprint = disk_fingerprint;
             return;
         }
 
         self.content = content;
         self.saved_content = self.content.clone();
+        self.disk_fingerprint = disk_fingerprint;
         self.dirty = false;
         cx.notify();
     }
+}
+
+fn read_disk_state(path: &Path) -> std::io::Result<(String, Option<DiskFingerprint>)> {
+    let content = normalize_newlines(&std::fs::read_to_string(path)?);
+    Ok((content, disk_fingerprint(path)))
+}
+
+fn disk_fingerprint(path: &Path) -> Option<DiskFingerprint> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(DiskFingerprint {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
 }
 
 impl Focusable for Buffer {

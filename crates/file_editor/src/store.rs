@@ -27,6 +27,7 @@ impl BufferStore {
             .try_global::<Self>()
             .and_then(|s| s.by_path.get(&path).and_then(|id| s.by_id.get(id)).cloned())
         {
+            existing.update(cx, |buffer, cx| buffer.refresh_from_disk_if_changed(cx));
             return existing;
         }
         let id = cx.update_global::<Self, _>(|store, _| {
