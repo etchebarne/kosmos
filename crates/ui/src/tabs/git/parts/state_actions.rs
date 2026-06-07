@@ -383,6 +383,13 @@ fn apply_git_action_error<T: PaneDelegate + SettingsDelegate>(
     cx.notify();
 }
 
+enum DiffRefreshMode {
+    Full,
+    Paths(Vec<String>),
+}
+
+const TARGETED_DIFF_REFRESH_PATH_LIMIT: usize = 128;
+
 fn ensure_summary<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Context<T>) {
     ensure_summary_watch(root, cx);
 
@@ -447,7 +454,7 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
     cx: &mut Context<T>,
 ) -> bool {
     let mut changed = false;
-    let mut diff_should_refresh = false;
+    let mut diff_refresh = None;
     let should_continue = cx.update_global::<GitUiState, _>(|state, _| {
         if state.watch_generation != generation || state.root.as_deref() != Some(root) {
             return false;
@@ -455,9 +462,11 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
 
         match result {
             Ok(summary) => {
-                diff_should_refresh = summary_diff_state_changed(state.summary.as_ref(), &summary)
-                    || state.last_error.is_some()
-                    || state.can_initialize_repository;
+                diff_refresh = if state.last_error.is_some() || state.can_initialize_repository {
+                    Some(DiffRefreshMode::Full)
+                } else {
+                    summary_diff_refresh(state.summary.as_ref(), &summary)
+                };
                 changed = state.summary.as_ref() != Some(&summary)
                     || state.last_error.is_some()
                     || state.can_initialize_repository;
@@ -471,7 +480,9 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
                 changed = state.summary.is_some()
                     || state.last_error.as_ref() != Some(&error)
                     || state.can_initialize_repository != is_missing_repository;
-                diff_should_refresh = changed;
+                if changed {
+                    diff_refresh = Some(DiffRefreshMode::Full);
+                }
                 state.summary = None;
                 state.last_error = Some(error);
                 state.can_initialize_repository = is_missing_repository;
@@ -480,8 +491,12 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
         true
     });
 
-    if diff_should_refresh {
-        super::refresh_diff_if_loaded(root.to_path_buf(), false, cx);
+    match diff_refresh {
+        Some(DiffRefreshMode::Full) => super::prewarm_diff(root.to_path_buf(), false, cx),
+        Some(DiffRefreshMode::Paths(paths)) => {
+            super::prewarm_diff_paths(root.to_path_buf(), paths, false, cx);
+        }
+        None => {}
     }
 
     if changed {
@@ -489,6 +504,52 @@ fn apply_watched_summary<T: PaneDelegate + SettingsDelegate>(
     }
 
     should_continue
+}
+
+fn summary_diff_refresh(
+    previous: Option<&RepositorySummary>,
+    next: &RepositorySummary,
+) -> Option<DiffRefreshMode> {
+    let Some(previous) = previous else {
+        return Some(DiffRefreshMode::Full);
+    };
+
+    if previous.work_dir != next.work_dir
+        || previous.branch != next.branch
+        || previous.latest_commit != next.latest_commit
+    {
+        return Some(DiffRefreshMode::Full);
+    }
+
+    let previous_files = previous
+        .files
+        .iter()
+        .map(|change| (change.path.as_str(), change))
+        .collect::<HashMap<_, _>>();
+    let next_files = next
+        .files
+        .iter()
+        .map(|change| (change.path.as_str(), change))
+        .collect::<HashMap<_, _>>();
+    let paths = previous_files
+        .keys()
+        .chain(next_files.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|path| previous_files.get(path) != next_files.get(path))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if !paths.is_empty() {
+        return Some(if paths.len() <= TARGETED_DIFF_REFRESH_PATH_LIMIT {
+            DiffRefreshMode::Paths(paths)
+        } else {
+            DiffRefreshMode::Full
+        });
+    }
+
+    summary_diff_state_changed(Some(previous), next).then_some(DiffRefreshMode::Full)
 }
 
 fn summary_diff_state_changed(
@@ -532,7 +593,7 @@ fn refresh_summary<T: PaneDelegate + SettingsDelegate>(
         cx.notify();
     }
 
-    super::refresh_diff_if_loaded(root.clone(), notify_now, cx);
+    super::prewarm_diff(root.clone(), notify_now, cx);
 
     let task = cx.spawn(async move |this, cx| {
         let result = cx

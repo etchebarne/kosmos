@@ -197,26 +197,43 @@ impl RepositorySummary {
 
 impl RepositoryDiff {
     pub fn discover(path: impl AsRef<Path>) -> Result<Self, Error> {
+        Self::discover_pathspec(path.as_ref(), None)
+    }
+
+    pub fn discover_paths(path: impl AsRef<Path>, paths: &[String]) -> Result<Self, Error> {
+        if paths.is_empty() {
+            let work_dir = git_work_dir(path.as_ref())?;
+            return Ok(Self {
+                work_dir,
+                files: Vec::new(),
+            });
+        }
+
+        Self::discover_pathspec(path.as_ref(), Some(paths))
+    }
+
+    fn discover_pathspec(path: &Path, paths: Option<&[String]>) -> Result<Self, Error> {
         let work_dir = git_work_dir(path.as_ref())?;
         let has_head = git_output(&work_dir, &["rev-parse", "--verify", "HEAD"]).is_ok();
         let output = if has_head {
-            git_output(
-                &work_dir,
-                &[
-                    "diff",
-                    "--no-color",
-                    "--no-ext-diff",
-                    "--find-renames",
-                    "--unified=3",
-                    "HEAD",
-                    "--",
-                ],
-            )?
+            let mut args = vec![
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--find-renames",
+                "--unified=3",
+                "HEAD",
+                "--",
+            ];
+            if let Some(paths) = paths {
+                args.extend(paths.iter().map(String::as_str));
+            }
+            git_output(&work_dir, &args)?
         } else {
             String::new()
         };
         let mut files = parse_unified_diff(&output);
-        let changes = file_changes(&work_dir).unwrap_or_default();
+        let changes = filtered_file_changes(&work_dir, paths);
         apply_status_to_file_diffs(&mut files, &work_dir, &changes);
         synthesize_created_file_diffs(&mut files, &work_dir, &changes);
         synthesize_conflicted_file_diffs(&mut files, &work_dir, &changes);
@@ -227,6 +244,19 @@ impl RepositoryDiff {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
+}
+
+fn filtered_file_changes(path: &Path, paths: Option<&[String]>) -> Vec<FileChange> {
+    let changes = file_changes(path).unwrap_or_default();
+    let Some(paths) = paths else {
+        return changes;
+    };
+
+    let paths = paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    changes
+        .into_iter()
+        .filter(|change| paths.contains(change.path.as_str()))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -1,8 +1,9 @@
-use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Context, Entity, Global, HighlightStyle, IntoElement, ListSizingBehavior,
@@ -40,34 +41,51 @@ const DIFF_MONO_CHAR_WIDTH_FACTOR: f32 = 0.62;
 
 type LineHighlightKey = (u8, Option<usize>, Option<usize>);
 type LineHighlights = Vec<(Range<usize>, HighlightStyle)>;
+type PreparedFileCache = HashMap<String, PreparedFileEntry>;
 
 struct DiffUiState {
-    root: Option<PathBuf>,
-    diff: Option<RepositoryDiff>,
+    entries: HashMap<PathBuf, DiffWorkspaceState>,
+    wrap_width_px: Option<f32>,
+}
+
+struct DiffWorkspaceState {
+    diff: Option<Arc<RepositoryDiff>>,
+    diff_generation: u64,
     loading: bool,
     error: Option<String>,
     generation: u64,
     task: Option<Task<()>>,
+    prepared: Option<PreparedDiffView>,
+    prepare_request: Option<DiffPrepareRequest>,
+    prepare_task: Option<Task<()>>,
     scroll_handle: VirtualListScrollHandle,
     pending_focus: Option<String>,
     active_file: Option<String>,
-    highlight_cache: Rc<DiffHighlightCache>,
-    wrap_width_px: Option<f32>,
+}
+
+impl Default for DiffWorkspaceState {
+    fn default() -> Self {
+        Self {
+            diff: None,
+            diff_generation: 0,
+            loading: false,
+            error: None,
+            generation: 0,
+            task: None,
+            prepared: None,
+            prepare_request: None,
+            prepare_task: None,
+            scroll_handle: VirtualListScrollHandle::new(),
+            pending_focus: None,
+            active_file: None,
+        }
+    }
 }
 
 impl Default for DiffUiState {
     fn default() -> Self {
         Self {
-            root: None,
-            diff: None,
-            loading: false,
-            error: None,
-            generation: 0,
-            task: None,
-            scroll_handle: VirtualListScrollHandle::new(),
-            pending_focus: None,
-            active_file: None,
-            highlight_cache: Rc::default(),
+            entries: HashMap::new(),
             wrap_width_px: None,
         }
     }
@@ -75,18 +93,47 @@ impl Default for DiffUiState {
 
 impl Global for DiffUiState {}
 
+#[derive(Clone)]
+struct PreparedDiffView {
+    generation: u64,
+    theme_id: &'static str,
+    work_dir: PathBuf,
+    rows: Rc<Vec<Arc<DiffRow>>>,
+    row_heights: Rc<Vec<f32>>,
+    highlight_cache: Rc<DiffHighlightCache>,
+    file_cache: PreparedFileCache,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DiffPrepareRequest {
+    generation: u64,
+    theme_id: &'static str,
+}
+
+struct PreparedDiffData {
+    generation: u64,
+    theme_id: &'static str,
+    work_dir: PathBuf,
+    rows: Vec<Arc<DiffRow>>,
+    row_heights: Vec<f32>,
+    highlight_cache: DiffHighlightCache,
+    file_cache: PreparedFileCache,
+}
+
+#[derive(Clone)]
+struct PreparedFileEntry {
+    fingerprint: u64,
+    rows: Arc<Vec<Arc<DiffRow>>>,
+    row_heights: Arc<Vec<f32>>,
+    highlights: Arc<HashMap<LineHighlightKey, LineHighlights>>,
+}
+
 #[derive(Clone, Default)]
 struct DiffHighlightCache {
-    fingerprint: Option<u64>,
-    theme_id: &'static str,
-    lines: HashMap<String, HashMap<LineHighlightKey, LineHighlights>>,
+    lines: HashMap<String, Arc<HashMap<LineHighlightKey, LineHighlights>>>,
 }
 
 impl DiffHighlightCache {
-    fn matches(&self, fingerprint: u64, theme_id: &'static str) -> bool {
-        self.fingerprint == Some(fingerprint) && self.theme_id == theme_id
-    }
-
     fn highlights(&self, path: &str, key: &LineHighlightKey) -> Option<&[LineHighlightsItem]> {
         self.lines
             .get(path)
@@ -160,30 +207,54 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     let root = tab.path.as_deref().unwrap_or(workspace_path).to_path_buf();
     ensure_diff(&root, cx);
 
-    let (diff, loading, error, scroll_handle, active_file) = {
+    let (diff, diff_generation, loading, error, scroll_handle, active_file) = {
         let state = cx.global::<DiffUiState>();
+        let entry = state.entries.get(&root);
         (
-            state.diff.clone(),
-            state.loading,
-            state.error.clone(),
-            state.scroll_handle.clone(),
-            state.active_file.clone(),
+            entry.and_then(|entry| entry.diff.clone()),
+            entry.map(|entry| entry.diff_generation).unwrap_or_default(),
+            entry.is_some_and(|entry| entry.loading),
+            entry.and_then(|entry| entry.error.clone()),
+            entry
+                .map(|entry| entry.scroll_handle.clone())
+                .unwrap_or_else(VirtualListScrollHandle::new),
+            entry.and_then(|entry| entry.active_file.clone()),
         )
     };
-    let rows = diff.as_ref().map(flatten_diff).unwrap_or_default();
-    apply_pending_focus(&root, &rows, cx);
-    let open_root = diff
-        .as_ref()
-        .map(|diff| diff.work_dir.clone())
-        .unwrap_or_else(|| root.clone());
     let theme = *cx.theme();
-    let highlight_cache = diff
-        .as_ref()
-        .map(|diff| ensure_highlight_cache(diff, theme.id, cx))
-        .unwrap_or_default();
     let soft_wrap = diff_soft_wrap_enabled(cx);
-    let rows = Rc::new(rows);
-    let delegate = cx.entity().clone();
+    let content = match (loading, error, diff) {
+        (true, _, None) => centered_state("Loading diff", cx),
+        (_, Some(error), None) => centered_state(error, cx),
+        (_, _, Some(diff)) if diff.is_empty() => centered_state("No changes", cx),
+        (_, _, Some(diff)) => {
+            let prepared = ensure_prepared_diff(&root, diff, theme.id, cx);
+            match prepared {
+                Some(prepared) if prepared.rows.is_empty() => {
+                    centered_state("No textual changes", cx)
+                }
+                Some(prepared) => {
+                    if prepared.generation == diff_generation {
+                        apply_pending_focus(&root, prepared.rows.as_slice(), cx);
+                    }
+                    diff_rows(
+                        prepared.work_dir,
+                        prepared.rows,
+                        prepared.row_heights,
+                        scroll_handle,
+                        prepared.highlight_cache,
+                        cx.entity().clone(),
+                        active_file,
+                        soft_wrap,
+                        window,
+                        cx,
+                    )
+                }
+                None => centered_state("Preparing diff", cx),
+            }
+        }
+        (_, _, None) => centered_state("Loading diff", cx),
+    };
 
     div()
         .size_full()
@@ -193,38 +264,16 @@ pub fn render<T: PaneDelegate + SettingsDelegate + gpui::Render>(
         .flex_col()
         .bg(theme.bg_surface)
         .text_color(theme.text)
-        .child(match (loading, error, diff) {
-            (true, _, None) => centered_state("Loading diff", cx),
-            (_, Some(error), None) => centered_state(error, cx),
-            (_, _, Some(diff)) if diff.is_empty() => centered_state("No changes", cx),
-            (_, _, _) if rows.is_empty() => centered_state("No textual changes", cx),
-            _ => diff_rows(
-                open_root,
-                rows,
-                scroll_handle,
-                highlight_cache,
-                delegate,
-                active_file,
-                soft_wrap,
-                window,
-                cx,
-            ),
-        })
+        .child(content)
         .into_any_element()
 }
 
 pub fn request_focus(root: PathBuf, file_path: String, cx: &mut App) {
     ensure_state(cx);
     cx.update_global::<DiffUiState, _>(|state, _| {
-        if state.root.as_ref() != Some(&root) {
-            state.root = Some(root);
-            state.diff = None;
-            state.error = None;
-            state.loading = false;
-            state.generation = state.generation.wrapping_add(1);
-        }
-        state.pending_focus = Some(file_path.clone());
-        state.active_file = Some(file_path);
+        let entry = entry_for_root(state, &root);
+        entry.pending_focus = Some(file_path.clone());
+        entry.active_file = Some(file_path);
     });
     cx.refresh_windows();
 }
@@ -235,12 +284,124 @@ fn ensure_state(cx: &mut App) {
     }
 }
 
+fn entry_for_root<'a>(state: &'a mut DiffUiState, root: &Path) -> &'a mut DiffWorkspaceState {
+    state.entries.entry(root.to_path_buf()).or_default()
+}
+
+fn ensure_prepared_diff<T: PaneDelegate + SettingsDelegate>(
+    root: &Path,
+    diff: Arc<RepositoryDiff>,
+    theme_id: &'static str,
+    cx: &mut Context<T>,
+) -> Option<PreparedDiffView> {
+    ensure_state(cx);
+    let (request, stale_prepared, previous_cache) = {
+        let state = cx.global::<DiffUiState>();
+        let Some(entry) = state.entries.get(root) else {
+            return None;
+        };
+        let generation = entry.diff_generation;
+        if let Some(prepared) = &entry.prepared
+            && prepared.generation == generation
+            && prepared.theme_id == theme_id
+        {
+            return Some(prepared.clone());
+        }
+
+        let stale_prepared = entry
+            .prepared
+            .as_ref()
+            .filter(|prepared| prepared.theme_id == theme_id)
+            .cloned();
+        let previous_cache = stale_prepared
+            .as_ref()
+            .map(|prepared| prepared.file_cache.clone())
+            .unwrap_or_default();
+
+        (
+            DiffPrepareRequest {
+                generation,
+                theme_id,
+            },
+            stale_prepared,
+            previous_cache,
+        )
+    };
+
+    let should_prepare = cx.update_global::<DiffUiState, _>(|state, _| {
+        let Some(entry) = state.entries.get_mut(root) else {
+            return false;
+        };
+        if entry.prepare_request == Some(request) {
+            return false;
+        }
+        entry.prepare_request = Some(request);
+        true
+    });
+
+    if should_prepare {
+        let root = root.to_path_buf();
+        let task_root = root.clone();
+        let highlight_theme = gpui_component::Theme::global(cx).highlight_theme.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let prepared = cx
+                .background_executor()
+                .spawn(async move {
+                    build_prepared_diff(&diff, request, &highlight_theme, previous_cache)
+                })
+                .await;
+            let _ = this.update(cx, |_, cx| {
+                apply_prepared_diff(&task_root, request, prepared, cx);
+                cx.notify();
+            });
+        });
+
+        cx.update_global::<DiffUiState, _>(|state, _| {
+            if let Some(entry) = state.entries.get_mut(&root) {
+                entry.prepare_task = Some(task);
+            }
+        });
+    }
+
+    stale_prepared
+}
+
+fn apply_prepared_diff(
+    root: &Path,
+    request: DiffPrepareRequest,
+    prepared: PreparedDiffData,
+    cx: &mut App,
+) {
+    cx.update_global::<DiffUiState, _>(|state, _| {
+        let Some(entry) = state.entries.get_mut(root) else {
+            return;
+        };
+        if entry.diff_generation != request.generation || entry.prepare_request != Some(request) {
+            return;
+        }
+
+        entry.prepared = Some(PreparedDiffView {
+            generation: prepared.generation,
+            theme_id: prepared.theme_id,
+            work_dir: prepared.work_dir,
+            rows: Rc::new(prepared.rows),
+            row_heights: Rc::new(prepared.row_heights),
+            highlight_cache: Rc::new(prepared.highlight_cache),
+            file_cache: prepared.file_cache,
+        });
+        entry.prepare_request = None;
+        entry.prepare_task = None;
+    });
+}
+
 fn ensure_diff<T: PaneDelegate + SettingsDelegate>(root: &Path, cx: &mut Context<T>) {
     ensure_state(cx);
     let needs_refresh = {
         let state = cx.global::<DiffUiState>();
-        state.root.as_deref() != Some(root)
-            || (!state.loading && state.diff.is_none() && state.error.is_none())
+        state
+            .entries
+            .get(root)
+            .is_none_or(|entry| !entry.loading && entry.diff.is_none() && entry.error.is_none())
     };
     if needs_refresh {
         refresh_diff(root.to_path_buf(), false, cx);
@@ -257,15 +418,66 @@ pub fn refresh_if_loaded<T: PaneDelegate + SettingsDelegate>(
     }
 }
 
+pub fn refresh_paths_if_loaded<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    paths: Vec<String>,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    if !should_refresh_loaded(&root, cx) {
+        return;
+    }
+
+    let can_refresh_paths = cx
+        .try_global::<DiffUiState>()
+        .and_then(|state| state.entries.get(&root))
+        .is_some_and(|entry| entry.diff.is_some());
+
+    if paths.is_empty() || !can_refresh_paths {
+        refresh_diff(root, notify_now, cx);
+    } else {
+        refresh_diff_paths(root, paths, notify_now, cx);
+    }
+}
+
+pub fn prewarm<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    ensure_state(cx);
+    refresh_diff(root, notify_now, cx);
+}
+
+pub fn prewarm_paths<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    paths: Vec<String>,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    ensure_state(cx);
+    let can_refresh_paths = cx
+        .try_global::<DiffUiState>()
+        .and_then(|state| state.entries.get(&root))
+        .is_some_and(|entry| entry.diff.is_some());
+
+    if paths.is_empty() || !can_refresh_paths {
+        refresh_diff(root, notify_now, cx);
+    } else {
+        refresh_diff_paths(root, paths, notify_now, cx);
+    }
+}
+
 pub fn refresh_if_loaded_app(root: PathBuf, notify_now: bool, cx: &mut App) {
     if !should_refresh_loaded(&root, cx) {
         return;
     }
 
     let generation = cx.update_global::<DiffUiState, _>(|state, _| {
-        state.loading = true;
-        state.generation = state.generation.wrapping_add(1);
-        state.generation
+        let entry = entry_for_root(state, &root);
+        entry.loading = true;
+        entry.generation = entry.generation.wrapping_add(1);
+        entry.generation
     });
 
     if notify_now {
@@ -273,31 +485,34 @@ pub fn refresh_if_loaded_app(root: PathBuf, notify_now: bool, cx: &mut App) {
     }
 
     let task_root = root.clone();
+    let apply_root = root.clone();
     let task = cx.spawn(async move |cx| {
         let result = cx
             .background_executor()
             .spawn(async move { RepositoryDiff::discover(task_root) })
             .await;
         let _ = cx.update(|cx| {
-            apply_diff_result(&root, generation, result, cx);
+            apply_diff_result(&apply_root, generation, result, cx);
             cx.refresh_windows();
         });
     });
 
     cx.update_global::<DiffUiState, _>(|state, _| {
-        state.task = Some(task);
+        let entry = entry_for_root(state, &root);
+        entry.task = Some(task);
     });
 }
 
 fn should_refresh_loaded(root: &Path, cx: &App) -> bool {
-    cx.try_global::<DiffUiState>().is_some_and(|state| {
-        state.root.as_deref() == Some(root)
-            && (state.diff.is_some()
-                || state.error.is_some()
-                || state.loading
-                || state.active_file.is_some()
-                || state.pending_focus.is_some())
-    })
+    cx.try_global::<DiffUiState>()
+        .and_then(|state| state.entries.get(root))
+        .is_some_and(|entry| {
+            entry.diff.is_some()
+                || entry.error.is_some()
+                || entry.loading
+                || entry.active_file.is_some()
+                || entry.pending_focus.is_some()
+        })
 }
 
 fn refresh_diff<T: PaneDelegate + SettingsDelegate>(
@@ -305,35 +520,99 @@ fn refresh_diff<T: PaneDelegate + SettingsDelegate>(
     notify_now: bool,
     cx: &mut Context<T>,
 ) {
-    let generation = cx.update_global::<DiffUiState, _>(|state, _| {
-        if state.root.as_ref() != Some(&root) {
-            state.diff = None;
-            state.error = None;
-        }
-        state.root = Some(root.clone());
-        state.loading = true;
-        state.generation = state.generation.wrapping_add(1);
-        state.generation
+    let theme_id = cx.theme().id;
+    let highlight_theme = gpui_component::Theme::global(cx).highlight_theme.clone();
+    let (generation, previous_cache) = cx.update_global::<DiffUiState, _>(|state, _| {
+        let entry = entry_for_root(state, &root);
+        let previous_cache = prepared_file_cache(entry.prepared.as_ref(), theme_id);
+        entry.loading = true;
+        entry.generation = entry.generation.wrapping_add(1);
+        (entry.generation, previous_cache)
     });
+    let request = DiffPrepareRequest {
+        generation,
+        theme_id,
+    };
 
     if notify_now {
         cx.notify();
     }
 
     let task_root = root.clone();
+    let apply_root = root.clone();
     let task = cx.spawn(async move |this, cx| {
         let result = cx
             .background_executor()
-            .spawn(async move { RepositoryDiff::discover(task_root) })
+            .spawn(async move {
+                RepositoryDiff::discover(task_root).map(|diff| {
+                    let prepared =
+                        build_prepared_diff(&diff, request, &highlight_theme, previous_cache);
+                    (diff, prepared)
+                })
+            })
             .await;
         let _ = this.update(cx, |_, cx| {
-            apply_diff_result(&root, generation, result, cx);
+            apply_prepared_diff_result(&apply_root, generation, result, cx);
             cx.notify();
         });
     });
 
     cx.update_global::<DiffUiState, _>(|state, _| {
-        state.task = Some(task);
+        let entry = entry_for_root(state, &root);
+        entry.task = Some(task);
+    });
+}
+
+fn refresh_diff_paths<T: PaneDelegate + SettingsDelegate>(
+    root: PathBuf,
+    paths: Vec<String>,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    let theme_id = cx.theme().id;
+    let highlight_theme = gpui_component::Theme::global(cx).highlight_theme.clone();
+    let (generation, current_diff, previous_cache) =
+        cx.update_global::<DiffUiState, _>(|state, _| {
+            let entry = entry_for_root(state, &root);
+            let current_diff = entry.diff.clone();
+            let previous_cache = prepared_file_cache(entry.prepared.as_ref(), theme_id);
+            entry.loading = true;
+            entry.generation = entry.generation.wrapping_add(1);
+            (entry.generation, current_diff, previous_cache)
+        });
+    let request = DiffPrepareRequest {
+        generation,
+        theme_id,
+    };
+
+    if notify_now {
+        cx.notify();
+    }
+
+    let task_root = root.clone();
+    let task_paths = paths.clone();
+    let apply_root = root.clone();
+    let task = cx.spawn(async move |this, cx| {
+        let result = cx
+            .background_executor()
+            .spawn(async move {
+                RepositoryDiff::discover_paths(task_root, &task_paths).map(|partial| {
+                    let diff = merge_partial_diff(current_diff.as_deref(), partial, &task_paths);
+                    let prepared =
+                        build_prepared_diff(&diff, request, &highlight_theme, previous_cache);
+                    (diff, prepared)
+                })
+            })
+            .await;
+        let _ = this.update(cx, |_, cx| {
+            apply_prepared_diff_result(&apply_root, generation, result, cx);
+            cx.notify();
+        });
+    });
+
+    cx.update_global::<DiffUiState, _>(|state, _| {
+        let entry = entry_for_root(state, &root);
+        entry.task = Some(task);
     });
 }
 
@@ -344,41 +623,135 @@ fn apply_diff_result(
     cx: &mut App,
 ) {
     cx.update_global::<DiffUiState, _>(|state, _| {
-        if state.generation != generation || state.root.as_deref() != Some(root) {
+        let Some(entry) = state.entries.get_mut(root) else {
+            return;
+        };
+        if entry.generation != generation {
             return;
         }
-        state.loading = false;
+        entry.loading = false;
         match result {
             Ok(diff) => {
-                state.diff = Some(diff);
-                state.error = None;
+                entry.diff = Some(Arc::new(diff));
+                entry.diff_generation = generation;
+                entry.prepare_request = None;
+                entry.error = None;
             }
             Err(error) => {
-                state.diff = None;
-                state.error = Some(error.to_string());
+                entry.diff = None;
+                entry.diff_generation = 0;
+                entry.prepared = None;
+                entry.prepare_request = None;
+                entry.error = Some(error.to_string());
             }
         }
     });
 }
 
+fn apply_prepared_diff_result(
+    root: &Path,
+    generation: u64,
+    result: Result<(RepositoryDiff, PreparedDiffData), kosmos_git::Error>,
+    cx: &mut App,
+) {
+    cx.update_global::<DiffUiState, _>(|state, _| {
+        let Some(entry) = state.entries.get_mut(root) else {
+            return;
+        };
+        if entry.generation != generation {
+            return;
+        }
+        entry.loading = false;
+        match result {
+            Ok((diff, prepared)) => {
+                entry.diff = Some(Arc::new(diff));
+                entry.diff_generation = generation;
+                entry.prepared = Some(PreparedDiffView {
+                    generation: prepared.generation,
+                    theme_id: prepared.theme_id,
+                    work_dir: prepared.work_dir,
+                    rows: Rc::new(prepared.rows),
+                    row_heights: Rc::new(prepared.row_heights),
+                    highlight_cache: Rc::new(prepared.highlight_cache),
+                    file_cache: prepared.file_cache,
+                });
+                entry.prepare_request = None;
+                entry.prepare_task = None;
+                entry.error = None;
+            }
+            Err(error) => {
+                entry.diff = None;
+                entry.diff_generation = 0;
+                entry.prepared = None;
+                entry.prepare_request = None;
+                entry.error = Some(error.to_string());
+            }
+        }
+    });
+}
+
+fn merge_partial_diff(
+    current: Option<&RepositoryDiff>,
+    partial: RepositoryDiff,
+    paths: &[String],
+) -> RepositoryDiff {
+    let Some(current) = current else {
+        return partial;
+    };
+
+    let affected_paths = paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    let mut replacements = partial
+        .files
+        .into_iter()
+        .map(|file| (file.path.clone(), file))
+        .collect::<HashMap<_, _>>();
+    let mut files = Vec::with_capacity(current.files.len() + replacements.len());
+
+    for file in &current.files {
+        if file_matches_paths(file, &affected_paths) {
+            if let Some(replacement) = replacements.remove(&file.path) {
+                files.push(replacement);
+            }
+            continue;
+        }
+
+        files.push(file.clone());
+    }
+
+    files.extend(replacements.into_values());
+
+    RepositoryDiff {
+        work_dir: partial.work_dir,
+        files,
+    }
+}
+
+fn file_matches_paths(file: &kosmos_git::FileDiff, paths: &HashSet<&str>) -> bool {
+    paths.contains(file.path.as_str())
+        || file
+            .old_path
+            .as_deref()
+            .is_some_and(|path| paths.contains(path))
+}
+
 fn apply_pending_focus<T: PaneDelegate + SettingsDelegate>(
     root: &Path,
-    rows: &[DiffRow],
+    rows: &[Arc<DiffRow>],
     cx: &mut Context<T>,
 ) {
     cx.update_global::<DiffUiState, _>(|state, _| {
-        if state.root.as_deref() != Some(root) {
+        let Some(entry) = state.entries.get_mut(root) else {
             return;
-        }
-        let Some(path) = state.pending_focus.clone() else {
+        };
+        let Some(path) = entry.pending_focus.clone() else {
             return;
         };
         let Some(ix) = rows.iter().position(|row| row.path() == path.as_str()) else {
             return;
         };
-        state.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
-        state.pending_focus = None;
-        state.active_file = Some(path);
+        entry.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
+        entry.pending_focus = None;
+        entry.active_file = Some(path);
     });
 }
 
@@ -389,92 +762,118 @@ fn diff_soft_wrap_enabled<T>(cx: &mut Context<T>) -> bool {
         .unwrap_or(false)
 }
 
-fn ensure_highlight_cache<T: PaneDelegate + SettingsDelegate>(
-    diff: &RepositoryDiff,
+fn prepared_file_cache(
+    prepared: Option<&PreparedDiffView>,
     theme_id: &'static str,
-    cx: &mut Context<T>,
-) -> Rc<DiffHighlightCache> {
-    ensure_state(cx);
-    let fingerprint = diff_fingerprint(diff);
-    if let Some(cache) = {
-        let state = cx.global::<DiffUiState>();
-        state
-            .highlight_cache
-            .matches(fingerprint, theme_id)
-            .then(|| state.highlight_cache.clone())
-    } {
-        return cache;
-    }
-
-    let highlight_theme = gpui_component::Theme::global(cx).highlight_theme.clone();
-    let cache = Rc::new(build_diff_highlight_cache(
-        diff,
-        fingerprint,
-        theme_id,
-        &highlight_theme,
-    ));
-    cx.update_global::<DiffUiState, _>(|state, _| {
-        state.highlight_cache = cache.clone();
-    });
-    cache
+) -> PreparedFileCache {
+    prepared
+        .filter(|prepared| prepared.theme_id == theme_id)
+        .map(|prepared| prepared.file_cache.clone())
+        .unwrap_or_default()
 }
 
-fn build_diff_highlight_cache(
+fn build_prepared_diff(
     diff: &RepositoryDiff,
-    fingerprint: u64,
-    theme_id: &'static str,
+    request: DiffPrepareRequest,
     highlight_theme: &HighlightTheme,
-) -> DiffHighlightCache {
-    let mut files = HashMap::new();
+    previous_cache: PreparedFileCache,
+) -> PreparedDiffData {
+    let mut rows = Vec::new();
+    let mut row_heights = Vec::new();
+    let mut highlight_lines = HashMap::new();
+    let mut file_cache = HashMap::new();
 
     for file in &diff.files {
-        if file.binary || (file.hunks.is_empty() && file.conflicts.is_empty()) {
-            continue;
-        }
+        let fingerprint = file_fingerprint(file);
+        let entry = previous_cache
+            .get(&file.path)
+            .filter(|entry| entry.fingerprint == fingerprint)
+            .cloned()
+            .unwrap_or_else(|| prepare_file_diff(file, fingerprint, highlight_theme));
 
-        let language = language::from_path(Path::new(&file.path))
-            .map(|language| component_highlighter_language(language.as_str()).to_string())
-            .unwrap_or_else(|| "plaintext".to_string());
-        let mut line_highlights = HashMap::new();
-        highlight_file_side(
-            file,
-            HighlightSide::Old,
-            &language,
-            highlight_theme,
-            &mut line_highlights,
-        );
-        highlight_file_side(
-            file,
-            HighlightSide::New,
-            &language,
-            highlight_theme,
-            &mut line_highlights,
-        );
-        highlight_conflict_side(
-            file,
-            ConflictSide::Current,
-            &language,
-            highlight_theme,
-            &mut line_highlights,
-        );
-        highlight_conflict_side(
-            file,
-            ConflictSide::Incoming,
-            &language,
-            highlight_theme,
-            &mut line_highlights,
-        );
-
-        if !line_highlights.is_empty() {
-            files.insert(file.path.clone(), line_highlights);
+        rows.extend(entry.rows.iter().cloned());
+        row_heights.extend(entry.row_heights.iter().copied());
+        if !entry.highlights.is_empty() {
+            highlight_lines.insert(file.path.clone(), entry.highlights.clone());
         }
+        file_cache.insert(file.path.clone(), entry);
     }
 
-    DiffHighlightCache {
-        fingerprint: Some(fingerprint),
-        theme_id,
-        lines: files,
+    PreparedDiffData {
+        generation: request.generation,
+        theme_id: request.theme_id,
+        work_dir: diff.work_dir.clone(),
+        rows,
+        row_heights,
+        highlight_cache: DiffHighlightCache {
+            lines: highlight_lines,
+        },
+        file_cache,
     }
+}
+
+fn prepare_file_diff(
+    file: &kosmos_git::FileDiff,
+    fingerprint: u64,
+    highlight_theme: &HighlightTheme,
+) -> PreparedFileEntry {
+    let rows = flatten_file_diff(file);
+    let row_heights = rows
+        .iter()
+        .map(|row| diff_row_height(row.as_ref(), false, 1))
+        .collect();
+    let highlights = build_file_highlight_cache(file, highlight_theme);
+
+    PreparedFileEntry {
+        fingerprint,
+        rows: Arc::new(rows),
+        row_heights: Arc::new(row_heights),
+        highlights: Arc::new(highlights),
+    }
+}
+
+fn build_file_highlight_cache(
+    file: &kosmos_git::FileDiff,
+    highlight_theme: &HighlightTheme,
+) -> HashMap<LineHighlightKey, LineHighlights> {
+    if file.binary || (file.hunks.is_empty() && file.conflicts.is_empty()) {
+        return HashMap::new();
+    }
+
+    let language = language::from_path(Path::new(&file.path))
+        .map(|language| component_highlighter_language(language.as_str()).to_string())
+        .unwrap_or_else(|| "plaintext".to_string());
+    let mut line_highlights = HashMap::new();
+    highlight_file_side(
+        file,
+        HighlightSide::Old,
+        &language,
+        highlight_theme,
+        &mut line_highlights,
+    );
+    highlight_file_side(
+        file,
+        HighlightSide::New,
+        &language,
+        highlight_theme,
+        &mut line_highlights,
+    );
+    highlight_conflict_side(
+        file,
+        ConflictSide::Current,
+        &language,
+        highlight_theme,
+        &mut line_highlights,
+    );
+    highlight_conflict_side(
+        file,
+        ConflictSide::Incoming,
+        &language,
+        highlight_theme,
+        &mut line_highlights,
+    );
+
+    line_highlights
 }
 
 fn highlight_conflict_side(
@@ -592,45 +991,41 @@ fn highlighted_code_text(text: String, highlights: Option<&[LineHighlightsItem]>
     }
 }
 
-fn diff_fingerprint(diff: &RepositoryDiff) -> u64 {
+fn file_fingerprint(file: &kosmos_git::FileDiff) -> u64 {
     let mut hasher = DefaultHasher::new();
-    diff.work_dir.hash(&mut hasher);
-    diff.files.len().hash(&mut hasher);
-    for file in &diff.files {
-        file.old_path.hash(&mut hasher);
-        file.path.hash(&mut hasher);
-        file_change_kind_key(file.kind).hash(&mut hasher);
-        file.binary.hash(&mut hasher);
-        file.hunks.len().hash(&mut hasher);
-        for hunk in &file.hunks {
-            hunk.old_start.hash(&mut hasher);
-            hunk.old_lines.hash(&mut hasher);
-            hunk.new_start.hash(&mut hasher);
-            hunk.new_lines.hash(&mut hasher);
-            hunk.header.hash(&mut hasher);
-            hunk.lines.len().hash(&mut hasher);
-            for line in &hunk.lines {
-                diff_line_kind_key(line.kind).hash(&mut hasher);
-                line.old_line.hash(&mut hasher);
-                line.new_line.hash(&mut hasher);
-                line.text.hash(&mut hasher);
-            }
+    file.old_path.hash(&mut hasher);
+    file.path.hash(&mut hasher);
+    file_change_kind_key(file.kind).hash(&mut hasher);
+    file.binary.hash(&mut hasher);
+    file.hunks.len().hash(&mut hasher);
+    for hunk in &file.hunks {
+        hunk.old_start.hash(&mut hasher);
+        hunk.old_lines.hash(&mut hasher);
+        hunk.new_start.hash(&mut hasher);
+        hunk.new_lines.hash(&mut hasher);
+        hunk.header.hash(&mut hasher);
+        hunk.lines.len().hash(&mut hasher);
+        for line in &hunk.lines {
+            diff_line_kind_key(line.kind).hash(&mut hasher);
+            line.old_line.hash(&mut hasher);
+            line.new_line.hash(&mut hasher);
+            line.text.hash(&mut hasher);
         }
-        file.conflicts.len().hash(&mut hasher);
-        for conflict in &file.conflicts {
-            conflict.start_line.hash(&mut hasher);
-            conflict.separator_line.hash(&mut hasher);
-            conflict.end_line.hash(&mut hasher);
-            conflict.current_label.hash(&mut hasher);
-            conflict.incoming_label.hash(&mut hasher);
-            for line in &conflict.current {
-                line.line.hash(&mut hasher);
-                line.text.hash(&mut hasher);
-            }
-            for line in &conflict.incoming {
-                line.line.hash(&mut hasher);
-                line.text.hash(&mut hasher);
-            }
+    }
+    file.conflicts.len().hash(&mut hasher);
+    for conflict in &file.conflicts {
+        conflict.start_line.hash(&mut hasher);
+        conflict.separator_line.hash(&mut hasher);
+        conflict.end_line.hash(&mut hasher);
+        conflict.current_label.hash(&mut hasher);
+        conflict.incoming_label.hash(&mut hasher);
+        for line in &conflict.current {
+            line.line.hash(&mut hasher);
+            line.text.hash(&mut hasher);
+        }
+        for line in &conflict.incoming {
+            line.line.hash(&mut hasher);
+            line.text.hash(&mut hasher);
         }
     }
     hasher.finish()
@@ -728,7 +1123,8 @@ fn push_diff_notification(cx: &mut App, notification: Notification) {
 
 fn diff_rows<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     root: PathBuf,
-    rows: Rc<Vec<DiffRow>>,
+    rows: Rc<Vec<Arc<DiffRow>>>,
+    row_heights: Rc<Vec<f32>>,
     scroll_handle: VirtualListScrollHandle,
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
@@ -742,11 +1138,14 @@ fn diff_rows<T: PaneDelegate + SettingsDelegate + gpui::Render>(
     let wrap_columns = diff_wrap_columns(window, measured_width);
     let item_sizes = Rc::new(
         rows.iter()
-            .map(|row| {
-                size(
-                    px(0.0),
-                    rems(diff_row_height(row, soft_wrap, wrap_columns)).to_pixels(rem_size),
-                )
+            .zip(row_heights.iter())
+            .map(|(row, unwrapped_height)| {
+                let height = if soft_wrap {
+                    diff_row_height(row.as_ref(), true, wrap_columns)
+                } else {
+                    *unwrapped_height
+                };
+                size(px(0.0), rems(height).to_pixels(rem_size))
             })
             .collect::<Vec<_>>(),
     );
@@ -918,7 +1317,7 @@ fn diff_wrap_columns(window: &Window, measured_width: Option<f32>) -> usize {
 
 fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
     ix: usize,
-    row: DiffRow,
+    row: Arc<DiffRow>,
     root: PathBuf,
     highlight_cache: Rc<DiffHighlightCache>,
     delegate: Entity<T>,
@@ -927,7 +1326,7 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
     wrap_columns: usize,
     cx: &mut Context<T>,
 ) -> AnyElement {
-    match row {
+    match row.as_ref() {
         DiffRow::File {
             path,
             old_path,
@@ -937,27 +1336,27 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
             binary,
         } => render_file_row(
             ix,
-            path,
-            old_path,
-            kind,
-            insertions,
-            deletions,
-            binary,
+            path.clone(),
+            old_path.clone(),
+            *kind,
+            *insertions,
+            *deletions,
+            *binary,
             root,
             delegate,
             active_file,
             cx,
         ),
-        DiffRow::Unchanged { lines, .. } => render_unchanged_row(ix, lines, cx),
+        DiffRow::Unchanged { lines, .. } => render_unchanged_row(ix, *lines, cx),
         DiffRow::Line {
             path,
             can_open,
             line,
         } => render_line_row(
             ix,
-            path,
-            can_open,
-            line,
+            path.clone(),
+            *can_open,
+            line.clone(),
             root,
             highlight_cache,
             delegate,
@@ -973,20 +1372,22 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
         } => render_conflict_actions_row(
             ix,
             root,
-            path,
-            start_line,
-            current_label,
-            incoming_label,
+            path.clone(),
+            *start_line,
+            current_label.clone(),
+            incoming_label.clone(),
             cx,
         ),
         DiffRow::ConflictMarker {
             line, text, side, ..
-        } => render_conflict_marker_row(ix, line, text, side, soft_wrap, wrap_columns, cx),
+        } => {
+            render_conflict_marker_row(ix, *line, text.clone(), *side, soft_wrap, wrap_columns, cx)
+        }
         DiffRow::ConflictLine { path, side, line } => render_conflict_line_row(
             ix,
-            path,
-            side,
-            line,
+            path.clone(),
+            *side,
+            line.clone(),
             root,
             highlight_cache,
             delegate,
@@ -994,7 +1395,9 @@ fn render_diff_row<T: PaneDelegate + SettingsDelegate>(
             wrap_columns,
             cx,
         ),
-        DiffRow::Message { text, .. } => render_message_row(ix, text, soft_wrap, wrap_columns, cx),
+        DiffRow::Message { text, .. } => {
+            render_message_row(ix, text.clone(), soft_wrap, wrap_columns, cx)
+        }
     }
 }
 
@@ -1563,108 +1966,100 @@ fn centered_state<T: PaneDelegate + SettingsDelegate>(
         .into_any_element()
 }
 
-fn flatten_diff(diff: &RepositoryDiff) -> Vec<DiffRow> {
+fn flatten_file_diff(file: &kosmos_git::FileDiff) -> Vec<Arc<DiffRow>> {
     let mut rows = Vec::new();
-    for file in &diff.files {
-        let (insertions, deletions) = file_stats(file);
-        rows.push(DiffRow::File {
+    let (insertions, deletions) = file_stats(file);
+    rows.push(Arc::new(DiffRow::File {
+        path: file.path.clone(),
+        old_path: file.old_path.clone(),
+        kind: file.kind,
+        insertions,
+        deletions,
+        binary: file.binary,
+    }));
+
+    if file.binary {
+        rows.push(Arc::new(DiffRow::Message {
             path: file.path.clone(),
-            old_path: file.old_path.clone(),
-            kind: file.kind,
-            insertions,
-            deletions,
-            binary: file.binary,
-        });
+            text: "Binary file changed".to_string(),
+        }));
+        return rows;
+    }
+    if !file.conflicts.is_empty() {
+        for conflict in &file.conflicts {
+            push_conflict_rows(&mut rows, &file.path, conflict);
+        }
+        return rows;
+    }
+    if file.hunks.is_empty() {
+        rows.push(Arc::new(DiffRow::Message {
+            path: file.path.clone(),
+            text: "No textual diff".to_string(),
+        }));
+        return rows;
+    }
 
-        if file.binary {
-            rows.push(DiffRow::Message {
+    let can_open = file.kind != FileChangeKind::Deleted;
+    let mut last_new_end = 0;
+    for hunk in &file.hunks {
+        let unchanged_lines = hunk.new_start.saturating_sub(last_new_end + 1);
+        if unchanged_lines > 0 {
+            rows.push(Arc::new(DiffRow::Unchanged {
                 path: file.path.clone(),
-                text: "Binary file changed".to_string(),
-            });
-            continue;
+                lines: unchanged_lines,
+            }));
         }
-        if !file.conflicts.is_empty() {
-            for conflict in &file.conflicts {
-                push_conflict_rows(&mut rows, &file.path, conflict);
-            }
-            continue;
-        }
-        if file.hunks.is_empty() {
-            rows.push(DiffRow::Message {
-                path: file.path.clone(),
-                text: "No textual diff".to_string(),
-            });
-            continue;
-        }
-
-        let can_open = file.kind != FileChangeKind::Deleted;
-        let mut last_new_end = 0;
-        for hunk in &file.hunks {
-            let unchanged_lines = hunk.new_start.saturating_sub(last_new_end + 1);
-            if unchanged_lines > 0 {
-                rows.push(DiffRow::Unchanged {
-                    path: file.path.clone(),
-                    lines: unchanged_lines,
-                });
-            }
-            rows.extend(hunk.lines.iter().cloned().map(|line| DiffRow::Line {
+        rows.extend(hunk.lines.iter().cloned().map(|line| {
+            Arc::new(DiffRow::Line {
                 path: file.path.clone(),
                 can_open,
                 line,
-            }));
-            last_new_end = hunk.new_start + hunk.new_lines.saturating_sub(1);
-        }
+            })
+        }));
+        last_new_end = hunk.new_start + hunk.new_lines.saturating_sub(1);
     }
     rows
 }
 
-fn push_conflict_rows(rows: &mut Vec<DiffRow>, path: &str, conflict: &ConflictBlock) {
-    rows.push(DiffRow::ConflictActions {
+fn push_conflict_rows(rows: &mut Vec<Arc<DiffRow>>, path: &str, conflict: &ConflictBlock) {
+    rows.push(Arc::new(DiffRow::ConflictActions {
         path: path.to_string(),
         start_line: conflict.start_line,
         current_label: conflict.current_label.clone(),
         incoming_label: conflict.incoming_label.clone(),
-    });
-    rows.push(DiffRow::ConflictMarker {
+    }));
+    rows.push(Arc::new(DiffRow::ConflictMarker {
         path: path.to_string(),
         line: conflict.start_line,
         text: format!("<<<<<<< {} (Current Change)", conflict.current_label),
         side: Some(ConflictSide::Current),
-    });
-    rows.extend(
-        conflict
-            .current
-            .iter()
-            .cloned()
-            .map(|line| DiffRow::ConflictLine {
-                path: path.to_string(),
-                side: ConflictSide::Current,
-                line,
-            }),
-    );
-    rows.push(DiffRow::ConflictMarker {
+    }));
+    rows.extend(conflict.current.iter().cloned().map(|line| {
+        Arc::new(DiffRow::ConflictLine {
+            path: path.to_string(),
+            side: ConflictSide::Current,
+            line,
+        })
+    }));
+    rows.push(Arc::new(DiffRow::ConflictMarker {
         path: path.to_string(),
         line: conflict.separator_line,
         text: "=======".to_string(),
         side: None,
-    });
-    rows.extend(
-        conflict
-            .incoming
-            .iter()
-            .cloned()
-            .map(|line| DiffRow::ConflictLine {
-                path: path.to_string(),
-                side: ConflictSide::Incoming,
-                line,
-            }),
-    );
-    rows.push(DiffRow::ConflictMarker {
+    }));
+    rows.extend(conflict.incoming.iter().cloned().map(|line| {
+        Arc::new(DiffRow::ConflictLine {
+            path: path.to_string(),
+            side: ConflictSide::Incoming,
+            line,
+        })
+    }));
+    rows.push(Arc::new(DiffRow::ConflictMarker {
         path: path.to_string(),
         line: conflict.end_line,
         text: format!(">>>>>>> {} (Incoming Change)", conflict.incoming_label),
         side: Some(ConflictSide::Incoming),
-    });
+    }));
 }
 
 impl DiffRow {

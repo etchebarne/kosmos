@@ -73,6 +73,32 @@ pub fn refresh_diff_if_loaded<T: PaneDelegate + SettingsDelegate>(
     diff::refresh_if_loaded(root, notify_now, cx);
 }
 
+pub fn refresh_diff_paths_if_loaded<T: PaneDelegate + SettingsDelegate>(
+    root: std::path::PathBuf,
+    paths: Vec<String>,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    diff::refresh_paths_if_loaded(root, paths, notify_now, cx);
+}
+
+pub fn prewarm_diff<T: PaneDelegate + SettingsDelegate>(
+    root: std::path::PathBuf,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    diff::prewarm(root, notify_now, cx);
+}
+
+pub fn prewarm_diff_paths<T: PaneDelegate + SettingsDelegate>(
+    root: std::path::PathBuf,
+    paths: Vec<String>,
+    notify_now: bool,
+    cx: &mut Context<T>,
+) {
+    diff::prewarm_paths(root, paths, notify_now, cx);
+}
+
 pub fn refresh_diff_if_loaded_app(root: std::path::PathBuf, notify_now: bool, cx: &mut App) {
     diff::refresh_if_loaded_app(root, notify_now, cx);
 }

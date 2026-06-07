@@ -258,6 +258,13 @@ impl VirtualList {
 
         let mut scroll_offset = scroll_offset;
         match scroll_to_item.strategy {
+            ScrollStrategy::Top => {
+                if self.axis.is_vertical() {
+                    scroll_offset.y = content_bounds.top() - bounds.top();
+                } else {
+                    scroll_offset.x = content_bounds.left() - bounds.left();
+                }
+            }
             ScrollStrategy::Center => {
                 if self.axis.is_vertical() {
                     scroll_offset.y = content_bounds.top() + content_bounds.size.height.half()
@@ -269,7 +276,14 @@ impl VirtualList {
                         - bounds.size.width.half()
                 }
             }
-            _ => {
+            ScrollStrategy::Bottom => {
+                if self.axis.is_vertical() {
+                    scroll_offset.y = content_bounds.bottom() - bounds.bottom();
+                } else {
+                    scroll_offset.x = content_bounds.right() - bounds.right();
+                }
+            }
+            ScrollStrategy::Nearest => {
                 // Ref: https://github.com/zed-industries/zed/blob/0d145289e0867a8d5d63e5e1397a5ca69c9d49c3/crates/gpui/src/elements/div.rs#L3026
                 if self.axis.is_vertical() {
                     if bounds.top() + scroll_offset.y < content_bounds.top() {
