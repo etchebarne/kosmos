@@ -5,17 +5,20 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, AppContext, ClipboardItem, Context, Entity, EntityInputHandler, Focusable,
-    Global, IntoElement, KeyBinding, KeyDownEvent, MouseButton, Pixels, Render, SharedString,
-    Subscription, Task, Window, div, prelude::*, px, rems,
+    AnyElement, App, AppContext, Bounds, ClipboardItem, Context, DragMoveEvent, Empty, Entity,
+    EntityId, EntityInputHandler, Focusable, Global, Half, Hsla, InteractiveElement as _,
+    IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, Render,
+    SharedString, StatefulInteractiveElement as _, Subscription, Task, Window, div,
+    linear_color_stop, linear_gradient, prelude::*, px, relative, rems,
 };
-use gpui_component::input::{
-    HoverProvider, Input, InputEvent, InputState, Rope, RopeExt, TabSize,
-};
+use gpui_component::ElementExt;
 use gpui_component::highlighter::Diagnostic as ComponentDiagnostic;
+use gpui_component::input::{
+    DocumentColorProvider, HoverProvider, Input, InputEvent, InputState, Rope, RopeExt, TabSize,
+};
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
-    Diagnostic as LspDiagnostic, Documentation, Position as LspPosition,
+    Color, ColorInformation, CompletionItem, CompletionItemKind, CompletionResponse,
+    CompletionTextEdit, Diagnostic as LspDiagnostic, Documentation, Position as LspPosition,
 };
 
 use file_editor::{Buffer, BufferId, BufferStore, soft_wrap_enabled};
@@ -36,6 +39,14 @@ const COMPLETION_MENU_CHAR_WIDTH: f32 = 7.0;
 const COMPLETION_CURSOR_CHAR_WIDTH_FACTOR: f32 = 0.62;
 const COMPLETION_MENU_HORIZONTAL_PADDING: Pixels = px(48.0);
 const MAX_COMPLETION_DETAIL_CHARS: usize = 56;
+const COLOR_PICKER_WIDTH: Pixels = px(380.0);
+const COLOR_PICKER_SPECTRUM_HEIGHT: Pixels = px(254.0);
+const COLOR_PICKER_SLIDER_HEIGHT: Pixels = px(12.0);
+const COLOR_PICKER_THUMB_SIZE: Pixels = px(16.0);
+const COLOR_PICKER_SLIDER_THUMB_WIDTH: Pixels = px(10.0);
+const COLOR_PICKER_SLIDER_THUMB_HEIGHT: Pixels = px(18.0);
+const COLOR_SWATCH_SIZE: Pixels = px(12.0);
+const COLOR_SWATCH_GAP: Pixels = px(4.0);
 const DIAGNOSTIC_REQUEST_DEBOUNCE: Duration = Duration::from_millis(250);
 // rust-analyzer can publish cargo-check diagnostics well after didChange.
 const DIAGNOSTIC_FOLLOW_UP_DELAY: Duration = Duration::from_millis(100);
@@ -56,8 +67,10 @@ struct EditorReveal {
 struct ComponentEditorInput {
     input: Entity<InputState>,
     completions: Entity<ComponentCompletionMenu>,
+    color_picker: Entity<ComponentColorPicker>,
     diagnostics: Entity<ComponentDiagnostics>,
     _buffer_observer: Subscription,
+    _input_observer: Subscription,
     buffer_id: BufferId,
     soft_wrap: bool,
     root: Option<PathBuf>,
@@ -67,12 +80,18 @@ struct ComponentEditorInput {
 struct ComponentEditorEntities {
     input: Entity<InputState>,
     completions: Entity<ComponentCompletionMenu>,
+    color_picker: Entity<ComponentColorPicker>,
 }
 
 #[derive(Clone)]
 struct ComponentLspProvider {
     buffer: Entity<Buffer>,
     root: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct ComponentColorProvider {
+    buffer: Entity<Buffer>,
 }
 
 struct ComponentCompletionMenu {
@@ -97,6 +116,47 @@ struct ComponentDiagnostics {
     buffer_was_dirty: bool,
 }
 
+struct ComponentColorPicker {
+    input: Entity<InputState>,
+    buffer: Entity<Buffer>,
+    active: Option<ComponentCssColor>,
+    active_hue: Option<f32>,
+    active_saturation: Option<f32>,
+    last_scroll_offset: Option<Point<Pixels>>,
+    picker_anchor: Option<(Pixels, Pixels)>,
+    overlay_bounds: Option<Bounds<Pixels>>,
+    spectrum_bounds: Option<Bounds<Pixels>>,
+    hue_bounds: Option<Bounds<Pixels>>,
+    alpha_bounds: Option<Bounds<Pixels>>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ComponentColorDragKind {
+    Spectrum,
+    Hue,
+    Alpha,
+}
+
+#[derive(Clone)]
+struct ComponentColorDrag {
+    entity_id: EntityId,
+    kind: ComponentColorDragKind,
+}
+
+#[derive(Clone, Copy)]
+struct ComponentColorHsva {
+    h: f32,
+    s: f32,
+    v: f32,
+    a: f32,
+}
+
+impl Render for ComponentColorDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 #[derive(Clone)]
 struct ComponentCompletionItem {
     item: CompletionItem,
@@ -119,7 +179,14 @@ impl ComponentEditorStore {
         let buffer_id = buffer.read(cx).id();
         let soft_wrap = soft_wrap_enabled(cx);
 
-        if let Some((input, completions, diagnostics, previous_soft_wrap, previous_root)) = cx
+        if let Some((
+            input,
+            completions,
+            color_picker,
+            diagnostics,
+            previous_soft_wrap,
+            previous_root,
+        )) = cx
             .global::<Self>()
             .inputs
             .get(&tab_id)
@@ -128,6 +195,7 @@ impl ComponentEditorStore {
                 (
                     existing.input.clone(),
                     existing.completions.clone(),
+                    existing.color_picker.clone(),
                     existing.diagnostics.clone(),
                     existing.soft_wrap,
                     existing.root.clone(),
@@ -148,7 +216,11 @@ impl ComponentEditorStore {
             if Self::sync_from_buffer(&input, buffer, window, cx) {
                 ComponentDiagnostics::request(&diagnostics, cx);
             }
-            return ComponentEditorEntities { input, completions };
+            return ComponentEditorEntities {
+                input,
+                completions,
+                color_picker,
+            };
         }
 
         let (initial, language) = {
@@ -166,6 +238,9 @@ impl ComponentEditorStore {
             buffer: buffer.clone(),
             root: root.clone(),
         });
+        let color_provider = Rc::new(ComponentColorProvider {
+            buffer: buffer.clone(),
+        });
         let input = cx.new(|cx| {
             let mut input = InputState::new(window, cx)
                 .code_editor(language)
@@ -177,10 +252,13 @@ impl ComponentEditorStore {
                 })
                 .default_value(initial);
             input.lsp.hover_provider = Some(lsp_provider);
+            input.lsp.document_color_provider = Some(color_provider);
             input
         });
-        let completions = cx
-            .new(|_| ComponentCompletionMenu::new(input.clone(), buffer.clone(), root.clone()));
+        let completions =
+            cx.new(|_| ComponentCompletionMenu::new(input.clone(), buffer.clone(), root.clone()));
+        let color_picker =
+            cx.new(|cx| ComponentColorPicker::new(input.clone(), buffer.clone(), window, cx));
         let buffer_was_dirty = buffer.read(cx).is_dirty();
         let diagnostics = cx.new(|_| {
             ComponentDiagnostics::new(
@@ -192,9 +270,12 @@ impl ComponentEditorStore {
         });
         let diagnostics_for_buffer = diagnostics.clone();
         let buffer_observer = cx.observe(buffer, move |_, cx| {
-            diagnostics_for_buffer.update(cx, |diagnostics, cx| {
-                diagnostics.handle_buffer_change(cx)
-            });
+            diagnostics_for_buffer
+                .update(cx, |diagnostics, cx| diagnostics.handle_buffer_change(cx));
+        });
+        let color_picker_for_input = color_picker.clone();
+        let input_observer = cx.observe(&input, move |_, cx| {
+            color_picker_for_input.update(cx, |picker, cx| picker.handle_input_update(cx));
         });
 
         let input_for_sub = input.clone();
@@ -223,8 +304,10 @@ impl ComponentEditorStore {
                 ComponentEditorInput {
                     input: input.clone(),
                     completions: completions.clone(),
+                    color_picker: color_picker.clone(),
                     diagnostics: diagnostics.clone(),
                     _buffer_observer: buffer_observer,
+                    _input_observer: input_observer,
                     buffer_id,
                     soft_wrap,
                     root,
@@ -234,7 +317,11 @@ impl ComponentEditorStore {
 
         ComponentDiagnostics::request(&diagnostics, cx);
 
-        ComponentEditorEntities { input, completions }
+        ComponentEditorEntities {
+            input,
+            completions,
+            color_picker,
+        }
     }
 
     fn drop_tab(tab_id: usize, cx: &mut App) {
@@ -513,9 +600,12 @@ impl ComponentCompletionMenu {
             return false;
         }
 
-        let max_first = self.items.len().saturating_sub(COMPLETION_MENU_VISIBLE_ITEMS);
-        self.first_visible = (self.first_visible as i32 + lines)
-            .clamp(0, max_first as i32) as usize;
+        let max_first = self
+            .items
+            .len()
+            .saturating_sub(COMPLETION_MENU_VISIBLE_ITEMS);
+        self.first_visible =
+            (self.first_visible as i32 + lines).clamp(0, max_first as i32) as usize;
         self.selected = self
             .selected
             .clamp(self.first_visible, self.last_visible().saturating_sub(1));
@@ -553,12 +643,7 @@ impl ComponentCompletionMenu {
         true
     }
 
-    fn accept_index(
-        &mut self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn accept_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if index >= self.items.len() {
             return false;
         }
@@ -567,17 +652,19 @@ impl ComponentCompletionMenu {
         self.accept_selected(window, cx)
     }
 
-    fn apply_completion(
-        &self,
-        item: &CompletionItem,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn apply_completion(&self, item: &CompletionItem, window: &mut Window, cx: &mut Context<Self>) {
         let content = self.input.read(cx).value().to_string();
-        let (range, new_text) = completion_edit_for_item(item, &content, self.replace_range.clone());
+        let (range, new_text) =
+            completion_edit_for_item(item, &content, self.replace_range.clone());
         let utf16_range = component_range_to_utf16(&content, &range);
         self.input.update(cx, |input, cx| {
-            EntityInputHandler::replace_text_in_range(input, Some(utf16_range), &new_text, window, cx);
+            EntityInputHandler::replace_text_in_range(
+                input,
+                Some(utf16_range),
+                &new_text,
+                window,
+                cx,
+            );
         });
     }
 }
@@ -754,7 +841,11 @@ impl ComponentDiagnostics {
         }
 
         let path = buffer.path().to_path_buf();
-        let Some(root) = self.root.clone().or_else(|| path.parent().map(Path::to_path_buf)) else {
+        let Some(root) = self
+            .root
+            .clone()
+            .or_else(|| path.parent().map(Path::to_path_buf))
+        else {
             self.clear(cx);
             return None;
         };
@@ -783,7 +874,11 @@ impl ComponentDiagnostics {
         }
 
         let path = buffer.path().to_path_buf();
-        let Some(root) = self.root.clone().or_else(|| path.parent().map(Path::to_path_buf)) else {
+        let Some(root) = self
+            .root
+            .clone()
+            .or_else(|| path.parent().map(Path::to_path_buf))
+        else {
             return None;
         };
 
@@ -830,6 +925,616 @@ impl ComponentDiagnostics {
     }
 }
 
+impl ComponentColorPicker {
+    fn new(
+        input: Entity<InputState>,
+        buffer: Entity<Buffer>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            input,
+            buffer,
+            active: None,
+            active_hue: None,
+            active_saturation: None,
+            last_scroll_offset: None,
+            picker_anchor: None,
+            overlay_bounds: None,
+            spectrum_bounds: None,
+            hue_bounds: None,
+            alpha_bounds: None,
+        }
+    }
+
+    fn open_color(&mut self, color: ComponentCssColor, cx: &mut Context<Self>) {
+        self.last_scroll_offset = Some(self.input.read(cx).scroll_offset());
+        self.picker_anchor = self.picker_anchor_for_range(&color.range, cx);
+        let hsva = component_color_to_hsva(color.color);
+        self.active_hue = Some(hsva.h);
+        self.active_saturation = Some(hsva.s);
+        self.active = Some(color);
+        cx.notify();
+    }
+
+    fn picker_anchor_for_range(
+        &self,
+        range: &Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Option<(Pixels, Pixels)> {
+        let input = self.input.read(cx);
+        let bounds = input.range_to_bounds(range)?;
+        let origin = self.overlay_bounds?.origin;
+        Some((
+            (bounds.origin.x - origin.x).max(px(0.0)),
+            (bounds.origin.y - origin.y + bounds.size.height + px(2.0)).max(px(0.0)),
+        ))
+    }
+
+    fn handle_input_update(&mut self, cx: &mut Context<Self>) {
+        let scroll_offset = self.input.read(cx).scroll_offset();
+        let scrolled = self
+            .last_scroll_offset
+            .is_some_and(|last_scroll_offset| last_scroll_offset != scroll_offset);
+        self.last_scroll_offset = Some(scroll_offset);
+
+        if scrolled {
+            self.close(cx);
+        }
+    }
+
+    fn close(&mut self, cx: &mut Context<Self>) {
+        if self.active.is_some() {
+            self.active = None;
+            self.active_hue = None;
+            self.active_saturation = None;
+            self.picker_anchor = None;
+            cx.notify();
+        }
+    }
+
+    fn apply_from_position(
+        &mut self,
+        kind: ComponentColorDragKind,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active) = self.active.as_ref() else {
+            return;
+        };
+        let mut color = component_color_to_hsva(active.color);
+        if let Some(hue) = self.active_hue {
+            color.h = hue;
+        }
+        if let Some(saturation) = self.active_saturation {
+            color.s = saturation;
+        }
+
+        match kind {
+            ComponentColorDragKind::Spectrum => {
+                let Some(bounds) = self.spectrum_bounds else {
+                    return;
+                };
+                color.s = component_color_unit((position.x - bounds.left()) / bounds.size.width);
+                color.v =
+                    component_color_unit(1.0 - (position.y - bounds.top()) / bounds.size.height);
+                self.active_saturation = Some(color.s);
+            }
+            ComponentColorDragKind::Hue => {
+                let Some(bounds) = self.hue_bounds else {
+                    return;
+                };
+                color.h = component_color_unit((position.x - bounds.left()) / bounds.size.width);
+                self.active_hue = Some(color.h);
+            }
+            ComponentColorDragKind::Alpha => {
+                let Some(bounds) = self.alpha_bounds else {
+                    return;
+                };
+                color.a = component_color_unit((position.x - bounds.left()) / bounds.size.width);
+            }
+        }
+
+        self.active_hue = Some(color.h);
+        self.active_saturation = Some(color.s);
+        self.apply_color(component_color_from_hsva(color), window, cx);
+    }
+
+    fn apply_color(&mut self, color: Hsla, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active) = self.active.clone() else {
+            return;
+        };
+        let content = self.input.read(cx).value().to_string();
+        let Some(current) = component_css_color_for_range(&content, &active.range) else {
+            return;
+        };
+
+        let new_text = component_css_format_color(&current.format, color);
+        let mut new_content = content.clone();
+        new_content.replace_range(current.range.clone(), &new_text);
+        let new_rope = Rope::from(new_content.as_str());
+        let document_colors = component_document_colors(&new_rope, &new_content);
+        let utf16_range = component_range_to_utf16(&content, &current.range);
+        self.input.update(cx, |input, cx| {
+            EntityInputHandler::replace_text_in_range(
+                input,
+                Some(utf16_range),
+                &new_text,
+                window,
+                cx,
+            );
+            input.lsp.set_document_colors(document_colors, cx);
+        });
+
+        self.active = Some(ComponentCssColor {
+            range: current.range.start..current.range.start + new_text.len(),
+            color,
+            format: current.format,
+        });
+        cx.notify();
+    }
+
+    fn render_swatches(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if !component_color_language(self.buffer.read(cx).language()) {
+            return Vec::new();
+        }
+
+        let input = self.input.read(cx);
+        let content = input.value().to_string();
+        let Some(overlay_bounds) = self.overlay_bounds else {
+            return Vec::new();
+        };
+        let origin = overlay_bounds.origin;
+
+        component_css_colors(&content)
+            .into_iter()
+            .filter_map(|color| {
+                let bounds = input.range_to_bounds(&color.range)?;
+                let left = (bounds.origin.x - origin.x - COLOR_SWATCH_SIZE - COLOR_SWATCH_GAP)
+                    .max(px(0.0));
+                let top = (bounds.origin.y - origin.y
+                    + (bounds.size.height - COLOR_SWATCH_SIZE).half())
+                .max(px(0.0));
+
+                Some(
+                    div()
+                        .id(("color-swatch", color.range.start))
+                        .absolute()
+                        .left(left)
+                        .top(top)
+                        .size(COLOR_SWATCH_SIZE)
+                        .rounded(px(1.0))
+                        .occlude()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |picker, _, _, cx| {
+                                picker.open_color(color.clone(), cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
+    fn render_spectrum(
+        &self,
+        color: ComponentColorHsva,
+        entity_id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hue = component_color_from_hsva(ComponentColorHsva {
+            s: 1.0,
+            v: 1.0,
+            a: 1.0,
+            ..color
+        });
+        let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
+        let transparent_white = gpui::hsla(0.0, 0.0, 1.0, 0.0);
+        let black = gpui::hsla(0.0, 0.0, 0.0, 1.0);
+        let transparent_black = gpui::hsla(0.0, 0.0, 0.0, 0.0);
+        let control = ComponentColorDrag {
+            entity_id,
+            kind: ComponentColorDragKind::Spectrum,
+        };
+
+        div()
+            .id("color-spectrum")
+            .relative()
+            .w_full()
+            .h(COLOR_PICKER_SPECTRUM_HEIGHT)
+            .rounded(px(5.0))
+            .bg(hue)
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(5.0))
+                    .bg(linear_gradient(
+                        90.0,
+                        linear_color_stop(white, 0.0),
+                        linear_color_stop(transparent_white, 1.0),
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(5.0))
+                    .bg(linear_gradient(
+                        180.0,
+                        linear_color_stop(transparent_black, 0.0),
+                        linear_color_stop(black, 1.0),
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(relative(color.s))
+                    .top(relative(1.0 - color.v))
+                    .ml(-COLOR_PICKER_THUMB_SIZE.half())
+                    .mt(-COLOR_PICKER_THUMB_SIZE.half())
+                    .size(COLOR_PICKER_THUMB_SIZE)
+                    .rounded(px(999.0))
+                    .border_2()
+                    .border_color(white)
+                    .shadow_md(),
+            )
+            .on_prepaint({
+                let entity = cx.entity().clone();
+                move |bounds, _, cx| {
+                    entity.update(cx, |picker, _| picker.spectrum_bounds = Some(bounds));
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|picker, event: &MouseDownEvent, window, cx| {
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Spectrum,
+                        event.position,
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
+            .on_drag(control, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                move |picker, event: &DragMoveEvent<ComponentColorDrag>, window, cx| {
+                    let drag = event.drag(cx);
+                    if drag.entity_id != entity_id || drag.kind != ComponentColorDragKind::Spectrum
+                    {
+                        return;
+                    }
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Spectrum,
+                        event.event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .into_any_element()
+    }
+
+    fn render_hue_slider(
+        &self,
+        color: ComponentColorHsva,
+        entity_id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let control = ComponentColorDrag {
+            entity_id,
+            kind: ComponentColorDragKind::Hue,
+        };
+        div()
+            .id("color-hue-slider")
+            .relative()
+            .w_full()
+            .h(COLOR_PICKER_SLIDER_HEIGHT)
+            .rounded(px(999.0))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .overflow_hidden()
+                    .rounded(px(999.0))
+                    .flex()
+                    .flex_row()
+                    .children((0..48).map(|ix| {
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .bg(gpui::hsla(ix as f32 / 47.0, 1.0, 0.5, 1.0))
+                    })),
+            )
+            .child(component_color_slider_thumb(color.h))
+            .on_prepaint({
+                let entity = cx.entity().clone();
+                move |bounds, _, cx| {
+                    entity.update(cx, |picker, _| picker.hue_bounds = Some(bounds));
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|picker, event: &MouseDownEvent, window, cx| {
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Hue,
+                        event.position,
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
+            .on_drag(control, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                move |picker, event: &DragMoveEvent<ComponentColorDrag>, window, cx| {
+                    let drag = event.drag(cx);
+                    if drag.entity_id != entity_id || drag.kind != ComponentColorDragKind::Hue {
+                        return;
+                    }
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Hue,
+                        event.event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .into_any_element()
+    }
+
+    fn render_alpha_slider(
+        &self,
+        color: ComponentColorHsva,
+        entity_id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let start = component_color_from_hsva(ComponentColorHsva { a: 0.0, ..color });
+        let end = component_color_from_hsva(ComponentColorHsva { a: 1.0, ..color });
+        let control = ComponentColorDrag {
+            entity_id,
+            kind: ComponentColorDragKind::Alpha,
+        };
+
+        div()
+            .id("color-alpha-slider")
+            .relative()
+            .w_full()
+            .h(COLOR_PICKER_SLIDER_HEIGHT)
+            .rounded(px(999.0))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .overflow_hidden()
+                    .rounded(px(999.0))
+                    .bg(linear_gradient(
+                        90.0,
+                        linear_color_stop(start, 0.0),
+                        linear_color_stop(end, 1.0),
+                    )),
+            )
+            .child(component_color_slider_thumb(color.a))
+            .on_prepaint({
+                let entity = cx.entity().clone();
+                move |bounds, _, cx| {
+                    entity.update(cx, |picker, _| picker.alpha_bounds = Some(bounds));
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|picker, event: &MouseDownEvent, window, cx| {
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Alpha,
+                        event.position,
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
+            .on_drag(control, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                move |picker, event: &DragMoveEvent<ComponentColorDrag>, window, cx| {
+                    let drag = event.drag(cx);
+                    if drag.entity_id != entity_id || drag.kind != ComponentColorDragKind::Alpha {
+                        return;
+                    }
+                    picker.apply_from_position(
+                        ComponentColorDragKind::Alpha,
+                        event.event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .into_any_element()
+    }
+}
+
+impl Render for ComponentColorPicker {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let swatches = self.render_swatches(cx);
+        if !component_color_language(self.buffer.read(cx).language()) {
+            self.active = None;
+            self.active_hue = None;
+            self.active_saturation = None;
+            return component_color_overlay(swatches, None, cx);
+        }
+
+        let Some(active) = self.active.clone() else {
+            return component_color_overlay(swatches, None, cx);
+        };
+
+        let position = {
+            let content = self.input.read(cx).value().to_string();
+            if component_css_color_for_range(&content, &active.range).is_none() {
+                None
+            } else {
+                self.picker_anchor
+                    .or_else(|| self.picker_anchor_for_range(&active.range, cx))
+            }
+        };
+
+        let Some((left, top)) = position else {
+            self.active = None;
+            self.active_hue = None;
+            self.active_saturation = None;
+            self.picker_anchor = None;
+            return component_color_overlay(swatches, None, cx);
+        };
+        self.picker_anchor = Some((left, top));
+        let mut color = component_color_to_hsva(active.color);
+        if let Some(hue) = self.active_hue {
+            color.h = hue;
+        }
+        if let Some(saturation) = self.active_saturation {
+            color.s = saturation;
+        }
+        let entity_id = cx.entity_id();
+        let theme = *cx.theme();
+
+        let picker = div()
+            .id("component-color-picker")
+            .absolute()
+            .left(left)
+            .top(top)
+            .w(COLOR_PICKER_WIDTH)
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .p(px(10.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme.border_strong)
+            .bg(theme.bg_surface)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|picker, _, _, cx| {
+                picker.close(cx);
+            }))
+            .child(self.render_spectrum(color, entity_id, cx))
+            .child(self.render_hue_slider(color, entity_id, cx))
+            .child(self.render_alpha_slider(color, entity_id, cx));
+
+        component_color_overlay(swatches, Some(picker.into_any_element()), cx)
+    }
+}
+
+fn component_color_overlay(
+    swatches: Vec<AnyElement>,
+    picker: Option<AnyElement>,
+    cx: &mut Context<ComponentColorPicker>,
+) -> AnyElement {
+    div()
+        .absolute()
+        .inset_0()
+        .on_prepaint({
+            let entity = cx.entity().clone();
+            move |bounds, _, cx| {
+                entity.update(cx, |picker, cx| {
+                    if picker.overlay_bounds.is_none_or(|previous| {
+                        previous.origin != bounds.origin || previous.size != bounds.size
+                    }) {
+                        picker.overlay_bounds = Some(bounds);
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .children(swatches)
+        .when_some(picker, |this, picker| this.child(picker))
+        .into_any_element()
+}
+
+fn component_color_slider_thumb(value: f32) -> AnyElement {
+    div()
+        .absolute()
+        .left(relative(value.clamp(0.0, 1.0)))
+        .top(px(-3.0))
+        .ml(-COLOR_PICKER_SLIDER_THUMB_WIDTH.half())
+        .w(COLOR_PICKER_SLIDER_THUMB_WIDTH)
+        .h(COLOR_PICKER_SLIDER_THUMB_HEIGHT)
+        .rounded(px(999.0))
+        .border_2()
+        .border_color(gpui::hsla(0.0, 0.0, 1.0, 1.0))
+        .shadow_md()
+        .into_any_element()
+}
+
+fn component_color_unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn component_color_to_hsva(color: Hsla) -> ComponentColorHsva {
+    let rgba = color.to_rgb();
+    let max = rgba.r.max(rgba.g).max(rgba.b);
+    let min = rgba.r.min(rgba.g).min(rgba.b);
+    let delta = max - min;
+    let hue = if delta == 0.0 {
+        color.h
+    } else if max == rgba.r {
+        ((rgba.g - rgba.b) / delta).rem_euclid(6.0) / 6.0
+    } else if max == rgba.g {
+        ((rgba.b - rgba.r) / delta + 2.0) / 6.0
+    } else {
+        ((rgba.r - rgba.g) / delta + 4.0) / 6.0
+    };
+
+    ComponentColorHsva {
+        h: component_color_unit(hue),
+        s: if max == 0.0 { 0.0 } else { delta / max },
+        v: max,
+        a: color.a,
+    }
+}
+
+fn component_color_from_hsva(color: ComponentColorHsva) -> Hsla {
+    let h = color.h.rem_euclid(1.0) * 6.0;
+    let c = color.v * color.s;
+    let x = c * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+    let m = color.v - c;
+    let (r, g, b) = if h < 1.0 {
+        (c, x, 0.0)
+    } else if h < 2.0 {
+        (x, c, 0.0)
+    } else if h < 3.0 {
+        (0.0, c, x)
+    } else if h < 4.0 {
+        (0.0, x, c)
+    } else if h < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    gpui::Rgba {
+        r: (r + m).clamp(0.0, 1.0),
+        g: (g + m).clamp(0.0, 1.0),
+        b: (b + m).clamp(0.0, 1.0),
+        a: component_color_unit(color.a),
+    }
+    .into()
+}
+
 impl Render for ComponentCompletionMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_open() || !self.input.focus_handle(cx).is_focused(window) {
@@ -856,8 +1561,9 @@ impl Render for ComponentCompletionMenu {
             .map(|bounds| bounds.origin)
             .unwrap_or(bounds.origin);
         let theme = *cx.theme();
-        let left = (bounds.origin.x - origin.x + completion_query_visual_width(visual_query, window))
-            .max(px(0.0));
+        let left = (bounds.origin.x - origin.x
+            + completion_query_visual_width(visual_query, window))
+        .max(px(0.0));
         let line_height = input.line_height().unwrap_or(bounds.size.height);
         let top = completion_line_for_offset(&content, anchor) as f32 * line_height
             + input.scroll_offset().y
@@ -900,43 +1606,48 @@ impl Render for ComponentCompletionMenu {
                     cx.stop_propagation();
                 }
             }))
-            .children(self.items[first_visible..last_visible].iter().enumerate().map(|(visible_index, item)| {
-                let index = first_visible + visible_index;
-                let selected = index == self.selected;
-                div()
-                    .id(index)
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(rems(0.75))
-                    .px(rems(0.4))
-                    .py(rems(0.2))
-                    .rounded(rems(0.2))
-                    .text_color(theme.text)
-                    .when(selected, |row| row.bg(theme.bg_selected))
-                    .hover(|row| row.bg(theme.bg_hover))
-                    .child(div().flex_none().child(item.label.clone()))
-                    .when_some(item.detail.clone(), |row, detail| {
-                        row.child(
-                            div()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_color(theme.text_subtle)
-                                .italic()
-                                .child(detail),
-                        )
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |menu, _, window, cx| {
-                            if menu.accept_index(index, window, cx) {
-                                cx.stop_propagation();
-                            }
-                        }),
-                    )
-            }))
+            .children(
+                self.items[first_visible..last_visible]
+                    .iter()
+                    .enumerate()
+                    .map(|(visible_index, item)| {
+                        let index = first_visible + visible_index;
+                        let selected = index == self.selected;
+                        div()
+                            .id(index)
+                            .w_full()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .gap(rems(0.75))
+                            .px(rems(0.4))
+                            .py(rems(0.2))
+                            .rounded(rems(0.2))
+                            .text_color(theme.text)
+                            .when(selected, |row| row.bg(theme.bg_selected))
+                            .hover(|row| row.bg(theme.bg_hover))
+                            .child(div().flex_none().child(item.label.clone()))
+                            .when_some(item.detail.clone(), |row, detail| {
+                                row.child(
+                                    div()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_color(theme.text_subtle)
+                                        .italic()
+                                        .child(detail),
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |menu, _, window, cx| {
+                                    if menu.accept_index(index, window, cx) {
+                                        cx.stop_propagation();
+                                    }
+                                }),
+                            )
+                    }),
+            )
             .into_any_element()
     }
 }
@@ -949,6 +1660,55 @@ impl ComponentCompletionItem {
             item,
             detail,
         }
+    }
+}
+
+fn component_document_colors(text: &Rope, content: &str) -> Vec<(lsp_types::Range, Hsla)> {
+    component_css_colors(content)
+        .into_iter()
+        .map(|color| {
+            (
+                lsp_types::Range::new(
+                    text.offset_to_position(color.range.start),
+                    text.offset_to_position(color.range.end),
+                ),
+                color.color,
+            )
+        })
+        .collect()
+}
+
+fn component_document_color_information(text: &Rope, content: &str) -> Vec<ColorInformation> {
+    component_document_colors(text, content)
+        .into_iter()
+        .map(|(range, color)| {
+            let rgba = color.to_rgb();
+            ColorInformation {
+                range,
+                color: Color {
+                    red: rgba.r,
+                    green: rgba.g,
+                    blue: rgba.b,
+                    alpha: rgba.a,
+                },
+            }
+        })
+        .collect()
+}
+
+impl DocumentColorProvider for ComponentColorProvider {
+    fn document_colors(
+        &self,
+        text: &Rope,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Vec<ColorInformation>>> {
+        if !component_color_language(self.buffer.read(cx).language()) {
+            return Task::ready(Ok(Vec::new()));
+        }
+
+        let content = text.to_string();
+        Task::ready(Ok(component_document_color_information(text, &content)))
     }
 }
 
@@ -1025,10 +1785,7 @@ fn component_diagnostics_from_lsp(
         .collect()
 }
 
-fn component_diagnostic_from_lsp(
-    diagnostic: LspDiagnostic,
-    lines: &[&str],
-) -> ComponentDiagnostic {
+fn component_diagnostic_from_lsp(diagnostic: LspDiagnostic, lines: &[&str]) -> ComponentDiagnostic {
     let range = component_position_from_lsp(diagnostic.range.start, lines)
         ..component_position_from_lsp(diagnostic.range.end, lines);
     let mut diagnostic = ComponentDiagnostic::from(diagnostic);
@@ -1037,7 +1794,10 @@ fn component_diagnostic_from_lsp(
 }
 
 fn component_position_from_lsp(position: LspPosition, lines: &[&str]) -> LspPosition {
-    let line = lines.get(position.line as usize).copied().unwrap_or_default();
+    let line = lines
+        .get(position.line as usize)
+        .copied()
+        .unwrap_or_default();
     let byte_index = byte_index_for_utf16_column(line, position.character as usize);
     let character = line[..byte_index].chars().count() as u32;
     LspPosition::new(position.line, character)
@@ -1114,7 +1874,9 @@ fn enhance_completion_item(item: &mut CompletionItem) {
 }
 
 fn completion_has_extra_detail(item: &CompletionItem) -> bool {
-    item.detail.as_deref().is_some_and(|detail| !detail.trim().is_empty())
+    item.detail
+        .as_deref()
+        .is_some_and(|detail| !detail.trim().is_empty())
         || item.label_details.as_ref().is_some_and(|details| {
             details
                 .detail
@@ -1190,7 +1952,10 @@ fn completion_full_detail(item: &CompletionItem) -> Option<String> {
 
 fn truncate_completion_detail(detail: &str) -> String {
     let mut chars = detail.chars();
-    let truncated = chars.by_ref().take(MAX_COMPLETION_DETAIL_CHARS).collect::<String>();
+    let truncated = chars
+        .by_ref()
+        .take(MAX_COMPLETION_DETAIL_CHARS)
+        .collect::<String>();
     if chars.next().is_some() {
         format!("{truncated}...")
     } else {
@@ -1420,7 +2185,10 @@ fn completion_query_visual_width(query: &str, window: &Window) -> Pixels {
 
 fn completion_line_for_offset(content: &str, offset: usize) -> usize {
     let offset = clamp_to_char_boundary(content, offset);
-    content[..offset].bytes().filter(|byte| *byte == b'\n').count()
+    content[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
 }
 
 fn clamp_to_char_boundary(content: &str, mut offset: usize) -> usize {
@@ -1455,7 +2223,9 @@ fn cut_current_component_line<T: 'static>(
         return false;
     }
 
-    cx.write_to_clipboard(ClipboardItem::new_string(content[range.clone()].to_string()));
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        content[range.clone()].to_string(),
+    ));
     let utf16_range = component_range_to_utf16(&content, &range);
     input.update(cx, |input, cx| {
         EntityInputHandler::replace_text_in_range(input, Some(utf16_range), "", window, cx);
@@ -1489,9 +2259,17 @@ fn insert_component_auto_pair(
 
         let utf16_range = component_range_to_utf16(&content, &selected_range);
         let replacement = format!("{open}{close}");
-        EntityInputHandler::replace_text_in_range(input, Some(utf16_range), &replacement, window, cx);
+        EntityInputHandler::replace_text_in_range(
+            input,
+            Some(utf16_range),
+            &replacement,
+            window,
+            cx,
+        );
 
-        let position = input.text().offset_to_position(selected_range.start + open.len_utf8());
+        let position = input
+            .text()
+            .offset_to_position(selected_range.start + open.len_utf8());
         input.set_cursor_position(position, window, cx);
         true
     })

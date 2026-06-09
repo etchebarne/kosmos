@@ -17,7 +17,11 @@ use std::{ops::Range, rc::Rc};
 use crate::{
     ActiveTheme as _, Colorize, IconName, Root, Selectable, Sizable as _,
     button::{Button, ButtonVariants as _},
-    input::{RopeExt as _, blink_cursor::CURSOR_WIDTH, display_map::LineLayout},
+    input::{
+        RopeExt as _,
+        blink_cursor::CURSOR_WIDTH,
+        display_map::{InlineColorMarker, LineLayout},
+    },
     scroll::Scrollbar,
 };
 
@@ -29,6 +33,7 @@ pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(10.);
 const FOLD_ICON_WIDTH: Pixels = px(14.);
 const FOLD_ICON_HITBOX_WIDTH: Pixels = px(18.);
 const MAX_HIGHLIGHT_LINE_LENGTH: usize = 10_000;
+const DOCUMENT_COLOR_MARKER_SPACER: &str = "  ";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct EditorScrollbarLayout {
@@ -677,19 +682,12 @@ impl TextElement {
 
     fn layout_document_colors(
         &self,
-        document_colors: &[(Range<usize>, Hsla)],
-        last_layout: &LastLayout,
-        bounds: &Bounds<Pixels>,
+        _document_colors: &[(Range<usize>, Hsla)],
+        _last_layout: &LastLayout,
+        _bounds: &Bounds<Pixels>,
         _cx: &mut App,
     ) -> Vec<(Path<Pixels>, Hsla)> {
-        let mut paths = vec![];
-        for (range, color) in document_colors.iter() {
-            if let Some(path) = Self::layout_match_range(range.clone(), last_layout, bounds) {
-                paths.push((path, *color));
-            }
-        }
-
-        paths
+        Vec::new()
     }
 
     fn layout_selections(
@@ -1203,29 +1201,46 @@ impl TextElement {
             debug_assert_eq!(line_item.len(), line_text.len());
 
             let mut wrapped_lines = SmallVec::with_capacity(1);
+            let mut original_lens = SmallVec::with_capacity(1);
+            let mut inline_color_markers = Vec::new();
 
             for range in &line_item.wrapped_lines {
                 let line_runs = runs_for_range(runs, run_offset, &range);
-                let line_runs = if bg_segments.is_empty() {
-                    line_runs
-                } else {
-                    split_runs_by_bg_segments(
-                        last_layout.visible_line_byte_offsets[vi] + (range.start),
-                        &line_runs,
-                        bg_segments,
-                    )
-                };
+                let absolute_start = last_layout.visible_line_byte_offsets[vi] + range.start;
+                let absolute_end = last_layout.visible_line_byte_offsets[vi] + range.end;
+                let color_markers = bg_segments
+                    .iter()
+                    .filter_map(|(color_range, color)| {
+                        if color_range.start >= absolute_start && color_range.start < absolute_end {
+                            Some((color_range.start - absolute_start, *color))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
-                let sub_line: SharedString = line_text[range.clone()].to_string().into();
+                let sub_line = line_text[range.clone()].to_string();
+                let original_len = sub_line.len();
+                let (sub_line, line_runs, mut markers) = Self::layout_inline_color_markers(
+                    &sub_line,
+                    &line_runs,
+                    &color_markers,
+                    wrapped_lines.len(),
+                );
+                let sub_line: SharedString = sub_line.into();
                 let shaped_line = window
                     .text_system()
                     .shape_line(sub_line, font_size, &line_runs, None);
 
                 wrapped_lines.push(shaped_line);
+                original_lens.push(original_len);
+                inline_color_markers.append(&mut markers);
             }
 
             let line_layout = LineLayout::new()
                 .lines(wrapped_lines)
+                .original_lens(original_lens)
+                .inline_color_markers(inline_color_markers)
                 .with_whitespaces(whitespace_indicators.clone());
             lines.push(line_layout);
 
@@ -1234,6 +1249,91 @@ impl TextElement {
         }
 
         lines
+    }
+
+    fn layout_inline_color_markers(
+        line: &str,
+        runs: &[TextRun],
+        markers: &[(usize, Hsla)],
+        line_index: usize,
+    ) -> (String, Vec<TextRun>, Vec<InlineColorMarker>) {
+        if markers.is_empty() {
+            return (line.to_string(), runs.to_vec(), Vec::new());
+        }
+
+        let mut markers = markers.to_vec();
+        markers.sort_by_key(|(offset, _)| *offset);
+
+        let spacer_len = DOCUMENT_COLOR_MARKER_SPACER.len();
+        let mut decorated = String::with_capacity(line.len() + markers.len() * spacer_len);
+        let mut decorated_runs = Vec::with_capacity(runs.len() + markers.len());
+        let mut color_markers = Vec::with_capacity(markers.len());
+        let mut marker_ix = 0;
+        let mut run_start = 0;
+
+        for run in runs {
+            let run_end = run_start + run.len;
+            let mut cursor = run_start;
+
+            while marker_ix < markers.len() && markers[marker_ix].0 <= run_end {
+                let (marker_offset, color) = markers[marker_ix];
+                if marker_offset < cursor {
+                    marker_ix += 1;
+                    continue;
+                }
+
+                if marker_offset > cursor {
+                    decorated.push_str(&line[cursor..marker_offset]);
+                    let mut text_run = run.clone();
+                    text_run.len = marker_offset - cursor;
+                    decorated_runs.push(text_run);
+                }
+
+                decorated.push_str(DOCUMENT_COLOR_MARKER_SPACER);
+                let mut spacer_run = run.clone();
+                spacer_run.len = spacer_len;
+                decorated_runs.push(spacer_run);
+                color_markers.push(InlineColorMarker {
+                    line_index,
+                    offset: marker_offset,
+                    spacer_len,
+                    color,
+                });
+
+                cursor = marker_offset;
+                marker_ix += 1;
+            }
+
+            if run_end > cursor {
+                decorated.push_str(&line[cursor..run_end]);
+                let mut text_run = run.clone();
+                text_run.len = run_end - cursor;
+                decorated_runs.push(text_run);
+            }
+
+            run_start = run_end;
+        }
+
+        while marker_ix < markers.len() {
+            let (marker_offset, color) = markers[marker_ix];
+            if marker_offset <= line.len()
+                && let Some(run) = runs.last()
+            {
+                decorated.push_str(DOCUMENT_COLOR_MARKER_SPACER);
+                let mut spacer_run = run.clone();
+                spacer_run.len = spacer_len;
+                decorated_runs.push(spacer_run);
+                color_markers.push(InlineColorMarker {
+                    line_index,
+                    offset: marker_offset,
+                    spacer_len,
+                    color,
+                });
+            }
+            marker_ix += 1;
+        }
+
+        (decorated, decorated_runs, color_markers)
     }
 
     /// First usize is the offset of skipped.
@@ -2197,6 +2297,7 @@ pub(super) fn runs_for_range(
     result
 }
 
+#[cfg(test)]
 fn split_runs_by_bg_segments(
     start_offset: usize,
     runs: &[TextRun],

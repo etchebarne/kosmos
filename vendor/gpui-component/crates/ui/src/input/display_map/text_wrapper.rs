@@ -2,7 +2,8 @@ use gpui::Half;
 use std::ops::Range;
 
 use gpui::{
-    App, Font, LineFragment, Pixels, Point, ShapedLine, Size, TextAlign, Window, point, px, size,
+    App, Bounds, Font, Hsla, LineFragment, Pixels, Point, ShapedLine, Size, TextAlign, Window,
+    fill, point, px, size,
 };
 use ropey::Rope;
 use smallvec::SmallVec;
@@ -347,10 +348,20 @@ pub(crate) struct LineLayout {
     len: usize,
     /// The soft wrapped lines of this line (Include the first line).
     pub(crate) wrapped_lines: SmallVec<[ShapedLine; 1]>,
+    original_lens: SmallVec<[usize; 1]>,
     pub(crate) longest_width: Pixels,
     pub(crate) whitespace_indicators: Option<WhitespaceIndicators>,
     /// Whitespace indicators: (line_index, x_position, is_tab)
     pub(crate) whitespace_chars: Vec<(usize, Pixels, bool)>,
+    pub(crate) inline_color_markers: Vec<InlineColorMarker>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InlineColorMarker {
+    pub(crate) line_index: usize,
+    pub(crate) offset: usize,
+    pub(crate) spacer_len: usize,
+    pub(crate) color: Hsla,
 }
 
 impl LineLayout {
@@ -359,8 +370,10 @@ impl LineLayout {
             len: 0,
             longest_width: px(0.),
             wrapped_lines: SmallVec::new(),
+            original_lens: SmallVec::new(),
             whitespace_chars: Vec::new(),
             whitespace_indicators: None,
+            inline_color_markers: Vec::new(),
         }
     }
 
@@ -370,7 +383,8 @@ impl LineLayout {
     }
 
     pub(crate) fn set_wrapped_lines(&mut self, wrapped_lines: SmallVec<[ShapedLine; 1]>) {
-        self.len = wrapped_lines.iter().map(|l| l.len).sum();
+        self.original_lens = wrapped_lines.iter().map(|l| l.len).collect();
+        self.len = self.original_lens.iter().sum();
         let width = wrapped_lines
             .iter()
             .map(|l| l.width)
@@ -378,6 +392,17 @@ impl LineLayout {
             .unwrap_or_default();
         self.longest_width = width;
         self.wrapped_lines = wrapped_lines;
+    }
+
+    pub(crate) fn original_lens(mut self, original_lens: SmallVec<[usize; 1]>) -> Self {
+        self.original_lens = original_lens;
+        self.len = self.original_lens.iter().sum();
+        self
+    }
+
+    pub(crate) fn inline_color_markers(mut self, markers: Vec<InlineColorMarker>) -> Self {
+        self.inline_color_markers = markers;
+        self
     }
 
     pub(crate) fn with_whitespaces(mut self, indicators: Option<WhitespaceIndicators>) -> Self {
@@ -390,6 +415,10 @@ impl LineLayout {
 
         for (line_index, wrapped_line) in self.wrapped_lines.iter().enumerate() {
             for (relative_offset, c) in wrapped_line.text.char_indices() {
+                if self.is_inline_color_spacer_offset(line_index, relative_offset) {
+                    continue;
+                }
+
                 if matches!(c, ' ' | '\t') {
                     let is_tab = c == '\t';
                     let start_x = wrapped_line.x_for_index(relative_offset);
@@ -406,6 +435,69 @@ impl LineLayout {
             }
         }
         self
+    }
+
+    fn line_original_len(&self, line_index: usize) -> usize {
+        self.original_lens
+            .get(line_index)
+            .copied()
+            .unwrap_or_else(|| self.wrapped_lines[line_index].len)
+    }
+
+    fn inline_color_inserted_len_before(
+        &self,
+        line_index: usize,
+        offset: usize,
+        include_at_offset: bool,
+    ) -> usize {
+        self.inline_color_markers
+            .iter()
+            .filter(|marker| {
+                marker.line_index == line_index
+                    && if include_at_offset {
+                        marker.offset <= offset
+                    } else {
+                        marker.offset < offset
+                    }
+            })
+            .map(|marker| marker.spacer_len)
+            .sum()
+    }
+
+    fn decorated_offset_for_index(&self, line_index: usize, offset: usize) -> usize {
+        offset + self.inline_color_inserted_len_before(line_index, offset, true)
+    }
+
+    fn inline_color_spacer_range(&self, marker: &InlineColorMarker) -> Range<usize> {
+        let start = marker.offset
+            + self.inline_color_inserted_len_before(marker.line_index, marker.offset, false);
+        start..start + marker.spacer_len
+    }
+
+    fn is_inline_color_spacer_offset(&self, line_index: usize, offset: usize) -> bool {
+        self.inline_color_markers
+            .iter()
+            .filter(|marker| marker.line_index == line_index)
+            .any(|marker| self.inline_color_spacer_range(marker).contains(&offset))
+    }
+
+    fn original_offset_for_decorated_index(&self, line_index: usize, index: usize) -> usize {
+        let mut original = index;
+        for marker in self
+            .inline_color_markers
+            .iter()
+            .filter(|marker| marker.line_index == line_index)
+        {
+            let range = self.inline_color_spacer_range(marker);
+            if index < range.start {
+                break;
+            }
+            if index <= range.end {
+                return marker.offset;
+            }
+            original = original.saturating_sub(marker.spacer_len);
+        }
+        original.min(self.line_original_len(line_index))
     }
 
     #[inline]
@@ -432,26 +524,29 @@ impl LineLayout {
 
         for (i, line) in self.wrapped_lines.iter().enumerate() {
             let is_last = i + 1 == self.wrapped_lines.len();
+            let line_len = self.line_original_len(i);
 
-            let matches = if line.len == 0 {
+            let matches = if line_len == 0 {
                 // Empty visual lines still own their boundary offset.
                 offset == acc_len
             } else if is_last || line_end_affinity {
                 // Inclusive: cursor can sit at end of this visual line.
-                offset >= acc_len && offset <= acc_len + line.len
+                offset >= acc_len && offset <= acc_len + line_len
             } else {
                 // Exclusive: boundary offset belongs to the next visual line.
-                offset >= acc_len && offset < acc_len + line.len
+                offset >= acc_len && offset < acc_len + line_len
             };
 
             if matches {
-                let x = line.x_for_index(offset.saturating_sub(acc_len)) + x_offset;
+                let line_offset = offset.saturating_sub(acc_len);
+                let decorated_offset = self.decorated_offset_for_index(i, line_offset);
+                let x = line.x_for_index(decorated_offset) + x_offset;
                 return Some(point(x, offset_y));
             }
 
             // Always advance by actual line length. The last line gets +1 so the
             // cursor can be placed after the final character.
-            acc_len += if is_last { line.len + 1 } else { line.len };
+            acc_len += if is_last { line_len + 1 } else { line_len };
             offset_y += last_layout.line_height;
         }
 
@@ -467,8 +562,10 @@ impl LineLayout {
         for (i, line) in self.wrapped_lines.iter().enumerate() {
             let is_last = i + 1 == self.wrapped_lines.len();
             if x <= line.width {
-                let mut ix = line.closest_index_for_x(x);
-                if !is_last && ix == line.text.len() {
+                let mut ix =
+                    self.original_offset_for_decorated_index(i, line.closest_index_for_x(x));
+                let line_len = self.line_original_len(i);
+                if !is_last && ix == line_len {
                     // For soft wrap line, we can't put the cursor at the end of the line.
                     let c_len = line.text.chars().last().map(|c| c.len_utf8()).unwrap_or(0);
                     ix = ix.saturating_sub(c_len);
@@ -476,7 +573,7 @@ impl LineLayout {
 
                 return acc_len + ix;
             }
-            acc_len += line.text.len();
+            acc_len += self.line_original_len(i);
         }
 
         acc_len
@@ -498,8 +595,12 @@ impl LineLayout {
             let is_last = i + 1 == self.wrapped_lines.len();
             let line_bottom = line_top + last_layout.line_height;
             if pos.y >= line_top && pos.y < line_bottom {
-                let mut ix = line.closest_index_for_x(pos.x - x_offset);
-                if !is_last && ix == line.text.len() {
+                let mut ix = self.original_offset_for_decorated_index(
+                    i,
+                    line.closest_index_for_x(pos.x - x_offset),
+                );
+                let line_len = self.line_original_len(i);
+                if !is_last && ix == line_len {
                     // For soft wrap line, we can't put the cursor at the end of the line.
                     let c_len = line.text.chars().last().map(|c| c.len_utf8()).unwrap_or(0);
                     ix = ix.saturating_sub(c_len);
@@ -507,7 +608,7 @@ impl LineLayout {
                 return Some(offset + ix);
             }
 
-            offset += line.text.len();
+            offset += self.line_original_len(i);
             line_top = line_bottom;
         }
 
@@ -522,14 +623,15 @@ impl LineLayout {
         let mut offset = 0;
         let mut line_top = px(0.);
         let x_offset = last_layout.alignment_offset(self.longest_width);
-        for line in self.wrapped_lines.iter() {
+        for (i, line) in self.wrapped_lines.iter().enumerate() {
             let line_bottom = line_top + last_layout.line_height;
             if pos.y >= line_top && pos.y < line_bottom {
-                let ix = line.index_for_x(pos.x - x_offset)?;
+                let ix = self
+                    .original_offset_for_decorated_index(i, line.index_for_x(pos.x - x_offset)?);
                 return Some(offset + ix);
             }
 
-            offset += line.text.len();
+            offset += self.line_original_len(i);
             line_top = line_bottom;
         }
 
@@ -549,6 +651,12 @@ impl LineLayout {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let x_offset = match (text_align, align_width) {
+            (TextAlign::Left, _) | (_, None) => px(0.),
+            (TextAlign::Center, Some(width)) => (width - self.longest_width).half().max(px(0.)),
+            (TextAlign::Right, Some(width)) => (width - self.longest_width).max(px(0.)),
+        };
+
         for (ix, line) in self.wrapped_lines.iter().enumerate() {
             _ = line.paint(
                 pos + point(px(0.), ix * line_height),
@@ -558,6 +666,30 @@ impl LineLayout {
                 window,
                 cx,
             );
+        }
+
+        for marker in &self.inline_color_markers {
+            let Some(line) = self.wrapped_lines.get(marker.line_index) else {
+                continue;
+            };
+            let range = self.inline_color_spacer_range(marker);
+            let start_x = line.x_for_index(range.start) + x_offset;
+            let end_x = line.x_for_index(range.end) + x_offset;
+            let slot_width = (end_x - start_x).max(px(0.));
+            let swatch_size = (slot_width - px(4.)).min(line_height - px(6.)).max(px(6.));
+            let swatch_origin = point(
+                pos.x + start_x + (slot_width - swatch_size).half(),
+                pos.y + marker.line_index as f32 * line_height + (line_height - swatch_size).half(),
+            );
+            let border_bounds = Bounds::new(swatch_origin, size(swatch_size, swatch_size));
+            let inner_size = (swatch_size - px(2.)).max(px(1.));
+            let inner_bounds = Bounds::new(
+                swatch_origin + point(px(1.), px(1.)),
+                size(inner_size, inner_size),
+            );
+
+            window.paint_quad(fill(border_bounds, gpui::hsla(0.0, 0.0, 1.0, 0.75)));
+            window.paint_quad(fill(inner_bounds, marker.color));
         }
 
         // Paint whitespace indicators

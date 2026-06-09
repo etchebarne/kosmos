@@ -1,4 +1,5 @@
 include!("parts/actions_and_elements.rs");
+include!("parts/color_support.rs");
 include!("parts/render.rs");
 include!("parts/tests.rs");
 

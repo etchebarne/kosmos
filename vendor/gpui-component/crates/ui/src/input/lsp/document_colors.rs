@@ -22,6 +22,19 @@ pub trait DocumentColorProvider {
 }
 
 impl Lsp {
+    pub fn set_document_colors(
+        &mut self,
+        mut document_colors: Vec<(lsp_types::Range, Hsla)>,
+        cx: &mut Context<InputState>,
+    ) {
+        document_colors.sort_by_key(|(range, _)| range.start);
+
+        if document_colors != self.document_colors {
+            self.document_colors = document_colors;
+            cx.notify();
+        }
+    }
+
     /// Get document colors that intersect with the visible range (0-based row).
     ///
     /// Returns byte ranges and colors.
@@ -74,7 +87,7 @@ impl Lsp {
             if let Some(task) = task_result {
                 if let Ok(colors) = task.await {
                     let _ = input_state.update(cx, |input_state, cx| {
-                        let mut document_colors: Vec<(lsp_types::Range, Hsla)> = colors
+                        let document_colors: Vec<(lsp_types::Range, Hsla)> = colors
                             .iter()
                             .map(|info| {
                                 let color = gpui::Rgba {
@@ -88,12 +101,7 @@ impl Lsp {
                                 (info.range, color)
                             })
                             .collect();
-                        document_colors.sort_by_key(|(range, _)| range.start);
-
-                        if document_colors != input_state.lsp.document_colors {
-                            input_state.lsp.document_colors = document_colors;
-                            cx.notify();
-                        }
+                        input_state.lsp.set_document_colors(document_colors, cx);
                     });
                 }
             }

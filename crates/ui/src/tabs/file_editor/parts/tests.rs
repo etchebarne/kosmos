@@ -40,7 +40,10 @@ mod tests {
     #[test]
     fn component_completion_raw_query_uses_current_expression() {
         let content = "const test = PROFILE.na";
-        assert_eq!(completion_raw_query_for_offset(content, content.len()), "PROFILE.na");
+        assert_eq!(
+            completion_raw_query_for_offset(content, content.len()),
+            "PROFILE.na"
+        );
     }
 
     #[test]
@@ -77,7 +80,10 @@ mod tests {
     fn component_completion_adds_compact_detail_and_full_documentation() {
         let mut item = completion_item("promise");
         item.kind = Some(CompletionItemKind::FUNCTION);
-        item.detail = Some("astro:src/content/loaders/glob promise helper with a very long source path".to_string());
+        item.detail = Some(
+            "astro:src/content/loaders/glob promise helper with a very long source path"
+                .to_string(),
+        );
 
         enhance_completion_item(&mut item);
         let entry = ComponentCompletionItem::new(item.clone());
@@ -148,6 +154,47 @@ mod tests {
         assert_eq!(new_text, "name");
     }
 
+    #[test]
+    fn component_css_colors_detect_common_css_literals() {
+        let content = "a{color:#abc;background:rgb(255 0 0 / 50%);border:rgba(1, 2, 3, .4);outline:oklch(63.7% 0.237 25.331)}";
+        let colors = component_css_colors(content);
+
+        let literals = colors
+            .iter()
+            .map(|color| &content[color.range.clone()])
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            literals,
+            [
+                "#abc",
+                "rgb(255 0 0 / 50%)",
+                "rgba(1, 2, 3, .4)",
+                "oklch(63.7% 0.237 25.331)"
+            ]
+        );
+        assert!((colors[1].color.a - 0.5).abs() < 0.001);
+        assert!((colors[2].color.a - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn component_css_color_formatter_preserves_function_family() {
+        let color = gpui::hsla(0.5, 0.5, 0.5, 0.25);
+
+        assert_eq!(
+            component_css_format_color(&ComponentCssColorFormat::Rgb { alpha: false }, color),
+            "rgba(64, 191, 191, 0.25)"
+        );
+        assert_eq!(
+            component_css_format_color(&ComponentCssColorFormat::Hex { alpha: false }, color),
+            "#40BFBF40"
+        );
+        assert!(
+            component_css_format_color(&ComponentCssColorFormat::Oklch { alpha: false }, color)
+                .starts_with("oklch(")
+        );
+    }
+
     fn completion_item(label: &str) -> CompletionItem {
         CompletionItem {
             label: label.to_string(),
@@ -156,6 +203,9 @@ mod tests {
     }
 
     fn test_completion_range() -> lsp_types::Range {
-        lsp_types::Range::new(lsp_types::Position::new(0, 2), lsp_types::Position::new(0, 5))
+        lsp_types::Range::new(
+            lsp_types::Position::new(0, 2),
+            lsp_types::Position::new(0, 5),
+        )
     }
 }

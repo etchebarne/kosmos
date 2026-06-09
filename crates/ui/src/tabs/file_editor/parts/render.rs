@@ -9,21 +9,22 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
         .and_then(|tree| tree.read(cx).root().map(Path::to_path_buf));
     let breadcrumb = render_breadcrumb(&path, file_tree_root.as_deref(), theme);
     let buffer = BufferStore::open(path.clone(), cx);
-    let editor_state = ComponentEditorStore::state_for_tab(
-        tab.id,
-        &buffer,
-        file_tree_root.clone(),
-        window,
-        cx,
-    );
+    let editor_state =
+        ComponentEditorStore::state_for_tab(tab.id, &buffer, file_tree_root.clone(), window, cx);
     let input = editor_state.input;
     if let Some(reveal) = ComponentEditorStore::take_pending_reveal(&path, cx) {
         let value = input.read(cx).value().to_string();
         let lines = value.split('\n').collect::<Vec<_>>();
-        let line = reveal.line.saturating_sub(1).min(lines.len().saturating_sub(1));
-        let column = reveal
-            .column
-            .min(lines.get(line).map(|line| line.chars().count()).unwrap_or(0));
+        let line = reveal
+            .line
+            .saturating_sub(1)
+            .min(lines.len().saturating_sub(1));
+        let column = reveal.column.min(
+            lines
+                .get(line)
+                .map(|line| line.chars().count())
+                .unwrap_or(0),
+        );
         input.update(cx, |input, cx| {
             input.set_cursor_position(
                 gpui_component::input::Position::new(line as u32, column as u32),
@@ -33,6 +34,7 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
         });
     }
     let completions = editor_state.completions;
+    let color_picker = editor_state.color_picker;
     let input_focus = input.focus_handle(cx);
     let input_for_copy = input.clone();
     let input_for_cut = input.clone();
@@ -56,9 +58,8 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                 .capture_action(cx.listener({
                     let completions = completions.clone();
                     move |_, _: &gpui_component::input::Enter, window, cx| {
-                        let handled = completions.update(cx, |menu, cx| {
-                            menu.accept_selected(window, cx)
-                        });
+                        let handled =
+                            completions.update(cx, |menu, cx| menu.accept_selected(window, cx));
                         if handled {
                             cx.stop_propagation();
                         } else {
@@ -69,9 +70,8 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                 .capture_action(cx.listener({
                     let completions = completions.clone();
                     move |_, _: &gpui_component::input::IndentInline, window, cx| {
-                        let handled = completions.update(cx, |menu, cx| {
-                            menu.accept_selected(window, cx)
-                        });
+                        let handled =
+                            completions.update(cx, |menu, cx| menu.accept_selected(window, cx));
                         if handled {
                             cx.stop_propagation();
                         } else {
@@ -112,9 +112,11 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                         }
                     }
                 }))
-                .on_action(cx.listener(move |_, _: &gpui_component::input::Copy, _, cx| {
-                    copy_current_component_line(&input_for_copy, cx);
-                }))
+                .on_action(
+                    cx.listener(move |_, _: &gpui_component::input::Copy, _, cx| {
+                        copy_current_component_line(&input_for_copy, cx);
+                    }),
+                )
                 .capture_action(cx.listener(
                     move |_, _: &gpui_component::input::Cut, window, cx| {
                         if cut_current_component_line(&input_for_cut, window, cx) {
@@ -124,13 +126,16 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                         }
                     },
                 ))
-                .capture_key_down(move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                    if insert_component_auto_pair(&input_for_auto_pair, event, window, cx) {
-                        cx.stop_propagation();
-                    }
-                })
+                .capture_key_down(
+                    move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                        if insert_component_auto_pair(&input_for_auto_pair, event, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    },
+                )
                 .child(
                     div()
+                        .id("file-editor-input-overlay")
                         .relative()
                         .size_full()
                         .child(
@@ -142,7 +147,8 @@ pub fn render<T: 'static>(tab: &Tab, window: &mut Window, cx: &mut Context<T>) -
                                 .text_size(rems(0.875))
                                 .size_full(),
                         )
-                        .child(completions),
+                        .child(completions)
+                        .child(color_picker),
                 ),
         )
         .into_any_element()
