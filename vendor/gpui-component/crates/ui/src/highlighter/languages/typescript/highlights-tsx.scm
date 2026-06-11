@@ -1,17 +1,16 @@
 ; JSX tags and attributes
 ;------------------------
 
-(jsx_opening_element
-  name: (identifier) @tag
-  (#match? @tag "^[a-z][^.]*$"))
+[
+  (jsx_opening_element
+    name: (_) @tag)
 
-(jsx_closing_element
-  name: (identifier) @tag
-  (#match? @tag "^[a-z][^.]*$"))
+  (jsx_closing_element
+    name: (_) @tag)
 
-(jsx_self_closing_element
-  name: (identifier) @tag
-  (#match? @tag "^[a-z][^.]*$"))
+  (jsx_self_closing_element
+    name: (_) @tag)
+]
 
 (jsx_attribute
   (property_identifier) @attribute)
