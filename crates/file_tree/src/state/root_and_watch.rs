@@ -66,13 +66,24 @@ impl FileTree {
         self.expanded.contains(path)
     }
 
+    pub fn expanded_paths(&self) -> Vec<PathBuf> {
+        self.expanded.iter().cloned().collect()
+    }
+
+    fn emit_expanded_changed(&self, cx: &mut Context<Self>) {
+        cx.emit(FileTreeEvent::ExpandedChanged {
+            root: self.root.clone(),
+            paths: self.expanded_paths(),
+        });
+    }
+
     pub fn children_of(&self, path: &Path) -> Option<&[Node]> {
         self.children.get(path).map(|v| v.as_slice())
     }
 
     /// Set or replace the root path. Drops any existing watcher and reloads
     /// the top-level directory listing, then installs a recursive watcher.
-    pub fn set_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+    pub fn set_root(&mut self, root: PathBuf, expanded: Vec<PathBuf>, cx: &mut Context<Self>) {
         if Some(&root) == self.root.as_ref() {
             return;
         }
@@ -94,8 +105,26 @@ impl FileTree {
         self.watcher_task = None;
 
         self.root = Some(root.clone());
-        self.expanded.insert(root.clone());
+        self.expanded = expanded
+            .into_iter()
+            .filter(|path| path.starts_with(&root))
+            .collect();
+        if self.expanded.is_empty() {
+            self.expanded.insert(root.clone());
+        }
         self.reload_dir(&root);
+        let mut expanded_dirs = self.expanded.iter().cloned().collect::<Vec<_>>();
+        expanded_dirs.sort();
+        for dir in expanded_dirs {
+            if dir == root {
+                continue;
+            }
+            if dir.is_dir() {
+                self.reload_dir(&dir);
+            } else {
+                self.expanded.remove(&dir);
+            }
+        }
 
         // Set up the events channel and start polling synchronously, but
         // install the watcher itself off the main thread — walking a big tree

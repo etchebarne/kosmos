@@ -19,6 +19,7 @@ impl WorkspaceDelegate for KosmosApp {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
+                this.sync_active_file_tree_expanded_dirs(cx);
                 this.workspaces.add(path);
                 this.sync_file_tree_root(cx);
                 cx.notify();
@@ -30,6 +31,7 @@ impl WorkspaceDelegate for KosmosApp {
     }
 
     fn select_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.sync_active_file_tree_expanded_dirs(cx);
         if self.workspaces.select(id) {
             self.sync_file_tree_root(cx);
             cx.notify();
@@ -52,6 +54,7 @@ impl WorkspaceDelegate for KosmosApp {
     }
 
     fn close_workspace(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.sync_active_file_tree_expanded_dirs(cx);
         if !self.workspaces.close(id) {
             return;
         }

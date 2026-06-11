@@ -7,6 +7,7 @@ pub struct Workspace {
     pub path: PathBuf,
     pub name: String,
     pub pane_tree: PaneTree,
+    pub file_tree_expanded_dirs: Vec<PathBuf>,
 }
 
 impl Workspace {
@@ -75,6 +76,10 @@ impl WorkspaceManager {
         self.workspaces.iter().find(|w| w.id == id)
     }
 
+    pub fn workspace_mut(&mut self, id: usize) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|w| w.id == id)
+    }
+
     pub fn add(&mut self, path: PathBuf) -> usize {
         if let Some(existing) = self.workspaces.iter().find(|w| w.path == path) {
             let id = existing.id;
@@ -93,6 +98,7 @@ impl WorkspaceManager {
             path,
             name,
             pane_tree: PaneTree::new(),
+            file_tree_expanded_dirs: Vec::new(),
         });
         self.set_active(Some(id));
         id

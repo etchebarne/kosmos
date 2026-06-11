@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{
@@ -62,8 +62,11 @@ impl KosmosApp {
     fn create_file_tree(cx: &mut Context<Self>) -> Entity<FileTree> {
         let file_tree = cx.new(FileTree::new);
         cx.observe(&file_tree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&file_tree, |_, _, event, cx| match event {
+        cx.subscribe(&file_tree, |this, _, event, cx| match event {
             FileTreeEvent::FsChanged { paths } => BufferStore::reload_paths(paths.clone(), cx),
+            FileTreeEvent::ExpandedChanged { root, paths } => {
+                this.persist_file_tree_expanded_dirs(root.as_deref(), paths.clone(), cx);
+            }
         })
         .detach();
         cx.set_global(FileTreeState::new());
@@ -162,12 +165,85 @@ impl KosmosApp {
     }
 
     pub(crate) fn sync_file_tree_root(&mut self, cx: &mut Context<Self>) {
-        let path: Option<PathBuf> = self.workspaces.active_workspace().map(|w| w.path.clone());
-        if let Some(path) = path {
+        let active = self
+            .workspaces
+            .active_workspace()
+            .map(|w| (w.path.clone(), w.file_tree_expanded_dirs.clone()));
+        if let Some((path, expanded)) = active {
             self.file_tree.update(cx, |tree, cx| {
-                tree.set_root(path, cx);
+                tree.set_root(path, expanded, cx);
             });
         }
+    }
+
+    pub(crate) fn sync_active_file_tree_expanded_dirs(&mut self, cx: &App) -> bool {
+        let Some(workspace_id) = self.workspaces.active_id() else {
+            return false;
+        };
+        self.sync_file_tree_expanded_dirs_for_workspace(workspace_id, cx)
+    }
+
+    fn sync_file_tree_expanded_dirs_for_workspace(
+        &mut self,
+        workspace_id: usize,
+        cx: &App,
+    ) -> bool {
+        let (root, paths) = {
+            let tree = self.file_tree.read(cx);
+            (tree.root().map(Path::to_path_buf), tree.expanded_paths())
+        };
+        self.set_file_tree_expanded_dirs_for_workspace(workspace_id, root.as_deref(), paths)
+    }
+
+    fn persist_file_tree_expanded_dirs(
+        &mut self,
+        root: Option<&Path>,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace_id) = self.workspaces.active_id() else {
+            return;
+        };
+        if !self.set_file_tree_expanded_dirs_for_workspace(workspace_id, root, paths)
+            && !self.pending_persist
+        {
+            return;
+        }
+        self.sync_terminal_paths_for_workspace(workspace_id, cx);
+        if let Some(workspace) = self.workspaces.workspace(workspace_id) {
+            persistence::save_workspace(workspace);
+        }
+        self.pending_persist = false;
+    }
+
+    fn set_file_tree_expanded_dirs_for_workspace(
+        &mut self,
+        workspace_id: usize,
+        root: Option<&Path>,
+        mut paths: Vec<PathBuf>,
+    ) -> bool {
+        let Some(workspace_path) = self
+            .workspaces
+            .workspace(workspace_id)
+            .map(|w| w.path.clone())
+        else {
+            return false;
+        };
+        if root != Some(workspace_path.as_path()) {
+            return false;
+        }
+        paths.retain(|path| path.starts_with(&workspace_path));
+        paths.sort();
+        paths.dedup();
+
+        let Some(workspace) = self.workspaces.workspace_mut(workspace_id) else {
+            return false;
+        };
+        if workspace.file_tree_expanded_dirs == paths {
+            return false;
+        }
+        workspace.file_tree_expanded_dirs = paths;
+        true
     }
 
     pub(crate) fn start_observing_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -187,6 +263,7 @@ impl KosmosApp {
     }
 
     pub(crate) fn persist_workspace(&mut self, workspace_id: usize, cx: &mut App) {
+        self.sync_file_tree_expanded_dirs_for_workspace(workspace_id, cx);
         self.sync_terminal_paths_for_workspace(workspace_id, cx);
         if let Some(workspace) = self.workspaces.workspace(workspace_id) {
             persistence::save_workspace(workspace);

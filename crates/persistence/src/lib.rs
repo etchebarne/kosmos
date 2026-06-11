@@ -60,6 +60,7 @@ fn load_inner(conn: &mut Connection) -> Result<Option<WorkspaceManager>> {
             path: PathBuf::from(row.path),
             name: row.name,
             pane_tree,
+            file_tree_expanded_dirs: load_file_tree_expanded_dirs(conn, row.id)?,
         });
     }
 
@@ -213,6 +214,17 @@ fn load_tabs(conn: &Connection, pane_node_id: i64) -> Result<Vec<Tab>> {
     rows.collect()
 }
 
+fn load_file_tree_expanded_dirs(conn: &Connection, workspace_id: usize) -> Result<Vec<PathBuf>> {
+    let mut stmt = conn.prepare(
+        "SELECT path FROM file_tree_expanded_dirs WHERE workspace_id = ? ORDER BY path ASC",
+    )?;
+    let rows = stmt.query_map([workspace_id as i64], |row| {
+        let path: String = row.get(0)?;
+        Ok(PathBuf::from(path))
+    })?;
+    rows.collect()
+}
+
 fn save_session_inner(conn: &mut Connection, manager: &WorkspaceManager) -> Result<()> {
     let tx = conn.transaction()?;
 
@@ -271,6 +283,16 @@ fn save_workspace_inner(conn: &mut Connection, workspace: &Workspace) -> Result<
         params![workspace.id as i64],
     )?;
     write_node(&tx, workspace.id, None, None, workspace.pane_tree.root())?;
+    tx.execute(
+        "DELETE FROM file_tree_expanded_dirs WHERE workspace_id = ?1",
+        params![workspace.id as i64],
+    )?;
+    for path in &workspace.file_tree_expanded_dirs {
+        tx.execute(
+            "INSERT OR IGNORE INTO file_tree_expanded_dirs (workspace_id, path) VALUES (?1, ?2)",
+            params![workspace.id as i64, path.to_string_lossy()],
+        )?;
+    }
     tx.commit()
 }
 

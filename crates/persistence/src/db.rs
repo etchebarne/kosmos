@@ -6,6 +6,7 @@ use storage::{Database, with_connection};
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/001_initial.sql"),
     include_str!("migrations/002_tab_path.sql"),
+    include_str!("migrations/003_file_tree_expanded_dirs.sql"),
 ];
 
 static CONN: OnceLock<Option<Mutex<Connection>>> = OnceLock::new();

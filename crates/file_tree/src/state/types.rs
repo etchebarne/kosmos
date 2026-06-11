@@ -53,4 +53,8 @@ pub struct FileTree {
 #[derive(Clone, Debug)]
 pub enum FileTreeEvent {
     FsChanged { paths: Vec<PathBuf> },
+    ExpandedChanged {
+        root: Option<PathBuf>,
+        paths: Vec<PathBuf>,
+    },
 }

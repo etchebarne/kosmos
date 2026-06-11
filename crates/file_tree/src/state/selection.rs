@@ -19,10 +19,15 @@ impl FileTree {
     }
 
     pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
-        self.expanded.clear();
+        let mut expanded = HashSet::new();
         if let Some(root) = self.root.clone() {
-            self.expanded.insert(root);
+            expanded.insert(root);
         }
+        if self.expanded == expanded {
+            return;
+        }
+        self.expanded = expanded;
+        self.emit_expanded_changed(cx);
         cx.notify();
     }
 
@@ -35,6 +40,7 @@ impl FileTree {
                 self.reload_dir(path);
             }
         }
+        self.emit_expanded_changed(cx);
         cx.notify();
     }
 
@@ -44,6 +50,7 @@ impl FileTree {
             if !self.children.contains_key(path) {
                 self.reload_dir(path);
             }
+            self.emit_expanded_changed(cx);
             cx.notify();
         }
     }
