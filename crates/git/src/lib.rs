@@ -1144,19 +1144,28 @@ pub fn delete_stash(path: impl AsRef<Path>, id: &str) -> Result<(), Error> {
 }
 
 fn git_output(path: &Path, args: &[&str]) -> Result<String, Error> {
-    let output = run_git_command(path, args)?;
+    let output = run_git_command(path, args, false)?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn run_git(path: &Path, args: &[&str]) -> Result<(), Error> {
-    run_git_command(path, args).map(|_| ())
+    run_git_command(path, args, true).map(|_| ())
 }
 
-fn run_git_command(path: &Path, args: &[&str]) -> Result<Output, Error> {
+fn run_git_command(
+    path: &Path,
+    args: &[&str],
+    allow_optional_locks: bool,
+) -> Result<Output, Error> {
     let work_dir = git_work_dir(path)?;
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(work_dir)
+    let mut command = std::process::Command::new("git");
+    command.args(args).current_dir(work_dir);
+    if !allow_optional_locks {
+        // Background reads must not create .git/index.lock while a write is starting.
+        command.env("GIT_OPTIONAL_LOCKS", "0");
+    }
+
+    let output = command
         .output()
         .map_err(|source| Error::Status(source.to_string()))?;
     if output.status.success() {
