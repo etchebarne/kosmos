@@ -1,8 +1,13 @@
 use std::path::PathBuf;
 
-use file_tree::FileTree;
+use file_tree::{ActiveFileTree, FileTree};
 use gpui::{App, AppContext, Bounds, Entity, Global, Pixels};
-use gpui_component::{input::InputState, tree::TreeState};
+use gpui_component::{
+    input::{InputEvent, InputState},
+    tree::TreeState,
+};
+
+use super::actions;
 
 pub(crate) struct PendingFileTreeDrop {
     pub tree: Entity<FileTree>,
@@ -23,6 +28,16 @@ impl FileTreeUi {
     pub fn install(window: &mut gpui::Window, cx: &mut App) {
         let input = cx.new(|cx| InputState::new(window, cx));
         let tree = cx.new(|cx| TreeState::new(cx));
+        cx.subscribe(&input, |_, event: &InputEvent, cx| {
+            if !matches!(event, InputEvent::Blur) {
+                return;
+            }
+            let Some(file_tree) = cx.file_tree().cloned() else {
+                return;
+            };
+            actions::commit_pending_input(&file_tree, cx);
+        })
+        .detach();
         cx.set_global(FileTreeUi {
             input,
             tree,

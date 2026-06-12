@@ -371,6 +371,7 @@ fn new_entry_input_body_app(
     };
     let entity_submit = entity.clone();
     let entity_cancel = entity.clone();
+    let entity_out = entity.clone();
     let input_for_submit = input.clone();
 
     div()
@@ -378,6 +379,9 @@ fn new_entry_input_body_app(
         .items_center()
         .h(ROW_HEIGHT)
         .w_full()
+        .on_mouse_down_out(move |_, _, cx| {
+            super::actions::commit_pending_input(&entity_out, cx);
+        })
         .child(indent_guides(depth, theme))
         .child(
             div()
@@ -424,6 +428,7 @@ fn rename_input_body_app(
     };
     let entity_submit = entity.clone();
     let entity_cancel = entity.clone();
+    let entity_out = entity.clone();
     let input_for_submit = input.clone();
 
     div()
@@ -431,6 +436,9 @@ fn rename_input_body_app(
         .items_center()
         .h(ROW_HEIGHT)
         .w_full()
+        .on_mouse_down_out(move |_, _, cx| {
+            super::actions::commit_pending_input(&entity_out, cx);
+        })
         .child(indent_guides(depth, theme))
         .child(
             div()

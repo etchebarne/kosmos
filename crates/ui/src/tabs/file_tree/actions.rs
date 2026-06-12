@@ -38,3 +38,17 @@ pub fn focus_new_entry_input(window: &mut Window, cx: &mut App) {
         });
     }
 }
+
+pub fn commit_pending_input(file_tree: &Entity<FileTree>, cx: &mut App) {
+    let Some(input) = cx.file_tree_ui().map(|ui| ui.input()) else {
+        return;
+    };
+    let value = input.read(cx).value().to_string();
+    file_tree.update(cx, |tree, cx| {
+        if tree.new_entry_draft().is_some() {
+            tree.apply_new_entry(value, cx);
+        } else if tree.rename_target().is_some() {
+            tree.apply_rename(value, cx);
+        }
+    });
+}
