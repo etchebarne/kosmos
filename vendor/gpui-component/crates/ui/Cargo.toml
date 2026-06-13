@@ -53,6 +53,7 @@ tree-sitter-languages = [
     "tree-sitter-toml",
     "tree-sitter-tsx",
     "tree-sitter-typescript",
+    "tree-sitter-xml",
     "tree-sitter-yaml",
     "tree-sitter-zig",
 ]
@@ -90,6 +91,7 @@ tree-sitter-swift = ["dep:tree-sitter-swift"]
 tree-sitter-toml = ["dep:tree-sitter-toml-ng"]
 tree-sitter-tsx = ["dep:tree-sitter-typescript"]
 tree-sitter-typescript = ["dep:tree-sitter-typescript"]
+tree-sitter-xml = ["dep:tree-sitter-xml"]
 tree-sitter-yaml = ["dep:tree-sitter-yaml"]
 tree-sitter-zig = ["dep:tree-sitter-zig"]
 
@@ -179,6 +181,7 @@ tree-sitter-svelte-next = { version = "0.1.1", optional = true }
 tree-sitter-swift = { version = "0.7.0", optional = true }
 tree-sitter-toml-ng = { version = "0.7.0", optional = true }
 tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-xml = { version = "0.7.0", optional = true }
 tree-sitter-yaml = { version = "0.7.1", optional = true }
 tree-sitter-zig = { version = "1.1.2", optional = true }
 

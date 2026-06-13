@@ -81,6 +81,8 @@ pub enum Language {
     Tsx,
     #[cfg(feature = "tree-sitter-typescript")]
     TypeScript,
+    #[cfg(feature = "tree-sitter-xml")]
+    Xml,
     #[cfg(feature = "tree-sitter-yaml")]
     Yaml,
     #[cfg(feature = "tree-sitter-zig")]
@@ -170,6 +172,8 @@ impl Language {
             Self::Tsx => "tsx",
             #[cfg(feature = "tree-sitter-typescript")]
             Self::TypeScript => "typescript",
+            #[cfg(feature = "tree-sitter-xml")]
+            Self::Xml => "xml",
             #[cfg(feature = "tree-sitter-yaml")]
             Self::Yaml => "yaml",
             #[cfg(feature = "tree-sitter-zig")]
@@ -254,6 +258,8 @@ impl Language {
             "tsx" => Some(Self::Tsx),
             #[cfg(feature = "tree-sitter-typescript")]
             "typescript" | "ts" => Some(Self::TypeScript),
+            #[cfg(feature = "tree-sitter-xml")]
+            "xml" | "xsd" | "xsl" | "xslt" | "rss" | "atom" | "plist" | "svg" => Some(Self::Xml),
             #[cfg(feature = "tree-sitter-yaml")]
             "yaml" | "yml" => Some(Self::Yaml),
             #[cfg(feature = "tree-sitter-zig")]
@@ -548,6 +554,13 @@ impl Language {
                 "",
                 tree_sitter_typescript::LOCALS_QUERY,
             ),
+            #[cfg(feature = "tree-sitter-xml")]
+            Self::Xml => (
+                tree_sitter_xml::LANGUAGE_XML,
+                tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+                "",
+                "",
+            ),
             #[cfg(feature = "tree-sitter-diff")]
             Self::Diff => (
                 tree_sitter_diff::LANGUAGE,
@@ -663,6 +676,8 @@ mod tests {
         assert_eq!(Language::TypeScript.name(), "typescript");
         #[cfg(feature = "tree-sitter-tsx")]
         assert_eq!(Language::Tsx.name(), "tsx");
+        #[cfg(feature = "tree-sitter-xml")]
+        assert_eq!(Language::Xml.name(), "xml");
         #[cfg(feature = "tree-sitter-diff")]
         assert_eq!(Language::Diff.name(), "diff");
         #[cfg(feature = "tree-sitter-elixir")]
@@ -693,6 +708,14 @@ mod tests {
         assert_eq!(Language::from_name("ts"), Some(Language::TypeScript));
         #[cfg(not(feature = "tree-sitter-typescript"))]
         assert_eq!(Language::from_name("ts"), None);
+
+        #[cfg(feature = "tree-sitter-xml")]
+        {
+            assert_eq!(Language::from_name("xml"), Some(Language::Xml));
+            assert_eq!(Language::from_name("svg"), Some(Language::Xml));
+        }
+        #[cfg(not(feature = "tree-sitter-xml"))]
+        assert_eq!(Language::from_name("xml"), None);
 
         assert_eq!(Language::from_str("unknown"), Language::Plain);
     }
