@@ -5,3 +5,11 @@ version = 4
 [[package]]
 name = "kosmos"
 version = "0.1.0"
+
+[[package]]
+name = "kosmos-core"
+version = "0.1.0"
+
+[[package]]
+name = "kosmos-ui"
+version = "0.1.0"
