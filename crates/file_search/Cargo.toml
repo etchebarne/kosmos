@@ -1,7 +1,0 @@
-[package]
-name = "file_search"
-version = "0.4.9"
-edition = "2024"
-
-[dependencies]
-fff-search = { version = "0.8.4", features = ["zlob"] }
