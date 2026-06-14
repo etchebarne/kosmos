@@ -23,16 +23,16 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 - `core/` contains the Rust logic layer.
 - `server/` contains the Rust backend process that imports `core`.
-- `ui/` contains the Qt frontend.
+- `desktop/` contains the C/GTK frontend.
 - `assets/` contains shared branding and icon assets.
 
 ## Development
 
 - Run the app with `./scripts/run.sh`.
 - Test the Rust workspace with `cargo test --workspace`.
-- Build the Qt UI with `cmake -S ui -B ui/build` and `cmake --build ui/build`.
+- Build the GTK desktop app with `meson setup desktop/build desktop` and `meson compile -C desktop/build`.
 
-The server and UI communicate over a Unix socket. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+The server and desktop frontend communicate over a Unix socket. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
 
 ## License
 
