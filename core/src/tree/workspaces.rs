@@ -128,9 +128,27 @@ impl Workspace {
     }
 
     pub fn add_tab_to_pane(&mut self, pane_id: PaneId, tab: Tab) -> bool {
+        self.insert_tab_in_pane(pane_id, usize::MAX, tab)
+    }
+
+    pub fn insert_tab_in_pane(&mut self, pane_id: PaneId, index: usize, tab: Tab) -> bool {
         if let Some(pane) = self.root.find_pane_mut(pane_id) {
-            pane.add_tab(tab);
+            pane.insert_tab(index, tab);
             true
+        } else {
+            false
+        }
+    }
+
+    pub fn reorder_tab_in_pane(
+        &mut self,
+        pane_id: PaneId,
+        tab_id: TabId,
+        target_index: usize,
+    ) -> bool {
+        if let Some(pane) = self.root.find_pane_mut(pane_id) {
+            self.active_pane = pane_id;
+            pane.reorder_tab(tab_id, target_index)
         } else {
             false
         }
@@ -166,6 +184,27 @@ impl Workspace {
         self.remove_empty_pane(pane_id, fallback_pane);
 
         Some(removed_tab)
+    }
+
+    pub fn split_pane_with_new_pane_first(
+        &mut self,
+        pane_id: PaneId,
+        axis: SplitAxis,
+        new_pane: Pane,
+        ratio: f32,
+        new_pane_first: bool,
+    ) -> bool {
+        let new_pane_id = new_pane.id();
+
+        if self
+            .root
+            .split_pane_with_new_pane_first(pane_id, axis, new_pane, ratio, new_pane_first)
+        {
+            self.active_pane = new_pane_id;
+            true
+        } else {
+            false
+        }
     }
 
     fn remove_empty_pane(&mut self, pane_id: PaneId, fallback_pane: Pane) {

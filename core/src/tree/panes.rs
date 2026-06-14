@@ -78,6 +78,17 @@ impl PaneNode {
         new_pane: Pane,
         ratio: f32,
     ) -> bool {
+        self.split_pane_with_new_pane_first(pane_id, axis, new_pane, ratio, false)
+    }
+
+    pub fn split_pane_with_new_pane_first(
+        &mut self,
+        pane_id: PaneId,
+        axis: SplitAxis,
+        new_pane: Pane,
+        ratio: f32,
+        new_pane_first: bool,
+    ) -> bool {
         validate_split_ratio(ratio);
 
         match self {
@@ -88,18 +99,32 @@ impl PaneNode {
                     active_tab: pane.active_tab,
                 };
 
-                *self = Self::split(axis, ratio, Self::Leaf(existing_pane), Self::Leaf(new_pane));
+                *self = if new_pane_first {
+                    Self::split(axis, ratio, Self::Leaf(new_pane), Self::Leaf(existing_pane))
+                } else {
+                    Self::split(axis, ratio, Self::Leaf(existing_pane), Self::Leaf(new_pane))
+                };
 
                 true
             }
             Self::Leaf(_) => false,
             Self::Split(split) => {
                 if split.first().contains_pane(pane_id) {
-                    split.first_mut().split_pane(pane_id, axis, new_pane, ratio)
+                    split.first_mut().split_pane_with_new_pane_first(
+                        pane_id,
+                        axis,
+                        new_pane,
+                        ratio,
+                        new_pane_first,
+                    )
                 } else {
-                    split
-                        .second_mut()
-                        .split_pane(pane_id, axis, new_pane, ratio)
+                    split.second_mut().split_pane_with_new_pane_first(
+                        pane_id,
+                        axis,
+                        new_pane,
+                        ratio,
+                        new_pane_first,
+                    )
                 }
             }
         }
@@ -179,6 +204,12 @@ impl SplitPane {
         self.ratio
     }
 
+    pub fn set_ratio(&mut self, ratio: f32) {
+        validate_split_ratio(ratio);
+
+        self.ratio = ratio;
+    }
+
     pub fn first(&self) -> &PaneNode {
         &self.first
     }
@@ -234,7 +265,7 @@ impl Pane {
 
     pub fn active_tab_id(&self) -> TabId {
         self.active_tab
-            .expect("a pane exposed by kosmos-core must always have an active tab")
+            .expect("a pane exposed by core must always have an active tab")
     }
 
     pub fn active_tab(&self) -> &Tab {
@@ -243,16 +274,42 @@ impl Pane {
         self.tabs
             .iter()
             .find(|tab| tab.id() == active_tab_id)
-            .expect("a pane exposed by kosmos-core must contain its active tab")
+            .expect("a pane exposed by core must contain its active tab")
     }
 
     pub fn add_tab(&mut self, tab: Tab) {
+        self.insert_tab(self.tabs.len(), tab);
+    }
+
+    pub fn insert_tab(&mut self, index: usize, tab: Tab) {
         let tab_id = tab.id();
-        self.tabs.push(tab);
+        let index = index.min(self.tabs.len());
+        self.tabs.insert(index, tab);
 
         if self.active_tab.is_none() {
             self.active_tab = Some(tab_id);
         }
+    }
+
+    pub fn reorder_tab(&mut self, tab_id: TabId, target_index: usize) -> bool {
+        let Some(current_index) = self.tabs.iter().position(|tab| tab.id() == tab_id) else {
+            return false;
+        };
+        let target_index = target_index.min(self.tabs.len());
+        let target_index = if target_index > current_index {
+            target_index - 1
+        } else {
+            target_index
+        };
+
+        if current_index == target_index {
+            return false;
+        }
+
+        let tab = self.tabs.remove(current_index);
+        self.tabs.insert(target_index, tab);
+
+        true
     }
 
     pub fn activate_tab(&mut self, tab_id: TabId) -> bool {
@@ -316,6 +373,21 @@ mod tests {
     }
 
     #[test]
+    fn reordering_tab_places_it_at_target_index() {
+        let mut pane = Pane::with_tab(
+            PaneId::new(1),
+            Tab::new(TabId::new(1), "First", TabKind::Blank),
+        );
+        pane.add_tab(Tab::new(TabId::new(2), "Second", TabKind::Blank));
+        pane.add_tab(Tab::new(TabId::new(3), "Third", TabKind::Blank));
+
+        assert!(pane.reorder_tab(TabId::new(1), 3));
+
+        let tab_ids = pane.tabs().iter().map(Tab::id).collect::<Vec<_>>();
+        assert_eq!(tab_ids, vec![TabId::new(2), TabId::new(3), TabId::new(1)]);
+    }
+
+    #[test]
     fn splitting_leaf_creates_recursive_node() {
         let first_pane = Pane::new(
             PaneId::new(1),
@@ -331,6 +403,34 @@ mod tests {
 
         assert!(root.contains_pane(PaneId::new(1)));
         assert!(root.contains_pane(PaneId::new(2)));
+    }
+
+    #[test]
+    fn splitting_leaf_can_place_new_pane_first() {
+        let first_pane = Pane::new(
+            PaneId::new(1),
+            Tab::new(TabId::new(1), "First", TabKind::Blank),
+        );
+        let second_pane = Pane::new(
+            PaneId::new(2),
+            Tab::new(TabId::new(2), "Second", TabKind::Blank),
+        );
+        let mut root = PaneNode::leaf(first_pane);
+
+        assert!(root.split_pane_with_new_pane_first(
+            PaneId::new(1),
+            SplitAxis::Horizontal,
+            second_pane,
+            0.5,
+            true,
+        ));
+
+        let PaneNode::Split(split) = root else {
+            panic!("splitting a leaf must create a split node");
+        };
+
+        assert_eq!(split.first().first_pane_id(), PaneId::new(2));
+        assert_eq!(split.second().first_pane_id(), PaneId::new(1));
     }
 
     #[test]

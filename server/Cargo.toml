@@ -1,0 +1,9 @@
+[package]
+name = "kosmos-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { version = "0.1.0", path = "../core" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"

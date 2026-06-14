@@ -19,6 +19,21 @@ Most editors dictate where things go. Kosmos lets you treat every view as a tab 
 
 Kosmos only runs on Linux. Windows and macOS are not supported, and support for those platforms is not planned at this time.
 
+## Project layout
+
+- `core/` contains the Rust logic layer.
+- `server/` contains the Rust backend process that imports `core`.
+- `ui/` contains the Qt frontend.
+- `assets/` contains shared branding and icon assets.
+
+## Development
+
+- Run the app with `./scripts/run.sh`.
+- Test the Rust workspace with `cargo test --workspace`.
+- Build the Qt UI with `cmake -S ui -B ui/build` and `cmake --build ui/build`.
+
+The server and UI communicate over a Unix socket. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+
 ## License
 
 MIT - see [LICENSE](LICENSE).
