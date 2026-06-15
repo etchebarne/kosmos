@@ -64,6 +64,8 @@ static void detached_tab_split_free(DetachedTabSplit *split) {
 }
 
 void kosmos_pane_dnd_clear_detached_tab_transfer(KosmosMainWindow *self) {
+    self->splitting_detached_tab = FALSE;
+
     if (self->detached_tab_window != NULL) {
         gtk_window_destroy(self->detached_tab_window);
     }
@@ -162,6 +164,10 @@ static void split_attached_tab(AdwTabView *view, AdwTabPage *page, int position,
     (void)position;
 
     KosmosMainWindow *self = KOSMOS_MAIN_WINDOW(user_data);
+    if (!ADW_IS_TAB_VIEW(view) || !ADW_IS_TAB_PAGE(page)) {
+        return;
+    }
+
     gboolean is_split_target = g_object_get_data(G_OBJECT(view), "split-drop-target") != NULL;
 
     if (!self->splitting_detached_tab && !is_split_target) {
@@ -201,7 +207,7 @@ static void split_attached_tab(AdwTabView *view, AdwTabPage *page, int position,
     split->tab_id = tab_id;
     split->axis = axis;
     split->new_pane_first = new_pane_first;
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, finish_detached_tab_split, split, (GDestroyNotify)detached_tab_split_free);
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 16, finish_detached_tab_split, split, (GDestroyNotify)detached_tab_split_free);
 }
 
 AdwTabView *kosmos_pane_dnd_create_split_sink_for_detached_tab(AdwTabView *view, gpointer user_data) {
@@ -257,6 +263,43 @@ static void set_pane_drag_highlight(KosmosMainWindow *self, GtkWidget *zone) {
     }
 
     g_object_set_data(G_OBJECT(self), "pane-drag-highlight-zone", zone);
+}
+
+static void set_split_drop_target_enabled(GtkWidget *target, gboolean enabled) {
+    GtkWidget *drop_receiver = g_object_get_data(G_OBJECT(target), "split-drop-receiver");
+    GtkWidget *tab_view = g_object_get_data(G_OBJECT(target), "split-drop-tab-view");
+
+    gtk_widget_set_visible(target, enabled);
+    gtk_widget_set_can_target(target, enabled);
+    if (drop_receiver != NULL) {
+        gtk_widget_set_can_target(drop_receiver, enabled);
+    }
+    if (tab_view != NULL) {
+        gtk_widget_set_can_target(tab_view, enabled);
+    }
+}
+
+static void set_split_targets_enabled_in(GtkWidget *widget, gboolean enabled) {
+    if (widget == NULL) {
+        return;
+    }
+
+    if (g_object_get_data(G_OBJECT(widget), "split-drop-zone") != NULL) {
+        set_split_drop_target_enabled(widget, enabled);
+    }
+
+    for (GtkWidget *child = gtk_widget_get_first_child(widget); child != NULL; child = gtk_widget_get_next_sibling(child)) {
+        set_split_targets_enabled_in(child, enabled);
+    }
+}
+
+void kosmos_pane_dnd_set_split_targets_enabled(KosmosMainWindow *self, gboolean enabled) {
+    if (!enabled) {
+        set_pane_drag_highlight(self, NULL);
+    }
+
+    set_split_targets_enabled_in(self->content_area, enabled);
+    set_split_targets_enabled_in(self->staged_content_area, enabled);
 }
 
 static gboolean split_zone_contains_point(GtkWidget *zone, GtkWidget *source, double source_x, double source_y) {
@@ -459,6 +502,7 @@ static void pane_drag_update(GtkGestureDrag *gesture, double offset_x, double of
         drag->active = TRUE;
         kosmos_tabbed_pane_clear_pending_activation(drag->view);
         g_object_set_data(G_OBJECT(drag->view), "tab-press-active", NULL);
+        kosmos_pane_dnd_set_split_targets_enabled(drag->window, TRUE);
         show_pane_drag_preview(drag);
         gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
     }
@@ -486,6 +530,7 @@ static void pane_drag_end(GtkGestureDrag *gesture, double offset_x, double offse
     drag->active = FALSE;
     set_pane_drag_highlight(drag->window, NULL);
     clear_pane_drag_preview(drag);
+    kosmos_pane_dnd_set_split_targets_enabled(drag->window, FALSE);
     if (!has_zone) {
         return;
     }
@@ -634,6 +679,8 @@ static GtkWidget *create_split_drop_target(
     zone->axis = axis;
     zone->new_pane_first = new_pane_first;
     g_object_set_data_full(G_OBJECT(target), "split-drop-zone", zone, g_free);
+    g_object_set_data(G_OBJECT(target), "split-drop-receiver", drop_receiver);
+    g_object_set_data(G_OBJECT(target), "split-drop-tab-view", GTK_WIDGET(tab_view));
     g_object_set_data(G_OBJECT(target), "split-drop-highlight", highlight);
 
     g_object_set_data(G_OBJECT(motion), "split-drop-highlight", highlight);
@@ -641,6 +688,7 @@ static GtkWidget *create_split_drop_target(
     g_signal_connect(motion, "motion", G_CALLBACK(show_split_drop_highlight), NULL);
     g_signal_connect(motion, "leave", G_CALLBACK(hide_split_drop_highlight), NULL);
     gtk_widget_add_controller(target, motion);
+    set_split_drop_target_enabled(target, FALSE);
 
     return target;
 }
@@ -657,6 +705,7 @@ static void add_split_drop_zone(
     gtk_widget_set_valign(target, valign);
     gtk_widget_set_size_request(target, width, height);
     gtk_overlay_add_overlay(overlay, target);
+    set_split_drop_target_enabled(target, FALSE);
 }
 
 GtkWidget *kosmos_pane_dnd_create_split_overlay(KosmosMainWindow *self, AdwTabView *tab_view, guint64 pane_id) {

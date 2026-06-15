@@ -96,6 +96,7 @@ gboolean kosmos_tabbed_pane_update_from_pane_view(
 void kosmos_tabbed_pane_clear_pending_activation(AdwTabView *view);
 
 void kosmos_pane_dnd_install_css(GtkWidget *widget);
+void kosmos_pane_dnd_set_split_targets_enabled(KosmosMainWindow *self, gboolean enabled);
 GtkWidget *kosmos_pane_dnd_create_split_overlay(KosmosMainWindow *self, AdwTabView *tab_view, guint64 pane_id);
 AdwTabView *kosmos_pane_dnd_create_split_sink_for_detached_tab(AdwTabView *view, gpointer user_data);
 void kosmos_pane_dnd_clear_detached_tab_transfer(KosmosMainWindow *self);

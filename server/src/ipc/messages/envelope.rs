@@ -62,6 +62,7 @@ pub(crate) enum Domain {
     Workspace,
     Pane,
     Tab,
+    FileTree,
 }
 
 #[derive(Debug, Serialize)]

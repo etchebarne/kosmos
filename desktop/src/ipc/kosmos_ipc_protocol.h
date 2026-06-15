@@ -8,6 +8,7 @@ typedef enum {
     KOSMOS_IPC_DOMAIN_WORKSPACE,
     KOSMOS_IPC_DOMAIN_PANE,
     KOSMOS_IPC_DOMAIN_TAB,
+    KOSMOS_IPC_DOMAIN_FILE_TREE,
 } KosmosIpcDomain;
 
 typedef enum {

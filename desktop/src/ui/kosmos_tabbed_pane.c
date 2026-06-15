@@ -1,5 +1,6 @@
 #include "ui/kosmos_main_window_private.h"
 #include "tabs/kosmos_blank_tab.h"
+#include "tabs/kosmos_file_tree_tab.h"
 
 typedef struct {
     guint64 workspace_id;
@@ -23,6 +24,11 @@ typedef struct {
     guint64 pane_id;
     guint64 tab_id;
 } TabKindChangeRequest;
+
+typedef struct {
+    KosmosMainWindow *window;
+    AdwTabView *view;
+} DeferredSplitTargetDisable;
 
 void kosmos_tabbed_pane_clear_pending_activation(AdwTabView *view) {
     g_object_set_data(G_OBJECT(view), "pending-tab-activation", NULL);
@@ -69,6 +75,22 @@ static void deferred_tab_activation_free(DeferredTabActivation *activation) {
     g_free(activation);
 }
 
+static void deferred_split_target_disable_free(DeferredSplitTargetDisable *disable) {
+    g_object_unref(disable->window);
+    g_object_unref(disable->view);
+    g_free(disable);
+}
+
+static gboolean finish_split_target_disable(gpointer user_data) {
+    DeferredSplitTargetDisable *disable = user_data;
+
+    if (!adw_tab_view_get_is_transferring_page(disable->view) && !disable->window->splitting_detached_tab) {
+        kosmos_pane_dnd_set_split_targets_enabled(disable->window, FALSE);
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
 static gboolean finish_pending_tab_activation(gpointer user_data) {
     DeferredTabActivation *activation = user_data;
     AdwTabView *view = activation->view;
@@ -111,11 +133,19 @@ static void tab_bar_released(GtkGestureClick *gesture, int n_press, double x, do
 
 static void tab_transfer_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
     (void)pspec;
-    (void)user_data;
 
+    KosmosMainWindow *self = KOSMOS_MAIN_WINDOW(user_data);
     AdwTabView *view = ADW_TAB_VIEW(object);
-    if (adw_tab_view_get_is_transferring_page(view)) {
+    gboolean transferring = adw_tab_view_get_is_transferring_page(view);
+
+    if (transferring) {
+        kosmos_pane_dnd_set_split_targets_enabled(self, TRUE);
         kosmos_tabbed_pane_clear_pending_activation(view);
+    } else {
+        DeferredSplitTargetDisable *disable = g_new(DeferredSplitTargetDisable, 1);
+        disable->window = g_object_ref(self);
+        disable->view = g_object_ref(view);
+        g_timeout_add_full(G_PRIORITY_DEFAULT, 16, finish_split_target_disable, disable, (GDestroyNotify)deferred_split_target_disable_free);
     }
 }
 
@@ -387,6 +417,9 @@ static GtkWidget *create_tab_content_child(
 ) {
     if (g_strcmp0(tab_kind_or_blank(kind), "blank") == 0) {
         return create_blank_tab_content(self, workspace_id, pane_id, tab_id);
+    }
+    if (g_strcmp0(tab_kind_or_blank(kind), "fileTree") == 0) {
+        return kosmos_file_tree_tab_create(self->ipc_client, workspace_id);
     }
 
     return create_unimplemented_tab_content(kind);
@@ -711,7 +744,7 @@ GtkWidget *kosmos_tabbed_pane_create(KosmosMainWindow *self, JsonObject *pane, g
     gtk_box_append(GTK_BOX(container), GTK_WIDGET(tab_bar));
     gtk_box_append(GTK_BOX(container), kosmos_pane_dnd_create_split_overlay(self, tab_view, pane_id));
     g_signal_connect(tab_view, "notify::selected-page", G_CALLBACK(activate_selected_tab), self);
-    g_signal_connect(tab_view, "notify::is-transferring-page", G_CALLBACK(tab_transfer_changed), NULL);
+    g_signal_connect(tab_view, "notify::is-transferring-page", G_CALLBACK(tab_transfer_changed), self);
     g_signal_connect(tab_view, "close-page", G_CALLBACK(close_tab), self);
     g_signal_connect(tab_view, "create-window", G_CALLBACK(kosmos_pane_dnd_create_split_sink_for_detached_tab), self);
     g_signal_connect(tab_view, "page-detached", G_CALLBACK(tab_detached), NULL);

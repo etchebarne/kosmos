@@ -64,6 +64,14 @@ gboolean kosmos_ipc_client_activate_workspace(
     GError **error
 );
 
+gboolean kosmos_ipc_client_list_file_tree(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
 gboolean kosmos_ipc_client_activate_pane(
     KosmosIpcClient *self,
     guint64 workspace_id,

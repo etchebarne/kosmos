@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::file_tree::{FileTree, FileTreeError, FileTreeOptions};
 use crate::tree::{
     Pane, PaneId, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
@@ -43,6 +44,22 @@ impl State {
 
     pub fn workspaces(&self) -> &WorkspaceList {
         &self.workspaces
+    }
+
+    pub fn file_tree(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(FileTreeError::WorkspaceUnavailable)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(FileTreeError::WorkspaceUnavailable)?;
+
+        FileTree::read(workspace.directory(), options)
     }
 
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {

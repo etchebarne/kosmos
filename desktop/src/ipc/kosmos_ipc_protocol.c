@@ -8,6 +8,8 @@ const char *kosmos_ipc_domain_to_string(KosmosIpcDomain domain) {
         return "pane";
     case KOSMOS_IPC_DOMAIN_TAB:
         return "tab";
+    case KOSMOS_IPC_DOMAIN_FILE_TREE:
+        return "fileTree";
     }
 
     g_return_val_if_reached("workspace");
