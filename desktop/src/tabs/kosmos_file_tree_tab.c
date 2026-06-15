@@ -300,6 +300,19 @@ static GtkTreeListRow *tree_row_in_ancestors(GtkWidget *widget) {
 }
 
 static GtkTreeListRow *tree_row_for_picked_widget(GtkWidget *widget) {
+    gboolean picked_list_item = FALSE;
+
+    for (GtkWidget *ancestor = widget; ancestor != NULL; ancestor = gtk_widget_get_parent(ancestor)) {
+        if (g_strcmp0(G_OBJECT_TYPE_NAME(ancestor), "GtkListItemWidget") == 0) {
+            picked_list_item = TRUE;
+            break;
+        }
+    }
+
+    if (!picked_list_item) {
+        return NULL;
+    }
+
     GtkTreeListRow *tree_row = tree_row_in_ancestors(widget);
 
     return tree_row == NULL ? tree_row_in_descendants(widget) : tree_row;
