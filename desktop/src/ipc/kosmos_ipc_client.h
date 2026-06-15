@@ -96,6 +96,16 @@ gboolean kosmos_ipc_client_move_pane(
     GError **error
 );
 
+gboolean kosmos_ipc_client_resize_pane_split(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 split_id,
+    double ratio,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
 gboolean kosmos_ipc_client_open_tab(
     KosmosIpcClient *self,
     guint64 workspace_id,

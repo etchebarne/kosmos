@@ -32,6 +32,11 @@ static void activate_workspace(GtkWidget *button, gpointer user_data) {
     KosmosMainWindow *self = KOSMOS_MAIN_WINDOW(user_data);
     guint64 *workspace_id = g_object_get_data(G_OBJECT(button), "workspace-id");
 
+    if (GTK_IS_TOGGLE_BUTTON(button) && !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button))) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(button), TRUE);
+        return;
+    }
+
     if (workspace_id == NULL || !kosmos_main_window_ensure_connected(self)) {
         return;
     }
@@ -254,8 +259,12 @@ static JsonObject *find_active_workspace(JsonArray *workspaces, guint64 active_w
 }
 
 void kosmos_main_window_apply_workspace_state(KosmosMainWindow *self, JsonNode *state) {
+    gboolean was_applying = self->applying_server_state;
+    self->applying_server_state = TRUE;
+
     if (state == NULL || !JSON_NODE_HOLDS_OBJECT(state)) {
         kosmos_main_window_set_status(self, "Workspace state is unavailable.");
+        self->applying_server_state = was_applying;
         return;
     }
 
@@ -263,6 +272,7 @@ void kosmos_main_window_apply_workspace_state(KosmosMainWindow *self, JsonNode *
     JsonNode *workspaces_node = json_object_get_member(result, "workspaces");
     if (workspaces_node == NULL || !JSON_NODE_HOLDS_ARRAY(workspaces_node)) {
         kosmos_main_window_set_status(self, "Workspace state is missing workspaces.");
+        self->applying_server_state = was_applying;
         return;
     }
 
@@ -306,22 +316,43 @@ void kosmos_main_window_apply_workspace_state(KosmosMainWindow *self, JsonNode *
 
     (void)workspace_count;
     if (active_workspace != NULL) {
+        gboolean hide_until_layout_applied = gtk_widget_get_first_child(self->content_area) != NULL &&
+            (!self->has_rendered_workspace || self->rendered_workspace_id != active_workspace_id);
         char *layout_signature = kosmos_pane_layout_create_signature(active_workspace);
+
+        if (hide_until_layout_applied) {
+            kosmos_pane_layout_begin_hidden_apply(self);
+        }
+
         if (layout_signature != NULL &&
             self->layout_signature != NULL &&
             g_strcmp0(layout_signature, self->layout_signature) == 0 &&
             kosmos_pane_layout_update_active_workspace_in_place(self, active_workspace)) {
             g_free(layout_signature);
+            self->rendered_workspace_id = active_workspace_id;
+            self->has_rendered_workspace = TRUE;
+            if (hide_until_layout_applied) {
+                kosmos_pane_layout_finish_hidden_apply(self);
+            }
+            self->applying_server_state = was_applying;
             return;
         }
 
         kosmos_pane_layout_render_active_workspace(self, active_workspace);
         g_clear_pointer(&self->layout_signature, g_free);
         self->layout_signature = layout_signature;
+        self->rendered_workspace_id = active_workspace_id;
+        self->has_rendered_workspace = TRUE;
+        if (hide_until_layout_applied) {
+            kosmos_pane_layout_finish_hidden_apply(self);
+        }
+        self->applying_server_state = was_applying;
         return;
     }
 
     kosmos_pane_layout_render_active_workspace(self, active_workspace);
+    self->has_rendered_workspace = FALSE;
+    self->applying_server_state = was_applying;
 }
 
 GtkWidget *kosmos_workspace_switcher_create(KosmosMainWindow *self) {

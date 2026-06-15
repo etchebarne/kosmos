@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use crate::tree::{
-    Pane, PaneId, SplitAxis, Tab, TabId, TabKind, Workspace, WorkspaceId, WorkspaceList,
+    Pane, PaneId, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
+    WorkspaceList,
 };
 
 #[derive(Debug)]
@@ -9,6 +10,7 @@ pub struct State {
     workspaces: WorkspaceList,
     next_workspace_id: u64,
     next_pane_id: u64,
+    next_split_id: u64,
     next_tab_id: u64,
 }
 
@@ -52,13 +54,21 @@ impl State {
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
+        let split_id = self.next_split_id();
         let new_pane = self.blank_pane();
         let Some(workspace) = self.workspace_mut(workspace_id) else {
             return false;
         };
         let pane_id = pane_id.unwrap_or_else(|| workspace.active_pane_id());
 
-        workspace.split_pane_with_new_pane_first(pane_id, axis, new_pane, 0.5, new_pane_first)
+        workspace.split_pane_with_new_pane_first(
+            split_id,
+            pane_id,
+            axis,
+            new_pane,
+            0.5,
+            new_pane_first,
+        )
     }
 
     pub fn activate_pane(&mut self, workspace_id: Option<WorkspaceId>, pane_id: PaneId) -> bool {
@@ -83,11 +93,12 @@ impl State {
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
+        let split_id = self.next_split_id();
         let Some(workspace) = self.workspace_mut(workspace_id) else {
             return false;
         };
 
-        workspace.move_pane_to_split(pane_id, target_pane_id, axis, 0.5, new_pane_first)
+        workspace.move_pane_to_split(split_id, pane_id, target_pane_id, axis, 0.5, new_pane_first)
     }
 
     pub fn open_tab(
@@ -159,6 +170,7 @@ impl State {
         let fallback_tab =
             (source_pane.tabs().len() == 1).then(|| self.next_tab("Blank", TabKind::Blank));
         let new_pane_id = self.next_pane_id();
+        let split_id = self.next_split_id();
 
         let Some(workspace) = self.workspace_mut(workspace_id) else {
             return false;
@@ -176,6 +188,7 @@ impl State {
 
         let new_pane = Pane::new(new_pane_id, tab);
         workspace.split_pane_with_new_pane_first(
+            split_id,
             target_pane_id,
             axis,
             new_pane,
@@ -214,6 +227,22 @@ impl State {
         workspace.reorder_tab_in_pane(pane_id, tab_id, target_index)
     }
 
+    pub fn resize_split(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        split_id: SplitPaneId,
+        ratio: f32,
+    ) -> bool {
+        let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
+            return false;
+        };
+        let Some(workspace) = self.workspace_mut(workspace_id) else {
+            return false;
+        };
+
+        workspace.resize_split(split_id, ratio)
+    }
+
     fn workspace_mut(&mut self, workspace_id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.workspace_mut(workspace_id)
     }
@@ -232,6 +261,12 @@ impl State {
         let pane_id = PaneId::new(self.next_pane_id);
         self.next_pane_id += 1;
         pane_id
+    }
+
+    fn next_split_id(&mut self) -> SplitPaneId {
+        let split_id = SplitPaneId::new(self.next_split_id);
+        self.next_split_id += 1;
+        split_id
     }
 
     fn next_tab_id(&mut self) -> TabId {
@@ -258,6 +293,7 @@ impl Default for State {
             workspaces: WorkspaceList::new(),
             next_workspace_id: 1,
             next_pane_id: 1,
+            next_split_id: 1,
             next_tab_id: 1,
         }
     }
@@ -387,5 +423,25 @@ mod tests {
         assert!(workspace.root().contains_pane(PaneId::new(1)));
         assert!(workspace.root().contains_pane(PaneId::new(2)));
         assert_eq!(workspace.active_pane_id(), PaneId::new(1));
+    }
+
+    #[test]
+    fn resizing_split_updates_server_owned_ratio() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        assert!(state.split_pane(None, None, SplitAxis::Horizontal, false));
+
+        assert!(state.resize_split(None, SplitPaneId::new(1), 0.7));
+        assert!(!state.resize_split(None, SplitPaneId::new(1), 1.0));
+
+        let workspace = state
+            .workspaces()
+            .active_workspace()
+            .expect("workspace should be active");
+        let crate::tree::PaneNode::Split(split) = workspace.root() else {
+            panic!("workspace root should be split");
+        };
+
+        assert_eq!(split.ratio(), 0.7);
     }
 }

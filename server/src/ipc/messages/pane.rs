@@ -1,4 +1,4 @@
-use core::tree::{Pane, PaneId, PaneNode, SplitAxis};
+use core::tree::{Pane, PaneId, PaneNode, SplitAxis, SplitPaneId};
 use serde::{Deserialize, Serialize};
 
 use super::tab::TabSnapshot;
@@ -29,6 +29,14 @@ pub(crate) struct MovePaneParams {
     pub(crate) new_pane_first: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResizeSplitParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) split_id: SplitPaneIdParam,
+    pub(crate) ratio: f32,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct WorkspaceIdParam(u64);
 
@@ -43,6 +51,15 @@ pub(crate) struct PaneIdParam(u64);
 
 impl From<PaneIdParam> for PaneId {
     fn from(value: PaneIdParam) -> Self {
+        Self::new(value.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub(crate) struct SplitPaneIdParam(u64);
+
+impl From<SplitPaneIdParam> for SplitPaneId {
+    fn from(value: SplitPaneIdParam) -> Self {
         Self::new(value.0)
     }
 }
@@ -79,6 +96,7 @@ pub(crate) enum PaneNodeSnapshot {
         pane: PaneSnapshot,
     },
     Split {
+        id: u64,
         axis: SplitAxisPayload,
         ratio: f32,
         first: Box<PaneNodeSnapshot>,
@@ -93,6 +111,7 @@ impl PaneNodeSnapshot {
                 pane: PaneSnapshot::from_pane(pane),
             },
             PaneNode::Split(split) => Self::Split {
+                id: split.id().value(),
                 axis: split.axis().into(),
                 ratio: split.ratio(),
                 first: Box::new(Self::from_node(split.first())),

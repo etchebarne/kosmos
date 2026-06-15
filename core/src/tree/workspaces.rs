@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::panes::{Pane, PaneId, PaneNode, SplitAxis};
+use super::panes::{Pane, PaneId, PaneNode, SplitAxis, SplitPaneId};
 use super::tabs::{Tab, TabId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -104,12 +104,18 @@ impl Workspace {
         }
     }
 
-    pub fn split_active_pane(&mut self, axis: SplitAxis, new_pane: Pane, ratio: f32) -> bool {
+    pub fn split_active_pane(
+        &mut self,
+        split_id: SplitPaneId,
+        axis: SplitAxis,
+        new_pane: Pane,
+        ratio: f32,
+    ) -> bool {
         let new_pane_id = new_pane.id();
 
         if self
             .root
-            .split_pane(self.active_pane, axis, new_pane, ratio)
+            .split_pane(split_id, self.active_pane, axis, new_pane, ratio)
         {
             self.active_pane = new_pane_id;
             true
@@ -196,6 +202,7 @@ impl Workspace {
 
     pub fn split_pane_with_new_pane_first(
         &mut self,
+        split_id: SplitPaneId,
         pane_id: PaneId,
         axis: SplitAxis,
         new_pane: Pane,
@@ -204,10 +211,14 @@ impl Workspace {
     ) -> bool {
         let new_pane_id = new_pane.id();
 
-        if self
-            .root
-            .split_pane_with_new_pane_first(pane_id, axis, new_pane, ratio, new_pane_first)
-        {
+        if self.root.split_pane_with_new_pane_first(
+            split_id,
+            pane_id,
+            axis,
+            new_pane,
+            ratio,
+            new_pane_first,
+        ) {
             self.active_pane = new_pane_id;
             true
         } else {
@@ -217,6 +228,7 @@ impl Workspace {
 
     pub fn move_pane_to_split(
         &mut self,
+        split_id: SplitPaneId,
         pane_id: PaneId,
         target_pane_id: PaneId,
         axis: SplitAxis,
@@ -236,13 +248,24 @@ impl Workspace {
         };
         let pane_id = pane.id();
 
-        if !root.split_pane_with_new_pane_first(target_pane_id, axis, pane, ratio, new_pane_first) {
+        if !root.split_pane_with_new_pane_first(
+            split_id,
+            target_pane_id,
+            axis,
+            pane,
+            ratio,
+            new_pane_first,
+        ) {
             return false;
         }
 
         self.root = root;
         self.active_pane = pane_id;
         true
+    }
+
+    pub fn resize_split(&mut self, split_id: SplitPaneId, ratio: f32) -> bool {
+        self.root.set_split_ratio(split_id, ratio)
     }
 
     fn remove_empty_pane(&mut self, pane_id: PaneId, fallback_pane: Pane) {
@@ -426,7 +449,12 @@ mod tests {
     fn splitting_active_pane_focuses_new_pane() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
 
-        assert!(workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5));
+        assert!(workspace.split_active_pane(
+            SplitPaneId::new(1),
+            SplitAxis::Vertical,
+            pane(2, 2),
+            0.5,
+        ));
 
         assert_eq!(workspace.active_pane_id(), PaneId::new(2));
         assert!(workspace.root().contains_pane(PaneId::new(1)));
@@ -436,7 +464,7 @@ mod tests {
     #[test]
     fn closing_last_tab_removes_pane() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
-        workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5);
+        workspace.split_active_pane(SplitPaneId::new(1), SplitAxis::Vertical, pane(2, 2), 0.5);
 
         let removed_tab = workspace.close_tab(PaneId::new(2), TabId::new(2), pane(3, 3));
 
@@ -449,7 +477,7 @@ mod tests {
     #[test]
     fn failed_tab_activation_keeps_active_pane() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
-        workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5);
+        workspace.split_active_pane(SplitPaneId::new(1), SplitAxis::Vertical, pane(2, 2), 0.5);
         workspace.activate_pane(PaneId::new(1));
 
         assert!(!workspace.activate_tab(PaneId::new(2), TabId::new(999)));
@@ -460,7 +488,7 @@ mod tests {
     #[test]
     fn failed_tab_reorder_keeps_active_pane() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
-        workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5);
+        workspace.split_active_pane(SplitPaneId::new(1), SplitAxis::Vertical, pane(2, 2), 0.5);
         workspace.activate_pane(PaneId::new(1));
 
         assert!(!workspace.reorder_tab_in_pane(PaneId::new(2), TabId::new(999), 0,));
@@ -471,8 +499,9 @@ mod tests {
     #[test]
     fn closing_inactive_empty_pane_keeps_active_pane_when_it_still_exists() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
-        workspace.split_active_pane(SplitAxis::Horizontal, pane(2, 2), 0.5);
+        workspace.split_active_pane(SplitPaneId::new(1), SplitAxis::Horizontal, pane(2, 2), 0.5);
         workspace.split_pane_with_new_pane_first(
+            SplitPaneId::new(2),
             PaneId::new(1),
             SplitAxis::Vertical,
             pane(3, 3),
@@ -491,8 +520,9 @@ mod tests {
     #[test]
     fn moving_pane_splits_target_with_existing_pane() {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
-        workspace.split_active_pane(SplitAxis::Horizontal, pane(2, 2), 0.5);
+        workspace.split_active_pane(SplitPaneId::new(1), SplitAxis::Horizontal, pane(2, 2), 0.5);
         workspace.split_pane_with_new_pane_first(
+            SplitPaneId::new(2),
             PaneId::new(1),
             SplitAxis::Vertical,
             pane(3, 3),
@@ -501,6 +531,7 @@ mod tests {
         );
 
         assert!(workspace.move_pane_to_split(
+            SplitPaneId::new(3),
             PaneId::new(3),
             PaneId::new(2),
             SplitAxis::Horizontal,
@@ -530,6 +561,7 @@ mod tests {
         let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
 
         assert!(workspace.move_pane_to_split(
+            SplitPaneId::new(1),
             PaneId::new(1),
             PaneId::new(1),
             SplitAxis::Horizontal,

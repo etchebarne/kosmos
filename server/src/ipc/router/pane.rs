@@ -1,5 +1,7 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
-use super::super::messages::pane::{ActivatePaneParams, MovePaneParams, SplitPaneParams};
+use super::super::messages::pane::{
+    ActivatePaneParams, MovePaneParams, ResizeSplitParams, SplitPaneParams,
+};
 use super::{command_response, parse_params, unsupported_action};
 
 pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
@@ -7,6 +9,7 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "split" => split_pane(state, request),
         "activate" => activate_pane(state, request),
         "move" => move_pane(state, request),
+        "resize" => resize_split(state, request),
         _ => unsupported_action(request),
     }
 }
@@ -56,6 +59,23 @@ fn activate_pane(state: &mut core::State, request: &RequestEnvelope) -> ServerMe
             state,
             "pane.not_found",
             "pane does not exist",
+        ),
+        Err(response) => response,
+    }
+}
+
+fn resize_split(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<ResizeSplitParams>(request) {
+        Ok(params) => command_response(
+            request.id,
+            state.resize_split(
+                params.workspace_id.map(Into::into),
+                params.split_id.into(),
+                params.ratio,
+            ),
+            state,
+            "pane.resize_failed",
+            "pane split could not be resized",
         ),
         Err(response) => response,
     }

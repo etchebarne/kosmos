@@ -22,6 +22,15 @@ void kosmos_main_window_clear_content_area(KosmosMainWindow *self) {
     }
     g_clear_pointer(&self->layout_signature, g_free);
 
+    if (self->staged_content_area != NULL) {
+        gtk_overlay_remove_overlay(GTK_OVERLAY(self->content_overlay), self->staged_content_area);
+        self->staged_content_area = NULL;
+    }
+    self->pending_layout_applies = 0;
+    self->hiding_layout_apply = FALSE;
+    self->has_rendered_workspace = FALSE;
+    gtk_widget_set_opacity(self->content_area, 1.0);
+
     GtkWidget *child = gtk_widget_get_first_child(self->content_area);
 
     while (child != NULL) {
@@ -172,7 +181,6 @@ static GtkWidget *create_header(KosmosMainWindow *self) {
 
 static void kosmos_main_window_init(KosmosMainWindow *self) {
     self->workspace_buttons = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
-    self->paned_ratios = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     self->pane_views = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
     kosmos_pane_dnd_install_css(GTK_WIDGET(self));
 
@@ -200,7 +208,6 @@ static void kosmos_main_window_finalize(GObject *object) {
     kosmos_pane_dnd_clear_detached_tab_transfer(self);
     g_clear_object(&self->ipc_client);
     g_clear_pointer(&self->workspace_buttons, g_hash_table_unref);
-    g_clear_pointer(&self->paned_ratios, g_hash_table_unref);
     g_clear_pointer(&self->pane_views, g_hash_table_unref);
     g_clear_pointer(&self->layout_signature, g_free);
 

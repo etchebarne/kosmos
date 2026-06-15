@@ -87,3 +87,31 @@ gboolean kosmos_ipc_client_move_pane(
     json_object_unref(params);
     return requested;
 }
+
+gboolean kosmos_ipc_client_resize_pane_split(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 split_id,
+    double ratio,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+) {
+    JsonObject *params = json_object_new();
+    json_object_set_int_member(params, "workspaceId", (gint64)workspace_id);
+    json_object_set_int_member(params, "splitId", (gint64)split_id);
+    json_object_set_double_member(params, "ratio", ratio);
+
+    gboolean requested = kosmos_ipc_client_request(
+        self,
+        KOSMOS_IPC_DOMAIN_PANE,
+        KOSMOS_IPC_ACTION_RESIZE,
+        params,
+        result,
+        cancellable,
+        error
+    );
+
+    json_object_unref(params);
+    return requested;
+}

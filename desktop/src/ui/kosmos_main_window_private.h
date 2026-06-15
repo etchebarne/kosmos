@@ -15,15 +15,20 @@ struct _KosmosMainWindow {
     GtkWidget *add_workspace_button;
     GtkWidget *content_overlay;
     GtkWidget *content_area;
+    GtkWidget *staged_content_area;
     GHashTable *workspace_buttons;
-    GHashTable *paned_ratios;
     GHashTable *pane_views;
     char *layout_signature;
+    guint64 rendered_workspace_id;
+    guint pending_layout_applies;
+    guint layout_apply_serial;
     AdwTabView *detached_tab_sink;
     GtkWindow *detached_tab_window;
     gboolean splitting_detached_tab;
     gboolean suppress_tab_detach;
     gboolean applying_server_state;
+    gboolean has_rendered_workspace;
+    gboolean hiding_layout_apply;
 };
 
 typedef struct {
@@ -63,6 +68,8 @@ GtkWidget *kosmos_workspace_switcher_ensure_add_button(KosmosMainWindow *self, g
 void kosmos_workspace_switcher_clear(KosmosMainWindow *self);
 
 char *kosmos_pane_layout_create_signature(JsonObject *workspace);
+void kosmos_pane_layout_begin_hidden_apply(KosmosMainWindow *self);
+void kosmos_pane_layout_finish_hidden_apply(KosmosMainWindow *self);
 gboolean kosmos_pane_layout_update_active_workspace_in_place(KosmosMainWindow *self, JsonObject *workspace);
 void kosmos_pane_layout_render_active_workspace(KosmosMainWindow *self, JsonObject *workspace);
 

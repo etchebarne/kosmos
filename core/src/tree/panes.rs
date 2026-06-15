@@ -13,6 +13,19 @@ impl PaneId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SplitPaneId(u64);
+
+impl SplitPaneId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaneNode {
     Leaf(Pane),
@@ -24,8 +37,14 @@ impl PaneNode {
         Self::Leaf(pane)
     }
 
-    pub fn split(axis: SplitAxis, ratio: f32, first: PaneNode, second: PaneNode) -> Self {
-        Self::Split(SplitPane::new(axis, ratio, first, second))
+    pub fn split(
+        id: SplitPaneId,
+        axis: SplitAxis,
+        ratio: f32,
+        first: PaneNode,
+        second: PaneNode,
+    ) -> Self {
+        Self::Split(SplitPane::new(id, axis, ratio, first, second))
     }
 
     pub fn find_pane(&self, pane_id: PaneId) -> Option<&Pane> {
@@ -73,16 +92,18 @@ impl PaneNode {
 
     pub fn split_pane(
         &mut self,
+        split_id: SplitPaneId,
         pane_id: PaneId,
         axis: SplitAxis,
         new_pane: Pane,
         ratio: f32,
     ) -> bool {
-        self.split_pane_with_new_pane_first(pane_id, axis, new_pane, ratio, false)
+        self.split_pane_with_new_pane_first(split_id, pane_id, axis, new_pane, ratio, false)
     }
 
     pub fn split_pane_with_new_pane_first(
         &mut self,
+        split_id: SplitPaneId,
         pane_id: PaneId,
         axis: SplitAxis,
         new_pane: Pane,
@@ -100,9 +121,21 @@ impl PaneNode {
                 };
 
                 *self = if new_pane_first {
-                    Self::split(axis, ratio, Self::Leaf(new_pane), Self::Leaf(existing_pane))
+                    Self::split(
+                        split_id,
+                        axis,
+                        ratio,
+                        Self::Leaf(new_pane),
+                        Self::Leaf(existing_pane),
+                    )
                 } else {
-                    Self::split(axis, ratio, Self::Leaf(existing_pane), Self::Leaf(new_pane))
+                    Self::split(
+                        split_id,
+                        axis,
+                        ratio,
+                        Self::Leaf(existing_pane),
+                        Self::Leaf(new_pane),
+                    )
                 };
 
                 true
@@ -111,6 +144,7 @@ impl PaneNode {
             Self::Split(split) => {
                 if split.first().contains_pane(pane_id) {
                     split.first_mut().split_pane_with_new_pane_first(
+                        split_id,
                         pane_id,
                         axis,
                         new_pane,
@@ -119,6 +153,7 @@ impl PaneNode {
                     )
                 } else {
                     split.second_mut().split_pane_with_new_pane_first(
+                        split_id,
                         pane_id,
                         axis,
                         new_pane,
@@ -137,10 +172,25 @@ impl PaneNode {
             Self::Split(split) => remove_pane_from_split(split, pane_id),
         }
     }
+
+    pub fn set_split_ratio(&mut self, split_id: SplitPaneId, ratio: f32) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split(split) if split.id() == split_id => split.try_set_ratio(ratio),
+            Self::Split(split) => {
+                if split.first_mut().set_split_ratio(split_id, ratio) {
+                    true
+                } else {
+                    split.second_mut().set_split_ratio(split_id, ratio)
+                }
+            }
+        }
+    }
 }
 
 fn remove_pane_from_split(split: SplitPane, pane_id: PaneId) -> (Option<PaneNode>, Option<Pane>) {
     let SplitPane {
+        id,
         axis,
         ratio,
         first,
@@ -150,7 +200,7 @@ fn remove_pane_from_split(split: SplitPane, pane_id: PaneId) -> (Option<PaneNode
     let (first_node, removed_pane) = (*first).remove_pane(pane_id);
     if let Some(removed_pane) = removed_pane {
         let node = match first_node {
-            Some(first_node) => PaneNode::split(axis, ratio, first_node, *second),
+            Some(first_node) => PaneNode::split(id, axis, ratio, first_node, *second),
             None => *second,
         };
 
@@ -161,7 +211,7 @@ fn remove_pane_from_split(split: SplitPane, pane_id: PaneId) -> (Option<PaneNode
     let (second_node, removed_pane) = (*second).remove_pane(pane_id);
     if let Some(removed_pane) = removed_pane {
         let node = match second_node {
-            Some(second_node) => PaneNode::split(axis, ratio, first_node, second_node),
+            Some(second_node) => PaneNode::split(id, axis, ratio, first_node, second_node),
             None => first_node,
         };
 
@@ -171,13 +221,14 @@ fn remove_pane_from_split(split: SplitPane, pane_id: PaneId) -> (Option<PaneNode
     let second_node = second_node.expect("pane removal without a removed pane must keep the node");
 
     (
-        Some(PaneNode::split(axis, ratio, first_node, second_node)),
+        Some(PaneNode::split(id, axis, ratio, first_node, second_node)),
         None,
     )
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SplitPane {
+    id: SplitPaneId,
     axis: SplitAxis,
     ratio: f32,
     first: Box<PaneNode>,
@@ -185,15 +236,26 @@ pub struct SplitPane {
 }
 
 impl SplitPane {
-    pub fn new(axis: SplitAxis, ratio: f32, first: PaneNode, second: PaneNode) -> Self {
+    pub fn new(
+        id: SplitPaneId,
+        axis: SplitAxis,
+        ratio: f32,
+        first: PaneNode,
+        second: PaneNode,
+    ) -> Self {
         validate_split_ratio(ratio);
 
         Self {
+            id,
             axis,
             ratio,
             first: Box::new(first),
             second: Box::new(second),
         }
+    }
+
+    pub fn id(&self) -> SplitPaneId {
+        self.id
     }
 
     pub fn axis(&self) -> SplitAxis {
@@ -208,6 +270,15 @@ impl SplitPane {
         validate_split_ratio(ratio);
 
         self.ratio = ratio;
+    }
+
+    pub fn try_set_ratio(&mut self, ratio: f32) -> bool {
+        if !is_valid_split_ratio(ratio) {
+            return false;
+        }
+
+        self.ratio = ratio;
+        true
     }
 
     pub fn first(&self) -> &PaneNode {
@@ -347,9 +418,13 @@ impl Pane {
 
 fn validate_split_ratio(ratio: f32) {
     assert!(
-        ratio.is_finite() && ratio > 0.0 && ratio < 1.0,
+        is_valid_split_ratio(ratio),
         "split ratio must be a finite value between 0.0 and 1.0"
     );
+}
+
+fn is_valid_split_ratio(ratio: f32) -> bool {
+    ratio.is_finite() && ratio > 0.0 && ratio < 1.0
 }
 
 #[cfg(test)]
@@ -399,7 +474,13 @@ mod tests {
         );
         let mut root = PaneNode::leaf(first_pane);
 
-        assert!(root.split_pane(PaneId::new(1), SplitAxis::Horizontal, second_pane, 0.5));
+        assert!(root.split_pane(
+            SplitPaneId::new(1),
+            PaneId::new(1),
+            SplitAxis::Horizontal,
+            second_pane,
+            0.5,
+        ));
 
         assert!(root.contains_pane(PaneId::new(1)));
         assert!(root.contains_pane(PaneId::new(2)));
@@ -418,6 +499,7 @@ mod tests {
         let mut root = PaneNode::leaf(first_pane);
 
         assert!(root.split_pane_with_new_pane_first(
+            SplitPaneId::new(1),
             PaneId::new(1),
             SplitAxis::Horizontal,
             second_pane,
@@ -444,6 +526,7 @@ mod tests {
             Tab::new(TabId::new(2), "Second", TabKind::Blank),
         );
         let root = PaneNode::split(
+            SplitPaneId::new(1),
             SplitAxis::Horizontal,
             0.5,
             PaneNode::leaf(first_pane),
