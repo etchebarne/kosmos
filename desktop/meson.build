@@ -18,8 +18,15 @@ sources = files(
   'src/main.c',
   'src/app/kosmos_application.c',
   'src/ipc/kosmos_ipc_client.c',
+  'src/ipc/kosmos_ipc_pane.c',
   'src/ipc/kosmos_ipc_protocol.c',
+  'src/ipc/kosmos_ipc_tab.c',
+  'src/ipc/kosmos_ipc_workspace.c',
   'src/ui/kosmos_main_window.c',
+  'src/ui/kosmos_pane_dnd.c',
+  'src/ui/kosmos_pane_layout.c',
+  'src/ui/kosmos_tabbed_pane.c',
+  'src/ui/kosmos_workspace_switcher.c',
 )
 
 executable(
