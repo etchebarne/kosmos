@@ -146,12 +146,16 @@ impl Workspace {
         tab_id: TabId,
         target_index: usize,
     ) -> bool {
-        if let Some(pane) = self.root.find_pane_mut(pane_id) {
+        let reordered = self
+            .root
+            .find_pane_mut(pane_id)
+            .is_some_and(|pane| pane.reorder_tab(tab_id, target_index));
+
+        if reordered {
             self.active_pane = pane_id;
-            pane.reorder_tab(tab_id, target_index)
-        } else {
-            false
         }
+
+        reordered
     }
 
     pub fn activate_tab_in_active_pane(&mut self, tab_id: TabId) -> bool {
@@ -160,12 +164,16 @@ impl Workspace {
     }
 
     pub fn activate_tab(&mut self, pane_id: PaneId, tab_id: TabId) -> bool {
-        if let Some(pane) = self.root.find_pane_mut(pane_id) {
+        let activated = self
+            .root
+            .find_pane_mut(pane_id)
+            .is_some_and(|pane| pane.activate_tab(tab_id));
+
+        if activated {
             self.active_pane = pane_id;
-            pane.activate_tab(tab_id)
-        } else {
-            false
         }
+
+        activated
     }
 
     pub fn close_tab(
@@ -238,6 +246,7 @@ impl Workspace {
     }
 
     fn remove_empty_pane(&mut self, pane_id: PaneId, fallback_pane: Pane) {
+        let previous_active_pane = self.active_pane;
         let fallback_pane_id = fallback_pane.id();
         let old_root = std::mem::replace(&mut self.root, PaneNode::leaf(fallback_pane));
         let (root, removed_pane) = old_root.remove_pane(pane_id);
@@ -245,7 +254,11 @@ impl Workspace {
         debug_assert!(removed_pane.is_some());
 
         if let Some(root) = root {
-            self.active_pane = root.first_pane_id();
+            self.active_pane = if root.contains_pane(previous_active_pane) {
+                previous_active_pane
+            } else {
+                root.first_pane_id()
+            };
             self.root = root;
         } else {
             self.active_pane = fallback_pane_id;
@@ -431,6 +444,48 @@ mod tests {
         assert!(!workspace.root().contains_pane(PaneId::new(2)));
         assert!(workspace.root().contains_pane(PaneId::new(1)));
         assert_eq!(workspace.root().pane_count(), 1);
+    }
+
+    #[test]
+    fn failed_tab_activation_keeps_active_pane() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
+        workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5);
+        workspace.activate_pane(PaneId::new(1));
+
+        assert!(!workspace.activate_tab(PaneId::new(2), TabId::new(999)));
+
+        assert_eq!(workspace.active_pane_id(), PaneId::new(1));
+    }
+
+    #[test]
+    fn failed_tab_reorder_keeps_active_pane() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
+        workspace.split_active_pane(SplitAxis::Vertical, pane(2, 2), 0.5);
+        workspace.activate_pane(PaneId::new(1));
+
+        assert!(!workspace.reorder_tab_in_pane(PaneId::new(2), TabId::new(999), 0,));
+
+        assert_eq!(workspace.active_pane_id(), PaneId::new(1));
+    }
+
+    #[test]
+    fn closing_inactive_empty_pane_keeps_active_pane_when_it_still_exists() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
+        workspace.split_active_pane(SplitAxis::Horizontal, pane(2, 2), 0.5);
+        workspace.split_pane_with_new_pane_first(
+            PaneId::new(1),
+            SplitAxis::Vertical,
+            pane(3, 3),
+            0.5,
+            false,
+        );
+        workspace.activate_pane(PaneId::new(2));
+
+        let removed_tab = workspace.close_tab(PaneId::new(3), TabId::new(3), pane(4, 4));
+
+        assert_eq!(removed_tab.map(|tab| tab.id()), Some(TabId::new(3)));
+        assert!(!workspace.root().contains_pane(PaneId::new(3)));
+        assert_eq!(workspace.active_pane_id(), PaneId::new(2));
     }
 
     #[test]
