@@ -22,6 +22,15 @@ pub(crate) struct ActivateTabParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SetTabKindParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) kind: TabKindPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CloseTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) pane_id: PaneIdParam,

@@ -1,6 +1,7 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::tab::{
-    ActivateTabParams, CloseTabParams, OpenTabParams, ReorderTabParams, SplitTabParams,
+    ActivateTabParams, CloseTabParams, OpenTabParams, ReorderTabParams, SetTabKindParams,
+    SplitTabParams,
 };
 use super::{command_response, parse_params, unsupported_action};
 
@@ -8,6 +9,7 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
     match request.action.as_str() {
         "open" => open_tab(state, request),
         "activate" => activate_tab(state, request),
+        "setKind" => set_tab_kind(state, request),
         "close" => close_tab(state, request),
         "reorder" => reorder_tab(state, request),
         "split" => split_tab(state, request),
@@ -41,6 +43,24 @@ fn activate_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMes
                 params.workspace_id.map(Into::into),
                 params.pane_id.into(),
                 params.tab_id.into(),
+            ),
+            state,
+            "tab.not_found",
+            "tab does not exist",
+        ),
+        Err(response) => response,
+    }
+}
+
+fn set_tab_kind(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SetTabKindParams>(request) {
+        Ok(params) => command_response(
+            request.id,
+            state.set_tab_kind(
+                params.workspace_id.map(Into::into),
+                params.pane_id.into(),
+                params.tab_id.into(),
+                params.kind.into(),
             ),
             state,
             "tab.not_found",

@@ -1,4 +1,5 @@
 #include "ui/kosmos_main_window_private.h"
+#include "tabs/kosmos_blank_tab.h"
 
 typedef struct {
     guint64 workspace_id;
@@ -15,6 +16,13 @@ typedef struct {
     KosmosMainWindow *window;
     AdwTabView *view;
 } DeferredTabActivation;
+
+typedef struct {
+    KosmosMainWindow *window;
+    guint64 workspace_id;
+    guint64 pane_id;
+    guint64 tab_id;
+} TabKindChangeRequest;
 
 void kosmos_tabbed_pane_clear_pending_activation(AdwTabView *view) {
     g_object_set_data(G_OBJECT(view), "pending-tab-activation", NULL);
@@ -267,13 +275,174 @@ static GtkWidget *create_new_tab_button(guint64 workspace_id, guint64 pane_id) {
     return button;
 }
 
-static GtkWidget *create_tab_content(const char *kind) {
-    (void)kind;
+static const char *tab_kind_or_blank(const char *kind) {
+    return kind == NULL || kind[0] == '\0' ? "blank" : kind;
+}
 
+static const char *tab_kind_title(const char *kind) {
+    kind = tab_kind_or_blank(kind);
+
+    if (g_strcmp0(kind, "fileTree") == 0) {
+        return "File Tree";
+    }
+    if (g_strcmp0(kind, "editor") == 0) {
+        return "Editor";
+    }
+    if (g_strcmp0(kind, "git") == 0) {
+        return "Git";
+    }
+    if (g_strcmp0(kind, "search") == 0) {
+        return "Search";
+    }
+    if (g_strcmp0(kind, "terminal") == 0) {
+        return "Terminal";
+    }
+    if (g_strcmp0(kind, "settings") == 0) {
+        return "Settings";
+    }
+
+    return "Blank";
+}
+
+static void tab_kind_change_request_free(TabKindChangeRequest *request) {
+    g_clear_object(&request->window);
+    g_free(request);
+}
+
+static void request_tab_kind_change(KosmosIpcTabKind kind, gpointer user_data) {
+    TabKindChangeRequest *request = user_data;
+    KosmosMainWindow *self = request->window;
+
+    if (!kosmos_main_window_ensure_connected(self)) {
+        return;
+    }
+
+    GError *error = NULL;
+    JsonNode *state = NULL;
+    kosmos_ipc_client_set_tab_kind(
+        self->ipc_client,
+        request->workspace_id,
+        request->pane_id,
+        request->tab_id,
+        kind,
+        &state,
+        NULL,
+        &error
+    );
+    kosmos_main_window_apply_server_state_or_show_error(self, state, error, "Failed to change tab type");
+
+    g_clear_error(&error);
+    if (state != NULL) {
+        json_node_unref(state);
+    }
+}
+
+static GtkWidget *create_blank_tab_content(
+    KosmosMainWindow *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id
+) {
+    TabKindChangeRequest *request = g_new(TabKindChangeRequest, 1);
+    request->window = g_object_ref(self);
+    request->workspace_id = workspace_id;
+    request->pane_id = pane_id;
+    request->tab_id = tab_id;
+
+    GtkWidget *content = kosmos_blank_tab_create(request_tab_kind_change, request);
+    g_object_set_data_full(
+        G_OBJECT(content),
+        "tab-kind-change-request",
+        request,
+        (GDestroyNotify)tab_kind_change_request_free
+    );
+
+    return content;
+}
+
+static GtkWidget *create_unimplemented_tab_content(const char *kind) {
+    char *text = g_strdup_printf("%s tab content", tab_kind_title(kind));
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *label = gtk_label_new(text);
+
+    g_free(text);
+
     gtk_widget_set_hexpand(content, TRUE);
     gtk_widget_set_vexpand(content, TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_widget_set_vexpand(label, TRUE);
+    gtk_box_append(GTK_BOX(content), label);
+
     return content;
+}
+
+static GtkWidget *create_tab_content_child(
+    KosmosMainWindow *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    const char *kind
+) {
+    if (g_strcmp0(tab_kind_or_blank(kind), "blank") == 0) {
+        return create_blank_tab_content(self, workspace_id, pane_id, tab_id);
+    }
+
+    return create_unimplemented_tab_content(kind);
+}
+
+static GtkWidget *create_tab_content(
+    KosmosMainWindow *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    const char *kind
+) {
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+    gtk_widget_set_hexpand(content, TRUE);
+    gtk_widget_set_vexpand(content, TRUE);
+    gtk_box_append(GTK_BOX(content), create_tab_content_child(self, workspace_id, pane_id, tab_id, kind));
+    g_object_set_data_full(G_OBJECT(content), "tab-kind", g_strdup(tab_kind_or_blank(kind)), g_free);
+
+    return content;
+}
+
+static gboolean tab_content_needs_update(GtkWidget *content, const char *kind) {
+    const char *current_kind = g_object_get_data(G_OBJECT(content), "tab-kind");
+    const char *next_kind = tab_kind_or_blank(kind);
+
+    return g_strcmp0(next_kind, "blank") == 0 || g_strcmp0(current_kind, next_kind) != 0;
+}
+
+static void clear_tab_content(GtkWidget *content) {
+    GtkWidget *child = gtk_widget_get_first_child(content);
+
+    while (child != NULL) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_box_remove(GTK_BOX(content), child);
+        child = next;
+    }
+}
+
+static void update_tab_content(
+    AdwTabPage *page,
+    KosmosMainWindow *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    const char *kind
+) {
+    GtkWidget *content = adw_tab_page_get_child(page);
+
+    if (content == NULL || !GTK_IS_BOX(content) || !tab_content_needs_update(content, kind)) {
+        return;
+    }
+
+    clear_tab_content(content);
+    gtk_box_append(GTK_BOX(content), create_tab_content_child(self, workspace_id, pane_id, tab_id, kind));
+    g_object_set_data_full(G_OBJECT(content), "tab-kind", g_strdup(tab_kind_or_blank(kind)), g_free);
 }
 
 static void configure_tab_page(AdwTabPage *page, guint64 workspace_id, guint64 pane_id, guint64 tab_id, const char *title) {
@@ -402,7 +571,9 @@ gboolean kosmos_tabbed_pane_update_from_pane_view(
                 return FALSE;
             }
 
-            page = adw_tab_view_append(view, create_tab_content(kind));
+            page = adw_tab_view_append(view, create_tab_content(self, workspace_id, pane_id, tab_id, kind));
+        } else {
+            update_tab_content(page, self, workspace_id, pane_id, tab_id, kind);
         }
 
         configure_tab_page(page, workspace_id, pane_id, tab_id, title);
@@ -505,7 +676,7 @@ GtkWidget *kosmos_tabbed_pane_create(KosmosMainWindow *self, JsonObject *pane, g
         }
         kosmos_json_get_string_member(tab, "kind", &kind);
 
-        GtkWidget *content = create_tab_content(kind);
+        GtkWidget *content = create_tab_content(self, workspace_id, pane_id, tab_id, kind);
         AdwTabPage *page = adw_tab_view_append(tab_view, content);
         configure_tab_page(page, workspace_id, pane_id, tab_id, title);
 

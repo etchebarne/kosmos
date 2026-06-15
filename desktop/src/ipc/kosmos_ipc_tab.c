@@ -86,6 +86,36 @@ gboolean kosmos_ipc_client_close_tab(
     return requested;
 }
 
+gboolean kosmos_ipc_client_set_tab_kind(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    KosmosIpcTabKind kind,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+) {
+    JsonObject *params = json_object_new();
+    json_object_set_int_member(params, "workspaceId", (gint64)workspace_id);
+    json_object_set_int_member(params, "paneId", (gint64)pane_id);
+    json_object_set_int_member(params, "tabId", (gint64)tab_id);
+    json_object_set_string_member(params, "kind", kosmos_ipc_tab_kind_to_string(kind));
+
+    gboolean requested = kosmos_ipc_client_request(
+        self,
+        KOSMOS_IPC_DOMAIN_TAB,
+        KOSMOS_IPC_ACTION_SET_KIND,
+        params,
+        result,
+        cancellable,
+        error
+    );
+
+    json_object_unref(params);
+    return requested;
+}
+
 gboolean kosmos_ipc_client_reorder_tab(
     KosmosIpcClient *self,
     guint64 workspace_id,

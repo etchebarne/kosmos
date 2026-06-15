@@ -1,4 +1,4 @@
-use super::tabs::{Tab, TabId};
+use super::tabs::{Tab, TabId, TabKind};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PaneId(u64);
@@ -390,6 +390,15 @@ impl Pane {
         } else {
             false
         }
+    }
+
+    pub fn set_tab_kind(&mut self, tab_id: TabId, kind: TabKind) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id() == tab_id) else {
+            return false;
+        };
+
+        tab.set_kind(kind);
+        true
     }
 
     pub(crate) fn remove_tab(&mut self, tab_id: TabId) -> Option<Tab> {

@@ -127,6 +127,17 @@ gboolean kosmos_ipc_client_activate_tab(
     GError **error
 );
 
+gboolean kosmos_ipc_client_set_tab_kind(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    KosmosIpcTabKind kind,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
 gboolean kosmos_ipc_client_close_tab(
     KosmosIpcClient *self,
     guint64 workspace_id,

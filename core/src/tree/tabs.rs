@@ -39,6 +39,11 @@ impl Tab {
         self.title = title.into();
     }
 
+    pub fn set_kind(&mut self, kind: TabKind) {
+        self.title = kind.default_title().to_owned();
+        self.kind = kind;
+    }
+
     pub fn kind(&self) -> &TabKind {
         &self.kind
     }
@@ -53,4 +58,18 @@ pub enum TabKind {
     Search,
     Terminal,
     Settings,
+}
+
+impl TabKind {
+    pub fn default_title(&self) -> &'static str {
+        match self {
+            Self::Blank => "Blank",
+            Self::FileTree => "File Tree",
+            Self::Editor => "Editor",
+            Self::Git => "Git",
+            Self::Search => "Search",
+            Self::Terminal => "Terminal",
+            Self::Settings => "Settings",
+        }
+    }
 }

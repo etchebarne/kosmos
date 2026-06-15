@@ -28,6 +28,7 @@ typedef enum {
 #define KOSMOS_IPC_ACTION_LIST "list"
 #define KOSMOS_IPC_ACTION_OPEN "open"
 #define KOSMOS_IPC_ACTION_ACTIVATE "activate"
+#define KOSMOS_IPC_ACTION_SET_KIND "setKind"
 #define KOSMOS_IPC_ACTION_CLOSE "close"
 #define KOSMOS_IPC_ACTION_SPLIT "split"
 #define KOSMOS_IPC_ACTION_REORDER "reorder"

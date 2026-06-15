@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::panes::{Pane, PaneId, PaneNode, SplitAxis, SplitPaneId};
-use super::tabs::{Tab, TabId};
+use super::tabs::{Tab, TabId, TabKind};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkspaceId(u64);
@@ -180,6 +180,19 @@ impl Workspace {
         }
 
         activated
+    }
+
+    pub fn set_tab_kind(&mut self, pane_id: PaneId, tab_id: TabId, kind: TabKind) -> bool {
+        let updated = self
+            .root
+            .find_pane_mut(pane_id)
+            .is_some_and(|pane| pane.set_tab_kind(tab_id, kind));
+
+        if updated {
+            self.active_pane = pane_id;
+        }
+
+        updated
     }
 
     pub fn close_tab(

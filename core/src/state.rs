@@ -164,6 +164,23 @@ impl State {
         workspace.activate_tab(pane_id, tab_id)
     }
 
+    pub fn set_tab_kind(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        pane_id: PaneId,
+        tab_id: TabId,
+        kind: TabKind,
+    ) -> bool {
+        let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
+            return false;
+        };
+        let Some(workspace) = self.workspace_mut(workspace_id) else {
+            return false;
+        };
+
+        workspace.set_tab_kind(pane_id, tab_id, kind)
+    }
+
     pub fn split_tab(
         &mut self,
         workspace_id: Option<WorkspaceId>,
@@ -428,6 +445,25 @@ mod tests {
 
         assert_eq!(pane.tabs().len(), 2);
         assert_eq!(pane.active_tab().title(), "Search");
+    }
+
+    #[test]
+    fn setting_tab_kind_updates_kind_and_default_title() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+
+        assert!(state.set_tab_kind(None, PaneId::new(1), TabId::new(1), TabKind::Git));
+
+        let workspace = state
+            .workspaces()
+            .active_workspace()
+            .expect("workspace should be active");
+        let pane = workspace
+            .active_pane()
+            .expect("workspace should have an active pane");
+
+        assert_eq!(pane.active_tab().title(), "Git");
+        assert_eq!(pane.active_tab().kind(), &TabKind::Git);
     }
 
     #[test]
