@@ -8,11 +8,16 @@ use std::thread;
 
 use super::connection;
 
-pub(crate) fn run(socket_path: PathBuf, state: core::State) -> io::Result<()> {
+pub(crate) fn run(
+    socket_path: PathBuf,
+    state: core::State,
+    store: core::persistence::StateStore,
+) -> io::Result<()> {
     prepare_socket_path(&socket_path)?;
 
     let listener = UnixListener::bind(&socket_path)?;
     let state = Arc::new(Mutex::new(state));
+    let store = Arc::new(store);
 
     println!("kosmos server listening on {}", socket_path.display());
 
@@ -20,9 +25,10 @@ pub(crate) fn run(socket_path: PathBuf, state: core::State) -> io::Result<()> {
         match stream {
             Ok(stream) => {
                 let state = Arc::clone(&state);
+                let store = Arc::clone(&store);
 
                 thread::spawn(move || {
-                    if let Err(error) = connection::handle(stream, state) {
+                    if let Err(error) = connection::handle(stream, state, store) {
                         eprintln!("IPC connection failed: {error}");
                     }
                 });

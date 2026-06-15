@@ -7,7 +7,11 @@ use crate::ipc::router;
 
 use super::codec;
 
-pub(crate) fn handle(stream: UnixStream, state: Arc<Mutex<core::State>>) -> io::Result<()> {
+pub(crate) fn handle(
+    stream: UnixStream,
+    state: Arc<Mutex<core::State>>,
+    store: Arc<core::persistence::StateStore>,
+) -> io::Result<()> {
     let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
     let mut writer = stream;
@@ -23,7 +27,22 @@ pub(crate) fn handle(stream: UnixStream, state: Arc<Mutex<core::State>>) -> io::
                     .lock()
                     .map_err(|_| io::Error::other("IPC state mutex was poisoned"))?;
 
-                router::route(&mut state, request)
+                let request_id = request.id;
+                let response = router::route(&mut state, request);
+
+                if response.is_ok() {
+                    if let Err(error) = store.save(&state) {
+                        ServerMessage::error(
+                            request_id,
+                            "persistence.save_failed",
+                            error.to_string(),
+                        )
+                    } else {
+                        response
+                    }
+                } else {
+                    response
+                }
             }
             Err(error) => ServerMessage::error(0, "ipc.invalid_message", error.to_string()),
         };

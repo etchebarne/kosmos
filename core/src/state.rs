@@ -19,6 +19,28 @@ impl State {
         Self::default()
     }
 
+    pub fn from_workspaces(
+        workspaces: Vec<Workspace>,
+        active_workspace_id: Option<WorkspaceId>,
+    ) -> Option<Self> {
+        let mut workspace_list = WorkspaceList::new();
+
+        for workspace in workspaces {
+            if !workspace_list.add_workspace(workspace) {
+                return None;
+            }
+        }
+
+        match active_workspace_id {
+            Some(active_workspace_id) if workspace_list.activate_workspace(active_workspace_id) => {
+            }
+            None if workspace_list.is_empty() => {}
+            _ => return None,
+        }
+
+        Self::from_workspace_list(workspace_list)
+    }
+
     pub fn workspaces(&self) -> &WorkspaceList {
         &self.workspaces
     }
@@ -285,6 +307,81 @@ impl State {
     fn next_tab(&mut self, title: impl Into<String>, kind: TabKind) -> Tab {
         Tab::new(self.next_tab_id(), title, kind)
     }
+
+    fn from_workspace_list(workspaces: WorkspaceList) -> Option<Self> {
+        let next_ids = NextIds::from_workspaces(&workspaces)?;
+
+        Some(Self {
+            workspaces,
+            next_workspace_id: next_ids.workspace_id,
+            next_pane_id: next_ids.pane_id,
+            next_split_id: next_ids.split_id,
+            next_tab_id: next_ids.tab_id,
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+struct MaxIds {
+    workspace_id: u64,
+    pane_id: u64,
+    split_id: u64,
+    tab_id: u64,
+}
+
+impl MaxIds {
+    fn visit_workspace(&mut self, workspace: &Workspace) {
+        self.workspace_id = self.workspace_id.max(workspace.id().value());
+        self.visit_pane_node(workspace.root());
+    }
+
+    fn visit_pane_node(&mut self, node: &crate::tree::PaneNode) {
+        match node {
+            crate::tree::PaneNode::Leaf(pane) => self.visit_pane(pane),
+            crate::tree::PaneNode::Split(split) => {
+                self.split_id = self.split_id.max(split.id().value());
+                self.visit_pane_node(split.first());
+                self.visit_pane_node(split.second());
+            }
+        }
+    }
+
+    fn visit_pane(&mut self, pane: &Pane) {
+        self.pane_id = self.pane_id.max(pane.id().value());
+
+        for tab in pane.tabs() {
+            self.tab_id = self.tab_id.max(tab.id().value());
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NextIds {
+    workspace_id: u64,
+    pane_id: u64,
+    split_id: u64,
+    tab_id: u64,
+}
+
+impl NextIds {
+    fn from_workspaces(workspaces: &WorkspaceList) -> Option<Self> {
+        let mut max_ids = MaxIds::default();
+
+        for workspace in workspaces.workspaces() {
+            max_ids.visit_workspace(workspace);
+        }
+
+        Some(Self {
+            workspace_id: next_id_after(max_ids.workspace_id)?,
+            pane_id: next_id_after(max_ids.pane_id)?,
+            split_id: next_id_after(max_ids.split_id)?,
+            tab_id: next_id_after(max_ids.tab_id)?,
+        })
+    }
+}
+
+fn next_id_after(id: u64) -> Option<u64> {
+    id.checked_add(1)
 }
 
 impl Default for State {

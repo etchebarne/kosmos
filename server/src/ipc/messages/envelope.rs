@@ -38,6 +38,12 @@ impl ServerMessage {
             }),
         })
     }
+
+    pub(crate) fn is_ok(&self) -> bool {
+        match self {
+            Self::Response(response) => response.ok,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
