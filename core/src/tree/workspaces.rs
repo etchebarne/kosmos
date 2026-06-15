@@ -207,6 +207,36 @@ impl Workspace {
         }
     }
 
+    pub fn move_pane_to_split(
+        &mut self,
+        pane_id: PaneId,
+        target_pane_id: PaneId,
+        axis: SplitAxis,
+        ratio: f32,
+        new_pane_first: bool,
+    ) -> bool {
+        if pane_id == target_pane_id {
+            return self.root.contains_pane(pane_id);
+        }
+
+        if !self.root.contains_pane(pane_id) || !self.root.contains_pane(target_pane_id) {
+            return false;
+        }
+
+        let Some((mut root, pane)) = remove_pane_from_root(&self.root, pane_id) else {
+            return false;
+        };
+        let pane_id = pane.id();
+
+        if !root.split_pane_with_new_pane_first(target_pane_id, axis, pane, ratio, new_pane_first) {
+            return false;
+        }
+
+        self.root = root;
+        self.active_pane = pane_id;
+        true
+    }
+
     fn remove_empty_pane(&mut self, pane_id: PaneId, fallback_pane: Pane) {
         let fallback_pane_id = fallback_pane.id();
         let old_root = std::mem::replace(&mut self.root, PaneNode::leaf(fallback_pane));
@@ -221,6 +251,12 @@ impl Workspace {
             self.active_pane = fallback_pane_id;
         }
     }
+}
+
+fn remove_pane_from_root(root: &PaneNode, pane_id: PaneId) -> Option<(PaneNode, Pane)> {
+    let (root, pane) = root.clone().remove_pane(pane_id);
+
+    Some((root?, pane?))
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -395,6 +431,59 @@ mod tests {
         assert!(!workspace.root().contains_pane(PaneId::new(2)));
         assert!(workspace.root().contains_pane(PaneId::new(1)));
         assert_eq!(workspace.root().pane_count(), 1);
+    }
+
+    #[test]
+    fn moving_pane_splits_target_with_existing_pane() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
+        workspace.split_active_pane(SplitAxis::Horizontal, pane(2, 2), 0.5);
+        workspace.split_pane_with_new_pane_first(
+            PaneId::new(1),
+            SplitAxis::Vertical,
+            pane(3, 3),
+            0.5,
+            false,
+        );
+
+        assert!(workspace.move_pane_to_split(
+            PaneId::new(3),
+            PaneId::new(2),
+            SplitAxis::Horizontal,
+            0.5,
+            true,
+        ));
+
+        assert_eq!(workspace.root().pane_count(), 3);
+        assert!(workspace.root().contains_pane(PaneId::new(1)));
+        assert!(workspace.root().contains_pane(PaneId::new(2)));
+        assert!(workspace.root().contains_pane(PaneId::new(3)));
+        assert_eq!(workspace.active_pane_id(), PaneId::new(3));
+
+        let PaneNode::Split(root_split) = workspace.root() else {
+            panic!("workspace root should remain split");
+        };
+        let PaneNode::Split(moved_split) = root_split.second() else {
+            panic!("target side should be split with moved pane");
+        };
+
+        assert_eq!(moved_split.first().first_pane_id(), PaneId::new(3));
+        assert_eq!(moved_split.second().first_pane_id(), PaneId::new(2));
+    }
+
+    #[test]
+    fn moving_pane_to_itself_is_noop() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), "/workspaces/main", pane(1, 1));
+
+        assert!(workspace.move_pane_to_split(
+            PaneId::new(1),
+            PaneId::new(1),
+            SplitAxis::Horizontal,
+            0.5,
+            false,
+        ));
+
+        assert_eq!(workspace.root().pane_count(), 1);
+        assert!(workspace.root().contains_pane(PaneId::new(1)));
     }
 
     #[test]

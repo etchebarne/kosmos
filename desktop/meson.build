@@ -12,6 +12,7 @@ project(
 gtk_dep = dependency('gtk4')
 gio_unix_dep = dependency('gio-unix-2.0')
 json_glib_dep = dependency('json-glib-1.0')
+libadwaita_dep = dependency('libadwaita-1')
 
 sources = files(
   'src/main.c',
@@ -25,6 +26,6 @@ executable(
   'kosmos-desktop',
   sources,
   include_directories: include_directories('src'),
-  dependencies: [gtk_dep, gio_unix_dep, json_glib_dep],
+  dependencies: [gtk_dep, gio_unix_dep, json_glib_dep, libadwaita_dep],
   install: true,
 )

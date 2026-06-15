@@ -9,11 +9,12 @@ GTK desktop frontend for Kosmos, written in C and built with Meson.
 - pkg-config
 - GTK 4 development files
 - JSON-GLib development files
+- libadwaita development files
 
 On Debian or Ubuntu, install the native dependencies with:
 
 ```sh
-sudo apt install meson ninja-build pkg-config libgtk-4-dev libjson-glib-dev
+sudo apt install meson ninja-build pkg-config libgtk-4-dev libjson-glib-dev libadwaita-1-dev
 ```
 
 ## Build

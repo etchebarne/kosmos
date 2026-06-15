@@ -31,6 +31,7 @@ typedef enum {
 #define KOSMOS_IPC_ACTION_CLOSE "close"
 #define KOSMOS_IPC_ACTION_SPLIT "split"
 #define KOSMOS_IPC_ACTION_REORDER "reorder"
+#define KOSMOS_IPC_ACTION_MOVE "move"
 
 const char *kosmos_ipc_domain_to_string(KosmosIpcDomain domain);
 const char *kosmos_ipc_split_axis_to_string(KosmosIpcSplitAxis axis);

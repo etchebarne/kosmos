@@ -1,6 +1,6 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::tab::{
-    ActivateTabParams, CloseTabParams, OpenTabParams, ReorderTabParams,
+    ActivateTabParams, CloseTabParams, OpenTabParams, ReorderTabParams, SplitTabParams,
 };
 use super::{command_response, parse_params, unsupported_action};
 
@@ -10,6 +10,7 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "activate" => activate_tab(state, request),
         "close" => close_tab(state, request),
         "reorder" => reorder_tab(state, request),
+        "split" => split_tab(state, request),
         _ => unsupported_action(request),
     }
 }
@@ -81,6 +82,29 @@ fn reorder_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMess
             state,
             "tab.reorder_failed",
             "tab could not be reordered",
+        ),
+        Err(response) => response,
+    }
+}
+
+fn split_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SplitTabParams>(request) {
+        Ok(params) => command_response(
+            request.id,
+            state.split_tab(
+                params.workspace_id.map(Into::into),
+                params.pane_id.into(),
+                params
+                    .target_pane_id
+                    .map(Into::into)
+                    .unwrap_or_else(|| params.pane_id.into()),
+                params.tab_id.into(),
+                params.axis.into(),
+                params.new_pane_first.unwrap_or(false),
+            ),
+            state,
+            "tab.split_failed",
+            "tab could not be split into a new pane",
         ),
         Err(response) => response,
     }

@@ -1,7 +1,7 @@
 use core::tree::{Tab, TabId, TabKind};
 use serde::{Deserialize, Serialize};
 
-use super::pane::{PaneIdParam, WorkspaceIdParam};
+use super::pane::{PaneIdParam, SplitAxisPayload, WorkspaceIdParam};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +35,17 @@ pub(crate) struct ReorderTabParams {
     pub(crate) pane_id: PaneIdParam,
     pub(crate) tab_id: TabIdParam,
     pub(crate) target_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SplitTabParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+    pub(crate) target_pane_id: Option<PaneIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) axis: SplitAxisPayload,
+    pub(crate) new_pane_first: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

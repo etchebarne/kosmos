@@ -19,6 +19,16 @@ pub(crate) struct ActivatePaneParams {
     pub(crate) pane_id: PaneIdParam,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MovePaneParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+    pub(crate) target_pane_id: PaneIdParam,
+    pub(crate) axis: SplitAxisPayload,
+    pub(crate) new_pane_first: Option<bool>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct WorkspaceIdParam(u64);
 

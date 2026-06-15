@@ -64,4 +64,91 @@ gboolean kosmos_ipc_client_activate_workspace(
     GError **error
 );
 
+gboolean kosmos_ipc_client_activate_pane(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_split_pane(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    KosmosIpcSplitAxis axis,
+    gboolean new_pane_first,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_move_pane(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 target_pane_id,
+    KosmosIpcSplitAxis axis,
+    gboolean new_pane_first,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_open_tab(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    const char *title,
+    KosmosIpcTabKind kind,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_activate_tab(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_close_tab(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_reorder_tab(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 tab_id,
+    guint target_index,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_split_tab(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    guint64 pane_id,
+    guint64 target_pane_id,
+    guint64 tab_id,
+    KosmosIpcSplitAxis axis,
+    gboolean new_pane_first,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
 G_END_DECLS
