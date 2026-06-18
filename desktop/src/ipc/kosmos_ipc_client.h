@@ -72,6 +72,56 @@ gboolean kosmos_ipc_client_list_file_tree(
     GError **error
 );
 
+gboolean kosmos_ipc_client_create_file_tree_entry(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    const char *parent_path,
+    const char *name,
+    gboolean directory,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_rename_file_tree_entry(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    const char *path,
+    const char *name,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_delete_file_tree_entry(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    const char *path,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_move_file_tree_entry(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    const char *path,
+    const char *target_directory_path,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
+gboolean kosmos_ipc_client_copy_file_tree_entry(
+    KosmosIpcClient *self,
+    guint64 workspace_id,
+    const char *path,
+    const char *target_directory_path,
+    JsonNode **result,
+    GCancellable *cancellable,
+    GError **error
+);
+
 gboolean kosmos_ipc_client_activate_pane(
     KosmosIpcClient *self,
     guint64 workspace_id,

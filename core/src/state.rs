@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::file_tree::{FileTree, FileTreeError, FileTreeOptions};
+use crate::file_tree::{FileTree, FileTreeCreateKind, FileTreeError, FileTreeOptions};
 use crate::tree::{
     Pane, PaneId, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
@@ -51,14 +51,73 @@ impl State {
         workspace_id: Option<WorkspaceId>,
         options: FileTreeOptions,
     ) -> Result<FileTree, FileTreeError> {
-        let workspace_id = self
-            .resolve_workspace_id(workspace_id)
-            .ok_or(FileTreeError::WorkspaceUnavailable)?;
-        let workspace = self
-            .workspaces
-            .workspace(workspace_id)
-            .ok_or(FileTreeError::WorkspaceUnavailable)?;
+        let workspace = self.file_tree_workspace(workspace_id)?;
 
+        FileTree::read(workspace.directory(), options)
+    }
+
+    pub fn create_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        parent: impl AsRef<std::path::Path>,
+        name: &str,
+        kind: FileTreeCreateKind,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace = self.file_tree_workspace(workspace_id)?;
+
+        crate::file_tree::create_entry(workspace.directory(), parent, name, kind)?;
+        FileTree::read(workspace.directory(), options)
+    }
+
+    pub fn rename_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        path: impl AsRef<std::path::Path>,
+        name: &str,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace = self.file_tree_workspace(workspace_id)?;
+
+        crate::file_tree::rename_entry(workspace.directory(), path, name)?;
+        FileTree::read(workspace.directory(), options)
+    }
+
+    pub fn delete_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        path: impl AsRef<std::path::Path>,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace = self.file_tree_workspace(workspace_id)?;
+
+        crate::file_tree::delete_entry(workspace.directory(), path)?;
+        FileTree::read(workspace.directory(), options)
+    }
+
+    pub fn move_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        path: impl AsRef<std::path::Path>,
+        target_directory: impl AsRef<std::path::Path>,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace = self.file_tree_workspace(workspace_id)?;
+
+        crate::file_tree::move_entry(workspace.directory(), path, target_directory)?;
+        FileTree::read(workspace.directory(), options)
+    }
+
+    pub fn copy_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        path: impl AsRef<std::path::Path>,
+        target_directory: impl AsRef<std::path::Path>,
+        options: FileTreeOptions,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace = self.file_tree_workspace(workspace_id)?;
+
+        crate::file_tree::copy_entry(workspace.directory(), path, target_directory)?;
         FileTree::read(workspace.directory(), options)
     }
 
@@ -301,6 +360,19 @@ impl State {
 
     fn workspace_mut(&mut self, workspace_id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.workspace_mut(workspace_id)
+    }
+
+    fn file_tree_workspace(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<&Workspace, FileTreeError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(FileTreeError::WorkspaceUnavailable)?;
+
+        self.workspaces
+            .workspace(workspace_id)
+            .ok_or(FileTreeError::WorkspaceUnavailable)
     }
 
     fn resolve_workspace_id(&self, workspace_id: Option<WorkspaceId>) -> Option<WorkspaceId> {

@@ -27,6 +27,9 @@ typedef enum {
 } KosmosIpcTabKind;
 
 #define KOSMOS_IPC_ACTION_LIST "list"
+#define KOSMOS_IPC_ACTION_CREATE "create"
+#define KOSMOS_IPC_ACTION_RENAME "rename"
+#define KOSMOS_IPC_ACTION_DELETE "delete"
 #define KOSMOS_IPC_ACTION_OPEN "open"
 #define KOSMOS_IPC_ACTION_ACTIVATE "activate"
 #define KOSMOS_IPC_ACTION_SET_KIND "setKind"
@@ -34,6 +37,7 @@ typedef enum {
 #define KOSMOS_IPC_ACTION_SPLIT "split"
 #define KOSMOS_IPC_ACTION_REORDER "reorder"
 #define KOSMOS_IPC_ACTION_MOVE "move"
+#define KOSMOS_IPC_ACTION_COPY "copy"
 #define KOSMOS_IPC_ACTION_RESIZE "resize"
 
 const char *kosmos_ipc_domain_to_string(KosmosIpcDomain domain);

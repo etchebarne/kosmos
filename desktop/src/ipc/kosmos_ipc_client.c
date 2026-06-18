@@ -10,6 +10,7 @@ struct _KosmosIpcClient {
     GDataInputStream *input;
     GOutputStream *output;
     guint64 next_request_id;
+    GMutex request_mutex;
 };
 
 G_DEFINE_FINAL_TYPE(KosmosIpcClient, kosmos_ipc_client, G_TYPE_OBJECT)
@@ -244,6 +245,7 @@ static void kosmos_ipc_client_finalize(GObject *object) {
     KosmosIpcClient *self = KOSMOS_IPC_CLIENT(object);
 
     kosmos_ipc_client_disconnect(self);
+    g_mutex_clear(&self->request_mutex);
     g_clear_pointer(&self->socket_path, g_free);
 
     G_OBJECT_CLASS(kosmos_ipc_client_parent_class)->finalize(object);
@@ -256,6 +258,7 @@ static void kosmos_ipc_client_class_init(KosmosIpcClientClass *klass) {
 
 static void kosmos_ipc_client_init(KosmosIpcClient *self) {
     self->next_request_id = 1;
+    g_mutex_init(&self->request_mutex);
 }
 
 char *kosmos_ipc_default_socket_path(void) {
@@ -371,8 +374,12 @@ gboolean kosmos_ipc_client_request(
         *result = NULL;
     }
 
+    g_mutex_lock(&self->request_mutex);
+
     if (!kosmos_ipc_client_is_connected(self)) {
-        return set_not_connected_error(self, error);
+        gboolean set = set_not_connected_error(self, error);
+        g_mutex_unlock(&self->request_mutex);
+        return set;
     }
 
     guint64 request_id = self->next_request_id++;
@@ -380,6 +387,7 @@ gboolean kosmos_ipc_client_request(
 
     if (!write_frame(self, payload, cancellable, error)) {
         g_free(payload);
+        g_mutex_unlock(&self->request_mutex);
         return FALSE;
     }
 
@@ -387,11 +395,13 @@ gboolean kosmos_ipc_client_request(
 
     char *response = read_frame(self, cancellable, error);
     if (response == NULL) {
+        g_mutex_unlock(&self->request_mutex);
         return FALSE;
     }
 
     gboolean parsed = parse_response(response, request_id, result, error);
     g_free(response);
+    g_mutex_unlock(&self->request_mutex);
 
     return parsed;
 }
