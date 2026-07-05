@@ -12,6 +12,15 @@ const kosmos: KosmosApi = {
   selectWorkspaceDirectory(): Promise<string | undefined> {
     return ipcRenderer.invoke("kosmos:selectWorkspaceDirectory") as Promise<string | undefined>;
   },
+  minimizeWindow(): Promise<void> {
+    return ipcRenderer.invoke("kosmos:window:minimize") as Promise<void>;
+  },
+  toggleMaximizeWindow(): Promise<void> {
+    return ipcRenderer.invoke("kosmos:window:toggleMaximize") as Promise<void>;
+  },
+  closeWindow(): Promise<void> {
+    return ipcRenderer.invoke("kosmos:window:close") as Promise<void>;
+  },
 };
 
 contextBridge.exposeInMainWorld("kosmos", kosmos);

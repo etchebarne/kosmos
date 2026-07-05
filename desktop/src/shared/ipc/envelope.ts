@@ -25,4 +25,7 @@ export type KosmosApi = {
   request<T = unknown>(request: KosmosIpcRequest): Promise<T>;
   getSocketPath(): Promise<string>;
   selectWorkspaceDirectory(): Promise<string | undefined>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
 };

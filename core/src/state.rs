@@ -46,6 +46,19 @@ impl State {
     }
 
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {
+        let directory = directory.into();
+
+        if let Some(workspace_id) = self
+            .workspaces
+            .workspaces()
+            .iter()
+            .find(|workspace| workspace.directory() == directory.as_path())
+            .map(Workspace::id)
+        {
+            self.workspaces.activate_workspace(workspace_id);
+            return workspace_id;
+        }
+
         let workspace_id = self.next_workspace_id();
         let initial_pane = self.blank_pane();
         let workspace = Workspace::new(workspace_id, directory, initial_pane);
@@ -426,6 +439,27 @@ mod tests {
         assert_eq!(workspace_id, WorkspaceId::new(1));
         assert_eq!(state.workspaces().active_workspace_id(), Some(workspace_id));
         assert_eq!(state.workspaces().workspaces().len(), 1);
+    }
+
+    #[test]
+    fn opening_existing_workspace_path_activates_existing_workspace() {
+        let mut state = State::new();
+
+        let first_workspace_id = state.open_workspace("/workspaces/first");
+        let second_workspace_id = state.open_workspace("/workspaces/second");
+        let reopened_workspace_id = state.open_workspace("/workspaces/first");
+
+        assert_eq!(second_workspace_id, WorkspaceId::new(2));
+        assert_eq!(reopened_workspace_id, first_workspace_id);
+        assert_eq!(
+            state.workspaces().active_workspace_id(),
+            Some(first_workspace_id)
+        );
+        assert_eq!(state.workspaces().workspaces().len(), 2);
+        assert_eq!(
+            state.open_workspace("/workspaces/third"),
+            WorkspaceId::new(3)
+        );
     }
 
     #[test]

@@ -16,6 +16,18 @@ export function selectWorkspaceDirectory(): Promise<string | undefined> {
   return kosmosApi().selectWorkspaceDirectory();
 }
 
+export function minimizeWindow(): Promise<void> {
+  return kosmosApi().minimizeWindow();
+}
+
+export function toggleMaximizeWindow(): Promise<void> {
+  return kosmosApi().toggleMaximizeWindow();
+}
+
+export function closeWindow(): Promise<void> {
+  return kosmosApi().closeWindow();
+}
+
 function kosmosApi() {
   if (!window.kosmos) {
     throw new Error("Electron preload did not expose the Kosmos IPC API.");

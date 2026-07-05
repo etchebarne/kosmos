@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -24,6 +24,28 @@ function registerIpcHandlers(): void {
 
     return result.canceled ? undefined : result.filePaths[0];
   });
+
+  ipcMain.handle("kosmos:window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("kosmos:window:toggleMaximize", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+
+    if (!window) {
+      return;
+    }
+
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+  });
+
+  ipcMain.handle("kosmos:window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
 }
 
 function createMainWindow(): void {
@@ -34,6 +56,8 @@ function createMainWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: "Kosmos",
+    frame: false,
+    autoHideMenuBar: true,
     backgroundColor: "#111217",
     webPreferences: {
       contextIsolation: true,
@@ -74,6 +98,7 @@ function validateRequest(request: KosmosIpcRequest): void {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   registerIpcHandlers();
   createMainWindow();
 

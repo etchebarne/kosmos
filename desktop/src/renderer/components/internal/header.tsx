@@ -1,15 +1,25 @@
-import { Plus } from "lucide-react";
+import { Minus, Plus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
   activateWorkspace,
+  closeWorkspace,
+  closeWindow,
   listWorkspaces,
+  minimizeWindow,
   openWorkspace,
   selectWorkspaceDirectory,
+  toggleMaximizeWindow,
   type WorkspaceListSnapshot,
 } from "@/renderer/ipc";
 import { Button } from "@/renderer/components/ui/button";
 import { ButtonGroup } from "@/renderer/components/ui/button-group";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/renderer/components/ui/context-menu";
 import type { WorkspaceId } from "@/shared/ipc";
 
 export function Header() {
@@ -94,15 +104,40 @@ export function Header() {
     }
   }
 
+  async function closeWorkspaceFromMenu(workspaceId: WorkspaceId): Promise<void> {
+    const requestId = switchRequestId.current + 1;
+    const previousSnapshot = snapshot;
+
+    switchRequestId.current = requestId;
+    setError(null);
+    setSnapshot((currentSnapshot) => closeWorkspaceLocally(currentSnapshot, workspaceId));
+
+    try {
+      const nextSnapshot = await closeWorkspace(workspaceId);
+
+      if (switchRequestId.current === requestId) {
+        setSnapshot(nextSnapshot);
+      }
+    } catch (caughtError) {
+      if (switchRequestId.current === requestId) {
+        setSnapshot(previousSnapshot);
+        setError(errorMessage(caughtError));
+      }
+    }
+  }
+
   return (
-    <header className="relative flex h-12 shrink-0 items-center justify-center px-4">
+    <header className="relative flex h-8 shrink-0 items-center justify-center px-2 [-webkit-app-region:drag]">
       {error ? (
-        <p className="absolute right-4 max-w-72 truncate text-xs text-destructive" title={error}>
+        <p
+          className="absolute right-24 max-w-72 truncate text-xs text-destructive [-webkit-app-region:no-drag]"
+          title={error}
+        >
           {error}
         </p>
       ) : null}
 
-      <ButtonGroup className="max-w-[min(60vw,42rem)] overflow-hidden">
+      <ButtonGroup className="max-w-[min(60vw,42rem)] overflow-hidden [-webkit-app-region:no-drag]">
         {isLoadingWorkspaces ? (
           <Button type="button" variant="outline" size="sm" disabled>
             Loading workspaces
@@ -112,17 +147,30 @@ export function Header() {
             const isActive = workspace.id === snapshot.activeWorkspaceId;
 
             return (
-              <Button
-                key={workspace.id}
-                type="button"
-                variant={isActive ? "default" : "outline"}
-                size="sm"
-                aria-pressed={isActive}
-                title={workspace.directory}
-                onClick={() => void switchWorkspace(workspace.id)}
-              >
-                <span className="max-w-36 truncate">{workspace.name}</span>
-              </Button>
+              <ContextMenu key={workspace.id}>
+                <ContextMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant={isActive ? "default" : "outline"}
+                      size="sm"
+                      aria-pressed={isActive}
+                      title={workspace.directory}
+                      onClick={() => void switchWorkspace(workspace.id)}
+                    >
+                      <span className="max-w-36 truncate">{workspace.name}</span>
+                    </Button>
+                  }
+                />
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    variant="destructive"
+                    onClick={() => void closeWorkspaceFromMenu(workspace.id)}
+                  >
+                    Close workspace
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })
         )}
@@ -139,8 +187,65 @@ export function Header() {
           <Plus />
         </Button>
       </ButtonGroup>
+
+      <div className="absolute right-1 flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Minimize window"
+          title="Minimize"
+          onClick={() => void minimizeWindow()}
+        >
+          <Minus className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Maximize window"
+          title="Maximize"
+          onClick={() => void toggleMaximizeWindow()}
+        >
+          <Square className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="hover:bg-destructive/15 hover:text-destructive"
+          aria-label="Close window"
+          title="Close"
+          onClick={() => void closeWindow()}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
     </header>
   );
+}
+
+function closeWorkspaceLocally(
+  snapshot: WorkspaceListSnapshot | null,
+  workspaceId: WorkspaceId,
+): WorkspaceListSnapshot | null {
+  if (!snapshot) {
+    return snapshot;
+  }
+
+  const workspaceIndex = snapshot.workspaces.findIndex((workspace) => workspace.id === workspaceId);
+
+  if (workspaceIndex === -1) {
+    return snapshot;
+  }
+
+  const workspaces = snapshot.workspaces.filter((workspace) => workspace.id !== workspaceId);
+  const activeWorkspaceId =
+    snapshot.activeWorkspaceId === workspaceId
+      ? (workspaces[workspaceIndex]?.id ?? workspaces[workspaceIndex - 1]?.id ?? null)
+      : snapshot.activeWorkspaceId;
+
+  return { ...snapshot, activeWorkspaceId, workspaces };
 }
 
 function errorMessage(error: unknown): string {
