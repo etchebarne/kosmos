@@ -111,9 +111,9 @@ export function WorkspaceView({
       <section className="grid min-h-0 flex-1 place-items-center overflow-hidden rounded-2xl border bg-background p-8 text-center shadow-sm">
         <div className="flex max-w-sm flex-col items-center gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">No workspace open</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Welcome to Kosmos</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Open a workspace to create tabs and panes.
+              Open a workspace to start exploring your project.
             </p>
           </div>
           <Button type="button" disabled={isAddingWorkspace} onClick={onOpenWorkspace}>
