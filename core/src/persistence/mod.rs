@@ -26,7 +26,8 @@ impl StateStore {
         }
 
         let store = Self { path };
-        store.connection()?;
+        let connection = store.connection()?;
+        migrate(&connection)?;
 
         Ok(store)
     }
@@ -52,11 +53,18 @@ impl StateStore {
         Ok(())
     }
 
-    fn connection(&self) -> Result<Connection> {
-        let connection = Connection::open(&self.path)?;
-        migrate(&connection)?;
+    pub fn save_active_workspace(&self, state: &State) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
 
-        Ok(connection)
+        replace_active_workspace_metadata(&transaction, state.workspaces().active_workspace_id())?;
+        transaction.commit()?;
+
+        Ok(())
+    }
+
+    fn connection(&self) -> Result<Connection> {
+        Ok(Connection::open(&self.path)?)
     }
 }
 
@@ -169,12 +177,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
 }
 
 fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
-    if let Some(active_workspace_id) = state.workspaces().active_workspace_id() {
-        transaction.execute(
-            "INSERT INTO metadata (key, value) VALUES ('active_workspace_id', ?1)",
-            params![active_workspace_id.value().to_string()],
-        )?;
-    }
+    insert_active_workspace_metadata(transaction, state.workspaces().active_workspace_id())?;
 
     for (position, workspace) in state.workspaces().workspaces().iter().enumerate() {
         let workspace_id = to_i64(workspace.id().value(), "workspace id")?;
@@ -195,6 +198,28 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
         )?;
 
         save_node(transaction, workspace.id(), "", workspace.root())?;
+    }
+
+    Ok(())
+}
+
+fn replace_active_workspace_metadata(
+    transaction: &Transaction<'_>,
+    active_workspace_id: Option<WorkspaceId>,
+) -> Result<()> {
+    transaction.execute("DELETE FROM metadata WHERE key = 'active_workspace_id'", [])?;
+    insert_active_workspace_metadata(transaction, active_workspace_id)
+}
+
+fn insert_active_workspace_metadata(
+    transaction: &Transaction<'_>,
+    active_workspace_id: Option<WorkspaceId>,
+) -> Result<()> {
+    if let Some(active_workspace_id) = active_workspace_id {
+        transaction.execute(
+            "INSERT INTO metadata (key, value) VALUES ('active_workspace_id', ?1)",
+            params![active_workspace_id.value().to_string()],
+        )?;
     }
 
     Ok(())
@@ -649,6 +674,32 @@ mod tests {
             .expect("pane should exist");
 
         assert!(pane.contains_tab(TabId::new(4)));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_active_workspace_without_full_state_save() {
+        let path = test_db_path("active-workspace");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        let first_workspace_id = state.open_workspace("/workspaces/first");
+        state.open_workspace("/workspaces/second");
+
+        store.save(&state).expect("state should save");
+
+        assert!(state.activate_workspace(first_workspace_id));
+        store
+            .save_active_workspace(&state)
+            .expect("active workspace should save");
+
+        let loaded = store.load().expect("state should load");
+
+        assert_eq!(
+            loaded.workspaces().active_workspace_id(),
+            Some(first_workspace_id)
+        );
+        assert_eq!(loaded.workspaces().workspaces().len(), 2);
 
         let _ = fs::remove_file(path);
     }

@@ -7,11 +7,11 @@ use serde::de::DeserializeOwned;
 use super::messages::envelope::{Domain, RequestEnvelope, ServerMessage};
 use super::messages::workspace::WorkspaceListSnapshot;
 
-pub(crate) fn route(state: &mut core::State, request: RequestEnvelope) -> ServerMessage {
+pub(crate) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match request.domain {
-        Domain::Workspace => workspace::route(state, &request),
-        Domain::Pane => pane::route(state, &request),
-        Domain::Tab => tab::route(state, &request),
+        Domain::Workspace => workspace::route(state, request),
+        Domain::Pane => pane::route(state, request),
+        Domain::Tab => tab::route(state, request),
     }
 }
 
