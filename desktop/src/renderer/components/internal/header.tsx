@@ -155,7 +155,6 @@ export function Header() {
                       variant={isActive ? "default" : "outline"}
                       size="sm"
                       aria-pressed={isActive}
-                      title={workspace.directory}
                       onClick={() => void switchWorkspace(workspace.id)}
                     >
                       <span className="max-w-36 truncate">{workspace.name}</span>
