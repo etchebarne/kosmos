@@ -148,6 +148,10 @@ fn migrate(connection: &Connection) -> Result<()> {
             UNIQUE (workspace_id, pane_id, position),
             FOREIGN KEY (workspace_id, pane_id) REFERENCES panes(workspace_id, id) ON DELETE CASCADE
         );
+
+        UPDATE tabs
+        SET kind = 'blank'
+        WHERE kind NOT IN ('blank', 'file_tree', 'editor', 'git', 'search', 'terminal', 'settings');
         ",
     )?;
 

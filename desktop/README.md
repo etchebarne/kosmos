@@ -1,44 +1,56 @@
 # Kosmos Desktop
 
-GTK desktop frontend for Kosmos, written in C and built with Meson.
+Electron desktop frontend for Kosmos, managed with Bun, React, Vite, Tailwind CSS, and shadcn/ui with Base UI primitives.
 
 ## Requirements
 
-- Meson
-- Ninja
-- pkg-config
-- GTK 4 development files
-- JSON-GLib development files
-- libadwaita development files
+- Bun
+- The Rust `kosmos-server` binary from the repository workspace
 
-On Debian or Ubuntu, install the native dependencies with:
+## Install
 
-```sh
-sudo apt install meson ninja-build pkg-config libgtk-4-dev libjson-glib-dev libadwaita-1-dev
+```bash
+bun install
 ```
 
-## Build
+## Development
 
-From the repository root:
+From `desktop/`:
 
-```sh
-meson setup desktop/build desktop
-meson compile -C desktop/build
+```bash
+bun run build
+bun run start
 ```
 
-## Run
-
-```sh
-./desktop/build/kosmos-desktop
-```
-
-The root `scripts/run.sh` script also builds the Rust server, starts it, and launches this GTK app.
+From the repository root, `./scripts/run.sh` builds the Rust server, starts it, builds the Electron frontend, and launches Electron.
 
 ## Structure
 
-- `src/main.c` bootstraps the GTK application.
-- `src/app/` owns GTK application lifecycle and initial server synchronization.
-- `src/ui/` owns windows and widgets.
-- `src/ipc/` owns Unix socket transport, newline-delimited JSON framing, and protocol helpers for `server/`.
+- `src/main/` owns the Electron main process and Unix socket connection to `server/`.
+- `src/preload/` exposes a small, safe renderer API through Electron IPC.
+- `src/renderer/` contains the React renderer.
+- `src/renderer/ipc/` contains domain functions that renderer code imports to talk to the Rust server.
+- `src/components/ui/` contains shadcn/ui components generated for Base UI.
+- `src/shared/ipc/` contains protocol envelope and domain types shared across Electron processes.
 
-The IPC client resolves the socket with the same order as the server: `$KOSMOS_SOCKET`, then `$XDG_RUNTIME_DIR/kosmos/server.sock`, then `/tmp/kosmos/server.sock`.
+The renderer never talks to the Rust server directly. Renderer consumers should import functions from `src/renderer/ipc/`, which call Electron IPC through the preload API. The main process forwards those calls to the existing newline-delimited JSON protocol on the server Unix socket.
+
+Example:
+
+```ts
+import { listWorkspaces, openWorkspace } from "@/renderer/ipc/workspace";
+
+const workspaces = await listWorkspaces();
+await openWorkspace("/path/to/project");
+```
+
+The socket path matches the Rust server lookup order: `$KOSMOS_SOCKET`, then `$XDG_RUNTIME_DIR/kosmos/server.sock`, then `/tmp/kosmos/server.sock`.
+
+## Scripts
+
+```bash
+bun run build
+bun run dev
+bun run start
+bun run typecheck
+```

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM"],
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "types": ["node", "vite/client"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+}

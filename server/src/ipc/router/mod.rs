@@ -1,4 +1,3 @@
-mod file_tree;
 mod pane;
 mod tab;
 mod workspace;
@@ -13,7 +12,6 @@ pub(crate) fn route(state: &mut core::State, request: RequestEnvelope) -> Server
         Domain::Workspace => workspace::route(state, &request),
         Domain::Pane => pane::route(state, &request),
         Domain::Tab => tab::route(state, &request),
-        Domain::FileTree => file_tree::route(state, &request),
     }
 }
 

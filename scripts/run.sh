@@ -3,8 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_BIN="$ROOT_DIR/target/debug/kosmos-server"
-DESKTOP_BUILD_DIR="$ROOT_DIR/desktop/build"
-DESKTOP_BIN="$DESKTOP_BUILD_DIR/kosmos-desktop"
+DESKTOP_DIR="$ROOT_DIR/desktop"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 export KOSMOS_SOCKET="${KOSMOS_SOCKET:-$RUNTIME_DIR/kosmos/server.sock}"
 
@@ -20,12 +19,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cargo build --package kosmos-server
-if [[ -f "$DESKTOP_BUILD_DIR/build.ninja" ]]; then
-    meson setup --reconfigure "$DESKTOP_BUILD_DIR" "$ROOT_DIR/desktop"
-else
-    meson setup "$DESKTOP_BUILD_DIR" "$ROOT_DIR/desktop"
+if [[ ! -d "$DESKTOP_DIR/node_modules" ]]; then
+    bun install --cwd "$DESKTOP_DIR"
 fi
-meson compile -C "$DESKTOP_BUILD_DIR"
+bun run --cwd "$DESKTOP_DIR" build
 
 "$SERVER_BIN" &
 server_pid="$!"
@@ -48,4 +45,4 @@ if [[ ! -S "$KOSMOS_SOCKET" ]]; then
     exit 1
 fi
 
-"$DESKTOP_BIN" "$@"
+bun run --cwd "$DESKTOP_DIR" start -- "$@"

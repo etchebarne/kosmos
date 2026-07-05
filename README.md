@@ -23,16 +23,16 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 - `core/` contains the Rust logic layer.
 - `server/` contains the Rust backend process that imports `core`.
-- `desktop/` contains the C/GTK frontend.
+- `desktop/` contains the Bun/Electron frontend.
 - `assets/` contains shared branding and icon assets.
 
 ## Development
 
 - Run the app with `./scripts/run.sh`.
 - Test the Rust workspace with `cargo test --workspace`.
-- Build the GTK desktop app with `meson setup desktop/build desktop` and `meson compile -C desktop/build`.
+- Build the Electron desktop app with `bun install --cwd desktop` and `bun run --cwd desktop build`.
 
-The server and desktop frontend communicate over a Unix socket. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+The server and Electron main process communicate over a Unix socket. The renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
 
 ## License
 
