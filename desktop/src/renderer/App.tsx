@@ -180,7 +180,12 @@ export function App() {
         return;
       }
 
-      updateFromServer(() => resizeSplit({ workspaceId: activeWorkspace.id, splitId, ratio }));
+      setError(null);
+      void resizeSplit({ workspaceId: activeWorkspace.id, splitId, ratio }).catch(
+        (caughtError: unknown) => {
+          setError(errorMessage(caughtError));
+        },
+      );
     },
     splitTab(
       paneId: PaneId,

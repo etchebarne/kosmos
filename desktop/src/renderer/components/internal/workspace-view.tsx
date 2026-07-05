@@ -69,6 +69,7 @@ type DraggedTab = {
 };
 
 const TAB_DRAG_MIME = "application/x-kosmos-tab";
+const MIN_PANE_SIZE = "16rem";
 
 const TAB_KIND_LABEL: Record<TabKind, string> = {
   blank: "Blank",
@@ -153,7 +154,7 @@ function PaneNodeView({
 
   return (
     <ResizablePanelGroup
-      key={`${node.id}:${node.ratio.toFixed(4)}`}
+      key={`${workspace.id}:${node.id}`}
       orientation={node.axis}
       className={cn("min-h-0", isRoot && "flex-1")}
       onLayoutChanged={(layout, meta) => {
@@ -168,18 +169,18 @@ function PaneNodeView({
         }
 
         const nextRatio = firstLayoutSize / (firstLayoutSize + secondLayoutSize);
-        if (!Number.isFinite(nextRatio) || Math.abs(nextRatio - node.ratio) < 0.005) {
+        if (!Number.isFinite(nextRatio) || nextRatio === node.ratio) {
           return;
         }
 
         actions.resizeSplit(node.id, nextRatio);
       }}
     >
-      <ResizablePanel id={firstPanelId} defaultSize={firstSize} minSize={12}>
+      <ResizablePanel id={firstPanelId} defaultSize={firstSize} minSize={MIN_PANE_SIZE}>
         <PaneNodeView node={node.first} workspace={workspace} actions={actions} />
       </ResizablePanel>
       <ResizableHandle withHandle />
-      <ResizablePanel id={secondPanelId} defaultSize={secondSize} minSize={12}>
+      <ResizablePanel id={secondPanelId} defaultSize={secondSize} minSize={MIN_PANE_SIZE}>
         <PaneNodeView node={node.second} workspace={workspace} actions={actions} />
       </ResizablePanel>
     </ResizablePanelGroup>
