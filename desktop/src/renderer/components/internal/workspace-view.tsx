@@ -309,7 +309,7 @@ function TabTrigger({
             nativeButton={false}
             draggable
             render={<div />}
-            className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs"
+            className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs data-active:!bg-foreground/10 data-active:!text-foreground"
             title={`${tab.title}. Drag to a pane edge to split.`}
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
           >
