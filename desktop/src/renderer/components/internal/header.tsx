@@ -1,16 +1,9 @@
 import { Minus, Plus, Square, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 
 import {
-  activateWorkspace,
-  closeWorkspace,
   closeWindow,
-  listWorkspaces,
   minimizeWindow,
-  openWorkspace,
-  selectWorkspaceDirectory,
   toggleMaximizeWindow,
-  type WorkspaceListSnapshot,
 } from "@/renderer/ipc";
 import { Button } from "@/renderer/components/ui/button";
 import { ButtonGroup } from "@/renderer/components/ui/button-group";
@@ -20,112 +13,27 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
-import type { WorkspaceId } from "@/shared/ipc";
+import type { WorkspaceId, WorkspaceListSnapshot } from "@/shared/ipc";
 
-export function Header() {
-  const [error, setError] = useState<string | null>(null);
-  const [isAddingWorkspace, setIsAddingWorkspace] = useState(false);
-  const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true);
-  const [snapshot, setSnapshot] = useState<WorkspaceListSnapshot | null>(null);
-  const switchRequestId = useRef(0);
+type HeaderProps = {
+  error: string | null;
+  isAddingWorkspace: boolean;
+  isLoadingWorkspaces: boolean;
+  snapshot: WorkspaceListSnapshot | null;
+  onCloseWorkspace(workspaceId: WorkspaceId): void;
+  onOpenWorkspace(): void;
+  onSwitchWorkspace(workspaceId: WorkspaceId): void;
+};
 
-  useEffect(() => {
-    let isMounted = true;
-
-    listWorkspaces()
-      .then((nextSnapshot) => {
-        if (!isMounted) {
-          return;
-        }
-
-        setSnapshot(nextSnapshot);
-        setError(null);
-      })
-      .catch((caughtError: unknown) => {
-        if (isMounted) {
-          setError(errorMessage(caughtError));
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsLoadingWorkspaces(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  async function switchWorkspace(workspaceId: WorkspaceId): Promise<void> {
-    if (workspaceId === snapshot?.activeWorkspaceId || isAddingWorkspace) {
-      return;
-    }
-
-    const requestId = switchRequestId.current + 1;
-    const previousSnapshot = snapshot;
-
-    switchRequestId.current = requestId;
-    setError(null);
-    setSnapshot((currentSnapshot) =>
-      currentSnapshot ? { ...currentSnapshot, activeWorkspaceId: workspaceId } : currentSnapshot,
-    );
-
-    try {
-      const nextSnapshot = await activateWorkspace(workspaceId);
-
-      if (switchRequestId.current === requestId) {
-        setSnapshot(nextSnapshot);
-      }
-    } catch (caughtError) {
-      if (switchRequestId.current === requestId) {
-        setSnapshot(previousSnapshot);
-        setError(errorMessage(caughtError));
-      }
-    }
-  }
-
-  async function addWorkspace(): Promise<void> {
-    setIsAddingWorkspace(true);
-    setError(null);
-
-    try {
-      const directory = await selectWorkspaceDirectory();
-
-      if (!directory) {
-        return;
-      }
-
-      setSnapshot(await openWorkspace(directory));
-    } catch (caughtError) {
-      setError(errorMessage(caughtError));
-    } finally {
-      setIsAddingWorkspace(false);
-    }
-  }
-
-  async function closeWorkspaceFromMenu(workspaceId: WorkspaceId): Promise<void> {
-    const requestId = switchRequestId.current + 1;
-    const previousSnapshot = snapshot;
-
-    switchRequestId.current = requestId;
-    setError(null);
-    setSnapshot((currentSnapshot) => closeWorkspaceLocally(currentSnapshot, workspaceId));
-
-    try {
-      const nextSnapshot = await closeWorkspace(workspaceId);
-
-      if (switchRequestId.current === requestId) {
-        setSnapshot(nextSnapshot);
-      }
-    } catch (caughtError) {
-      if (switchRequestId.current === requestId) {
-        setSnapshot(previousSnapshot);
-        setError(errorMessage(caughtError));
-      }
-    }
-  }
-
+export function Header({
+  error,
+  isAddingWorkspace,
+  isLoadingWorkspaces,
+  snapshot,
+  onCloseWorkspace,
+  onOpenWorkspace,
+  onSwitchWorkspace,
+}: HeaderProps) {
   return (
     <header className="relative flex h-8 shrink-0 items-center justify-center px-2 [-webkit-app-region:drag]">
       {error ? (
@@ -155,7 +63,7 @@ export function Header() {
                       variant={isActive ? "default" : "outline"}
                       size="sm"
                       aria-pressed={isActive}
-                      onClick={() => void switchWorkspace(workspace.id)}
+                      onClick={() => onSwitchWorkspace(workspace.id)}
                     >
                       <span className="max-w-36 truncate">{workspace.name}</span>
                     </Button>
@@ -164,7 +72,7 @@ export function Header() {
                 <ContextMenuContent>
                   <ContextMenuItem
                     variant="destructive"
-                    onClick={() => void closeWorkspaceFromMenu(workspace.id)}
+                    onClick={() => onCloseWorkspace(workspace.id)}
                   >
                     Close workspace
                   </ContextMenuItem>
@@ -181,7 +89,7 @@ export function Header() {
           aria-label="Open workspace"
           title="Open workspace"
           disabled={isLoadingWorkspaces || isAddingWorkspace}
-          onClick={() => void addWorkspace()}
+          onClick={onOpenWorkspace}
         >
           <Plus />
         </Button>
@@ -222,35 +130,4 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function closeWorkspaceLocally(
-  snapshot: WorkspaceListSnapshot | null,
-  workspaceId: WorkspaceId,
-): WorkspaceListSnapshot | null {
-  if (!snapshot) {
-    return snapshot;
-  }
-
-  const workspaceIndex = snapshot.workspaces.findIndex((workspace) => workspace.id === workspaceId);
-
-  if (workspaceIndex === -1) {
-    return snapshot;
-  }
-
-  const workspaces = snapshot.workspaces.filter((workspace) => workspace.id !== workspaceId);
-  const activeWorkspaceId =
-    snapshot.activeWorkspaceId === workspaceId
-      ? (workspaces[workspaceIndex]?.id ?? workspaces[workspaceIndex - 1]?.id ?? null)
-      : snapshot.activeWorkspaceId;
-
-  return { ...snapshot, activeWorkspaceId, workspaces };
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Unable to communicate with the Kosmos server.";
 }

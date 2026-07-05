@@ -1,4 +1,4 @@
-import type { PaneId, SplitPaneId, WorkspaceId } from "./ids";
+import type { PaneId, SplitPaneId, TabId, WorkspaceId } from "./ids";
 import type { TabSnapshot } from "./tab";
 
 export type SplitAxis = "horizontal" | "vertical";
@@ -45,6 +45,6 @@ export type PaneNodeSnapshot =
 
 export type PaneSnapshot = {
   id: PaneId;
-  activeTabId: number;
+  activeTabId: TabId;
   tabs: TabSnapshot[];
 };
