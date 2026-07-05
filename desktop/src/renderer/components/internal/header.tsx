@@ -87,7 +87,6 @@ export function Header({
           variant="outline"
           size="icon-sm"
           aria-label="Open workspace"
-          title="Open workspace"
           disabled={isLoadingWorkspaces || isAddingWorkspace}
           onClick={onOpenWorkspace}
         >
@@ -101,7 +100,6 @@ export function Header({
           variant="ghost"
           size="icon-xs"
           aria-label="Minimize window"
-          title="Minimize"
           onClick={() => void minimizeWindow()}
         >
           <Minus className="size-3.5" />
@@ -111,7 +109,6 @@ export function Header({
           variant="ghost"
           size="icon-xs"
           aria-label="Maximize window"
-          title="Maximize"
           onClick={() => void toggleMaximizeWindow()}
         >
           <Square className="size-3.5" />
@@ -122,7 +119,6 @@ export function Header({
           size="icon-xs"
           className="hover:bg-destructive/15 hover:text-destructive"
           aria-label="Close window"
-          title="Close"
           onClick={() => void closeWindow()}
         >
           <X className="size-3.5" />

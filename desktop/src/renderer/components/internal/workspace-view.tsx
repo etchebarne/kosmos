@@ -270,7 +270,6 @@ function PaneLeaf({
             size="icon-sm"
             className="shrink-0"
             aria-label="Open tab"
-            title="Open tab"
             onClick={() => actions.openTab(pane.id)}
           >
             <Plus />
@@ -310,7 +309,6 @@ function TabTrigger({
             draggable
             render={<div />}
             className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs data-active:!bg-foreground/10 data-active:!text-foreground"
-            title={`${tab.title}. Drag to a pane edge to split.`}
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
           >
             <TabIcon
@@ -323,7 +321,6 @@ function TabTrigger({
               draggable={false}
               className="ml-1 -mr-1 grid size-5 shrink-0 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground hover:opacity-100 group-data-active/tab:opacity-60 group-hover/tab:opacity-60 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               aria-label={`Close ${tab.title}`}
-              title="Close tab"
               onPointerDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
