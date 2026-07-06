@@ -9,6 +9,7 @@ import {
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
 import { renderTabContent, tabKindIcon } from "@/renderer/components/tabs";
+import { activeWorkspaceFrom } from "@/renderer/lib/workspace-snapshot";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -16,41 +17,16 @@ import {
 } from "@/renderer/components/ui/resizable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/renderer/components/ui/tabs";
 import { cn } from "@/renderer/lib/utils";
+import { useWorkspaceStore } from "@/renderer/stores";
 import type {
   PaneId,
   PaneNodeSnapshot,
   PaneSnapshot,
   SplitAxis,
-  SplitPaneId,
   TabId,
-  TabKind,
   TabSnapshot,
-  WorkspaceSnapshot,
+  WorkspaceId,
 } from "@/shared/ipc";
-
-export type WorkspaceViewActions = {
-  activatePane(paneId: PaneId): void;
-  activateTab(paneId: PaneId, tabId: TabId): void;
-  closeTab(paneId: PaneId, tabId: TabId): void;
-  openTab(paneId: PaneId): void;
-  resizeSplit(splitId: SplitPaneId, ratio: number): void;
-  setTabKind(paneId: PaneId, tabId: TabId, kind: TabKind): void;
-  splitTab(
-    paneId: PaneId,
-    tabId: TabId,
-    targetPaneId: PaneId,
-    axis: SplitAxis,
-    newPaneFirst: boolean,
-  ): void;
-};
-
-type WorkspaceViewProps = {
-  actions: WorkspaceViewActions;
-  isAddingWorkspace: boolean;
-  isLoading: boolean;
-  workspace: WorkspaceSnapshot | null;
-  onOpenWorkspace(): void;
-};
 
 type DropEdge = "left" | "right" | "top" | "bottom";
 
@@ -62,14 +38,13 @@ type DraggedTab = {
 const TAB_DRAG_MIME = "application/x-kosmos-tab";
 const MIN_PANE_SIZE_REM = 16;
 
-export function WorkspaceView({
-  actions,
-  isAddingWorkspace,
-  isLoading,
-  workspace,
-  onOpenWorkspace,
-}: WorkspaceViewProps) {
-  if (isLoading) {
+export function WorkspaceView() {
+  const addWorkspace = useWorkspaceStore((state) => state.addWorkspace);
+  const isAddingWorkspace = useWorkspaceStore((state) => state.isAddingWorkspace);
+  const isLoadingWorkspaces = useWorkspaceStore((state) => state.isLoadingWorkspaces);
+  const workspace = useWorkspaceStore((state) => activeWorkspaceFrom(state.snapshot));
+
+  if (isLoadingWorkspaces) {
     return (
       <section className="grid min-h-0 flex-1 place-items-center overflow-hidden rounded-2xl border bg-background text-center shadow-sm">
         <p className="text-sm text-muted-foreground">Loading workspace state...</p>
@@ -87,7 +62,7 @@ export function WorkspaceView({
               Open a workspace to start exploring your project.
             </p>
           </div>
-          <Button type="button" disabled={isAddingWorkspace} onClick={onOpenWorkspace}>
+          <Button type="button" disabled={isAddingWorkspace} onClick={() => void addWorkspace()}>
             <Plus />
             Open workspace
           </Button>
@@ -98,24 +73,24 @@ export function WorkspaceView({
 
   return (
     <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-sm">
-      <PaneNodeView node={workspace.root} workspace={workspace} actions={actions} isRoot />
+      <PaneNodeView node={workspace.root} workspaceId={workspace.id} isRoot />
     </section>
   );
 }
 
 function PaneNodeView({
   node,
-  workspace,
-  actions,
+  workspaceId,
   isRoot = false,
 }: {
   node: PaneNodeSnapshot;
-  workspace: WorkspaceSnapshot;
-  actions: WorkspaceViewActions;
+  workspaceId: WorkspaceId;
   isRoot?: boolean;
 }) {
+  const resizeSplit = useWorkspaceStore((state) => state.resizeSplit);
+
   if (node.type === "leaf") {
-    return <PaneLeaf pane={node.pane} workspace={workspace} actions={actions} isRoot={isRoot} />;
+    return <PaneLeaf pane={node.pane} isRoot={isRoot} />;
   }
 
   const firstPanelId = `split-${node.id}-first`;
@@ -125,8 +100,13 @@ function PaneNodeView({
 
   return (
     <ResizablePanelGroup
-      key={`${workspace.id}:${node.id}`}
+      key={`${workspaceId}:${node.id}`}
+      id={`workspace-${workspaceId}-split-${node.id}`}
       orientation={node.axis}
+      defaultLayout={{
+        [firstPanelId]: firstSize,
+        [secondPanelId]: secondSize,
+      }}
       className={cn("min-h-0", isRoot && "flex-1")}
       onLayoutChanged={(layout, meta) => {
         if (!meta.isUserInteraction) {
@@ -144,23 +124,23 @@ function PaneNodeView({
           return;
         }
 
-        actions.resizeSplit(node.id, nextRatio);
+        resizeSplit(node.id, nextRatio);
       }}
     >
       <ResizablePanel
         id={firstPanelId}
-        defaultSize={firstSize}
+        defaultSize={percentSize(firstSize)}
         minSize={minimumNodeSize(node.first, node.axis)}
       >
-        <PaneNodeView node={node.first} workspace={workspace} actions={actions} />
+        <PaneNodeView node={node.first} workspaceId={workspaceId} />
       </ResizablePanel>
       <ResizableHandle withHandle />
       <ResizablePanel
         id={secondPanelId}
-        defaultSize={secondSize}
+        defaultSize={percentSize(secondSize)}
         minSize={minimumNodeSize(node.second, node.axis)}
       >
-        <PaneNodeView node={node.second} workspace={workspace} actions={actions} />
+        <PaneNodeView node={node.second} workspaceId={workspaceId} />
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -168,16 +148,17 @@ function PaneNodeView({
 
 function PaneLeaf({
   pane,
-  workspace,
-  actions,
   isRoot,
 }: {
   pane: PaneSnapshot;
-  workspace: WorkspaceSnapshot;
-  actions: WorkspaceViewActions;
   isRoot: boolean;
 }) {
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
+  const activatePane = useWorkspaceStore((state) => state.activatePane);
+  const activateTab = useWorkspaceStore((state) => state.activateTab);
+  const openTab = useWorkspaceStore((state) => state.openTab);
+  const splitTab = useWorkspaceStore((state) => state.splitTab);
+
   return (
     <article
       className={cn(
@@ -219,7 +200,7 @@ function PaneLeaf({
 
         const split = splitDetailsFromEdge(edge);
         event.preventDefault();
-        actions.splitTab(
+        splitTab(
           draggedTab.paneId,
           draggedTab.tabId,
           pane.id,
@@ -231,7 +212,7 @@ function PaneLeaf({
       <Tabs
         value={tabValue(pane.activeTabId)}
         className="h-full min-h-0 gap-0"
-        onValueChange={(value) => activateTabFromValue(value, pane, actions)}
+        onValueChange={(value) => activateTabFromValue(value, pane, activateTab)}
       >
         <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-muted/60 px-2">
           <TabsList
@@ -239,7 +220,7 @@ function PaneLeaf({
             className="h-full min-w-0 flex-1 justify-start overflow-x-auto overflow-y-hidden rounded-none p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {pane.tabs.map((tab) => (
-              <TabTrigger key={tab.id} pane={pane} tab={tab} actions={actions} />
+              <TabTrigger key={tab.id} pane={pane} tab={tab} />
             ))}
           </TabsList>
 
@@ -249,7 +230,7 @@ function PaneLeaf({
             size="icon-sm"
             className="shrink-0"
             aria-label="Open tab"
-            onClick={() => actions.openTab(pane.id)}
+            onClick={() => openTab(pane.id)}
           >
             <Plus />
           </Button>
@@ -260,8 +241,7 @@ function PaneLeaf({
             <TabBody
               paneId={pane.id}
               tab={tab}
-              actions={actions}
-              onActivatePane={() => actions.activatePane(pane.id)}
+              onActivatePane={() => activatePane(pane.id)}
             />
           </TabsContent>
         ))}
@@ -275,13 +255,12 @@ function PaneLeaf({
 function TabTrigger({
   pane,
   tab,
-  actions,
 }: {
   pane: PaneSnapshot;
   tab: TabSnapshot;
-  actions: WorkspaceViewActions;
 }) {
   const TabIcon = tabKindIcon(tab.kind);
+  const closeTab = useWorkspaceStore((state) => state.closeTab);
 
   return (
     <ContextMenu>
@@ -312,7 +291,7 @@ function TabTrigger({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                actions.closeTab(pane.id, tab.id);
+                closeTab(pane.id, tab.id);
               }}
             >
               <X className="size-3" />
@@ -321,7 +300,7 @@ function TabTrigger({
         }
       />
       <ContextMenuContent>
-        <ContextMenuItem variant="destructive" onClick={() => actions.closeTab(pane.id, tab.id)}>
+        <ContextMenuItem variant="destructive" onClick={() => closeTab(pane.id, tab.id)}>
           Close tab
         </ContextMenuItem>
       </ContextMenuContent>
@@ -332,19 +311,19 @@ function TabTrigger({
 function TabBody({
   paneId,
   tab,
-  actions,
   onActivatePane,
 }: {
   paneId: PaneId;
   tab: TabSnapshot;
-  actions: WorkspaceViewActions;
   onActivatePane(): void;
 }) {
+  const setTabKind = useWorkspaceStore((state) => state.setTabKind);
+
   return renderTabContent({
     paneId,
     tab,
     onActivatePane,
-    onSetTabKind: (kind) => actions.setTabKind(paneId, tab.id, kind),
+    onSetTabKind: (kind) => setTabKind(paneId, tab.id, kind),
   });
 }
 
@@ -371,7 +350,7 @@ function DropIndicator({ edge }: { edge: DropEdge | null }) {
 function activateTabFromValue(
   value: unknown,
   pane: PaneSnapshot,
-  actions: WorkspaceViewActions,
+  activateTab: (paneId: PaneId, tabId: TabId) => void,
 ): void {
   const tabId = Number(value);
 
@@ -383,7 +362,7 @@ function activateTabFromValue(
     return;
   }
 
-  actions.activateTab(pane.id, tabId);
+  activateTab(pane.id, tabId);
 }
 
 function writeDraggedTab(
@@ -466,6 +445,10 @@ function tabValue(tabId: TabId): string {
 
 function ratioToPercent(ratio: number): number {
   return Math.min(Math.max(ratio * 100, 1), 99);
+}
+
+function percentSize(value: number): string {
+  return `${value}%`;
 }
 
 function minimumNodeSize(node: PaneNodeSnapshot, axis: SplitAxis): string {

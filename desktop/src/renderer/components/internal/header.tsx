@@ -5,6 +5,7 @@ import {
   minimizeWindow,
   toggleMaximizeWindow,
 } from "@/renderer/ipc";
+import { useWorkspaceStore } from "@/renderer/stores";
 import { Button } from "@/renderer/components/ui/button";
 import { ButtonGroup } from "@/renderer/components/ui/button-group";
 import {
@@ -13,27 +14,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
-import type { WorkspaceId, WorkspaceListSnapshot } from "@/shared/ipc";
 
-type HeaderProps = {
-  error: string | null;
-  isAddingWorkspace: boolean;
-  isLoadingWorkspaces: boolean;
-  snapshot: WorkspaceListSnapshot | null;
-  onCloseWorkspace(workspaceId: WorkspaceId): void;
-  onOpenWorkspace(): void;
-  onSwitchWorkspace(workspaceId: WorkspaceId): void;
-};
+export function Header() {
+  const addWorkspace = useWorkspaceStore((state) => state.addWorkspace);
+  const closeWorkspace = useWorkspaceStore((state) => state.closeWorkspace);
+  const error = useWorkspaceStore((state) => state.error);
+  const isAddingWorkspace = useWorkspaceStore((state) => state.isAddingWorkspace);
+  const isLoadingWorkspaces = useWorkspaceStore((state) => state.isLoadingWorkspaces);
+  const snapshot = useWorkspaceStore((state) => state.snapshot);
+  const switchWorkspace = useWorkspaceStore((state) => state.switchWorkspace);
 
-export function Header({
-  error,
-  isAddingWorkspace,
-  isLoadingWorkspaces,
-  snapshot,
-  onCloseWorkspace,
-  onOpenWorkspace,
-  onSwitchWorkspace,
-}: HeaderProps) {
   return (
     <header className="relative flex h-8 shrink-0 items-center justify-center px-2 [-webkit-app-region:drag]">
       {error ? (
@@ -63,7 +53,7 @@ export function Header({
                       variant={isActive ? "default" : "outline"}
                       size="sm"
                       aria-pressed={isActive}
-                      onClick={() => onSwitchWorkspace(workspace.id)}
+                      onClick={() => void switchWorkspace(workspace.id)}
                     >
                       <span className="max-w-36 truncate">{workspace.name}</span>
                     </Button>
@@ -72,7 +62,7 @@ export function Header({
                 <ContextMenuContent>
                   <ContextMenuItem
                     variant="destructive"
-                    onClick={() => onCloseWorkspace(workspace.id)}
+                    onClick={() => void closeWorkspace(workspace.id)}
                   >
                     Close workspace
                   </ContextMenuItem>
@@ -88,7 +78,7 @@ export function Header({
           size="icon-sm"
           aria-label="Open workspace"
           disabled={isLoadingWorkspaces || isAddingWorkspace}
-          onClick={onOpenWorkspace}
+          onClick={() => void addWorkspace()}
         >
           <Plus />
         </Button>

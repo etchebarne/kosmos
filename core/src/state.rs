@@ -611,4 +611,25 @@ mod tests {
 
         assert_eq!(split.ratio(), 0.7);
     }
+
+    #[test]
+    fn resized_split_survives_workspace_switches() {
+        let mut state = State::new();
+        let first_workspace_id = state.open_workspace("/workspaces/first");
+        assert!(state.split_pane(Some(first_workspace_id), None, SplitAxis::Horizontal, false,));
+        assert!(state.resize_split(Some(first_workspace_id), SplitPaneId::new(1), 0.7));
+
+        state.open_workspace("/workspaces/second");
+        assert!(state.activate_workspace(first_workspace_id));
+
+        let workspace = state
+            .workspaces()
+            .active_workspace()
+            .expect("first workspace should be active again");
+        let crate::tree::PaneNode::Split(split) = workspace.root() else {
+            panic!("workspace root should be split");
+        };
+
+        assert_eq!(split.ratio(), 0.7);
+    }
 }
