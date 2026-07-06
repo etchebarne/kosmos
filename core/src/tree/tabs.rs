@@ -57,7 +57,6 @@ pub enum TabKind {
     Git,
     Search,
     Terminal,
-    Settings,
 }
 
 impl TabKind {
@@ -69,7 +68,6 @@ impl TabKind {
             Self::Git => "Git",
             Self::Search => "Search",
             Self::Terminal => "Terminal",
-            Self::Settings => "Settings",
         }
     }
 }

@@ -76,7 +76,6 @@ pub(crate) enum TabKindPayload {
     Git,
     Search,
     Terminal,
-    Settings,
 }
 
 impl From<TabKindPayload> for TabKind {
@@ -88,7 +87,6 @@ impl From<TabKindPayload> for TabKind {
             TabKindPayload::Git => Self::Git,
             TabKindPayload::Search => Self::Search,
             TabKindPayload::Terminal => Self::Terminal,
-            TabKindPayload::Settings => Self::Settings,
         }
     }
 }
@@ -102,7 +100,6 @@ impl From<&TabKind> for TabKindPayload {
             TabKind::Git => Self::Git,
             TabKind::Search => Self::Search,
             TabKind::Terminal => Self::Terminal,
-            TabKind::Settings => Self::Settings,
         }
     }
 }

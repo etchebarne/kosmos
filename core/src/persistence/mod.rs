@@ -170,7 +170,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 
         UPDATE tabs
         SET kind = 'blank'
-        WHERE kind NOT IN ('blank', 'file_tree', 'editor', 'git', 'search', 'terminal', 'settings');
+        WHERE kind NOT IN ('blank', 'file_tree', 'editor', 'git', 'search', 'terminal');
         ",
     )?;
 
@@ -668,7 +668,6 @@ fn tab_kind_name(kind: &TabKind) -> &'static str {
         TabKind::Git => "git",
         TabKind::Search => "search",
         TabKind::Terminal => "terminal",
-        TabKind::Settings => "settings",
     }
 }
 
@@ -680,7 +679,6 @@ fn parse_tab_kind(kind: &str) -> Result<TabKind> {
         "git" => Ok(TabKind::Git),
         "search" => Ok(TabKind::Search),
         "terminal" => Ok(TabKind::Terminal),
-        "settings" => Ok(TabKind::Settings),
         _ => Err(invalid_state(format!("unknown tab kind {kind:?}"))),
     }
 }

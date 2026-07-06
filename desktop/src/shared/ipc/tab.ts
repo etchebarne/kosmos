@@ -1,7 +1,7 @@
 import type { PaneId, TabId, WorkspaceId } from "./ids";
 import type { SplitAxis } from "./pane";
 
-export type TabKind = "blank" | "fileTree" | "editor" | "git" | "search" | "terminal" | "settings";
+export type TabKind = "blank" | "fileTree" | "editor" | "git" | "search" | "terminal";
 
 export type OpenTabParams = {
   workspaceId?: WorkspaceId | null;

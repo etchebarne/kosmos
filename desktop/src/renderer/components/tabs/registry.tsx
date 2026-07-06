@@ -5,7 +5,6 @@ import {
   FolderTree,
   GitBranch,
   Search,
-  Settings,
   Terminal,
   type LucideIcon,
 } from "lucide-react";
@@ -38,7 +37,6 @@ const TAB_KIND_ORDER: TabKind[] = [
   "git",
   "search",
   "terminal",
-  "settings",
 ];
 
 const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
@@ -66,7 +64,6 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
   git: placeholderTabDefinition("Git", GitBranch, true),
   search: placeholderTabDefinition("Search", Search, true),
   terminal: placeholderTabDefinition("Terminal", Terminal, true),
-  settings: placeholderTabDefinition("Settings", Settings, true),
 };
 
 const BLANK_TAB_OPTIONS: BlankTabOption[] = TAB_KIND_ORDER.filter(
