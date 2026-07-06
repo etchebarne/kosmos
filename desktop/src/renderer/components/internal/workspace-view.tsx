@@ -217,7 +217,7 @@ function PaneLeaf({
         className="h-full min-h-0 gap-0"
         onValueChange={(value) => activateTabFromValue(value, pane, activateTab)}
       >
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-muted/60 px-2">
+        <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-muted/60 px-1">
           <TabsList
             variant="line"
             className="h-full min-w-0 flex-1 justify-start overflow-x-auto overflow-y-hidden rounded-none p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
