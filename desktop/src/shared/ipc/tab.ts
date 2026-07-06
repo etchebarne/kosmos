@@ -36,6 +36,14 @@ export type ReorderTabParams = {
   targetIndex: number;
 };
 
+export type MoveTabParams = {
+  workspaceId?: WorkspaceId | null;
+  paneId: PaneId;
+  targetPaneId: PaneId;
+  tabId: TabId;
+  targetIndex: number;
+};
+
 export type SplitTabParams = {
   workspaceId?: WorkspaceId | null;
   paneId: PaneId;

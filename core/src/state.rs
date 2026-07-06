@@ -439,6 +439,24 @@ impl State {
         workspace.reorder_tab_in_pane(pane_id, tab_id, target_index)
     }
 
+    pub fn move_tab(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        pane_id: PaneId,
+        target_pane_id: PaneId,
+        tab_id: TabId,
+        target_index: usize,
+    ) -> bool {
+        let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
+            return false;
+        };
+        let Some(workspace) = self.workspace_mut(workspace_id) else {
+            return false;
+        };
+
+        workspace.move_tab_to_pane(pane_id, target_pane_id, tab_id, target_index)
+    }
+
     pub fn resize_split(
         &mut self,
         workspace_id: Option<WorkspaceId>,
@@ -834,6 +852,70 @@ mod tests {
         assert!(workspace.root().contains_pane(PaneId::new(1)));
         assert!(workspace.root().contains_pane(PaneId::new(2)));
         assert_eq!(workspace.active_pane_id(), PaneId::new(1));
+    }
+
+    #[test]
+    fn moving_tab_to_another_pane_adds_it_to_target_pane() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        state.open_tab(None, None, "Search", TabKind::Search);
+        assert!(state.split_pane(None, None, SplitAxis::Horizontal, false));
+
+        assert!(state.move_tab(None, PaneId::new(1), PaneId::new(2), TabId::new(2), 1,));
+
+        let workspace = state
+            .workspaces()
+            .active_workspace()
+            .expect("workspace should be active");
+        let source_pane = workspace
+            .root()
+            .find_pane(PaneId::new(1))
+            .expect("source pane should remain");
+        let target_pane = workspace
+            .root()
+            .find_pane(PaneId::new(2))
+            .expect("target pane should exist");
+
+        assert_eq!(source_pane.tabs().len(), 1);
+        assert_eq!(
+            target_pane.tabs().iter().map(Tab::id).collect::<Vec<_>>(),
+            vec![TabId::new(3), TabId::new(2)]
+        );
+        assert_eq!(target_pane.active_tab_id(), TabId::new(2));
+        assert_eq!(workspace.active_pane_id(), PaneId::new(2));
+    }
+
+    #[test]
+    fn moving_last_tab_to_another_pane_removes_source_pane() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        assert!(state.split_pane(None, None, SplitAxis::Horizontal, false));
+
+        assert!(state.move_tab(
+            None,
+            PaneId::new(1),
+            PaneId::new(2),
+            TabId::new(1),
+            usize::MAX,
+        ));
+
+        let workspace = state
+            .workspaces()
+            .active_workspace()
+            .expect("workspace should be active");
+        let target_pane = workspace
+            .root()
+            .find_pane(PaneId::new(2))
+            .expect("target pane should exist");
+
+        assert_eq!(workspace.root().pane_count(), 1);
+        assert!(!workspace.root().contains_pane(PaneId::new(1)));
+        assert_eq!(
+            target_pane.tabs().iter().map(Tab::id).collect::<Vec<_>>(),
+            vec![TabId::new(2), TabId::new(1)]
+        );
+        assert_eq!(target_pane.active_tab_id(), TabId::new(1));
+        assert_eq!(workspace.active_pane_id(), PaneId::new(2));
     }
 
     #[test]

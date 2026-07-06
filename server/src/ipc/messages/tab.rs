@@ -48,6 +48,16 @@ pub(crate) struct ReorderTabParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct MoveTabParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+    pub(crate) target_pane_id: PaneIdParam,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) target_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SplitTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) pane_id: PaneIdParam,

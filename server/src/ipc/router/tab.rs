@@ -1,7 +1,7 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::tab::{
-    ActivateTabParams, CloseTabParams, OpenTabParams, ReorderTabParams, SetTabKindParams,
-    SplitTabParams,
+    ActivateTabParams, CloseTabParams, MoveTabParams, OpenTabParams, ReorderTabParams,
+    SetTabKindParams, SplitTabParams,
 };
 use super::{command_response, parse_params, unsupported_action};
 
@@ -12,6 +12,7 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "setKind" => set_tab_kind(state, request),
         "close" => close_tab(state, request),
         "reorder" => reorder_tab(state, request),
+        "move" => move_tab(state, request),
         "split" => split_tab(state, request),
         _ => unsupported_action(request),
     }
@@ -102,6 +103,25 @@ fn reorder_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMess
             state,
             "tab.reorder_failed",
             "tab could not be reordered",
+        ),
+        Err(response) => response,
+    }
+}
+
+fn move_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<MoveTabParams>(request) {
+        Ok(params) => command_response(
+            request.id,
+            state.move_tab(
+                params.workspace_id.map(Into::into),
+                params.pane_id.into(),
+                params.target_pane_id.into(),
+                params.tab_id.into(),
+                params.target_index,
+            ),
+            state,
+            "tab.move_failed",
+            "tab could not be moved",
         ),
         Err(response) => response,
     }

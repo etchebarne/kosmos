@@ -1,6 +1,7 @@
 import type {
   ActivateTabParams,
   CloseTabParams,
+  MoveTabParams,
   OpenTabParams,
   ReorderTabParams,
   SetTabKindParams,
@@ -30,6 +31,10 @@ export function closeTab(params: CloseTabParams): Promise<WorkspaceListSnapshot>
 
 export function reorderTab(params: ReorderTabParams): Promise<WorkspaceListSnapshot> {
   return requestServer(DOMAIN, "reorder", params);
+}
+
+export function moveTab(params: MoveTabParams): Promise<WorkspaceListSnapshot> {
+  return requestServer(DOMAIN, "move", params);
 }
 
 export function splitTab(params: SplitTabParams): Promise<WorkspaceListSnapshot> {

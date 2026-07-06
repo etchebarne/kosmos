@@ -14,6 +14,7 @@ import {
   closeTab as closeTabIpc,
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
+  moveTab as moveTabIpc,
   openTab as openTabIpc,
   openWorkspace,
   resizeSplit as resizeSplitIpc,
@@ -49,6 +50,7 @@ type WorkspaceStore = {
   closeTab(paneId: PaneId, tabId: TabId): void;
   closeWorkspace(workspaceId: WorkspaceId): Promise<void>;
   initializeWorkspaces(): Promise<void>;
+  moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
   openTab(paneId: PaneId): void;
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
@@ -205,6 +207,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           set({ isLoadingWorkspaces: false });
         }
       }
+    },
+    moveTab(paneId, tabId, targetPaneId, targetIndex) {
+      const activeWorkspace = activeWorkspaceFrom(get().snapshot);
+      if (!activeWorkspace) {
+        return;
+      }
+
+      updateFromServer(() =>
+        moveTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId, targetPaneId, targetIndex }),
+      );
     },
     openTab(paneId) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);

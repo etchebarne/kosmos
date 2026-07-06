@@ -164,6 +164,44 @@ impl Workspace {
         reordered
     }
 
+    pub fn move_tab_to_pane(
+        &mut self,
+        pane_id: PaneId,
+        target_pane_id: PaneId,
+        tab_id: TabId,
+        target_index: usize,
+    ) -> bool {
+        if pane_id == target_pane_id {
+            return self.reorder_tab_in_pane(pane_id, tab_id, target_index);
+        }
+
+        let Some(source_pane) = self.root.find_pane(pane_id) else {
+            return false;
+        };
+        if !source_pane.contains_tab(tab_id) || !self.root.contains_pane(target_pane_id) {
+            return false;
+        }
+
+        let remove_source_pane = source_pane.tabs().len() == 1;
+        let Some(tab) = self
+            .root
+            .find_pane_mut(pane_id)
+            .and_then(|pane| pane.remove_tab(tab_id))
+        else {
+            return false;
+        };
+
+        if remove_source_pane && !self.remove_pane_after_tab_move(pane_id) {
+            return false;
+        }
+
+        if self.insert_tab_in_pane(target_pane_id, target_index, tab) {
+            self.activate_tab(target_pane_id, tab_id)
+        } else {
+            false
+        }
+    }
+
     pub fn activate_tab_in_active_pane(&mut self, tab_id: TabId) -> bool {
         self.active_pane_mut()
             .is_some_and(|pane| pane.activate_tab(tab_id))
@@ -299,6 +337,25 @@ impl Workspace {
         } else {
             self.active_pane = fallback_pane_id;
         }
+    }
+
+    fn remove_pane_after_tab_move(&mut self, pane_id: PaneId) -> bool {
+        let (root, removed_pane) = self.root.clone().remove_pane(pane_id);
+
+        debug_assert!(removed_pane.is_some());
+
+        let Some(root) = root else {
+            return false;
+        };
+
+        self.active_pane = if root.contains_pane(self.active_pane) {
+            self.active_pane
+        } else {
+            root.first_pane_id()
+        };
+        self.root = root;
+
+        true
     }
 }
 

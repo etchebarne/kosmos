@@ -36,7 +36,13 @@ type DraggedTab = {
   tabId: TabId;
 };
 
+type TabDropTarget = {
+  index: number;
+  x: number;
+};
+
 const TAB_DRAG_MIME = "application/x-kosmos-tab";
+const TAB_TRIGGER_SELECTOR = "[data-kosmos-tab-trigger]";
 const MIN_PANE_SIZE_REM = 16;
 
 export function WorkspaceView() {
@@ -157,8 +163,10 @@ function PaneLeaf({
   isRoot: boolean;
 }) {
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<TabDropTarget | null>(null);
   const activatePane = useWorkspaceStore((state) => state.activatePane);
   const activateTab = useWorkspaceStore((state) => state.activateTab);
+  const moveTab = useWorkspaceStore((state) => state.moveTab);
   const openTab = useWorkspaceStore((state) => state.openTab);
   const splitTab = useWorkspaceStore((state) => state.splitTab);
 
@@ -175,12 +183,14 @@ function PaneLeaf({
         }
 
         setDropEdge(null);
+        setTabDropTarget(null);
       }}
       onDragOver={(event) => {
         if (!hasDraggedTab(event)) {
           return;
         }
 
+        setTabDropTarget(null);
         const edge = edgeFromDragEvent(event, event.currentTarget);
         setDropEdge(edge);
 
@@ -196,6 +206,7 @@ function PaneLeaf({
         const draggedTab = readDraggedTab(event);
         const edge = edgeFromDragEvent(event, event.currentTarget);
         setDropEdge(null);
+        setTabDropTarget(null);
 
         if (!draggedTab || !edge) {
           return;
@@ -217,7 +228,37 @@ function PaneLeaf({
         className="h-full min-h-0 gap-0"
         onValueChange={(value) => activateTabFromValue(value, pane, activateTab)}
       >
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-muted/60 px-1">
+        <div
+          className="relative flex h-10 shrink-0 items-center gap-1 border-b bg-muted/60 px-1"
+          onDragOver={(event) => {
+            if (!hasDraggedTab(event)) {
+              return;
+            }
+
+            const target = tabDropTargetFromDragEvent(event, event.currentTarget);
+            setDropEdge(null);
+            setTabDropTarget(target);
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(event) => {
+            const draggedTab = readDraggedTab(event);
+            if (!draggedTab) {
+              return;
+            }
+
+            const target = tabDropTargetFromDragEvent(event, event.currentTarget);
+            setDropEdge(null);
+            setTabDropTarget(null);
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!isTabDropNoop(pane, draggedTab, target.index)) {
+              moveTab(draggedTab.paneId, draggedTab.tabId, pane.id, target.index);
+            }
+          }}
+        >
           <TabsList
             variant="line"
             className="h-full min-w-0 flex-1 justify-start overflow-x-auto overflow-y-hidden rounded-none p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -237,6 +278,8 @@ function PaneLeaf({
           >
             <Plus />
           </Button>
+
+          <TabDropIndicator target={tabDropTarget} />
         </div>
 
         {pane.tabs.map((tab) => (
@@ -275,6 +318,7 @@ function TabTrigger({
             nativeButton={false}
             draggable
             render={<div />}
+            data-kosmos-tab-trigger=""
             className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs data-active:!bg-foreground/10 data-active:!text-foreground"
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
           >
@@ -335,6 +379,19 @@ function TabBody({
         onSetTabKind: (kind) => setTabKind(paneId, tab.id, kind),
       })}
     </TabErrorBoundary>
+  );
+}
+
+function TabDropIndicator({ target }: { target: TabDropTarget | null }) {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    <div
+      className="pointer-events-none absolute top-1.5 bottom-1.5 z-30 w-0.5 -translate-x-1/2 rounded-full bg-primary ring-4 ring-primary/15"
+      style={{ left: target.x }}
+    />
   );
 }
 
@@ -427,6 +484,46 @@ function hasDraggedTab(event: DragEvent<HTMLElement>): boolean {
   return false;
 }
 
+function tabDropTargetFromDragEvent(
+  event: DragEvent<HTMLElement>,
+  element: HTMLElement,
+): TabDropTarget {
+  const containerRect = element.getBoundingClientRect();
+  const tabElements = Array.from(element.querySelectorAll<HTMLElement>(TAB_TRIGGER_SELECTOR));
+
+  if (tabElements.length === 0) {
+    return {
+      index: 0,
+      x: clamp(event.clientX - containerRect.left, 0, containerRect.width),
+    };
+  }
+
+  for (let index = 0; index < tabElements.length; index += 1) {
+    const tabRect = tabElements[index]!.getBoundingClientRect();
+    if (event.clientX < tabRect.left + tabRect.width / 2) {
+      return {
+        index,
+        x: clamp(tabRect.left - containerRect.left, 0, containerRect.width),
+      };
+    }
+  }
+
+  const lastTabRect = tabElements[tabElements.length - 1]!.getBoundingClientRect();
+  return {
+    index: tabElements.length,
+    x: clamp(lastTabRect.right - containerRect.left, 0, containerRect.width),
+  };
+}
+
+function isTabDropNoop(pane: PaneSnapshot, draggedTab: DraggedTab, targetIndex: number): boolean {
+  if (draggedTab.paneId !== pane.id) {
+    return false;
+  }
+
+  const currentIndex = pane.tabs.findIndex((tab) => tab.id === draggedTab.tabId);
+  return currentIndex === -1 || targetIndex === currentIndex || targetIndex === currentIndex + 1;
+}
+
 function edgeFromDragEvent(event: DragEvent<HTMLElement>, element: HTMLElement): DropEdge | null {
   const rect = element.getBoundingClientRect();
   const threshold = Math.min(96, Math.max(40, Math.min(rect.width, rect.height) * 0.28));
@@ -460,6 +557,10 @@ function ratioToPercent(ratio: number): number {
 
 function percentSize(value: number): string {
   return `${value}%`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function minimumNodeSize(node: PaneNodeSnapshot, axis: SplitAxis): string {
