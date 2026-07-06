@@ -58,6 +58,7 @@ function registerIpcHandlers(): void {
 
 function createMainWindow(): void {
   const runtimeDirectory = getRuntimeDirectory();
+  const appIconPath = getAppIconPath();
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -67,6 +68,7 @@ function createMainWindow(): void {
     frame: false,
     autoHideMenuBar: true,
     backgroundColor: "#111217",
+    icon: appIconPath,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -78,6 +80,10 @@ function createMainWindow(): void {
   registerWindowShortcuts(window);
 
   void window.loadFile(path.join(runtimeDirectory, "renderer", "index.html"));
+}
+
+function getAppIconPath(): string {
+  return path.resolve(app.getAppPath(), "assets", "icon", "icon-512.png");
 }
 
 function registerWindowShortcuts(window: BrowserWindow): void {

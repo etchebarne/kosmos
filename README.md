@@ -23,8 +23,7 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 - `core/` contains the Rust logic layer.
 - `server/` contains the Rust backend process that imports `core`.
-- `desktop/` contains the Bun/Electron frontend.
-- `assets/` contains shared branding and icon assets.
+- `desktop/` contains the Bun/Electron frontend and its assets.
 
 ## Development
 
