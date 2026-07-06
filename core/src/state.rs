@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::file_tree::{FileTree, FileTreeEntryKind, FileTreeError, FileTreeViewState};
+use crate::file_tree::{
+    FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
+};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
@@ -85,6 +87,17 @@ impl State {
         };
 
         FileTree::scan_with_expanded_paths(workspace.directory(), expanded_paths)
+    }
+
+    pub fn file_tree_children(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        directory_path: &str,
+    ) -> Result<FileTreeDirectory, FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+
+        FileTree::scan_children(directory, directory_path)
     }
 
     pub fn set_file_tree_expanded_paths(

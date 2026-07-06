@@ -3,14 +3,16 @@ use core::file_tree::FileTreeError;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::file_tree::{
     CreateFileTreeEntryParams, DeleteFileTreeEntriesParams, DeleteFileTreeEntryParams,
-    FileTreeResolvedPath, FileTreeSnapshot, GetFileTreeParams, RenameFileTreeEntryParams,
-    ResolveFileTreePathParams, SetFileTreeExpandedPathsParams, TransferFileTreeEntriesParams,
+    FileTreeChildrenSnapshot, FileTreeResolvedPath, FileTreeSnapshot, GetFileTreeChildrenParams,
+    GetFileTreeParams, RenameFileTreeEntryParams, ResolveFileTreePathParams,
+    SetFileTreeExpandedPathsParams, TransferFileTreeEntriesParams,
 };
 use super::{parse_params, unsupported_action};
 
 pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match request.action.as_str() {
         "get" => get_file_tree(state, request),
+        "getChildren" => get_file_tree_children(state, request),
         "setExpandedPaths" => set_expanded_paths(state, request),
         "createEntry" => create_entry(state, request),
         "renameEntry" => rename_entry(state, request),
@@ -32,6 +34,25 @@ fn get_file_tree(state: &mut core::State, request: &RequestEnvelope) -> ServerMe
             Ok(file_tree) => {
                 ServerMessage::ok(request.id, FileTreeSnapshot::from_file_tree(&file_tree))
             }
+            Err(error) => {
+                ServerMessage::error(request.id, file_tree_error_code(&error), error.to_string())
+            }
+        },
+        Err(response) => response,
+    }
+}
+
+fn get_file_tree_children(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GetFileTreeChildrenParams>(request) {
+        Ok(params) => match state.file_tree_children(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            &params.path,
+        ) {
+            Ok(directory) => ServerMessage::ok(
+                request.id,
+                FileTreeChildrenSnapshot::from_directory(&directory),
+            ),
             Err(error) => {
                 ServerMessage::error(request.id, file_tree_error_code(&error), error.to_string())
             }
@@ -188,6 +209,7 @@ fn file_tree_error_code(error: &FileTreeError) -> &'static str {
         FileTreeError::WorkspaceNotFound => "file_tree.workspace_not_found",
         FileTreeError::TabNotFound => "file_tree.tab_not_found",
         FileTreeError::RootNotDirectory(_) => "file_tree.root_not_directory",
+        FileTreeError::TooManyEntries { .. } => "file_tree.too_many_entries",
         FileTreeError::InvalidPath(_) => "file_tree.invalid_path",
         FileTreeError::InvalidName(_) => "file_tree.invalid_name",
         FileTreeError::EntryNotFound(_) => "file_tree.entry_not_found",

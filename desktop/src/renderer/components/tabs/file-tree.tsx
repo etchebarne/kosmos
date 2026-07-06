@@ -17,6 +17,7 @@ import {
   createFileTreeEntry,
   deleteFileTreeEntries,
   getFileTree,
+  getFileTreeChildren,
   moveFileTreeEntries,
   renameFileTreeEntry,
   revealFileTreePath,
@@ -388,6 +389,12 @@ function LoadedFileTree({
         </div>
       ) : null}
       <FileTreeExpansionPersistence
+        model={model}
+        snapshot={snapshot}
+        workspaceId={workspaceId}
+        tabId={tabId}
+      />
+      <FileTreeDeferredDirectoryLoader
         model={model}
         snapshot={snapshot}
         workspaceId={workspaceId}
@@ -944,6 +951,86 @@ function FileTreeExpansionPersistence({
     workspaceId,
     tabId,
   ]);
+
+  return null;
+}
+
+function FileTreeDeferredDirectoryLoader({
+  model,
+  snapshot,
+  workspaceId,
+  tabId,
+}: {
+  model: FileTreeModel;
+  snapshot: FileTreeSnapshot;
+  workspaceId: WorkspaceId;
+  tabId: TabId;
+}) {
+  const deferredPathsRef = useRef(new Set(snapshot.deferredPaths));
+  const loadingPathsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    deferredPathsRef.current = new Set(snapshot.deferredPaths);
+    loadingPathsRef.current.clear();
+  }, [snapshot.deferredPaths]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const loadDirectory = async (path: string) => {
+      loadingPathsRef.current.add(path);
+
+      try {
+        const children = await getFileTreeChildren({ workspaceId, tabId, path });
+
+        if (disposed) {
+          return;
+        }
+
+        const operations = children.paths
+          .filter((childPath) => !model.getItem(childPath))
+          .map((childPath) => ({ type: "add" as const, path: childPath }));
+
+        deferredPathsRef.current.delete(path);
+
+        for (const deferredPath of children.deferredPaths) {
+          deferredPathsRef.current.add(deferredPath);
+        }
+
+        if (operations.length > 0) {
+          model.batch(operations);
+        }
+      } catch (caughtError: unknown) {
+        if (!disposed) {
+          window.alert(errorMessage(caughtError));
+        }
+      } finally {
+        loadingPathsRef.current.delete(path);
+      }
+    };
+
+    const loadExpandedDeferredDirectories = () => {
+      for (const path of deferredPathsRef.current) {
+        if (loadingPathsRef.current.has(path)) {
+          continue;
+        }
+
+        const item = model.getItem(path);
+        if (isDirectoryHandle(item) && item.isExpanded()) {
+          void loadDirectory(path);
+        }
+      }
+    };
+
+    loadExpandedDeferredDirectories();
+
+    const unsubscribe = model.subscribe(loadExpandedDeferredDirectories);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [model, workspaceId, tabId]);
 
   return null;
 }

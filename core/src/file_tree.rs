@@ -11,6 +11,31 @@ use crate::tree::{TabId, WorkspaceId};
 
 pub type Result<T> = std::result::Result<T, FileTreeError>;
 
+const MAX_FILE_TREE_PATHS: usize = 50_000;
+const IGNORED_DIRECTORY_NAMES: &[&str] = &[
+    ".angular",
+    ".cache",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".next",
+    ".nuxt",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svn",
+    ".svelte-kit",
+    ".turbo",
+    ".venv",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileTreeEntryKind {
     Directory,
@@ -22,6 +47,13 @@ pub struct FileTree {
     root: PathBuf,
     paths: Vec<String>,
     expanded_paths: Vec<String>,
+    deferred_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileTreeDirectory {
+    paths: Vec<String>,
+    deferred_paths: Vec<String>,
 }
 
 impl FileTree {
@@ -38,7 +70,14 @@ impl FileTree {
 
         let mut paths = Vec::new();
         let mut directory_paths = HashSet::new();
-        collect_paths(&root, "", &mut paths, &mut directory_paths)?;
+        let mut deferred_paths = Vec::new();
+        collect_paths(
+            &root,
+            "",
+            &mut paths,
+            &mut directory_paths,
+            &mut deferred_paths,
+        )?;
         let expanded_paths = normalize_expanded_paths(expanded_paths)
             .into_iter()
             .filter(|path| directory_paths.contains(path))
@@ -48,6 +87,32 @@ impl FileTree {
             root,
             paths,
             expanded_paths,
+            deferred_paths,
+        })
+    }
+
+    pub fn scan_children(
+        root: impl AsRef<Path>,
+        directory_path: &str,
+    ) -> Result<FileTreeDirectory> {
+        let root = root.as_ref();
+        ensure_directory(root)?;
+        let normalized_path = normalize_relative_path(directory_path, PathUsage::Directory)?;
+        let directory = resolve_directory(root, &normalized_path)?;
+        let relative_directory = path_to_str(&normalized_path);
+        let mut paths = Vec::new();
+        let mut deferred_paths = Vec::new();
+
+        collect_child_paths(
+            &directory,
+            relative_directory,
+            &mut paths,
+            &mut deferred_paths,
+        )?;
+
+        Ok(FileTreeDirectory {
+            paths,
+            deferred_paths,
         })
     }
 
@@ -61,6 +126,10 @@ impl FileTree {
 
     pub fn expanded_paths(&self) -> &[String] {
         &self.expanded_paths
+    }
+
+    pub fn deferred_paths(&self) -> &[String] {
+        &self.deferred_paths
     }
 
     pub fn create_entry(
@@ -194,6 +263,16 @@ impl FileTree {
     }
 }
 
+impl FileTreeDirectory {
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    pub fn deferred_paths(&self) -> &[String] {
+        &self.deferred_paths
+    }
+}
+
 fn delete_resolved_entry(path: PathBuf) -> Result<()> {
     let file_type = fs::symlink_metadata(&path)
         .map_err(|error| io_error(path.clone(), error))?
@@ -252,6 +331,9 @@ pub enum FileTreeError {
     },
     RootNotDirectory(PathBuf),
     TabNotFound,
+    TooManyEntries {
+        limit: usize,
+    },
     UnsupportedEntry(PathBuf),
     WorkspaceNotFound,
 }
@@ -286,6 +368,9 @@ impl fmt::Display for FileTreeError {
                 write!(formatter, "{} is not a directory", path.display())
             }
             Self::TabNotFound => formatter.write_str("file tree tab does not exist"),
+            Self::TooManyEntries { limit } => {
+                write!(formatter, "file tree contains more than {limit} entries")
+            }
             Self::UnsupportedEntry(path) => {
                 write!(formatter, "unsupported file tree entry: {}", path.display())
             }
@@ -306,6 +391,7 @@ impl StdError for FileTreeError {
             | Self::InvalidPath(_)
             | Self::RootNotDirectory(_)
             | Self::TabNotFound
+            | Self::TooManyEntries { .. }
             | Self::UnsupportedEntry(_)
             | Self::WorkspaceNotFound => None,
         }
@@ -649,23 +735,60 @@ fn collect_paths(
     relative_directory: &str,
     paths: &mut Vec<String>,
     directory_paths: &mut HashSet<String>,
+    deferred_paths: &mut Vec<String>,
 ) -> Result<()> {
-    for entry in sorted_entries(directory)? {
+    for entry in sorted_entries(directory, paths.len())? {
         let relative_path = relative_path(relative_directory, &entry.name);
 
         if entry.is_directory {
-            paths.push(format!("{relative_path}/"));
-            directory_paths.insert(format!("{relative_path}/"));
-            collect_paths(&entry.path, &relative_path, paths, directory_paths)?;
+            let directory_path = format!("{relative_path}/");
+
+            push_path(paths, directory_path.clone())?;
+            directory_paths.insert(directory_path);
+
+            if is_ignored_directory_name(&entry.name) {
+                deferred_paths.push(format!("{relative_path}/"));
+                continue;
+            }
+
+            collect_paths(
+                &entry.path,
+                &relative_path,
+                paths,
+                directory_paths,
+                deferred_paths,
+            )?;
         } else {
-            paths.push(relative_path);
+            push_path(paths, relative_path)?;
         }
     }
 
     Ok(())
 }
 
-fn sorted_entries(directory: &Path) -> Result<Vec<FileTreeEntry>> {
+fn collect_child_paths(
+    directory: &Path,
+    relative_directory: &str,
+    paths: &mut Vec<String>,
+    deferred_paths: &mut Vec<String>,
+) -> Result<()> {
+    for entry in sorted_entries(directory, paths.len())? {
+        let relative_path = relative_path(relative_directory, &entry.name);
+
+        if entry.is_directory {
+            let directory_path = format!("{relative_path}/");
+
+            push_path(paths, directory_path.clone())?;
+            deferred_paths.push(directory_path);
+        } else {
+            push_path(paths, relative_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sorted_entries(directory: &Path, existing_path_count: usize) -> Result<Vec<FileTreeEntry>> {
     let entries = fs::read_dir(directory).map_err(|error| io_error(directory, error))?;
     let mut file_tree_entries = Vec::new();
 
@@ -673,17 +796,43 @@ fn sorted_entries(directory: &Path) -> Result<Vec<FileTreeEntry>> {
         let entry = entry.map_err(|error| io_error(directory, error))?;
         let path = entry.path();
         let file_type = entry.file_type().map_err(|error| io_error(&path, error))?;
+        let is_directory = file_type.is_dir();
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        ensure_path_capacity(existing_path_count.saturating_add(file_tree_entries.len()))?;
 
         file_tree_entries.push(FileTreeEntry {
-            name: entry.file_name().to_string_lossy().into_owned(),
+            name,
             path,
-            is_directory: file_type.is_dir(),
+            is_directory,
         });
     }
 
     file_tree_entries.sort_by(compare_entries);
 
     Ok(file_tree_entries)
+}
+
+fn push_path(paths: &mut Vec<String>, path: String) -> Result<()> {
+    ensure_path_capacity(paths.len())?;
+
+    paths.push(path);
+
+    Ok(())
+}
+
+fn ensure_path_capacity(current_path_count: usize) -> Result<()> {
+    if current_path_count < MAX_FILE_TREE_PATHS {
+        Ok(())
+    } else {
+        Err(FileTreeError::TooManyEntries {
+            limit: MAX_FILE_TREE_PATHS,
+        })
+    }
+}
+
+fn is_ignored_directory_name(name: &str) -> bool {
+    IGNORED_DIRECTORY_NAMES.contains(&name)
 }
 
 fn compare_entries(left: &FileTreeEntry, right: &FileTreeEntry) -> Ordering {
@@ -805,6 +954,75 @@ mod tests {
         assert_eq!(tree.expanded_paths(), &["src/", "src/components/"]);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_keeps_generated_dependency_and_build_directories_collapsed() {
+        let root = test_root("ignored-directories");
+        fs::create_dir_all(root.join(".git/objects")).expect("git metadata should be created");
+        fs::create_dir_all(root.join("node_modules/pkg")).expect("dependencies should be created");
+        fs::create_dir_all(root.join("src")).expect("source directory should be created");
+        fs::create_dir_all(root.join("target/debug")).expect("build output should be created");
+        fs::write(root.join("node_modules/pkg/index.js"), b"export {}")
+            .expect("dependency file should be written");
+        fs::write(root.join("src/main.rs"), b"fn main() {}")
+            .expect("source file should be written");
+
+        let tree = FileTree::scan(&root).expect("file tree should scan");
+
+        assert_eq!(
+            tree.paths(),
+            &[".git/", "node_modules/", "src/", "src/main.rs", "target/"]
+        );
+        assert_eq!(
+            tree.deferred_paths(),
+            &[".git/", "node_modules/", "target/"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_children_lists_one_level_and_defers_child_directories() {
+        let root = test_root("children");
+        fs::create_dir_all(root.join("node_modules/.bin"))
+            .expect("bin directory should be created");
+        fs::create_dir_all(root.join("node_modules/pkg"))
+            .expect("package directory should be created");
+        fs::write(root.join("node_modules/README.md"), b"readme")
+            .expect("readme should be written");
+        fs::write(root.join("node_modules/pkg/index.js"), b"export {}")
+            .expect("nested package file should be written");
+
+        let children =
+            FileTree::scan_children(&root, "node_modules/").expect("children should be listed");
+
+        assert_eq!(
+            children.paths(),
+            &[
+                "node_modules/.bin/",
+                "node_modules/pkg/",
+                "node_modules/README.md"
+            ]
+        );
+        assert_eq!(
+            children.deferred_paths(),
+            &["node_modules/.bin/", "node_modules/pkg/"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_entry_count_is_bounded() {
+        let mut paths = vec![String::new(); MAX_FILE_TREE_PATHS];
+
+        let error = push_path(&mut paths, "overflow".to_owned())
+            .expect_err("entry limit should be enforced");
+
+        assert!(
+            matches!(error, FileTreeError::TooManyEntries { limit } if limit == MAX_FILE_TREE_PATHS)
+        );
     }
 
     #[test]

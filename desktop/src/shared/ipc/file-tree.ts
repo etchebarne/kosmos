@@ -5,6 +5,12 @@ export type GetFileTreeParams = {
   tabId?: TabId | null;
 };
 
+export type GetFileTreeChildrenParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  path: string;
+};
+
 export type SetFileTreeExpandedPathsParams = {
   workspaceId?: WorkspaceId | null;
   tabId: TabId;
@@ -61,4 +67,10 @@ export type FileTreeSnapshot = {
   root: string;
   paths: string[];
   expandedPaths: string[];
+  deferredPaths: string[];
+};
+
+export type FileTreeChildrenSnapshot = {
+  paths: string[];
+  deferredPaths: string[];
 };

@@ -2,8 +2,10 @@ import type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
   DeleteFileTreeEntryParams,
+  FileTreeChildrenSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,
+  GetFileTreeChildrenParams,
   GetFileTreeParams,
   RenameFileTreeEntryParams,
   ResolveFileTreePathParams,
@@ -17,6 +19,12 @@ const DOMAIN = "fileTree";
 
 export function getFileTree(params: GetFileTreeParams = {}): Promise<FileTreeSnapshot> {
   return requestServer(DOMAIN, "get", params);
+}
+
+export function getFileTreeChildren(
+  params: GetFileTreeChildrenParams,
+): Promise<FileTreeChildrenSnapshot> {
+  return requestServer(DOMAIN, "getChildren", params);
 }
 
 export function setFileTreeExpandedPaths(
@@ -64,8 +72,10 @@ export type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
   DeleteFileTreeEntryParams,
+  FileTreeChildrenSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,
+  GetFileTreeChildrenParams,
   GetFileTreeParams,
   RenameFileTreeEntryParams,
   ResolveFileTreePathParams,

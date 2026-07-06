@@ -1,4 +1,4 @@
-use core::file_tree::{FileTree, FileTreeEntryKind};
+use core::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind};
 use serde::{Deserialize, Serialize};
 
 use super::pane::WorkspaceIdParam;
@@ -9,6 +9,14 @@ use super::tab::TabIdParam;
 pub(crate) struct GetFileTreeParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: Option<TabIdParam>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetFileTreeChildrenParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +101,14 @@ pub(crate) struct FileTreeSnapshot {
     root: String,
     paths: Vec<String>,
     expanded_paths: Vec<String>,
+    deferred_paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FileTreeChildrenSnapshot {
+    paths: Vec<String>,
+    deferred_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +123,16 @@ impl FileTreeSnapshot {
             root: file_tree.root().to_string_lossy().into_owned(),
             paths: file_tree.paths().to_vec(),
             expanded_paths: file_tree.expanded_paths().to_vec(),
+            deferred_paths: file_tree.deferred_paths().to_vec(),
+        }
+    }
+}
+
+impl FileTreeChildrenSnapshot {
+    pub(crate) fn from_directory(directory: &FileTreeDirectory) -> Self {
+        Self {
+            paths: directory.paths().to_vec(),
+            deferred_paths: directory.deferred_paths().to_vec(),
         }
     }
 }
