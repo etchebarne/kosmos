@@ -1,16 +1,5 @@
 import { useState, type DragEvent } from "react";
-import {
-  File,
-  FileText,
-  FolderTree,
-  GitBranch,
-  Plus,
-  Search,
-  Settings,
-  Terminal,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
 import {
@@ -19,6 +8,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
+import { renderTabContent, tabKindIcon } from "@/renderer/components/tabs";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -44,6 +34,7 @@ export type WorkspaceViewActions = {
   closeTab(paneId: PaneId, tabId: TabId): void;
   openTab(paneId: PaneId): void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
+  setTabKind(paneId: PaneId, tabId: TabId, kind: TabKind): void;
   splitTab(
     paneId: PaneId,
     tabId: TabId,
@@ -69,27 +60,7 @@ type DraggedTab = {
 };
 
 const TAB_DRAG_MIME = "application/x-kosmos-tab";
-const MIN_PANE_SIZE = "16rem";
-
-const TAB_KIND_LABEL: Record<TabKind, string> = {
-  blank: "Blank",
-  editor: "Editor",
-  fileTree: "File Tree",
-  git: "Git",
-  search: "Search",
-  settings: "Settings",
-  terminal: "Terminal",
-};
-
-const TAB_KIND_ICON: Record<TabKind, LucideIcon> = {
-  blank: File,
-  editor: FileText,
-  fileTree: FolderTree,
-  git: GitBranch,
-  search: Search,
-  settings: Settings,
-  terminal: Terminal,
-};
+const MIN_PANE_SIZE_REM = 16;
 
 export function WorkspaceView({
   actions,
@@ -176,11 +147,19 @@ function PaneNodeView({
         actions.resizeSplit(node.id, nextRatio);
       }}
     >
-      <ResizablePanel id={firstPanelId} defaultSize={firstSize} minSize={MIN_PANE_SIZE}>
+      <ResizablePanel
+        id={firstPanelId}
+        defaultSize={firstSize}
+        minSize={minimumNodeSize(node.first, node.axis)}
+      >
         <PaneNodeView node={node.first} workspace={workspace} actions={actions} />
       </ResizablePanel>
       <ResizableHandle withHandle />
-      <ResizablePanel id={secondPanelId} defaultSize={secondSize} minSize={MIN_PANE_SIZE}>
+      <ResizablePanel
+        id={secondPanelId}
+        defaultSize={secondSize}
+        minSize={minimumNodeSize(node.second, node.axis)}
+      >
         <PaneNodeView node={node.second} workspace={workspace} actions={actions} />
       </ResizablePanel>
     </ResizablePanelGroup>
@@ -278,7 +257,12 @@ function PaneLeaf({
 
         {pane.tabs.map((tab) => (
           <TabsContent key={tab.id} value={tabValue(tab.id)} className="min-h-0 p-0">
-            <TabBody tab={tab} onActivatePane={() => actions.activatePane(pane.id)} />
+            <TabBody
+              paneId={pane.id}
+              tab={tab}
+              actions={actions}
+              onActivatePane={() => actions.activatePane(pane.id)}
+            />
           </TabsContent>
         ))}
       </Tabs>
@@ -297,7 +281,7 @@ function TabTrigger({
   tab: TabSnapshot;
   actions: WorkspaceViewActions;
 }) {
-  const TabIcon = TAB_KIND_ICON[tab.kind];
+  const TabIcon = tabKindIcon(tab.kind);
 
   return (
     <ContextMenu>
@@ -345,17 +329,23 @@ function TabTrigger({
   );
 }
 
-function TabBody({ tab, onActivatePane }: { tab: TabSnapshot; onActivatePane(): void }) {
-  return (
-    <div
-      className="grid h-full min-h-0 place-items-center overflow-hidden p-5"
-      onPointerDown={onActivatePane}
-    >
-      <h2 className="max-w-full truncate text-3xl font-semibold tracking-tight text-muted-foreground">
-        {tab.title}
-      </h2>
-    </div>
-  );
+function TabBody({
+  paneId,
+  tab,
+  actions,
+  onActivatePane,
+}: {
+  paneId: PaneId;
+  tab: TabSnapshot;
+  actions: WorkspaceViewActions;
+  onActivatePane(): void;
+}) {
+  return renderTabContent({
+    paneId,
+    tab,
+    onActivatePane,
+    onSetTabKind: (kind) => actions.setTabKind(paneId, tab.id, kind),
+  });
 }
 
 function DropIndicator({ edge }: { edge: DropEdge | null }) {
@@ -476,4 +466,21 @@ function tabValue(tabId: TabId): string {
 
 function ratioToPercent(ratio: number): number {
   return Math.min(Math.max(ratio * 100, 1), 99);
+}
+
+function minimumNodeSize(node: PaneNodeSnapshot, axis: SplitAxis): string {
+  return `${minimumNodeSizeRem(node, axis)}rem`;
+}
+
+function minimumNodeSizeRem(node: PaneNodeSnapshot, axis: SplitAxis): number {
+  if (node.type === "leaf") {
+    return MIN_PANE_SIZE_REM;
+  }
+
+  const firstMinimum = minimumNodeSizeRem(node.first, axis);
+  const secondMinimum = minimumNodeSizeRem(node.second, axis);
+
+  return node.axis === axis
+    ? firstMinimum + secondMinimum
+    : Math.max(firstMinimum, secondMinimum);
 }

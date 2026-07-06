@@ -1,0 +1,92 @@
+import type { ReactNode } from "react";
+import {
+  File,
+  FileText,
+  FolderTree,
+  GitBranch,
+  Search,
+  Settings,
+  Terminal,
+  type LucideIcon,
+} from "lucide-react";
+
+import type { PaneId, TabKind, TabSnapshot } from "@/shared/ipc";
+
+import { BlankTab, type BlankTabOption } from "./blank";
+import { PlaceholderTab } from "./placeholder";
+
+type TabContentProps = {
+  paneId: PaneId;
+  tab: TabSnapshot;
+  onActivatePane(): void;
+  onSetTabKind(kind: TabKind): void;
+};
+
+type TabDefinition = {
+  icon: LucideIcon;
+  label: string;
+  showInBlankPicker: boolean;
+  render(props: TabContentProps): ReactNode;
+};
+
+const TAB_KIND_ORDER: TabKind[] = [
+  "blank",
+  "fileTree",
+  "editor",
+  "git",
+  "search",
+  "terminal",
+  "settings",
+];
+
+const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
+  blank: {
+    icon: File,
+    label: "Blank",
+    showInBlankPicker: false,
+    render: ({ onActivatePane, onSetTabKind }) => (
+      <BlankTab
+        options={BLANK_TAB_OPTIONS}
+        onActivatePane={onActivatePane}
+        onSelectKind={onSetTabKind}
+      />
+    ),
+  },
+  fileTree: placeholderTabDefinition("File Tree", FolderTree, true),
+  editor: placeholderTabDefinition("Editor", FileText, false),
+  git: placeholderTabDefinition("Git", GitBranch, true),
+  search: placeholderTabDefinition("Search", Search, true),
+  terminal: placeholderTabDefinition("Terminal", Terminal, true),
+  settings: placeholderTabDefinition("Settings", Settings, true),
+};
+
+const BLANK_TAB_OPTIONS: BlankTabOption[] = TAB_KIND_ORDER.filter(
+  (kind) => TAB_DEFINITIONS[kind].showInBlankPicker,
+).map((kind) => ({
+  icon: TAB_DEFINITIONS[kind].icon,
+  kind,
+  label: TAB_DEFINITIONS[kind].label,
+}));
+
+export function renderTabContent(props: TabContentProps): ReactNode {
+  return TAB_DEFINITIONS[props.tab.kind].render(props);
+}
+
+export function tabKindIcon(kind: TabKind): LucideIcon {
+  return TAB_DEFINITIONS[kind].icon;
+}
+
+function placeholderTabDefinition(
+  label: string,
+  icon: LucideIcon,
+  showInBlankPicker: boolean,
+): TabDefinition {
+  return {
+    icon,
+    label,
+    showInBlankPicker,
+    render: ({ tab, onActivatePane }) => (
+      <PlaceholderTab title={tab.title} onActivatePane={onActivatePane} />
+    ),
+  };
+}

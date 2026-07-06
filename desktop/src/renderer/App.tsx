@@ -16,6 +16,7 @@ import {
   openTab,
   openWorkspace,
   resizeSplit,
+  setTabKind,
   selectWorkspaceDirectory,
   splitTab,
   type WorkspaceListSnapshot,
@@ -25,6 +26,7 @@ import type {
   SplitAxis,
   SplitPaneId,
   TabId,
+  TabKind,
   WorkspaceId,
   WorkspaceSnapshot,
 } from "@/shared/ipc";
@@ -185,6 +187,15 @@ export function App() {
         (caughtError: unknown) => {
           setError(errorMessage(caughtError));
         },
+      );
+    },
+    setTabKind(paneId: PaneId, tabId: TabId, kind: TabKind) {
+      if (!activeWorkspace) {
+        return;
+      }
+
+      updateFromServer(() =>
+        setTabKind({ workspaceId: activeWorkspace.id, paneId, tabId, kind }),
       );
     },
     splitTab(
