@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::State;
+use crate::file_tree::FileTreeViewState;
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
 };
@@ -157,6 +158,16 @@ fn migrate(connection: &Connection) -> Result<()> {
             FOREIGN KEY (workspace_id, pane_id) REFERENCES panes(workspace_id, id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS file_tree_expanded_paths (
+            workspace_id INTEGER NOT NULL,
+            tab_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, tab_id, path),
+            UNIQUE (workspace_id, tab_id, position),
+            FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
+        );
+
         UPDATE tabs
         SET kind = 'blank'
         WHERE kind NOT IN ('blank', 'file_tree', 'editor', 'git', 'search', 'terminal', 'settings');
@@ -168,6 +179,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 
 fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM metadata", [])?;
+    transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
     transaction.execute("DELETE FROM tabs", [])?;
     transaction.execute("DELETE FROM panes", [])?;
     transaction.execute("DELETE FROM pane_nodes", [])?;
@@ -199,6 +211,8 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
 
         save_node(transaction, workspace.id(), "", workspace.root())?;
     }
+
+    save_file_tree_view_states(transaction, state)?;
 
     Ok(())
 }
@@ -310,6 +324,27 @@ fn save_pane(transaction: &Transaction<'_>, workspace_id: WorkspaceId, pane: &Pa
     Ok(())
 }
 
+fn save_file_tree_view_states(transaction: &Transaction<'_>, state: &State) -> Result<()> {
+    for view_state in state.file_tree_view_states() {
+        for (position, path) in view_state.expanded_paths().iter().enumerate() {
+            transaction.execute(
+                "
+                INSERT INTO file_tree_expanded_paths (workspace_id, tab_id, position, path)
+                VALUES (?1, ?2, ?3, ?4)
+                ",
+                params![
+                    to_i64(view_state.workspace_id().value(), "workspace id")?,
+                    to_i64(view_state.tab_id().value(), "tab id")?,
+                    usize_to_i64(position, "file tree expanded path position")?,
+                    path,
+                ],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn load_state(connection: &Connection) -> Result<State> {
     let active_workspace_id = load_active_workspace_id(connection)?;
     let workspace_rows = load_workspace_rows(connection)?;
@@ -329,8 +364,14 @@ fn load_state(connection: &Connection) -> Result<State> {
         workspaces.push(workspace);
     }
 
-    State::from_workspaces(workspaces, active_workspace_id)
-        .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
+    let file_tree_view_states = load_file_tree_view_states(connection)?;
+
+    State::from_workspaces_with_file_tree_view_states(
+        workspaces,
+        active_workspace_id,
+        file_tree_view_states,
+    )
+    .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
 }
 
 fn load_active_workspace_id(connection: &Connection) -> Result<Option<WorkspaceId>> {
@@ -541,6 +582,61 @@ fn load_tabs(
     Ok(tabs)
 }
 
+fn load_file_tree_view_states(connection: &Connection) -> Result<Vec<FileTreeViewState>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT workspace_id, tab_id, path
+        FROM file_tree_expanded_paths
+        ORDER BY workspace_id, tab_id, position
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut view_states = Vec::new();
+    let mut current_key: Option<(WorkspaceId, TabId)> = None;
+    let mut current_paths = Vec::new();
+
+    for row in rows {
+        let (workspace_id, tab_id, path) = row?;
+        let key = (
+            WorkspaceId::new(to_u64(workspace_id, "workspace id")?),
+            TabId::new(to_u64(tab_id, "tab id")?),
+        );
+
+        if current_key.is_some_and(|current_key| current_key != key) {
+            push_file_tree_view_state(&mut view_states, current_key, &mut current_paths);
+        }
+
+        current_key = Some(key);
+        current_paths.push(path);
+    }
+
+    push_file_tree_view_state(&mut view_states, current_key, &mut current_paths);
+
+    Ok(view_states)
+}
+
+fn push_file_tree_view_state(
+    view_states: &mut Vec<FileTreeViewState>,
+    key: Option<(WorkspaceId, TabId)>,
+    paths: &mut Vec<String>,
+) {
+    let Some((workspace_id, tab_id)) = key else {
+        return;
+    };
+    let paths = std::mem::take(paths);
+    let view_state = FileTreeViewState::new(workspace_id, tab_id, paths);
+
+    if !view_state.expanded_paths().is_empty() {
+        view_states.push(view_state);
+    }
+}
+
 fn child_path(path: &str, index: u8) -> String {
     if path.is_empty() {
         index.to_string()
@@ -704,6 +800,35 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[test]
+    fn saves_and_loads_file_tree_view_state() {
+        let path = test_db_path("file-tree-view-state");
+        let workspace_path = test_workspace_path("file-tree-view-state-workspace");
+        fs::create_dir_all(workspace_path.join("src/components"))
+            .expect("workspace directories should be created");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&workspace_path);
+        assert!(state.set_tab_kind(None, PaneId::new(1), TabId::new(1), TabKind::FileTree));
+        assert!(state.set_file_tree_expanded_paths(
+            Some(workspace_id),
+            TabId::new(1),
+            vec!["src".to_owned(), "src/components".to_owned()],
+        ));
+
+        store.save(&state).expect("state should save");
+
+        let loaded = store.load().expect("state should load");
+        let file_tree = loaded
+            .file_tree(Some(workspace_id), Some(TabId::new(1)))
+            .expect("file tree should load");
+
+        assert_eq!(file_tree.expanded_paths(), &["src/", "src/components/"]);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(workspace_path);
+    }
+
     fn test_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -712,6 +837,18 @@ mod tests {
 
         std::env::temp_dir().join(format!(
             "kosmos-core-persistence-{}-{name}-{nanos}.sqlite3",
+            std::process::id()
+        ))
+    }
+
+    fn test_workspace_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "kosmos-core-persistence-workspace-{}-{name}-{nanos}",
             std::process::id()
         ))
     }

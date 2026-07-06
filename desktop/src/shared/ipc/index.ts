@@ -1,4 +1,5 @@
 export type * from "./envelope";
+export type * from "./file-tree";
 export type * from "./ids";
 export type * from "./pane";
 export type * from "./tab";

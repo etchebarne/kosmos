@@ -17,6 +17,7 @@ import {
   openTab as openTabIpc,
   openWorkspace,
   resizeSplit as resizeSplitIpc,
+  setFileTreeExpandedPaths as setFileTreeExpandedPathsIpc,
   setTabKind as setTabKindIpc,
   selectWorkspaceDirectory,
   splitTab as splitTabIpc,
@@ -26,12 +27,14 @@ import type {
   PaneId,
   SplitAxis,
   SplitPaneId,
+  SetFileTreeExpandedPathsParams,
   TabId,
   TabKind,
   WorkspaceId,
 } from "@/shared/ipc";
 
 type WorkspaceRequest = () => Promise<WorkspaceListSnapshot>;
+type FileTreeExpansionFlusher = () => Promise<void> | void;
 
 type WorkspaceStore = {
   error: string | null;
@@ -47,7 +50,9 @@ type WorkspaceStore = {
   closeWorkspace(workspaceId: WorkspaceId): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   openTab(paneId: PaneId): void;
+  registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
+  saveFileTreeExpandedPaths(params: SetFileTreeExpandedPathsParams): Promise<void>;
   setTabKind(paneId: PaneId, tabId: TabId, kind: TabKind): void;
   splitTab(
     paneId: PaneId,
@@ -60,6 +65,9 @@ type WorkspaceStore = {
 };
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
+  const fileTreeExpansionFlushers = new Set<FileTreeExpansionFlusher>();
+  const pendingFileTreeExpansionSaves = new Set<Promise<void>>();
+
   function updateFromServer(request: WorkspaceRequest): void {
     set({ error: null });
 
@@ -72,6 +80,38 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       .catch((caughtError: unknown) => {
         set({ error: errorMessage(caughtError) });
       });
+  }
+
+  function trackFileTreeExpansionSave(promise: Promise<void>): Promise<void> {
+    pendingFileTreeExpansionSaves.add(promise);
+
+    void promise.finally(() => {
+      pendingFileTreeExpansionSaves.delete(promise);
+    });
+
+    return promise;
+  }
+
+  async function flushFileTreeExpansionSaves(): Promise<void> {
+    const flushPromises: Promise<void>[] = [];
+
+    for (const flusher of fileTreeExpansionFlushers) {
+      try {
+        flushPromises.push(
+          Promise.resolve(flusher()).catch((caughtError: unknown) => {
+            set({ error: errorMessage(caughtError) });
+          }),
+        );
+      } catch (caughtError) {
+        set({ error: errorMessage(caughtError) });
+      }
+    }
+
+    await Promise.all(flushPromises);
+
+    while (pendingFileTreeExpansionSaves.size > 0) {
+      await Promise.all(Array.from(pendingFileTreeExpansionSaves));
+    }
   }
 
   return {
@@ -176,6 +216,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         openTabIpc({ workspaceId: activeWorkspace.id, paneId, kind: "blank" }),
       );
     },
+    registerFileTreeExpansionFlusher(flusher) {
+      fileTreeExpansionFlushers.add(flusher);
+
+      return () => {
+        fileTreeExpansionFlushers.delete(flusher);
+      };
+    },
     resizeSplit(splitId, ratio) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
       if (!activeWorkspace) {
@@ -191,6 +238,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           set({ error: errorMessage(caughtError) });
         },
       );
+    },
+    saveFileTreeExpandedPaths(params) {
+      const save = setFileTreeExpandedPathsIpc(params)
+        .then(() => undefined)
+        .catch((caughtError: unknown) => {
+          set({ error: errorMessage(caughtError) });
+        });
+
+      return trackFileTreeExpansionSave(save);
     },
     setTabKind(paneId, tabId, kind) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
@@ -228,10 +284,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       const requestId = switchRequestId + 1;
       const previousSnapshot = snapshot;
 
+      set({ error: null, switchRequestId: requestId });
+
+      await flushFileTreeExpansionSaves();
+
+      if (get().switchRequestId !== requestId) {
+        return;
+      }
+
       set({
         error: null,
         snapshot: snapshot ? { ...snapshot, activeWorkspaceId: workspaceId } : snapshot,
-        switchRequestId: requestId,
       });
 
       try {

@@ -68,6 +68,7 @@ fn persistence_mode(request: &RequestEnvelope) -> PersistenceMode {
     match (request.domain, request.action.as_str()) {
         (Domain::Workspace, "list") => PersistenceMode::None,
         (Domain::Workspace, "activate") => PersistenceMode::ActiveWorkspace,
+        (Domain::FileTree, "get") => PersistenceMode::None,
         _ => PersistenceMode::Full,
     }
 }

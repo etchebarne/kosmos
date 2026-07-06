@@ -2,6 +2,7 @@ import { useState, type DragEvent } from "react";
 import { Plus, X } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
+import { TabErrorBoundary } from "@/renderer/components/tabs/error-boundary";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -90,7 +91,7 @@ function PaneNodeView({
   const resizeSplit = useWorkspaceStore((state) => state.resizeSplit);
 
   if (node.type === "leaf") {
-    return <PaneLeaf pane={node.pane} isRoot={isRoot} />;
+    return <PaneLeaf pane={node.pane} workspaceId={workspaceId} isRoot={isRoot} />;
   }
 
   const firstPanelId = `split-${node.id}-first`;
@@ -148,9 +149,11 @@ function PaneNodeView({
 
 function PaneLeaf({
   pane,
+  workspaceId,
   isRoot,
 }: {
   pane: PaneSnapshot;
+  workspaceId: WorkspaceId;
   isRoot: boolean;
 }) {
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
@@ -241,6 +244,7 @@ function PaneLeaf({
             <TabBody
               paneId={pane.id}
               tab={tab}
+              workspaceId={workspaceId}
               onActivatePane={() => activatePane(pane.id)}
             />
           </TabsContent>
@@ -311,20 +315,27 @@ function TabTrigger({
 function TabBody({
   paneId,
   tab,
+  workspaceId,
   onActivatePane,
 }: {
   paneId: PaneId;
   tab: TabSnapshot;
+  workspaceId: WorkspaceId;
   onActivatePane(): void;
 }) {
   const setTabKind = useWorkspaceStore((state) => state.setTabKind);
 
-  return renderTabContent({
-    paneId,
-    tab,
-    onActivatePane,
-    onSetTabKind: (kind) => setTabKind(paneId, tab.id, kind),
-  });
+  return (
+    <TabErrorBoundary key={`${tab.id}:${tab.kind}`}>
+      {renderTabContent({
+        paneId,
+        tab,
+        workspaceId,
+        onActivatePane,
+        onSetTabKind: (kind) => setTabKind(paneId, tab.id, kind),
+      })}
+    </TabErrorBoundary>
+  );
 }
 
 function DropIndicator({ edge }: { edge: DropEdge | null }) {

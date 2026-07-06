@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
+use crate::file_tree::{FileTree, FileTreeError, FileTreeViewState};
 use crate::tree::{
-    Pane, PaneId, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
+    Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
 };
 
 #[derive(Debug)]
 pub struct State {
     workspaces: WorkspaceList,
+    file_tree_view_states: Vec<FileTreeViewState>,
     next_workspace_id: u64,
     next_pane_id: u64,
     next_split_id: u64,
@@ -22,6 +24,18 @@ impl State {
     pub fn from_workspaces(
         workspaces: Vec<Workspace>,
         active_workspace_id: Option<WorkspaceId>,
+    ) -> Option<Self> {
+        Self::from_workspaces_with_file_tree_view_states(
+            workspaces,
+            active_workspace_id,
+            Vec::new(),
+        )
+    }
+
+    pub fn from_workspaces_with_file_tree_view_states(
+        workspaces: Vec<Workspace>,
+        active_workspace_id: Option<WorkspaceId>,
+        file_tree_view_states: Vec<FileTreeViewState>,
     ) -> Option<Self> {
         let mut workspace_list = WorkspaceList::new();
 
@@ -38,11 +52,63 @@ impl State {
             _ => return None,
         }
 
-        Self::from_workspace_list(workspace_list)
+        Self::from_workspace_list(workspace_list, file_tree_view_states)
     }
 
     pub fn workspaces(&self) -> &WorkspaceList {
         &self.workspaces
+    }
+
+    pub fn file_tree_view_states(&self) -> &[FileTreeViewState] {
+        &self.file_tree_view_states
+    }
+
+    pub fn file_tree(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: Option<TabId>,
+    ) -> Result<FileTree, FileTreeError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(FileTreeError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(FileTreeError::WorkspaceNotFound)?;
+        let expanded_paths = match tab_id {
+            Some(tab_id) if self.is_file_tree_tab(workspace_id, tab_id) => self
+                .file_tree_view_state(workspace_id, tab_id)
+                .map(FileTreeViewState::expanded_paths)
+                .unwrap_or(&[]),
+            Some(_) => return Err(FileTreeError::TabNotFound),
+            None => &[],
+        };
+
+        FileTree::scan_with_expanded_paths(workspace.directory(), expanded_paths)
+    }
+
+    pub fn set_file_tree_expanded_paths(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        expanded_paths: Vec<String>,
+    ) -> bool {
+        let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
+            return false;
+        };
+
+        if !self.is_file_tree_tab(workspace_id, tab_id) {
+            return false;
+        }
+
+        let view_state = FileTreeViewState::new(workspace_id, tab_id, expanded_paths);
+        self.remove_file_tree_view_state(workspace_id, tab_id);
+
+        if !view_state.expanded_paths().is_empty() {
+            self.file_tree_view_states.push(view_state);
+        }
+
+        true
     }
 
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {
@@ -73,10 +139,16 @@ impl State {
     }
 
     pub fn close_workspace(&mut self, workspace_id: Option<WorkspaceId>) -> Option<Workspace> {
-        match workspace_id {
+        let closed_workspace = match workspace_id {
             Some(workspace_id) => self.workspaces.close_workspace(workspace_id),
             None => self.workspaces.close_active_workspace(),
+        };
+
+        if let Some(workspace) = &closed_workspace {
+            self.remove_workspace_file_tree_view_states(workspace.id());
         }
+
+        closed_workspace
     }
 
     pub fn split_pane(
@@ -184,6 +256,7 @@ impl State {
         tab_id: TabId,
         kind: TabKind,
     ) -> bool {
+        let keep_file_tree_state = kind == TabKind::FileTree;
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -191,7 +264,13 @@ impl State {
             return false;
         };
 
-        workspace.set_tab_kind(pane_id, tab_id, kind)
+        let updated = workspace.set_tab_kind(pane_id, tab_id, kind);
+
+        if updated && !keep_file_tree_state {
+            self.remove_file_tree_view_state(workspace_id, tab_id);
+        }
+
+        updated
     }
 
     pub fn split_tab(
@@ -259,7 +338,13 @@ impl State {
         let fallback_pane = self.blank_pane();
         let workspace = self.workspace_mut(workspace_id)?;
 
-        workspace.close_tab(pane_id, tab_id, fallback_pane)
+        let removed_tab = workspace.close_tab(pane_id, tab_id, fallback_pane);
+
+        if removed_tab.is_some() {
+            self.remove_file_tree_view_state(workspace_id, tab_id);
+        }
+
+        removed_tab
     }
 
     pub fn reorder_tab(
@@ -338,11 +423,52 @@ impl State {
         Tab::new(self.next_tab_id(), title, kind)
     }
 
-    fn from_workspace_list(workspaces: WorkspaceList) -> Option<Self> {
+    fn file_tree_view_state(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Option<&FileTreeViewState> {
+        self.file_tree_view_states
+            .iter()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+    }
+
+    fn remove_file_tree_view_state(&mut self, workspace_id: WorkspaceId, tab_id: TabId) {
+        self.file_tree_view_states
+            .retain(|state| state.workspace_id() != workspace_id || state.tab_id() != tab_id);
+    }
+
+    fn remove_workspace_file_tree_view_states(&mut self, workspace_id: WorkspaceId) {
+        self.file_tree_view_states
+            .retain(|state| state.workspace_id() != workspace_id);
+    }
+
+    fn is_file_tree_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
+    }
+
+    fn tab_kind(&self, workspace_id: WorkspaceId, tab_id: TabId) -> Option<&TabKind> {
+        let workspace = self.workspaces.workspace(workspace_id)?;
+
+        tab_kind_in_node(workspace.root(), tab_id)
+    }
+
+    fn from_workspace_list(
+        workspaces: WorkspaceList,
+        file_tree_view_states: Vec<FileTreeViewState>,
+    ) -> Option<Self> {
         let next_ids = NextIds::from_workspaces(&workspaces)?;
+
+        if file_tree_view_states.iter().any(|state| {
+            tab_kind_in_workspace_list(&workspaces, state.workspace_id(), state.tab_id())
+                != Some(&TabKind::FileTree)
+        }) {
+            return None;
+        }
 
         Some(Self {
             workspaces,
+            file_tree_view_states,
             next_workspace_id: next_ids.workspace_id,
             next_pane_id: next_ids.pane_id,
             next_split_id: next_ids.split_id,
@@ -414,10 +540,33 @@ fn next_id_after(id: u64) -> Option<u64> {
     id.checked_add(1)
 }
 
+fn tab_kind_in_workspace_list(
+    workspaces: &WorkspaceList,
+    workspace_id: WorkspaceId,
+    tab_id: TabId,
+) -> Option<&TabKind> {
+    let workspace = workspaces.workspace(workspace_id)?;
+
+    tab_kind_in_node(workspace.root(), tab_id)
+}
+
+fn tab_kind_in_node(node: &PaneNode, tab_id: TabId) -> Option<&TabKind> {
+    match node {
+        PaneNode::Leaf(pane) => pane
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == tab_id)
+            .map(Tab::kind),
+        PaneNode::Split(split) => tab_kind_in_node(split.first(), tab_id)
+            .or_else(|| tab_kind_in_node(split.second(), tab_id)),
+    }
+}
+
 impl Default for State {
     fn default() -> Self {
         Self {
             workspaces: WorkspaceList::new(),
+            file_tree_view_states: Vec::new(),
             next_workspace_id: 1,
             next_pane_id: 1,
             next_split_id: 1,
@@ -631,5 +780,93 @@ mod tests {
         };
 
         assert_eq!(split.ratio(), 0.7);
+    }
+
+    #[test]
+    fn file_tree_requires_a_workspace() {
+        let state = State::new();
+
+        let error = state
+            .file_tree(None, None)
+            .expect_err("missing workspace should fail");
+
+        assert!(matches!(error, FileTreeError::WorkspaceNotFound));
+    }
+
+    #[test]
+    fn file_tree_expanded_paths_are_stored_for_file_tree_tabs() {
+        let root = test_directory("file-tree-state");
+        std::fs::create_dir(root.join("src")).expect("test directory should be created");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(None, PaneId::new(1), TabId::new(1), TabKind::FileTree));
+
+        assert!(state.set_file_tree_expanded_paths(
+            Some(workspace_id),
+            TabId::new(1),
+            vec!["src".to_owned(), "missing".to_owned()],
+        ));
+
+        let file_tree = state
+            .file_tree(Some(workspace_id), Some(TabId::new(1)))
+            .expect("file tree should load");
+
+        assert_eq!(file_tree.expanded_paths(), &["src/"]);
+        assert_eq!(state.file_tree_view_states().len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_expanded_paths_require_a_file_tree_tab() {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+
+        assert!(!state.set_file_tree_expanded_paths(
+            Some(workspace_id),
+            TabId::new(1),
+            vec!["src".to_owned()],
+        ));
+
+        let error = state
+            .file_tree(Some(workspace_id), Some(TabId::new(1)))
+            .expect_err("blank tabs should not expose file tree state");
+
+        assert!(matches!(error, FileTreeError::TabNotFound));
+    }
+
+    #[test]
+    fn closing_tab_removes_file_tree_view_state() {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+        assert!(state.set_tab_kind(None, PaneId::new(1), TabId::new(1), TabKind::FileTree));
+        assert!(state.set_file_tree_expanded_paths(
+            Some(workspace_id),
+            TabId::new(1),
+            vec!["src".to_owned()],
+        ));
+
+        assert!(
+            state
+                .close_tab(Some(workspace_id), PaneId::new(1), TabId::new(1))
+                .is_some()
+        );
+
+        assert!(state.file_tree_view_states().is_empty());
+    }
+
+    fn test_directory(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-core-state-{}-{name}-{nanos}",
+            std::process::id()
+        ));
+
+        std::fs::create_dir_all(&root).expect("test root should be created");
+
+        root
     }
 }

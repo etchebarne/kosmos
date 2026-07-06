@@ -10,14 +10,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { PaneId, TabKind, TabSnapshot } from "@/shared/ipc";
+import type { PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 
 import { BlankTab, type BlankTabOption } from "./blank";
+import { FileTreeTab } from "./file-tree";
 import { PlaceholderTab } from "./placeholder";
 
 type TabContentProps = {
   paneId: PaneId;
   tab: TabSnapshot;
+  workspaceId: WorkspaceId;
   onActivatePane(): void;
   onSetTabKind(kind: TabKind): void;
 };
@@ -52,7 +54,14 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
       />
     ),
   },
-  fileTree: placeholderTabDefinition("File Tree", FolderTree, true),
+  fileTree: {
+    icon: FolderTree,
+    label: "File Tree",
+    showInBlankPicker: true,
+    render: ({ tab, workspaceId, onActivatePane }) => (
+      <FileTreeTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
+    ),
+  },
   editor: placeholderTabDefinition("Editor", FileText, false),
   git: placeholderTabDefinition("Git", GitBranch, true),
   search: placeholderTabDefinition("Search", Search, true),

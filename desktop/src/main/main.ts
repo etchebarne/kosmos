@@ -5,7 +5,7 @@ import path from "node:path";
 import type { KosmosIpcDomain, KosmosIpcRequest } from "../shared/ipc";
 import { KosmosServerClient } from "./server-client";
 
-const validDomains = new Set<KosmosIpcDomain>(["workspace", "pane", "tab"]);
+const validDomains = new Set<KosmosIpcDomain>(["workspace", "pane", "tab", "fileTree"]);
 const serverClient = new KosmosServerClient();
 
 function registerIpcHandlers(): void {
@@ -67,7 +67,29 @@ function createMainWindow(): void {
     },
   });
 
+  registerWindowShortcuts(window);
+
   void window.loadFile(path.join(runtimeDirectory, "renderer", "index.html"));
+}
+
+function registerWindowShortcuts(window: BrowserWindow): void {
+  window.webContents.on("before-input-event", (event, input) => {
+    const key = input.key.toLowerCase();
+    const togglesDevTools =
+      input.key === "F12" || ((input.control || input.meta) && input.shift && key === "i");
+
+    if (!togglesDevTools) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (window.webContents.isDevToolsOpened()) {
+      window.webContents.closeDevTools();
+    } else {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
+  });
 }
 
 function getRuntimeDirectory(): string {
