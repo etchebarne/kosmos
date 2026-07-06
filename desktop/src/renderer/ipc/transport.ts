@@ -28,6 +28,10 @@ export function closeWindow(): Promise<void> {
   return kosmosApi().closeWindow();
 }
 
+export function revealPath(path: string): Promise<void> {
+  return kosmosApi().revealPath(path);
+}
+
 function kosmosApi() {
   if (!window.kosmos) {
     throw new Error("Electron preload did not expose the Kosmos IPC API.");

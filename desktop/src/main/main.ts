@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -45,6 +45,14 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("kosmos:window:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("kosmos:revealPath", (_event, targetPath: unknown) => {
+    if (typeof targetPath !== "string" || targetPath.length === 0) {
+      throw new Error("Reveal path must be a non-empty string");
+    }
+
+    shell.showItemInFolder(targetPath);
   });
 }
 

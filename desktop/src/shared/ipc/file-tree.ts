@@ -11,6 +11,52 @@ export type SetFileTreeExpandedPathsParams = {
   expandedPaths: string[];
 };
 
+export type FileTreeEntryKind = "directory" | "file";
+
+export type CreateFileTreeEntryParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  parentPath?: string | null;
+  name: string;
+  kind: FileTreeEntryKind;
+};
+
+export type RenameFileTreeEntryParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  sourcePath: string;
+  destinationPath: string;
+};
+
+export type TransferFileTreeEntriesParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  sourcePaths: string[];
+  targetDirectoryPath?: string | null;
+};
+
+export type DeleteFileTreeEntryParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  path: string;
+};
+
+export type DeleteFileTreeEntriesParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  paths: string[];
+};
+
+export type ResolveFileTreePathParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
+  path?: string | null;
+};
+
+export type FileTreeResolvedPath = {
+  path: string;
+};
+
 export type FileTreeSnapshot = {
   root: string;
   paths: string[];

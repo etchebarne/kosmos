@@ -28,4 +28,5 @@ export type KosmosApi = {
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
+  revealPath(path: string): Promise<void>;
 };

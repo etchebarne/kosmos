@@ -21,6 +21,9 @@ const kosmos: KosmosApi = {
   closeWindow(): Promise<void> {
     return ipcRenderer.invoke("kosmos:window:close") as Promise<void>;
   },
+  revealPath(path: string): Promise<void> {
+    return ipcRenderer.invoke("kosmos:revealPath", path) as Promise<void>;
+  },
 };
 
 contextBridge.exposeInMainWorld("kosmos", kosmos);

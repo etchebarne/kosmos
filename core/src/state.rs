@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::file_tree::{FileTree, FileTreeError, FileTreeViewState};
+use crate::file_tree::{FileTree, FileTreeEntryKind, FileTreeError, FileTreeViewState};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
@@ -109,6 +109,81 @@ impl State {
         }
 
         true
+    }
+
+    pub fn create_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        parent_path: Option<&str>,
+        name: &str,
+        kind: FileTreeEntryKind,
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::create_entry(directory, parent_path, name, kind).map(|_| ())
+    }
+
+    pub fn rename_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        source_path: &str,
+        destination_path: &str,
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::rename_entry(directory, source_path, destination_path).map(|_| ())
+    }
+
+    pub fn move_file_tree_entries(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        source_paths: &[String],
+        target_directory_path: Option<&str>,
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::move_entries(directory, source_paths, target_directory_path).map(|_| ())
+    }
+
+    pub fn copy_file_tree_entries(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        source_paths: &[String],
+        target_directory_path: Option<&str>,
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::copy_entries(directory, source_paths, target_directory_path).map(|_| ())
+    }
+
+    pub fn delete_file_tree_entry(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: &str,
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::delete_entry(directory, path)
+    }
+
+    pub fn delete_file_tree_entries(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        paths: &[String],
+    ) -> Result<(), FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::delete_entries(directory, paths)
+    }
+
+    pub fn resolve_file_tree_path(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: Option<&str>,
+    ) -> Result<PathBuf, FileTreeError> {
+        let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
+        FileTree::resolve_path(directory, path)
     }
 
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {
@@ -445,6 +520,26 @@ impl State {
 
     fn is_file_tree_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
+    }
+
+    fn file_tree_workspace_directory(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<&Path, FileTreeError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(FileTreeError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(FileTreeError::WorkspaceNotFound)?;
+
+        if !self.is_file_tree_tab(workspace_id, tab_id) {
+            return Err(FileTreeError::TabNotFound);
+        }
+
+        Ok(workspace.directory())
     }
 
     fn tab_kind(&self, workspace_id: WorkspaceId, tab_id: TabId) -> Option<&TabKind> {
