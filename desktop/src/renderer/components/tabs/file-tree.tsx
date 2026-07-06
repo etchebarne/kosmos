@@ -10,6 +10,7 @@ import type {
 import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   copyFileTreeEntries,
@@ -362,20 +363,23 @@ function LoadedFileTree({
         className="h-full min-h-0 w-full overflow-hidden bg-card text-card-foreground [--trees-bg-muted-override:var(--accent)] [--trees-bg-override:var(--card)] [--trees-border-color-override:var(--border)] [--trees-fg-muted-override:var(--muted-foreground)] [--trees-fg-override:var(--card-foreground)] [--trees-focus-ring-color-override:var(--ring)] [--trees-input-bg-override:var(--input)] [--trees-item-row-gap-override:6px] [--trees-padding-inline-override:0px] [--trees-scrollbar-gutter-override:0px] [--trees-search-bg-override:var(--input)] [--trees-search-fg-override:var(--foreground)] [--trees-selected-bg-override:var(--accent)] [--trees-selected-fg-override:var(--accent-foreground)]"
         style={{ height: "100%" }}
         renderContextMenu={(item, context) => (
-          <FileTreeContextMenu
-            clipboard={clipboard}
-            context={context}
-            item={item}
-            model={model}
-            tabId={tabId}
-            workspaceId={workspaceId}
-            onClipboardChange={setClipboard}
-            onCreateInline={startInlineCreate}
-            onIsPendingCreate={isPendingCreatePath}
-            onRegisterContextMenu={registerRowContextMenu}
-            onRemovePendingCreate={removePendingCreate}
-            onMutation={runMutation}
-          />
+          createPortal(
+            <FileTreeContextMenu
+              clipboard={clipboard}
+              context={context}
+              item={item}
+              model={model}
+              tabId={tabId}
+              workspaceId={workspaceId}
+              onClipboardChange={setClipboard}
+              onCreateInline={startInlineCreate}
+              onIsPendingCreate={isPendingCreatePath}
+              onRegisterContextMenu={registerRowContextMenu}
+              onRemovePendingCreate={removePendingCreate}
+              onMutation={runMutation}
+            />,
+            document.body,
+          )
         )}
       />
       {snapshot.paths.length === 0 && !hasInlineCreate ? (
@@ -434,7 +438,7 @@ function RootFileTreeContextMenu({
       data-file-tree-context-menu-root="true"
       role="menu"
       tabIndex={-1}
-      className="fixed z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none"
+      className="fixed z-[1000] min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none"
       style={{ left: position.x, top: position.y }}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -555,7 +559,8 @@ function FileTreeContextMenu({
       data-file-tree-context-menu-root="true"
       role="menu"
       tabIndex={-1}
-      className="z-50 min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none"
+      className="fixed z-[1000] min-w-40 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none"
+      style={{ left: context.anchorRect.left, top: context.anchorRect.top }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           context.close();
