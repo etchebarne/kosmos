@@ -30,8 +30,11 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 - Run the app with `./scripts/run.sh`.
 - Test the Rust workspace with `cargo test --workspace`.
 - Build the Electron desktop app with `bun install --cwd desktop` and `bun run --cwd desktop build`.
+- Build a production Linux AppImage with `./scripts/bundle-linux.sh`. Artifacts are written to `desktop/release/`.
+- The AppImage-based AUR package template lives in `aur/kosmos-bin/`.
+- Bump release metadata with `./scripts/bump-version.sh patch|minor|major|x.y.z`.
 
-The server and Electron main process communicate over a Unix socket. The renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+The Electron main process launches the Rust server as a sidecar process. They communicate over a Unix socket, while the renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
 
 ## License
 

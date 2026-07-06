@@ -4,9 +4,11 @@ import path from "node:path";
 
 import type { KosmosIpcDomain, KosmosIpcRequest } from "../shared/ipc";
 import { KosmosServerClient } from "./server-client";
+import { KosmosServerProcess } from "./server-process";
 
 const validDomains = new Set<KosmosIpcDomain>(["workspace", "pane", "tab", "fileTree"]);
 const serverClient = new KosmosServerClient();
+const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 
 function registerIpcHandlers(): void {
   ipcMain.handle("kosmos:request", (_event, request: KosmosIpcRequest) => {
@@ -83,7 +85,9 @@ function createMainWindow(): void {
 }
 
 function getAppIconPath(): string {
-  return path.resolve(app.getAppPath(), "assets", "icon", "icon-512.png");
+  const assetsDirectory = app.isPackaged ? process.resourcesPath : app.getAppPath();
+
+  return path.resolve(assetsDirectory, "assets", "icon", "icon-512.png");
 }
 
 function registerWindowShortcuts(window: BrowserWindow): void {
@@ -133,8 +137,9 @@ function validateRequest(request: KosmosIpcRequest): void {
   }
 }
 
-app.whenReady().then(() => {
+async function startApp(): Promise<void> {
   Menu.setApplicationMenu(null);
+  await serverProcess.start();
   registerIpcHandlers();
   createMainWindow();
 
@@ -143,11 +148,23 @@ app.whenReady().then(() => {
       createMainWindow();
     }
   });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+app.whenReady().then(startApp).catch((error: unknown) => {
+  dialog.showErrorBox("Kosmos failed to start", errorMessage(error));
+  app.quit();
+});
+
+app.on("before-quit", () => {
+  serverClient.disconnect();
+  serverProcess.stop();
 });
 
 app.on("window-all-closed", () => {
-  serverClient.disconnect();
-
   if (process.platform !== "darwin") {
     app.quit();
   }
