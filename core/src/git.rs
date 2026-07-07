@@ -26,6 +26,7 @@ pub struct GitRepositorySnapshot {
 pub struct GitBranch {
     name: String,
     current: bool,
+    remote: bool,
     upstream: Option<String>,
 }
 
@@ -73,8 +74,9 @@ impl GitRepository {
             &repository_root,
             [
                 "for-each-ref",
-                "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)",
+                "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(refname)",
                 "refs/heads",
+                "refs/remotes",
             ],
         )?);
         let diff_stats = diff_stats(&repository_root, &status.changes)?;
@@ -126,6 +128,28 @@ impl GitRepository {
         let repository_root = repository_root(directory.as_ref())?;
         let branch = normalize_branch_name(branch)?;
         git(&repository_root, ["switch", branch]).map(|_| ())
+    }
+
+    pub fn track_remote_branch(directory: impl AsRef<Path>, branch: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let branch = normalize_branch_name(branch)?;
+
+        git(&repository_root, ["switch", "--track", branch]).map(|_| ())
+    }
+
+    pub fn create_branch(directory: impl AsRef<Path>, name: &str, start_point: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let name = normalize_branch_name(name)?;
+        let start_point = normalize_branch_name(start_point)?;
+
+        git(&repository_root, ["switch", "--create", name, start_point]).map(|_| ())
+    }
+
+    pub fn delete_branch(directory: impl AsRef<Path>, branch: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let branch = normalize_branch_name(branch)?;
+
+        git(&repository_root, ["branch", "--delete", branch]).map(|_| ())
     }
 
     pub fn fetch(directory: impl AsRef<Path>) -> Result<()> {
@@ -277,6 +301,10 @@ impl GitBranch {
 
     pub fn current(&self) -> bool {
         self.current
+    }
+
+    pub fn remote(&self) -> bool {
+        self.remote
     }
 
     pub fn upstream(&self) -> Option<&str> {
@@ -641,10 +669,17 @@ fn parse_branch_line(line: &[u8]) -> Option<GitBranch> {
     let upstream = fields
         .next()
         .and_then(|field| non_empty_string(&String::from_utf8_lossy(field)));
+    let refname = fields.next().map(String::from_utf8_lossy)?;
+    let remote = refname.starts_with("refs/remotes/");
+
+    if remote && refname.ends_with("/HEAD") {
+        return None;
+    }
 
     Some(GitBranch {
         name,
         current,
+        remote,
         upstream,
     })
 }
@@ -885,7 +920,7 @@ fn normalize_commit_message(message: &str) -> Result<&str> {
 fn normalize_branch_name(branch: &str) -> Result<&str> {
     let branch = branch.trim();
 
-    if branch.is_empty() || branch.contains('\0') {
+    if branch.is_empty() || branch.starts_with('-') || branch.contains('\0') {
         Err(GitError::BranchRequired)
     } else {
         Ok(branch)
@@ -992,14 +1027,20 @@ mod tests {
 
     #[test]
     fn parses_branch_rows() {
-        let branches = parse_branches(b"main\0*\0origin/main\nfeature\0 \0\n");
+        let branches = parse_branches(
+            b"main\0*\0origin/main\0refs/heads/main\nfeature\0 \0\0refs/heads/feature\norigin/feature\0 \0\0refs/remotes/origin/feature\norigin\0 \0\0refs/remotes/origin/HEAD\n",
+        );
 
-        assert_eq!(branches.len(), 2);
+        assert_eq!(branches.len(), 3);
         assert_eq!(branches[0].name(), "main");
         assert!(branches[0].current());
+        assert!(!branches[0].remote());
         assert_eq!(branches[0].upstream(), Some("origin/main"));
         assert_eq!(branches[1].name(), "feature");
         assert!(!branches[1].current());
+        assert!(!branches[1].remote());
+        assert_eq!(branches[2].name(), "origin/feature");
+        assert!(branches[2].remote());
     }
 
     #[test]

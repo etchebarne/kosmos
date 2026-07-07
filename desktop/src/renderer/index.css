@@ -142,6 +142,32 @@
     display: none;
   }
 
+  .scrollbar-themed {
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 38%, transparent) transparent;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-themed::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .scrollbar-themed::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-themed::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 28%, transparent);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  .scrollbar-themed:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 45%, transparent);
+    background-clip: content-box;
+  }
+
   .terminal-scrollbar-none .xterm-viewport {
     -ms-overflow-style: none;
     scrollbar-width: none;

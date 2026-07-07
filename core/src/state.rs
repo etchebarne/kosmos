@@ -286,6 +286,40 @@ impl State {
         GitRepository::switch_branch(directory, branch)
     }
 
+    pub fn track_git_remote_branch(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        branch: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::track_remote_branch(directory, branch)
+    }
+
+    pub fn create_git_branch(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        name: &str,
+        start_point: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::create_branch(directory, name, start_point)
+    }
+
+    pub fn delete_git_branch(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        branch: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::delete_branch(directory, branch)
+    }
+
     pub fn fetch_git_changes(
         &self,
         workspace_id: Option<WorkspaceId>,

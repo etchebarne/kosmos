@@ -12,6 +12,7 @@ export type GitChangeKind =
 export type GitBranch = {
   name: string;
   current: boolean;
+  remote: boolean;
   upstream?: string | null;
 };
 
@@ -59,6 +60,11 @@ export type CommitGitChangesParams = GitTabParams & {
 
 export type SwitchGitBranchParams = GitTabParams & {
   branch: string;
+};
+
+export type CreateGitBranchParams = GitTabParams & {
+  name: string;
+  startPoint: string;
 };
 
 export type PullGitChangesParams = GitTabParams & {

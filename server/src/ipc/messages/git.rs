@@ -37,6 +37,15 @@ pub(crate) struct SwitchGitBranchParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct CreateGitBranchParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) name: String,
+    pub(crate) start_point: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PullGitChangesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
@@ -88,6 +97,7 @@ pub(crate) struct GitStashPayload {
 struct GitBranchPayload {
     name: String,
     current: bool,
+    remote: bool,
     upstream: Option<String>,
 }
 
@@ -144,6 +154,7 @@ impl GitBranchPayload {
         Self {
             name: branch.name().to_owned(),
             current: branch.current(),
+            remote: branch.remote(),
             upstream: branch.upstream().map(ToOwned::to_owned),
         }
     }

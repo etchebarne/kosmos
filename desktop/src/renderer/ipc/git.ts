@@ -1,5 +1,6 @@
 import type {
   CommitGitChangesParams,
+  CreateGitBranchParams,
   GitPathsParams,
   GitRepositorySnapshot,
   GitStash,
@@ -46,6 +47,18 @@ export function switchGitBranch(params: SwitchGitBranchParams): Promise<boolean>
   return requestServer(DOMAIN, "switchBranch", params);
 }
 
+export function trackGitRemoteBranch(params: SwitchGitBranchParams): Promise<boolean> {
+  return requestServer(DOMAIN, "trackRemoteBranch", params);
+}
+
+export function createGitBranch(params: CreateGitBranchParams): Promise<boolean> {
+  return requestServer(DOMAIN, "createBranch", params);
+}
+
+export function deleteGitBranch(params: SwitchGitBranchParams): Promise<boolean> {
+  return requestServer(DOMAIN, "deleteBranch", params);
+}
+
 export function fetchGitChanges(params: GitTabParams): Promise<boolean> {
   return requestServer(DOMAIN, "fetch", params);
 }
@@ -88,6 +101,7 @@ export function discardStagedGitChanges(params: GitTabParams): Promise<boolean> 
 
 export type {
   CommitGitChangesParams,
+  CreateGitBranchParams,
   GitPathsParams,
   GitRepositorySnapshot,
   GitStash,

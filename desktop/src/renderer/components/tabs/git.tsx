@@ -21,6 +21,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   applyGitStash,
   commitGitChanges,
+  createGitBranch,
+  deleteGitBranch,
   discardAllGitChanges,
   discardStagedGitChanges,
   dropGitStash,
@@ -34,6 +36,7 @@ import {
   stageGitPaths,
   stashStagedGitChanges,
   switchGitBranch,
+  trackGitRemoteBranch,
   unstageAllGitChanges,
   unstageGitPaths,
 } from "@/renderer/ipc";
@@ -49,6 +52,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/renderer/components/ui/dialog";
@@ -78,6 +82,7 @@ import { errorMessage } from "@/renderer/lib/errors";
 import type {
   GitChange,
   GitChangeKind,
+  GitBranch,
   GitRepositorySnapshot,
   GitStash,
   GitTabParams,
@@ -111,6 +116,9 @@ type GitOperationId =
   | "unstagePaths"
   | "init"
   | "switchBranch"
+  | "trackRemoteBranch"
+  | "createBranch"
+  | "deleteBranch"
   | "commit"
   | "stashStaged"
   | "applyStash"
@@ -193,6 +201,7 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     tabId,
   });
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
+  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [primaryRemoteActionId, setPrimaryRemoteActionId] = useState<RemoteGitActionId>("pull");
   const [activeOperation, setActiveOperation] = useState<GitOperationId | null>(null);
   const [successfulOperation, setSuccessfulOperation] = useState<GitOperationId | null>(null);
@@ -316,8 +325,10 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
           successfulOperation={successfulOperation}
           primaryRemoteActionId={primaryRemoteActionId}
           stashDialogOpen={stashDialogOpen}
+          branchDialogOpen={branchDialogOpen}
           onPrimaryRemoteActionChange={setPrimaryRemoteActionId}
           onStashDialogOpenChange={setStashDialogOpen}
+          onBranchDialogOpenChange={setBranchDialogOpen}
           onOperationFinish={finishOperation}
           onOperationStart={startOperation}
           onOperationSuccess={showOperationSuccess}
@@ -336,8 +347,10 @@ function LoadedGitTab({
   successfulOperation,
   primaryRemoteActionId,
   stashDialogOpen,
+  branchDialogOpen,
   onPrimaryRemoteActionChange,
   onStashDialogOpenChange,
+  onBranchDialogOpenChange,
   onOperationFinish,
   onOperationStart,
   onOperationSuccess,
@@ -350,8 +363,10 @@ function LoadedGitTab({
   successfulOperation: GitOperationId | null;
   primaryRemoteActionId: RemoteGitActionId;
   stashDialogOpen: boolean;
+  branchDialogOpen: boolean;
   onPrimaryRemoteActionChange(actionId: RemoteGitActionId): void;
   onStashDialogOpenChange(open: boolean): void;
+  onBranchDialogOpenChange(open: boolean): void;
   onOperationFinish(): void;
   onOperationStart(operationId: GitOperationId): void;
   onOperationSuccess(operationId: GitOperationId): void;
@@ -403,13 +418,29 @@ function LoadedGitTab({
         : stageGitPaths({ ...tabParams, paths }),
     );
   };
-  const switchBranchValue = (branch: string | null) => {
-    if (!branch || branch === snapshot.branch) {
+  const switchBranch = (branch: string) => {
+    if (branch === snapshot.branch) {
       return;
     }
 
+    onBranchDialogOpenChange(false);
     void runOperation("switchBranch", () => switchGitBranch({ ...tabParams, branch }));
   };
+  const trackRemoteBranch = (branch: string) => {
+    const localBranch = localBranchNameFromRemote(branch);
+
+    if (snapshot.branches.some((candidate) => !candidate.remote && candidate.name === localBranch)) {
+      switchBranch(localBranch);
+      return;
+    }
+
+    onBranchDialogOpenChange(false);
+    void runOperation("trackRemoteBranch", () => trackGitRemoteBranch({ ...tabParams, branch }));
+  };
+  const createBranch = (name: string, startPoint: string) =>
+    runOperation("createBranch", () => createGitBranch({ ...tabParams, name, startPoint }));
+  const deleteBranch = (branch: string) =>
+    runOperation("deleteBranch", () => deleteGitBranch({ ...tabParams, branch }));
 
   return (
     <TooltipProvider>
@@ -508,6 +539,18 @@ function LoadedGitTab({
           onRun={runOperation}
         />
 
+        <GitBranchesDialog
+          open={branchDialogOpen}
+          branches={snapshot.branches}
+          currentBranch={snapshot.branch}
+          busy={busy}
+          onOpenChange={onBranchDialogOpenChange}
+          onCreate={createBranch}
+          onDelete={deleteBranch}
+          onSwitch={switchBranch}
+          onTrackRemote={trackRemoteBranch}
+        />
+
         <div className="relative min-h-0 flex-1 overflow-hidden border-b">
           {hasChanges ? (
             <GitChangeTree
@@ -524,28 +567,24 @@ function LoadedGitTab({
 
         <div className="flex shrink-0 flex-col gap-2 p-2">
           <div className="flex items-center justify-between gap-2">
-            <Select value={snapshot.branch ?? null} disabled={busy || snapshot.branches.length === 0} onValueChange={switchBranchValue}>
-              <SelectTrigger size="sm" className="min-w-44 max-w-72 flex-1 justify-start">
-                {activeOperation === "switchBranch" ? (
-                  <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" />
-                ) : successfulOperation === "switchBranch" ? (
-                  <Check className="size-3.5 text-emerald-500" />
-                ) : (
-                  <GitBranchIcon className="size-3.5 text-muted-foreground" />
-                )}
-                <SelectValue placeholder="Detached HEAD" />
-              </SelectTrigger>
-              <SelectContent align="start" className="max-w-80">
-                {snapshot.branches.map((branch) => (
-                  <SelectItem key={branch.name} value={branch.name}>
-                    <span className="min-w-0 truncate">{branch.name}</span>
-                    {branch.upstream ? (
-                      <span className="text-xs text-muted-foreground">{branch.upstream}</span>
-                    ) : null}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-w-44 max-w-72 flex-1 justify-start overflow-hidden"
+              disabled={busy || snapshot.branches.length === 0}
+              aria-label="Select git branch"
+              onClick={() => onBranchDialogOpenChange(true)}
+            >
+              {activeOperation === "switchBranch" || activeOperation === "trackRemoteBranch" ? (
+                <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" />
+              ) : successfulOperation === "switchBranch" || successfulOperation === "trackRemoteBranch" ? (
+                <Check className="size-3.5 text-emerald-500" />
+              ) : (
+                <GitBranchIcon className="size-3.5 text-muted-foreground" />
+              )}
+              <span className="min-w-0 truncate">{snapshot.branch ?? "Detached HEAD"}</span>
+            </Button>
             <RemoteGitActions
               busy={busy}
               activeOperation={activeOperation}
@@ -605,6 +644,349 @@ function GitToolbarTooltip({ children, label }: { children: ReactNode; label: st
       <TooltipContent side="bottom">{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+function GitBranchesDialog({
+  branches,
+  busy,
+  currentBranch,
+  open,
+  onCreate,
+  onDelete,
+  onOpenChange,
+  onSwitch,
+  onTrackRemote,
+}: {
+  branches: GitBranch[];
+  busy: boolean;
+  currentBranch?: string | null;
+  open: boolean;
+  onCreate(name: string, startPoint: string): Promise<boolean>;
+  onDelete(branch: string): Promise<boolean>;
+  onOpenChange(open: boolean): void;
+  onSwitch(branch: string): void;
+  onTrackRemote(branch: string): void;
+}) {
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const localBranchNames = new Set(branches.filter((branch) => !branch.remote).map((branch) => branch.name));
+  const localBranches = branches.filter((branch) => !branch.remote && branchMatchesSearch(branch, search));
+  const remoteBranches = branches.filter((branch) => branch.remote && branchMatchesSearch(branch, search));
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="!flex max-h-[min(34rem,calc(100vh-2rem))] max-w-xl flex-col overflow-hidden p-0">
+          <div className="px-4 pt-4 pr-12">
+            <DialogHeader>
+              <DialogTitle>Branches</DialogTitle>
+              <DialogDescription>Switch local branches or create one from an existing branch.</DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="flex gap-2 px-4">
+            <input
+              value={search}
+              placeholder="Search branches"
+              className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy || branches.length === 0}
+              onClick={() => setCreateDialogOpen(true)}
+            >
+              <Plus />
+              New
+            </Button>
+          </div>
+
+          <div className="scrollbar-themed min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            {localBranches.length === 0 && remoteBranches.length === 0 ? (
+              <GitDialogMessage message={search.trim() ? "No matching branches" : "No branches"} />
+            ) : null}
+            {localBranches.length > 0 ? (
+              <GitBranchSection
+                title="Local"
+                branches={localBranches}
+                busy={busy}
+                currentBranch={currentBranch}
+                onDelete={onDelete}
+                onSwitch={onSwitch}
+              />
+            ) : null}
+            {remoteBranches.length > 0 ? (
+              <GitBranchSection
+                title="Remote"
+                branches={remoteBranches}
+                busy={busy}
+                currentBranch={currentBranch}
+                localBranchNames={localBranchNames}
+                onSwitch={onSwitch}
+                onTrackRemote={onTrackRemote}
+              />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <GitCreateBranchDialog
+        open={createDialogOpen}
+        branches={branches}
+        busy={busy}
+        currentBranch={currentBranch}
+        onCreate={onCreate}
+        onCreated={() => onOpenChange(false)}
+        onOpenChange={setCreateDialogOpen}
+      />
+    </>
+  );
+}
+
+function GitCreateBranchDialog({
+  branches,
+  busy,
+  currentBranch,
+  open,
+  onCreate,
+  onCreated,
+  onOpenChange,
+}: {
+  branches: GitBranch[];
+  busy: boolean;
+  currentBranch?: string | null;
+  open: boolean;
+  onCreate(name: string, startPoint: string): Promise<boolean>;
+  onCreated(): void;
+  onOpenChange(open: boolean): void;
+}) {
+  const [name, setName] = useState("");
+  const [source, setSource] = useState("");
+  const mountedRef = useRef(true);
+  const defaultSource = currentBranch && branches.some((branch) => branch.name === currentBranch)
+    ? currentBranch
+    : branches[0]?.name ?? "";
+  const canCreate = name.trim().length > 0 && source.trim().length > 0;
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setName("");
+    setSource(defaultSource);
+  }, [open]);
+
+  const createBranch = async () => {
+    const branchName = name.trim();
+    const startPoint = source.trim();
+
+    if (!branchName || !startPoint) {
+      return;
+    }
+
+    const succeeded = await onCreate(branchName, startPoint);
+
+    if (!succeeded) {
+      return;
+    }
+
+    onCreated();
+
+    if (mountedRef.current) {
+      onOpenChange(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md overflow-hidden p-0">
+        <div className="px-4 pt-4 pr-12">
+          <DialogHeader>
+            <DialogTitle>New branch</DialogTitle>
+            <DialogDescription>Create and switch to a new branch from a selected source.</DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <div className="space-y-3 px-4 pb-4">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Branch name</span>
+            <input
+              value={name}
+              placeholder="feature/my-branch"
+              className="h-8 w-full rounded-lg border bg-background px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Create from</span>
+            <Select value={source} disabled={branches.length === 0} onValueChange={(value) => setSource(value ?? "")}>
+              <SelectTrigger size="sm" className="w-full justify-start">
+                <SelectValue placeholder="Select source branch" />
+              </SelectTrigger>
+              <SelectContent align="start" className="max-w-80">
+                {branches.map((branch) => (
+                  <SelectItem key={branch.name} value={branch.name}>
+                    <span className="min-w-0 truncate">{branch.name}</span>
+                    <span className="text-xs text-muted-foreground">{branch.remote ? "Remote" : "Local"}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+
+        <DialogFooter className="mx-0 mb-0 rounded-none bg-muted/30 px-4 py-3">
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={busy || !canCreate} onClick={() => void createBranch()}>
+            {busy ? <LoaderCircle className="animate-spin" /> : null}
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GitBranchSection({
+  branches,
+  busy,
+  currentBranch,
+  localBranchNames,
+  title,
+  onDelete,
+  onSwitch,
+  onTrackRemote,
+}: {
+  branches: GitBranch[];
+  busy: boolean;
+  currentBranch?: string | null;
+  localBranchNames?: ReadonlySet<string>;
+  title: string;
+  onDelete?(branch: string): Promise<boolean>;
+  onSwitch(branch: string): void;
+  onTrackRemote?(branch: string): void;
+}) {
+  return (
+    <section className="mt-4 space-y-1.5 first:mt-0">
+      <h3 className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <ul className="space-y-1.5">
+        {branches.map((branch) => (
+          <GitBranchRow
+            key={branch.name}
+            branch={branch}
+            busy={busy}
+            current={branch.name === currentBranch}
+            localBranchNames={localBranchNames}
+            onDelete={onDelete}
+            onSwitch={onSwitch}
+            onTrackRemote={onTrackRemote}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function GitBranchRow({
+  branch,
+  busy,
+  current,
+  localBranchNames,
+  onDelete,
+  onSwitch,
+  onTrackRemote,
+}: {
+  branch: GitBranch;
+  busy: boolean;
+  current: boolean;
+  localBranchNames?: ReadonlySet<string>;
+  onDelete?(branch: string): Promise<boolean>;
+  onSwitch(branch: string): void;
+  onTrackRemote?(branch: string): void;
+}) {
+  const canSwitch = (!branch.remote && !current) || (branch.remote && Boolean(onTrackRemote));
+  const canDelete = Boolean(onDelete && !branch.remote && !current);
+  const localBranchName = localBranchNameFromRemote(branch.name);
+  const branchDescription = branch.remote
+    ? `${localBranchNames?.has(localBranchName) ? "Switch local" : "Create local"} ${localBranchName}`
+    : branch.upstream;
+  const content = (
+    <>
+      <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{branch.name}</span>
+        {branchDescription ? (
+          <span className="block truncate text-xs text-muted-foreground">{branchDescription}</span>
+        ) : null}
+      </span>
+    </>
+  );
+
+  return (
+    <li className="flex items-center gap-1.5 rounded-lg border bg-background/60 p-1.5">
+      {canSwitch ? (
+        <button
+          type="button"
+          disabled={busy}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted/60 disabled:cursor-default disabled:opacity-60"
+          onClick={() => (branch.remote ? onTrackRemote?.(branch.name) : onSwitch(branch.name))}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-3 px-1.5 py-1 text-sm">{content}</div>
+      )}
+      {current ? <Check className="mx-1 size-3.5 shrink-0 text-emerald-500" /> : null}
+      {canDelete ? (
+        <Button
+          type="button"
+          variant="destructive"
+          size="icon-sm"
+          disabled={busy}
+          aria-label={`Delete ${branch.name}`}
+          onClick={() => {
+            if (!window.confirm(`Delete local branch ${branch.name}?`)) {
+              return;
+            }
+
+            void onDelete?.(branch.name);
+          }}
+        >
+          <Trash2 />
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
+function branchMatchesSearch(branch: GitBranch, search: string): boolean {
+  const query = search.trim().toLowerCase();
+
+  if (!query) {
+    return true;
+  }
+
+  return branch.name.toLowerCase().includes(query) || Boolean(branch.upstream?.toLowerCase().includes(query));
+}
+
+function localBranchNameFromRemote(branch: string): string {
+  const separatorIndex = branch.indexOf("/");
+
+  if (separatorIndex === -1 || separatorIndex === branch.length - 1) {
+    return branch;
+  }
+
+  return branch.slice(separatorIndex + 1);
 }
 
 function RemoteGitActions({
@@ -866,11 +1248,11 @@ function GitStashesDialog({
 
         <div className="min-h-40 overflow-y-auto px-4 pb-4">
           {listState.status === "idle" || listState.status === "loading" ? (
-            <GitStashesMessage message="Loading stashes..." />
+            <GitDialogMessage message="Loading stashes..." />
           ) : null}
-          {listState.status === "error" ? <GitStashesMessage message={listState.message} /> : null}
+          {listState.status === "error" ? <GitDialogMessage message={listState.message} /> : null}
           {listState.status === "loaded" && listState.stashes.length === 0 ? (
-            <GitStashesMessage message="No stashes" />
+            <GitDialogMessage message="No stashes" />
           ) : null}
           {listState.status === "loaded" && listState.stashes.length > 0 ? (
             <ul className="space-y-3">
@@ -958,7 +1340,7 @@ function GitStashRow({
   );
 }
 
-function GitStashesMessage({ message }: { message: string }) {
+function GitDialogMessage({ message }: { message: string }) {
   return (
     <div className="grid min-h-40 place-items-center rounded-lg border border-dashed p-5 text-center">
       <p className="text-sm text-muted-foreground">{message}</p>

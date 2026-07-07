@@ -2,8 +2,8 @@ use core::git::GitError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::git::{
-    CommitGitChangesParams, GitPathsParams, GitRepositorySnapshotPayload, GitStashParams,
-    GitStashPayload, GitTabParams, PullGitChangesParams, PushGitChangesParams,
+    CommitGitChangesParams, CreateGitBranchParams, GitPathsParams, GitRepositorySnapshotPayload,
+    GitStashParams, GitStashPayload, GitTabParams, PullGitChangesParams, PushGitChangesParams,
     SwitchGitBranchParams,
 };
 use super::{parse_params, unsupported_action};
@@ -18,6 +18,9 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "unstageAll" => unstage_all(state, request),
         "commit" => commit(state, request),
         "switchBranch" => switch_branch(state, request),
+        "trackRemoteBranch" => track_remote_branch(state, request),
+        "createBranch" => create_branch(state, request),
+        "deleteBranch" => delete_branch(state, request),
         "fetch" => fetch(state, request),
         "pull" => pull(state, request),
         "push" => push(state, request),
@@ -124,6 +127,49 @@ fn switch_branch(state: &mut core::State, request: &RequestEnvelope) -> ServerMe
     match parse_params::<SwitchGitBranchParams>(request) {
         Ok(params) => command_result(
             state.switch_git_branch(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.branch,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn track_remote_branch(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SwitchGitBranchParams>(request) {
+        Ok(params) => command_result(
+            state.track_git_remote_branch(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.branch,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn create_branch(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<CreateGitBranchParams>(request) {
+        Ok(params) => command_result(
+            state.create_git_branch(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.name,
+                &params.start_point,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn delete_branch(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SwitchGitBranchParams>(request) {
+        Ok(params) => command_result(
+            state.delete_git_branch(
                 params.workspace_id.map(Into::into),
                 params.tab_id.into(),
                 &params.branch,
