@@ -59,6 +59,12 @@ pub enum TabKind {
     Terminal,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TabLifecycle {
+    Ephemeral,
+    KeepAlive,
+}
+
 impl TabKind {
     pub fn default_title(&self) -> &'static str {
         match self {
@@ -69,5 +75,25 @@ impl TabKind {
             Self::Search => "Search",
             Self::Terminal => "Terminal",
         }
+    }
+
+    pub fn lifecycle(&self) -> TabLifecycle {
+        match self {
+            Self::Terminal => TabLifecycle::KeepAlive,
+            Self::Blank | Self::FileTree | Self::Editor | Self::Git | Self::Search => {
+                TabLifecycle::Ephemeral
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_tabs_are_keep_alive_tabs() {
+        assert_eq!(TabKind::Terminal.lifecycle(), TabLifecycle::KeepAlive);
+        assert_eq!(TabKind::Editor.lifecycle(), TabLifecycle::Ephemeral);
     }
 }

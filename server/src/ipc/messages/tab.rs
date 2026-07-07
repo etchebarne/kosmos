@@ -1,4 +1,4 @@
-use core::tree::{Tab, TabId, TabKind};
+use core::tree::{Tab, TabId, TabKind, TabLifecycle};
 use serde::{Deserialize, Serialize};
 
 use super::pane::{PaneIdParam, SplitAxisPayload, WorkspaceIdParam};
@@ -114,12 +114,29 @@ impl From<&TabKind> for TabKindPayload {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum TabLifecyclePayload {
+    Ephemeral,
+    KeepAlive,
+}
+
+impl From<TabLifecycle> for TabLifecyclePayload {
+    fn from(value: TabLifecycle) -> Self {
+        match value {
+            TabLifecycle::Ephemeral => Self::Ephemeral,
+            TabLifecycle::KeepAlive => Self::KeepAlive,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TabSnapshot {
     id: u64,
     title: String,
     kind: TabKindPayload,
+    lifecycle: TabLifecyclePayload,
 }
 
 impl TabSnapshot {
@@ -128,6 +145,7 @@ impl TabSnapshot {
             id: tab.id().value(),
             title: tab.title().to_owned(),
             kind: tab.kind().into(),
+            lifecycle: tab.kind().lifecycle().into(),
         }
     }
 }

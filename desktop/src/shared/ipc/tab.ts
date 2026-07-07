@@ -3,6 +3,8 @@ import type { SplitAxis } from "./pane";
 
 export type TabKind = "blank" | "fileTree" | "editor" | "git" | "search" | "terminal";
 
+export type TabLifecycle = "ephemeral" | "keepAlive";
+
 export type OpenTabParams = {
   workspaceId?: WorkspaceId | null;
   paneId?: PaneId | null;
@@ -57,4 +59,5 @@ export type TabSnapshot = {
   id: TabId;
   title: string;
   kind: TabKind;
+  lifecycle: TabLifecycle;
 };

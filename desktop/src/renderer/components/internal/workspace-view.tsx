@@ -10,7 +10,6 @@ import {
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
 import { renderTabContent, tabKindIcon } from "@/renderer/components/tabs";
-import { activeWorkspaceFrom } from "@/renderer/lib/workspace-snapshot";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -49,7 +48,8 @@ export function WorkspaceView() {
   const addWorkspace = useWorkspaceStore((state) => state.addWorkspace);
   const isAddingWorkspace = useWorkspaceStore((state) => state.isAddingWorkspace);
   const isLoadingWorkspaces = useWorkspaceStore((state) => state.isLoadingWorkspaces);
-  const workspace = useWorkspaceStore((state) => activeWorkspaceFrom(state.snapshot));
+  const snapshot = useWorkspaceStore((state) => state.snapshot);
+  const activeWorkspaceId = snapshot?.activeWorkspaceId ?? null;
 
   if (isLoadingWorkspaces) {
     return (
@@ -59,7 +59,10 @@ export function WorkspaceView() {
     );
   }
 
-  if (!workspace) {
+  if (
+    !activeWorkspaceId ||
+    !snapshot?.workspaces.some((workspace) => workspace.id === activeWorkspaceId)
+  ) {
     return (
       <section className="grid min-h-0 flex-1 place-items-center overflow-hidden rounded-2xl border bg-background p-8 text-center shadow-sm">
         <div className="flex max-w-sm flex-col items-center gap-4">
@@ -80,7 +83,20 @@ export function WorkspaceView() {
 
   return (
     <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-sm">
-      <PaneNodeView node={workspace.root} workspaceId={workspace.id} isRoot />
+      {snapshot.workspaces.map((workspace) => {
+        const isWorkspaceActive = workspace.id === activeWorkspaceId;
+
+        return (
+          <div key={workspace.id} hidden={!isWorkspaceActive} className="flex min-h-0 flex-1">
+            <PaneNodeView
+              node={workspace.root}
+              workspaceId={workspace.id}
+              isWorkspaceActive={isWorkspaceActive}
+              isRoot
+            />
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -88,16 +104,25 @@ export function WorkspaceView() {
 function PaneNodeView({
   node,
   workspaceId,
+  isWorkspaceActive,
   isRoot = false,
 }: {
   node: PaneNodeSnapshot;
   workspaceId: WorkspaceId;
+  isWorkspaceActive: boolean;
   isRoot?: boolean;
 }) {
   const resizeSplit = useWorkspaceStore((state) => state.resizeSplit);
 
   if (node.type === "leaf") {
-    return <PaneLeaf pane={node.pane} workspaceId={workspaceId} isRoot={isRoot} />;
+    return (
+      <PaneLeaf
+        pane={node.pane}
+        workspaceId={workspaceId}
+        isWorkspaceActive={isWorkspaceActive}
+        isRoot={isRoot}
+      />
+    );
   }
 
   const firstPanelId = `split-${node.id}-first`;
@@ -139,7 +164,11 @@ function PaneNodeView({
         defaultSize={percentSize(firstSize)}
         minSize={minimumNodeSize(node.first, node.axis)}
       >
-        <PaneNodeView node={node.first} workspaceId={workspaceId} />
+        <PaneNodeView
+          node={node.first}
+          workspaceId={workspaceId}
+          isWorkspaceActive={isWorkspaceActive}
+        />
       </ResizablePanel>
       <ResizableHandle withHandle />
       <ResizablePanel
@@ -147,7 +176,11 @@ function PaneNodeView({
         defaultSize={percentSize(secondSize)}
         minSize={minimumNodeSize(node.second, node.axis)}
       >
-        <PaneNodeView node={node.second} workspaceId={workspaceId} />
+        <PaneNodeView
+          node={node.second}
+          workspaceId={workspaceId}
+          isWorkspaceActive={isWorkspaceActive}
+        />
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -156,10 +189,12 @@ function PaneNodeView({
 function PaneLeaf({
   pane,
   workspaceId,
+  isWorkspaceActive,
   isRoot,
 }: {
   pane: PaneSnapshot;
   workspaceId: WorkspaceId;
+  isWorkspaceActive: boolean;
   isRoot: boolean;
 }) {
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
@@ -284,16 +319,29 @@ function PaneLeaf({
           <TabDropIndicator target={tabDropTarget} />
         </div>
 
-        {pane.tabs.map((tab) => (
-          <TabsContent key={tab.id} value={tabValue(tab.id)} className="min-h-0 p-0">
-            <TabBody
-              paneId={pane.id}
-              tab={tab}
-              workspaceId={workspaceId}
-              onActivatePane={() => activatePane(pane.id)}
-            />
-          </TabsContent>
-        ))}
+        {pane.tabs.map((tab) => {
+          const isTabActive = isWorkspaceActive && tab.id === pane.activeTabId;
+          const shouldRenderTabBody = isWorkspaceActive || tab.lifecycle === "keepAlive";
+
+          return (
+            <TabsContent
+              key={tab.id}
+              value={tabValue(tab.id)}
+              keepMounted={tab.lifecycle === "keepAlive"}
+              className="min-h-0 p-0"
+            >
+              {shouldRenderTabBody ? (
+                <TabBody
+                  paneId={pane.id}
+                  tab={tab}
+                  workspaceId={workspaceId}
+                  isActive={isTabActive}
+                  onActivatePane={() => activatePane(pane.id)}
+                />
+              ) : null}
+            </TabsContent>
+          );
+        })}
       </Tabs>
 
       <DropIndicator edge={dropEdge} />
@@ -362,11 +410,13 @@ function TabBody({
   paneId,
   tab,
   workspaceId,
+  isActive,
   onActivatePane,
 }: {
   paneId: PaneId;
   tab: TabSnapshot;
   workspaceId: WorkspaceId;
+  isActive: boolean;
   onActivatePane(): void;
 }) {
   const setTabKind = useWorkspaceStore((state) => state.setTabKind);
@@ -377,6 +427,7 @@ function TabBody({
         paneId,
         tab,
         workspaceId,
+        isActive,
         onActivatePane,
         onSetTabKind: (kind) => setTabKind(paneId, tab.id, kind),
       })}

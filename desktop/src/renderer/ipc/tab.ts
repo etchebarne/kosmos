@@ -41,4 +41,4 @@ export function splitTab(params: SplitTabParams): Promise<WorkspaceListSnapshot>
   return requestServer(DOMAIN, "split", params);
 }
 
-export type { TabKind, TabSnapshot } from "@/shared/ipc";
+export type { TabKind, TabLifecycle, TabSnapshot } from "@/shared/ipc";

@@ -16,6 +16,7 @@ import type { TabId, TerminalOutput, WorkspaceId } from "@/shared/ipc";
 type TerminalTabProps = {
   workspaceId: WorkspaceId;
   tabId: TabId;
+  isActive: boolean;
   onActivatePane(): void;
 };
 
@@ -40,9 +41,27 @@ const TERMINAL_FONT_FAMILY =
 const TERMINAL_FONT_SIZE = 13;
 const TERMINAL_LINE_HEIGHT = 1;
 
-export function TerminalTab({ workspaceId, tabId, onActivatePane }: TerminalTabProps) {
+export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: TerminalTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const applySizeRef = useRef<(() => void) | null>(null);
+  const isActiveRef = useRef(isActive);
+  const terminalRef = useRef<XTerm | null>(null);
   const [status, setStatus] = useState<TerminalStatus>({ kind: "starting" });
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+
+    if (!isActive) {
+      return undefined;
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      applySizeRef.current?.();
+      terminalRef.current?.focus();
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [isActive]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -172,6 +191,10 @@ export function TerminalTab({ workspaceId, tabId, onActivatePane }: TerminalTabP
       }
     };
     const applySize = () => {
+      if (!isElementVisible(container)) {
+        return;
+      }
+
       const nextSize = fitTerminal(terminal, fitAddon);
 
       if (dimensionsEqual(size, nextSize)) {
@@ -199,7 +222,9 @@ export function TerminalTab({ workspaceId, tabId, onActivatePane }: TerminalTabP
           return;
         }
 
-        size = fitTerminal(terminal, fitAddon);
+        if (isElementVisible(container)) {
+          size = fitTerminal(terminal, fitAddon);
+        }
 
         const output = await openTerminal({
           workspaceId,
@@ -228,7 +253,12 @@ export function TerminalTab({ workspaceId, tabId, onActivatePane }: TerminalTabP
     terminal.loadAddon(canvasAddon);
     terminal.loadAddon(fitAddon);
     terminal.open(container);
-    terminal.focus();
+    terminalRef.current = terminal;
+    applySizeRef.current = applySize;
+
+    if (isActiveRef.current) {
+      terminal.focus();
+    }
 
     const inputDisposable = terminal.onData(queueInput);
     const resizeObserver = new ResizeObserver(applySize);
@@ -246,6 +276,8 @@ export function TerminalTab({ workspaceId, tabId, onActivatePane }: TerminalTabP
       }
 
       terminal.dispose();
+      terminalRef.current = null;
+      applySizeRef.current = null;
     };
   }, [workspaceId, tabId]);
 
@@ -309,6 +341,10 @@ function dimensionsEqual(left: TerminalDimensions, right: TerminalDimensions): b
 
 function nextAnimationFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function isElementVisible(element: HTMLElement): boolean {
+  return element.getClientRects().length > 0;
 }
 
 function terminalExitMessage(output: TerminalOutput): string {

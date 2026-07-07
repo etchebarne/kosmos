@@ -20,6 +20,7 @@ type TabContentProps = {
   paneId: PaneId;
   tab: TabSnapshot;
   workspaceId: WorkspaceId;
+  isActive: boolean;
   onActivatePane(): void;
   onSetTabKind(kind: TabKind): void;
 };
@@ -68,8 +69,13 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
     icon: TerminalIcon,
     label: "Terminal",
     showInBlankPicker: true,
-    render: ({ tab, workspaceId, onActivatePane }) => (
-      <TerminalTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
+    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+      <TerminalTab
+        workspaceId={workspaceId}
+        tabId={tab.id}
+        isActive={isActive}
+        onActivatePane={onActivatePane}
+      />
     ),
   },
 };
