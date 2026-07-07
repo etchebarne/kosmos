@@ -12,10 +12,10 @@ use crate::tree::{TabId, WorkspaceId};
 pub type Result<T> = std::result::Result<T, FileTreeError>;
 
 const MAX_FILE_TREE_PATHS: usize = 50_000;
+const EXCLUDED_DIRECTORY_NAMES: &[&str] = &[".git"];
 const IGNORED_DIRECTORY_NAMES: &[&str] = &[
     ".angular",
     ".cache",
-    ".git",
     ".hg",
     ".mypy_cache",
     ".next",
@@ -799,6 +799,10 @@ fn sorted_entries(directory: &Path, existing_path_count: usize) -> Result<Vec<Fi
         let is_directory = file_type.is_dir();
         let name = entry.file_name().to_string_lossy().into_owned();
 
+        if is_directory && is_excluded_directory_name(&name) {
+            continue;
+        }
+
         ensure_path_capacity(existing_path_count.saturating_add(file_tree_entries.len()))?;
 
         file_tree_entries.push(FileTreeEntry {
@@ -833,6 +837,10 @@ fn ensure_path_capacity(current_path_count: usize) -> Result<()> {
 
 fn is_ignored_directory_name(name: &str) -> bool {
     IGNORED_DIRECTORY_NAMES.contains(&name)
+}
+
+fn is_excluded_directory_name(name: &str) -> bool {
+    EXCLUDED_DIRECTORY_NAMES.contains(&name)
 }
 
 fn compare_entries(left: &FileTreeEntry, right: &FileTreeEntry) -> Ordering {
@@ -957,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_keeps_generated_dependency_and_build_directories_collapsed() {
+    fn scan_hides_git_and_keeps_generated_dependency_and_build_directories_collapsed() {
         let root = test_root("ignored-directories");
         fs::create_dir_all(root.join(".git/objects")).expect("git metadata should be created");
         fs::create_dir_all(root.join("node_modules/pkg")).expect("dependencies should be created");
@@ -972,12 +980,9 @@ mod tests {
 
         assert_eq!(
             tree.paths(),
-            &[".git/", "node_modules/", "src/", "src/main.rs", "target/"]
+            &["node_modules/", "src/", "src/main.rs", "target/"]
         );
-        assert_eq!(
-            tree.deferred_paths(),
-            &[".git/", "node_modules/", "target/"]
-        );
+        assert_eq!(tree.deferred_paths(), &["node_modules/", "target/"]);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -987,6 +992,8 @@ mod tests {
         let root = test_root("children");
         fs::create_dir_all(root.join("node_modules/.bin"))
             .expect("bin directory should be created");
+        fs::create_dir_all(root.join("node_modules/.git/objects"))
+            .expect("git metadata should be created");
         fs::create_dir_all(root.join("node_modules/pkg"))
             .expect("package directory should be created");
         fs::write(root.join("node_modules/README.md"), b"readme")
