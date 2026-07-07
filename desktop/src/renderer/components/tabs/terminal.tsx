@@ -283,7 +283,7 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
 
   return (
     <div
-      className="relative h-full min-h-0 overflow-hidden bg-[#101010] text-white"
+      className="terminal-scrollbar-none relative h-full min-h-0 overflow-hidden bg-[#101010] text-white"
       onPointerDown={onActivatePane}
     >
       <div ref={containerRef} className="h-full min-h-0 overflow-hidden" />

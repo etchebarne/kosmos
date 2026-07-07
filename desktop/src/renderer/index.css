@@ -141,4 +141,13 @@
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
+
+  .terminal-scrollbar-none .xterm-viewport {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .terminal-scrollbar-none .xterm-viewport::-webkit-scrollbar {
+    display: none;
+  }
 }
