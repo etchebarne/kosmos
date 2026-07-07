@@ -1,4 +1,4 @@
-import { useState, type DragEvent } from "react";
+import { useState, type DragEvent, type WheelEvent } from "react";
 import { Plus, X } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
@@ -259,14 +259,16 @@ function PaneLeaf({
             }
           }}
         >
-          <TabsList
-            variant="line"
-            className="h-full min-w-0 flex-1 justify-start overflow-x-auto overflow-y-hidden rounded-none p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          <div
+            className="scrollbar-none flex h-full min-w-0 flex-1 items-center overflow-x-auto overflow-y-hidden overscroll-x-contain"
+            onWheel={scrollTabStripOnWheel}
           >
-            {pane.tabs.map((tab) => (
-              <TabTrigger key={tab.id} pane={pane} tab={tab} />
-            ))}
-          </TabsList>
+            <TabsList variant="line" className="h-8 w-max min-w-full justify-start rounded-none p-0">
+              {pane.tabs.map((tab) => (
+                <TabTrigger key={tab.id} pane={pane} tab={tab} />
+              ))}
+            </TabsList>
+          </div>
 
           <Button
             type="button"
@@ -319,7 +321,7 @@ function TabTrigger({
             draggable
             render={<div />}
             data-kosmos-tab-trigger=""
-            className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs data-active:!bg-foreground/10 data-active:!text-foreground"
+            className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs after:hidden data-active:!bg-foreground/10 data-active:!text-foreground"
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
           >
             <TabIcon
@@ -482,6 +484,23 @@ function hasDraggedTab(event: DragEvent<HTMLElement>): boolean {
   }
 
   return false;
+}
+
+function scrollTabStripOnWheel(event: WheelEvent<HTMLDivElement>): void {
+  const scroller = event.currentTarget;
+  const maxScrollLeft = scroller.scrollWidth - scroller.clientWidth;
+
+  if (maxScrollLeft <= 0 || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) {
+    return;
+  }
+
+  const nextScrollLeft = clamp(scroller.scrollLeft + event.deltaY, 0, maxScrollLeft);
+  if (nextScrollLeft === scroller.scrollLeft) {
+    return;
+  }
+
+  scroller.scrollLeft = nextScrollLeft;
+  event.preventDefault();
 }
 
 function tabDropTargetFromDragEvent(
