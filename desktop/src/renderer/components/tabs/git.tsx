@@ -15,6 +15,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -67,6 +68,12 @@ import {
 } from "@/renderer/components/ui/select";
 import { Separator } from "@/renderer/components/ui/separator";
 import { Textarea } from "@/renderer/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/renderer/components/ui/tooltip";
 import { errorMessage } from "@/renderer/lib/errors";
 import type {
   GitChange,
@@ -129,6 +136,9 @@ type ActiveStashAction = {
   selector: string;
   operationId: "applyStash" | "dropStash";
 };
+
+const OPERATION_FEEDBACK_DISABLED = new Set<GitOperationId>(["stageAll", "unstageAll"]);
+const OPERATION_SUCCESS_FEEDBACK_DISABLED = new Set<GitOperationId>(["stageAll", "unstageAll"]);
 
 const CHECKBOX_HIT_WIDTH = 26;
 const SUCCESS_FEEDBACK_MS = 1000;
@@ -204,6 +214,10 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     setActiveOperation(null);
   };
   const showOperationSuccess = (operationId: GitOperationId) => {
+    if (OPERATION_SUCCESS_FEEDBACK_DISABLED.has(operationId)) {
+      return;
+    }
+
     clearSuccessTimeout();
     setSuccessfulOperation(operationId);
     successTimeoutRef.current = setTimeout(() => {
@@ -374,171 +388,181 @@ function LoadedGitTab({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex min-h-10 shrink-0 items-center gap-2 border-b px-2 py-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          disabled={busy}
-          aria-label="Refresh git status"
-          onClick={() => void runOperation("refresh", onReload, { refresh: false })}
-        >
-          <OperationIcon
-            defaultIcon={RefreshCw}
-            operationId="refresh"
-            activeOperation={activeOperation}
-            successfulOperation={successfulOperation}
-          />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <GitChangeSummary snapshot={snapshot} />
-        </div>
-        <div className="flex shrink-0 items-center gap-0">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            disabled={busy || unstagedCount === 0}
-            aria-label="Stage all changes"
-            onClick={() => void runOperation("stageAll", () => stageAllGitChanges(tabParams))}
-          >
-            <OperationIcon
-              defaultIcon={Plus}
-              operationId="stageAll"
+    <TooltipProvider>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex min-h-10 shrink-0 items-center gap-2 border-b px-2 py-1.5">
+          <GitToolbarTooltip label="Refresh git status">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={busy}
+              aria-label="Refresh git status"
+              onClick={() => void runOperation("refresh", onReload, { refresh: false })}
+            >
+              <OperationIcon
+                defaultIcon={RefreshCw}
+                operationId="refresh"
+                activeOperation={activeOperation}
+                successfulOperation={successfulOperation}
+              />
+            </Button>
+          </GitToolbarTooltip>
+          <div className="min-w-0 flex-1">
+            <GitChangeSummary snapshot={snapshot} />
+          </div>
+          <div className="flex shrink-0 items-center gap-0">
+            <GitToolbarTooltip label="Stage all changes">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy || unstagedCount === 0}
+                aria-label="Stage all changes"
+                onClick={() => void runOperation("stageAll", () => stageAllGitChanges(tabParams))}
+              >
+                <OperationIcon
+                  defaultIcon={Plus}
+                  operationId="stageAll"
+                  activeOperation={activeOperation}
+                  successfulOperation={successfulOperation}
+                />
+              </Button>
+            </GitToolbarTooltip>
+            <GitToolbarTooltip label="Unstage all changes">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy || stagedCount === 0}
+                aria-label="Unstage all changes"
+                onClick={() => void runOperation("unstageAll", () => unstageAllGitChanges(tabParams))}
+              >
+                <OperationIcon
+                  defaultIcon={Minus}
+                  operationId="unstageAll"
+                  activeOperation={activeOperation}
+                  successfulOperation={successfulOperation}
+                />
+              </Button>
+            </GitToolbarTooltip>
+            <GitToolbarTooltip label="Stash staged changes">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy || stagedCount === 0}
+                aria-label="Stash staged changes"
+                onClick={() => void runOperation("stashStaged", () => stashStagedGitChanges(tabParams))}
+              >
+                <OperationIcon
+                  defaultIcon={Save}
+                  operationId="stashStaged"
+                  activeOperation={activeOperation}
+                  successfulOperation={successfulOperation}
+                />
+              </Button>
+            </GitToolbarTooltip>
+            <GitActionsMenu
               activeOperation={activeOperation}
               successfulOperation={successfulOperation}
+              busy={busy}
+              hasChanges={hasChanges}
+              hasStagedChanges={stagedCount > 0}
+              tabParams={tabParams}
+              onOpenStashes={() => onStashDialogOpenChange(true)}
+              onRun={runOperation}
             />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            disabled={busy || stagedCount === 0}
-            aria-label="Unstage all changes"
-            onClick={() => void runOperation("unstageAll", () => unstageAllGitChanges(tabParams))}
-          >
-            <OperationIcon
-              defaultIcon={Minus}
-              operationId="unstageAll"
-              activeOperation={activeOperation}
-              successfulOperation={successfulOperation}
-            />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            disabled={busy || stagedCount === 0}
-            aria-label="Stash staged changes"
-            onClick={() => void runOperation("stashStaged", () => stashStagedGitChanges(tabParams))}
-          >
-            <OperationIcon
-              defaultIcon={Save}
-              operationId="stashStaged"
-              activeOperation={activeOperation}
-              successfulOperation={successfulOperation}
-            />
-          </Button>
-          <GitActionsMenu
-            activeOperation={activeOperation}
-            successfulOperation={successfulOperation}
-            busy={busy}
-            hasChanges={hasChanges}
-            hasStagedChanges={stagedCount > 0}
-            tabParams={tabParams}
-            onOpenStashes={() => onStashDialogOpenChange(true)}
-            onRun={runOperation}
-          />
+          </div>
         </div>
-      </div>
 
-      <GitStashesDialog
-        open={stashDialogOpen}
-        busy={busy}
-        tabParams={tabParams}
-        onOpenChange={onStashDialogOpenChange}
-        onRun={runOperation}
-      />
-
-      <div className="relative min-h-0 flex-1 overflow-hidden border-b">
-        {hasChanges ? (
-          <GitChangeTree
-            key={snapshot.changes.map((change) => `${change.path}:${change.staged}:${change.unstaged}`).join("|")}
-            changes={snapshot.changes}
-            paths={treePaths}
-            disabled={busy}
-            onToggleStage={toggleStagePaths}
-          />
-        ) : (
-          <GitMessage message="No changes" />
-        )}
-      </div>
-
-      <div className="flex shrink-0 flex-col gap-2 p-2">
-        <div className="flex items-center justify-between gap-2">
-          <Select value={snapshot.branch ?? null} disabled={busy || snapshot.branches.length === 0} onValueChange={switchBranchValue}>
-            <SelectTrigger size="sm" className="min-w-44 max-w-72 flex-1 justify-start">
-              {activeOperation === "switchBranch" ? (
-                <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" />
-              ) : successfulOperation === "switchBranch" ? (
-                <Check className="size-3.5 text-emerald-500" />
-              ) : (
-                <GitBranchIcon className="size-3.5 text-muted-foreground" />
-              )}
-              <SelectValue placeholder="Detached HEAD" />
-            </SelectTrigger>
-            <SelectContent align="start" className="max-w-80">
-              {snapshot.branches.map((branch) => (
-                <SelectItem key={branch.name} value={branch.name}>
-                  <span className="min-w-0 truncate">{branch.name}</span>
-                  {branch.upstream ? (
-                    <span className="text-xs text-muted-foreground">{branch.upstream}</span>
-                  ) : null}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <RemoteGitActions
-            busy={busy}
-            activeOperation={activeOperation}
-            successfulOperation={successfulOperation}
-            primaryActionId={primaryRemoteActionId}
-            tabParams={tabParams}
-            onPrimaryActionChange={onPrimaryRemoteActionChange}
-            onRun={runOperation}
-          />
-        </div>
-        <Textarea
-          value={commitMessage}
-          placeholder="Commit message"
-          className="max-h-28 min-h-20 resize-none border-0 bg-background/60 text-sm shadow-none focus-visible:ring-1"
-          disabled={busy}
-          onChange={(event) => setCommitMessage(event.target.value)}
+        <GitStashesDialog
+          open={stashDialogOpen}
+          busy={busy}
+          tabParams={tabParams}
+          onOpenChange={onStashDialogOpenChange}
+          onRun={runOperation}
         />
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1" />
-          <Button
-            type="button"
-            disabled={busy || stagedCount === 0 || !hasCommitMessage}
-            onClick={() =>
-              void runOperation(
-                "commit",
-                () => commitGitChanges({ ...tabParams, message: commitMessage }),
-                { clearCommitMessage: true },
-              )
-            }
-          >
-            {activeOperation === "commit" ? <LoaderCircle className="animate-spin" /> : null}
-            {activeOperation !== "commit" && successfulOperation === "commit" ? (
-              <Check className="text-emerald-500" />
-            ) : null}
-            Commit staged
-          </Button>
+
+        <div className="relative min-h-0 flex-1 overflow-hidden border-b">
+          {hasChanges ? (
+            <GitChangeTree
+              key={snapshot.changes.map((change) => `${change.path}:${change.staged}:${change.unstaged}`).join("|")}
+              changes={snapshot.changes}
+              paths={treePaths}
+              disabled={busy}
+              onToggleStage={toggleStagePaths}
+            />
+          ) : (
+            <GitMessage message="No changes" />
+          )}
         </div>
-        <GitLatestCommitFooter latestCommit={snapshot.latestCommit} />
+
+        <div className="flex shrink-0 flex-col gap-2 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <Select value={snapshot.branch ?? null} disabled={busy || snapshot.branches.length === 0} onValueChange={switchBranchValue}>
+              <SelectTrigger size="sm" className="min-w-44 max-w-72 flex-1 justify-start">
+                {activeOperation === "switchBranch" ? (
+                  <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" />
+                ) : successfulOperation === "switchBranch" ? (
+                  <Check className="size-3.5 text-emerald-500" />
+                ) : (
+                  <GitBranchIcon className="size-3.5 text-muted-foreground" />
+                )}
+                <SelectValue placeholder="Detached HEAD" />
+              </SelectTrigger>
+              <SelectContent align="start" className="max-w-80">
+                {snapshot.branches.map((branch) => (
+                  <SelectItem key={branch.name} value={branch.name}>
+                    <span className="min-w-0 truncate">{branch.name}</span>
+                    {branch.upstream ? (
+                      <span className="text-xs text-muted-foreground">{branch.upstream}</span>
+                    ) : null}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <RemoteGitActions
+              busy={busy}
+              activeOperation={activeOperation}
+              successfulOperation={successfulOperation}
+              primaryActionId={primaryRemoteActionId}
+              tabParams={tabParams}
+              onPrimaryActionChange={onPrimaryRemoteActionChange}
+              onRun={runOperation}
+            />
+          </div>
+          <Textarea
+            value={commitMessage}
+            placeholder="Commit message"
+            className="max-h-28 min-h-20 resize-none border-0 bg-background/60 text-sm shadow-none focus-visible:ring-1"
+            disabled={busy}
+            onChange={(event) => setCommitMessage(event.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1" />
+            <Button
+              type="button"
+              disabled={busy || stagedCount === 0 || !hasCommitMessage}
+              onClick={() =>
+                void runOperation(
+                  "commit",
+                  () => commitGitChanges({ ...tabParams, message: commitMessage }),
+                  { clearCommitMessage: true },
+                )
+              }
+            >
+              {activeOperation === "commit" ? <LoaderCircle className="animate-spin" /> : null}
+              {activeOperation !== "commit" && successfulOperation === "commit" ? (
+                <Check className="text-emerald-500" />
+              ) : null}
+              Commit staged
+            </Button>
+          </div>
+          <GitLatestCommitFooter latestCommit={snapshot.latestCommit} />
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -547,6 +571,15 @@ function GitLatestCommitFooter({ latestCommit }: { latestCommit?: string | null 
     <div className="-mx-2 -mb-2 border-t px-2 py-1.5 text-xs text-muted-foreground">
       <p className="truncate">{latestCommit ?? "No commits yet"}</p>
     </div>
+  );
+}
+
+function GitToolbarTooltip({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>{children}</TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -662,15 +695,17 @@ function GitActionsMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Git actions">
-            {localActionRunning ? <LoaderCircle className="animate-spin" /> : null}
-            {!localActionRunning && localActionSucceeded ? <Check className="text-emerald-500" /> : null}
-            {!localActionRunning && !localActionSucceeded ? <MoreHorizontal /> : null}
-          </Button>
-        }
-      />
+      <GitToolbarTooltip label="More git actions">
+        <DropdownMenuTrigger
+          render={
+            <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Git actions">
+              {localActionRunning ? <LoaderCircle className="animate-spin" /> : null}
+              {!localActionRunning && localActionSucceeded ? <Check className="text-emerald-500" /> : null}
+              {!localActionRunning && !localActionSucceeded ? <MoreHorizontal /> : null}
+            </Button>
+          }
+        />
+      </GitToolbarTooltip>
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Local</DropdownMenuLabel>
@@ -982,6 +1017,10 @@ function OperationIcon({
   operationId: GitOperationId;
   successfulOperation: GitOperationId | null;
 }) {
+  if (OPERATION_FEEDBACK_DISABLED.has(operationId)) {
+    return <DefaultIcon />;
+  }
+
   if (activeOperation === operationId) {
     return <LoaderCircle className="animate-spin" />;
   }
