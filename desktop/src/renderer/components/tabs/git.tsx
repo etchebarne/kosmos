@@ -571,7 +571,7 @@ function LoadedGitTab({
               type="button"
               variant="outline"
               size="sm"
-              className="min-w-44 max-w-72 flex-1 justify-start overflow-hidden"
+              className="min-w-0 max-w-72 shrink justify-start overflow-hidden"
               disabled={busy || snapshot.branches.length === 0}
               aria-label="Select git branch"
               onClick={() => onBranchDialogOpenChange(true)}
