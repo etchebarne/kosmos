@@ -13,6 +13,7 @@ import type { PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 
 import { BlankTab, type BlankTabOption } from "./blank";
 import { FileTreeTab } from "./file-tree";
+import { GitTab } from "./git";
 import { PlaceholderTab } from "./placeholder";
 import { TerminalTab } from "./terminal";
 
@@ -63,7 +64,14 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
     ),
   },
   editor: placeholderTabDefinition("Editor", FileText, false),
-  git: placeholderTabDefinition("Git", GitBranch, true),
+  git: {
+    icon: GitBranch,
+    label: "Git",
+    showInBlankPicker: true,
+    render: ({ tab, workspaceId, onActivatePane }) => (
+      <GitTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
+    ),
+  },
   search: placeholderTabDefinition("Search", Search, true),
   terminal: {
     icon: TerminalIcon,

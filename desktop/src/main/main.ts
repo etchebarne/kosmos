@@ -11,6 +11,7 @@ const validDomains = new Set<KosmosIpcDomain>([
   "pane",
   "tab",
   "fileTree",
+  "git",
   "terminal",
 ]);
 const serverClient = new KosmosServerClient();

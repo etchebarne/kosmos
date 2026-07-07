@@ -69,6 +69,7 @@ fn persistence_mode(request: &RequestEnvelope) -> PersistenceMode {
         (Domain::Workspace, "list") => PersistenceMode::None,
         (Domain::Workspace, "activate") => PersistenceMode::ActiveWorkspace,
         (Domain::FileTree, "get" | "getChildren") => PersistenceMode::None,
+        (Domain::Git, _) => PersistenceMode::None,
         (Domain::Terminal, _) => PersistenceMode::None,
         _ => PersistenceMode::Full,
     }

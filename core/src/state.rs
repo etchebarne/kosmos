@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
+use crate::git::{GitError, GitRepository, GitRepositorySnapshot};
 use crate::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
@@ -199,6 +200,142 @@ impl State {
     ) -> Result<PathBuf, FileTreeError> {
         let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
         FileTree::resolve_path(directory, path)
+    }
+
+    pub fn git_status(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<GitRepositorySnapshot, GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::snapshot(directory)
+    }
+
+    pub fn stage_git_paths(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        paths: &[String],
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::stage_paths(directory, paths)
+    }
+
+    pub fn unstage_git_paths(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        paths: &[String],
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::unstage_paths(directory, paths)
+    }
+
+    pub fn stage_all_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::stage_all(directory)
+    }
+
+    pub fn unstage_all_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::unstage_all(directory)
+    }
+
+    pub fn commit_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        message: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::commit(directory, message)
+    }
+
+    pub fn switch_git_branch(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        branch: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::switch_branch(directory, branch)
+    }
+
+    pub fn fetch_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::fetch(directory)
+    }
+
+    pub fn pull_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        rebase: bool,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::pull(directory, rebase)
+    }
+
+    pub fn push_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        force: bool,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::push(directory, force)
+    }
+
+    pub fn stash_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::stash(directory)
+    }
+
+    pub fn discard_all_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::discard_all_changes(directory)
+    }
+
+    pub fn discard_staged_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::discard_staged_changes(directory)
     }
 
     pub fn open_terminal(
@@ -636,6 +773,10 @@ impl State {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Terminal)
     }
 
+    fn is_git_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Git)
+    }
+
     fn file_tree_workspace_directory(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -682,6 +823,26 @@ impl State {
 
         if !self.is_terminal_tab(workspace_id, tab_id) {
             return Err(TerminalError::TabNotFound);
+        }
+
+        Ok(workspace.directory())
+    }
+
+    fn git_workspace_directory(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<&Path, GitError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+
+        if !self.is_git_tab(workspace_id, tab_id) {
+            return Err(GitError::TabNotFound);
         }
 
         Ok(workspace.directory())

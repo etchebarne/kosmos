@@ -1,4 +1,5 @@
 export * from "./file-tree";
+export * from "./git";
 export * from "./pane";
 export * from "./tab";
 export * from "./terminal";

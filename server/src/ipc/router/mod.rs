@@ -1,4 +1,5 @@
 mod file_tree;
+mod git;
 mod pane;
 mod tab;
 mod terminal;
@@ -15,6 +16,7 @@ pub(crate) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         Domain::Pane => pane::route(state, request),
         Domain::Tab => tab::route(state, request),
         Domain::FileTree => file_tree::route(state, request),
+        Domain::Git => git::route(state, request),
         Domain::Terminal => terminal::route(state, request),
     }
 }
