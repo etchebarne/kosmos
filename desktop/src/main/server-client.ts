@@ -12,9 +12,9 @@ type PendingRequest = {
 export class KosmosIpcRequestError extends Error {
   constructor(
     readonly code: string,
-    message: string,
+    readonly messageWithoutCode: string,
   ) {
-    super(`${code}: ${message}`);
+    super(`${code}: ${messageWithoutCode}`);
     this.name = "KosmosIpcRequestError";
   }
 }

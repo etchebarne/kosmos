@@ -18,6 +18,10 @@ export function getGitStatus(params: GitTabParams): Promise<GitRepositorySnapsho
   return requestServer(DOMAIN, "status", params);
 }
 
+export function initGitRepository(params: GitTabParams): Promise<boolean> {
+  return requestServer(DOMAIN, "init", params);
+}
+
 export function stageGitPaths(params: GitPathsParams): Promise<boolean> {
   return requestServer(DOMAIN, "stagePaths", params);
 }

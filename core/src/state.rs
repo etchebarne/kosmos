@@ -212,6 +212,16 @@ impl State {
         GitRepository::snapshot(directory)
     }
 
+    pub fn init_git_repository(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::init(directory)
+    }
+
     pub fn stage_git_paths(
         &self,
         workspace_id: Option<WorkspaceId>,

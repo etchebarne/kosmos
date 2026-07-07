@@ -1,10 +1,26 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import type { KosmosApi, KosmosIpcRequest } from "../shared/ipc";
+import type { KosmosApi, KosmosIpcRequest, KosmosIpcRequestResult } from "../shared/ipc";
+
+class KosmosPreloadRequestError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "KosmosIpcRequestError";
+  }
+}
 
 const kosmos: KosmosApi = {
-  request<T = unknown>(request: KosmosIpcRequest): Promise<T> {
-    return ipcRenderer.invoke("kosmos:request", request) as Promise<T>;
+  async request<T = unknown>(request: KosmosIpcRequest): Promise<T> {
+    const response = (await ipcRenderer.invoke("kosmos:request", request)) as KosmosIpcRequestResult<T>;
+
+    if (response.ok) {
+      return response.result;
+    }
+
+    throw new KosmosPreloadRequestError(response.error.code, response.error.message);
   },
   getSocketPath(): Promise<string> {
     return ipcRenderer.invoke("kosmos:socketPath") as Promise<string>;

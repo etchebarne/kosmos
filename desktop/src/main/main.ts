@@ -2,8 +2,8 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { KosmosIpcDomain, KosmosIpcRequest } from "../shared/ipc";
-import { KosmosServerClient } from "./server-client";
+import type { KosmosIpcDomain, KosmosIpcError, KosmosIpcRequest, KosmosIpcRequestResult } from "../shared/ipc";
+import { KosmosIpcRequestError, KosmosServerClient } from "./server-client";
 import { KosmosServerProcess } from "./server-process";
 
 const validDomains = new Set<KosmosIpcDomain>([
@@ -18,9 +18,15 @@ const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 
 function registerIpcHandlers(): void {
-  ipcMain.handle("kosmos:request", (_event, request: KosmosIpcRequest) => {
+  ipcMain.handle("kosmos:request", async (_event, request: KosmosIpcRequest): Promise<KosmosIpcRequestResult> => {
     validateRequest(request);
-    return serverClient.request(request.domain, request.action, request.params ?? {});
+    try {
+      const result = await serverClient.request(request.domain, request.action, request.params ?? {});
+
+      return { ok: true, result };
+    } catch (caughtError: unknown) {
+      return { ok: false, error: ipcRequestError(caughtError) };
+    }
   });
 
   ipcMain.handle("kosmos:socketPath", () => serverClient.socketPath);
@@ -142,6 +148,14 @@ function validateRequest(request: KosmosIpcRequest): void {
   if (typeof request.action !== "string" || request.action.length === 0) {
     throw new Error("IPC request action must be a non-empty string");
   }
+}
+
+function ipcRequestError(error: unknown): KosmosIpcError {
+  if (error instanceof KosmosIpcRequestError) {
+    return { code: error.code, message: error.messageWithoutCode };
+  }
+
+  return { code: "ipc.request_failed", message: errorMessage(error) };
 }
 
 async function startApp(): Promise<void> {

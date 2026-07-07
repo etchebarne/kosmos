@@ -21,6 +21,10 @@ export type KosmosServerResponse = {
   error?: KosmosIpcError;
 };
 
+export type KosmosIpcRequestResult<T = unknown> =
+  | { ok: true; result: T }
+  | { ok: false; error: KosmosIpcError };
+
 export type KosmosApi = {
   request<T = unknown>(request: KosmosIpcRequest): Promise<T>;
   getSocketPath(): Promise<string>;

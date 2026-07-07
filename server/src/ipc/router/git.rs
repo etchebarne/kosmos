@@ -10,6 +10,7 @@ use super::{parse_params, unsupported_action};
 
 pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match request.action.as_str() {
+        "init" => init(state, request),
         "status" => status(state, request),
         "stagePaths" => stage_paths(state, request),
         "unstagePaths" => unstage_paths(state, request),
@@ -28,6 +29,16 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "discardAll" => discard_all(state, request),
         "discardStaged" => discard_staged(state, request),
         _ => unsupported_action(request),
+    }
+}
+
+fn init(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => command_result(
+            state.init_git_repository(params.workspace_id.map(Into::into), params.tab_id.into()),
+            request.id,
+        ),
+        Err(response) => response,
     }
 }
 

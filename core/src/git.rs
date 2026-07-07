@@ -59,6 +59,10 @@ pub enum GitChangeKind {
 pub struct GitRepository;
 
 impl GitRepository {
+    pub fn init(directory: impl AsRef<Path>) -> Result<()> {
+        git(directory.as_ref(), ["init"]).map(|_| ())
+    }
+
     pub fn snapshot(directory: impl AsRef<Path>) -> Result<GitRepositorySnapshot> {
         let repository_root = repository_root(directory.as_ref())?;
         let status = parse_status(&git_bytes(
@@ -193,12 +197,22 @@ impl GitRepository {
 
     pub fn discard_all_changes(directory: impl AsRef<Path>) -> Result<()> {
         let repository_root = repository_root(directory.as_ref())?;
+
+        if !has_head(&repository_root)? {
+            return Ok(());
+        }
+
         git(&repository_root, ["reset", "--hard", "HEAD"])?;
         git(&repository_root, ["clean", "-fd"]).map(|_| ())
     }
 
     pub fn discard_staged_changes(directory: impl AsRef<Path>) -> Result<()> {
         let repository_root = repository_root(directory.as_ref())?;
+
+        if !has_head(&repository_root)? {
+            return Ok(());
+        }
+
         let staged_paths = staged_paths(&repository_root)?;
 
         if staged_paths.is_empty() {
@@ -698,6 +712,20 @@ fn latest_commit(repository_root: &Path) -> Result<Option<String>> {
             if stderr.contains("does not have any commits") =>
         {
             Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn has_head(repository_root: &Path) -> Result<bool> {
+    match git(repository_root, ["rev-parse", "--verify", "HEAD"]) {
+        Ok(_) => Ok(true),
+        Err(GitError::CommandFailed { stderr, .. })
+            if stderr.contains("Needed a single revision")
+                || stderr.contains("unknown revision")
+                || stderr.contains("ambiguous argument") =>
+        {
+            Ok(false)
         }
         Err(error) => Err(error),
     }

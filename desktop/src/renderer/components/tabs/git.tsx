@@ -27,6 +27,7 @@ import {
   fetchGitChanges,
   getGitStashes,
   getGitStatus,
+  initGitRepository,
   pullGitChanges,
   pushGitChanges,
   stageAllGitChanges,
@@ -66,7 +67,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/renderer/components/ui/select";
-import { Separator } from "@/renderer/components/ui/separator";
 import { Textarea } from "@/renderer/components/ui/textarea";
 import {
   Tooltip,
@@ -100,7 +100,7 @@ type GitLoadState =
       snapshot: GitRepositorySnapshot;
       revision: number;
     }
-  | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
+  | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string; code?: string };
 
 type RemoteGitActionId = "fetch" | "pull" | "pullRebase" | "push" | "pushForce";
 type GitOperationId =
@@ -109,6 +109,7 @@ type GitOperationId =
   | "unstageAll"
   | "stagePaths"
   | "unstagePaths"
+  | "init"
   | "switchBranch"
   | "commit"
   | "stashStaged"
@@ -138,7 +139,7 @@ type ActiveStashAction = {
 };
 
 const OPERATION_FEEDBACK_DISABLED = new Set<GitOperationId>(["stageAll", "unstageAll"]);
-const OPERATION_SUCCESS_FEEDBACK_DISABLED = new Set<GitOperationId>(["stageAll", "unstageAll"]);
+const GIT_REPOSITORY_NOT_FOUND_CODE = "git.repository_not_found";
 
 const CHECKBOX_HIT_WIDTH = 26;
 const SUCCESS_FEEDBACK_MS = 1000;
@@ -214,7 +215,7 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     setActiveOperation(null);
   };
   const showOperationSuccess = (operationId: GitOperationId) => {
-    if (OPERATION_SUCCESS_FEEDBACK_DISABLED.has(operationId)) {
+    if (OPERATION_FEEDBACK_DISABLED.has(operationId)) {
       return;
     }
 
@@ -261,8 +262,22 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
           workspaceId: targetWorkspaceId,
           tabId: targetTabId,
           message: errorMessage(caughtError),
+          code: ipcErrorCode(caughtError),
         });
       }
+    }
+  };
+
+  const initializeGitRepository = async () => {
+    startOperation("init");
+
+    try {
+      await initGitRepository({ workspaceId, tabId });
+      await loadGitStatus(workspaceId, tabId, false);
+    } catch (caughtError: unknown) {
+      window.alert(errorMessage(caughtError));
+    } finally {
+      finishOperation();
     }
   };
 
@@ -282,7 +297,15 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card" onPointerDown={onActivatePane}>
       {currentLoadState.status === "loading" ? <GitMessage message="Loading repository..." /> : null}
-      {currentLoadState.status === "error" ? <GitMessage message={currentLoadState.message} /> : null}
+      {currentLoadState.status === "error" && currentLoadState.code === GIT_REPOSITORY_NOT_FOUND_CODE ? (
+        <GitInitializeRepositoryMessage
+          busy={activeOperation === "init"}
+          onInitialize={() => void initializeGitRepository()}
+        />
+      ) : null}
+      {currentLoadState.status === "error" && currentLoadState.code !== GIT_REPOSITORY_NOT_FOUND_CODE ? (
+        <GitMessage message={currentLoadState.message} />
+      ) : null}
       {currentLoadState.status === "loaded" ? (
         <LoadedGitTab
           key={currentLoadState.revision}
@@ -340,6 +363,7 @@ function LoadedGitTab({
   const unstagedCount = snapshot.changes.filter((change) => change.isUnstaged).length;
   const busy = activeOperation !== null;
   const hasChanges = snapshot.changes.length > 0;
+  const hasCommittedHistory = snapshot.latestCommit != null;
   const hasCommitMessage = commitMessage.trim().length > 0;
   const runOperation = async (
     operationId: GitOperationId,
@@ -467,8 +491,8 @@ function LoadedGitTab({
               activeOperation={activeOperation}
               successfulOperation={successfulOperation}
               busy={busy}
-              hasChanges={hasChanges}
-              hasStagedChanges={stagedCount > 0}
+              canDiscardAll={hasCommittedHistory && hasChanges}
+              canDiscardStaged={hasCommittedHistory && stagedCount > 0}
               tabParams={tabParams}
               onOpenStashes={() => onStashDialogOpenChange(true)}
               onRun={runOperation}
@@ -669,19 +693,19 @@ function RemoteGitActions({
 
 function GitActionsMenu({
   activeOperation,
+  canDiscardStaged,
   successfulOperation,
   busy,
-  hasChanges,
-  hasStagedChanges,
+  canDiscardAll,
   tabParams,
   onOpenStashes,
   onRun,
 }: {
   activeOperation: GitOperationId | null;
+  canDiscardStaged: boolean;
   successfulOperation: GitOperationId | null;
   busy: boolean;
-  hasChanges: boolean;
-  hasStagedChanges: boolean;
+  canDiscardAll: boolean;
   tabParams: GitTabParams;
   onOpenStashes(): void;
   onRun(
@@ -715,7 +739,7 @@ function GitActionsMenu({
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
-            disabled={!hasStagedChanges}
+            disabled={!canDiscardStaged}
             onClick={() => {
               if (!window.confirm("Discard staged changes? This cannot be undone.")) {
                 return;
@@ -729,7 +753,7 @@ function GitActionsMenu({
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
-            disabled={!hasChanges}
+            disabled={!canDiscardAll}
             onClick={() => {
               if (!window.confirm("Discard all changes? This cannot be undone.")) {
                 return;
@@ -1331,13 +1355,55 @@ function changeCountLabel(changeCount: number): string {
   return changeCount === 1 ? "1 Change" : `${changeCount} Changes`;
 }
 
+function GitInitializeRepositoryMessage({
+  busy,
+  onInitialize,
+}: {
+  busy: boolean;
+  onInitialize(): void;
+}) {
+  return (
+    <div className="grid h-full min-h-0 place-items-center overflow-hidden p-5 text-center">
+      <div className="flex max-w-sm flex-col items-center gap-3">
+        <div className="space-y-1">
+          <p className="text-sm font-medium">No Git repository</p>
+          <p className="text-sm text-muted-foreground">
+            Initialize this workspace to start tracking changes.
+          </p>
+        </div>
+        <Button type="button" disabled={busy} onClick={onInitialize}>
+          {busy ? <LoaderCircle className="animate-spin" /> : null}
+          Initialize repository
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function GitMessage({ message }: { message: string }) {
   return (
     <div className="grid h-full min-h-0 place-items-center overflow-hidden p-5 text-center">
       <div className="flex max-w-sm flex-col items-center gap-3">
-        <Separator className="w-12" />
         <p className="text-sm text-muted-foreground">{message}</p>
       </div>
     </div>
   );
+}
+
+function ipcErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+
+  if (typeof code === "string") {
+    return code;
+  }
+
+  if (error instanceof Error) {
+    return error.message.match(/\b([a-z]+\.[a-z_]+):/)?.[1];
+  }
+
+  return undefined;
 }
