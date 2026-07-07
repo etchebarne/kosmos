@@ -1,4 +1,4 @@
-export type KosmosIpcDomain = "workspace" | "pane" | "tab" | "fileTree";
+export type KosmosIpcDomain = "workspace" | "pane" | "tab" | "fileTree" | "terminal";
 
 export type KosmosIpcParams = Record<string, unknown>;
 

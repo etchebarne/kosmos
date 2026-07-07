@@ -6,7 +6,13 @@ import type { KosmosIpcDomain, KosmosIpcRequest } from "../shared/ipc";
 import { KosmosServerClient } from "./server-client";
 import { KosmosServerProcess } from "./server-process";
 
-const validDomains = new Set<KosmosIpcDomain>(["workspace", "pane", "tab", "fileTree"]);
+const validDomains = new Set<KosmosIpcDomain>([
+  "workspace",
+  "pane",
+  "tab",
+  "fileTree",
+  "terminal",
+]);
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 

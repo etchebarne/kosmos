@@ -63,6 +63,7 @@ pub(crate) enum Domain {
     Pane,
     Tab,
     FileTree,
+    Terminal,
 }
 
 #[derive(Debug, Serialize)]

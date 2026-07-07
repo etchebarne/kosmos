@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
+use crate::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
@@ -12,6 +13,7 @@ use crate::tree::{
 pub struct State {
     workspaces: WorkspaceList,
     file_tree_view_states: Vec<FileTreeViewState>,
+    terminal_sessions: TerminalSessions,
     next_workspace_id: u64,
     next_pane_id: u64,
     next_split_id: u64,
@@ -199,6 +201,68 @@ impl State {
         FileTree::resolve_path(directory, path)
     }
 
+    pub fn open_terminal(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        columns: u16,
+        rows: u16,
+    ) -> Result<TerminalOutput, TerminalError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(TerminalError::WorkspaceNotFound)?;
+        let directory = self
+            .terminal_workspace_directory(workspace_id, tab_id)?
+            .to_path_buf();
+        let size = TerminalSize::new(columns, rows)?;
+
+        self.terminal_sessions
+            .open(workspace_id, tab_id, &directory, size)
+    }
+
+    pub fn write_terminal_input(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        input: &str,
+    ) -> Result<(), TerminalError> {
+        let workspace_id = self.terminal_workspace_id(workspace_id, tab_id)?;
+
+        self.terminal_sessions
+            .write_input(workspace_id, tab_id, input)
+    }
+
+    pub fn read_terminal_output(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<TerminalOutput, TerminalError> {
+        let workspace_id = self.terminal_workspace_id(workspace_id, tab_id)?;
+
+        self.terminal_sessions.read_output(workspace_id, tab_id)
+    }
+
+    pub fn resize_terminal(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        columns: u16,
+        rows: u16,
+    ) -> Result<(), TerminalError> {
+        let workspace_id = self.terminal_workspace_id(workspace_id, tab_id)?;
+        let size = TerminalSize::new(columns, rows)?;
+
+        self.terminal_sessions.resize(workspace_id, tab_id, size)
+    }
+
+    pub fn close_terminal(&mut self, workspace_id: Option<WorkspaceId>, tab_id: TabId) -> bool {
+        let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
+            return false;
+        };
+
+        self.terminal_sessions.close(workspace_id, tab_id)
+    }
+
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {
         let directory = directory.into();
 
@@ -234,6 +298,7 @@ impl State {
 
         if let Some(workspace) = &closed_workspace {
             self.remove_workspace_file_tree_view_states(workspace.id());
+            self.terminal_sessions.close_workspace(workspace.id());
         }
 
         closed_workspace
@@ -345,9 +410,12 @@ impl State {
         kind: TabKind,
     ) -> bool {
         let keep_file_tree_state = kind == TabKind::FileTree;
+        let keep_terminal_session = kind == TabKind::Terminal;
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
+        let close_terminal_session = !keep_terminal_session
+            && self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Terminal);
         let Some(workspace) = self.workspace_mut(workspace_id) else {
             return false;
         };
@@ -356,6 +424,10 @@ impl State {
 
         if updated && !keep_file_tree_state {
             self.remove_file_tree_view_state(workspace_id, tab_id);
+        }
+
+        if updated && close_terminal_session {
+            self.terminal_sessions.close(workspace_id, tab_id);
         }
 
         updated
@@ -430,6 +502,13 @@ impl State {
 
         if removed_tab.is_some() {
             self.remove_file_tree_view_state(workspace_id, tab_id);
+        }
+
+        if removed_tab
+            .as_ref()
+            .is_some_and(|tab| tab.kind() == &TabKind::Terminal)
+        {
+            self.terminal_sessions.close(workspace_id, tab_id);
         }
 
         removed_tab
@@ -553,6 +632,10 @@ impl State {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
     }
 
+    fn is_terminal_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Terminal)
+    }
+
     fn file_tree_workspace_directory(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -568,6 +651,37 @@ impl State {
 
         if !self.is_file_tree_tab(workspace_id, tab_id) {
             return Err(FileTreeError::TabNotFound);
+        }
+
+        Ok(workspace.directory())
+    }
+
+    fn terminal_workspace_id(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<WorkspaceId, TerminalError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(TerminalError::WorkspaceNotFound)?;
+
+        self.terminal_workspace_directory(workspace_id, tab_id)?;
+
+        Ok(workspace_id)
+    }
+
+    fn terminal_workspace_directory(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Result<&Path, TerminalError> {
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(TerminalError::WorkspaceNotFound)?;
+
+        if !self.is_terminal_tab(workspace_id, tab_id) {
+            return Err(TerminalError::TabNotFound);
         }
 
         Ok(workspace.directory())
@@ -595,6 +709,7 @@ impl State {
         Some(Self {
             workspaces,
             file_tree_view_states,
+            terminal_sessions: TerminalSessions::default(),
             next_workspace_id: next_ids.workspace_id,
             next_pane_id: next_ids.pane_id,
             next_split_id: next_ids.split_id,
@@ -693,6 +808,7 @@ impl Default for State {
         Self {
             workspaces: WorkspaceList::new(),
             file_tree_view_states: Vec::new(),
+            terminal_sessions: TerminalSessions::default(),
             next_workspace_id: 1,
             next_pane_id: 1,
             next_split_id: 1,
@@ -1023,6 +1139,25 @@ mod tests {
             .expect_err("blank tabs should not expose file tree state");
 
         assert!(matches!(error, FileTreeError::TabNotFound));
+    }
+
+    #[test]
+    fn terminal_sessions_require_a_terminal_tab() {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+
+        let error = state
+            .read_terminal_output(Some(workspace_id), TabId::new(1))
+            .expect_err("blank tabs should not expose terminal sessions");
+
+        assert!(matches!(error, TerminalError::TabNotFound));
+        assert!(state.set_tab_kind(None, PaneId::new(1), TabId::new(1), TabKind::Terminal));
+
+        let error = state
+            .read_terminal_output(Some(workspace_id), TabId::new(1))
+            .expect_err("terminal tabs should require a started session");
+
+        assert!(matches!(error, TerminalError::SessionNotFound));
     }
 
     #[test]

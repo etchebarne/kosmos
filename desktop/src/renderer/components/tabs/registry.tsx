@@ -5,7 +5,7 @@ import {
   FolderTree,
   GitBranch,
   Search,
-  Terminal,
+  Terminal as TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ import type { PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 import { BlankTab, type BlankTabOption } from "./blank";
 import { FileTreeTab } from "./file-tree";
 import { PlaceholderTab } from "./placeholder";
+import { TerminalTab } from "./terminal";
 
 type TabContentProps = {
   paneId: PaneId;
@@ -63,7 +64,14 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
   editor: placeholderTabDefinition("Editor", FileText, false),
   git: placeholderTabDefinition("Git", GitBranch, true),
   search: placeholderTabDefinition("Search", Search, true),
-  terminal: placeholderTabDefinition("Terminal", Terminal, true),
+  terminal: {
+    icon: TerminalIcon,
+    label: "Terminal",
+    showInBlankPicker: true,
+    render: ({ tab, workspaceId, onActivatePane }) => (
+      <TerminalTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
+    ),
+  },
 };
 
 const BLANK_TAB_OPTIONS: BlankTabOption[] = TAB_KIND_ORDER.filter(

@@ -3,4 +3,5 @@ export type * from "./file-tree";
 export type * from "./ids";
 export type * from "./pane";
 export type * from "./tab";
+export type * from "./terminal";
 export type * from "./workspace";
