@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
-use crate::git::{GitError, GitRepository, GitRepositorySnapshot};
+use crate::git::{GitError, GitRepository, GitRepositorySnapshot, GitStash};
 use crate::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
@@ -316,6 +316,48 @@ impl State {
         let directory = self.git_workspace_directory(workspace_id, tab_id)?;
 
         GitRepository::stash(directory)
+    }
+
+    pub fn stash_staged_git_changes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::stash_staged_changes(directory)
+    }
+
+    pub fn git_stashes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Vec<GitStash>, GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::stashes(directory)
+    }
+
+    pub fn apply_git_stash(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        selector: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::apply_stash(directory, selector)
+    }
+
+    pub fn drop_git_stash(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        selector: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::drop_stash(directory, selector)
     }
 
     pub fn discard_all_git_changes(

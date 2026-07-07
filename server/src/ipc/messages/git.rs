@@ -1,4 +1,4 @@
-use core::git::{GitBranch, GitChange, GitChangeKind, GitRepositorySnapshot};
+use core::git::{GitBranch, GitChange, GitChangeKind, GitRepositorySnapshot, GitStash};
 use serde::{Deserialize, Serialize};
 
 use super::pane::WorkspaceIdParam;
@@ -51,6 +51,14 @@ pub(crate) struct PushGitChangesParams {
     pub(crate) force: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitStashParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) selector: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitRepositorySnapshotPayload {
@@ -64,6 +72,15 @@ pub(crate) struct GitRepositorySnapshotPayload {
     deletions: u32,
     branches: Vec<GitBranchPayload>,
     changes: Vec<GitChangePayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitStashPayload {
+    selector: String,
+    commit: String,
+    timestamp: i64,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,6 +158,17 @@ impl GitChangePayload {
             unstaged: change.unstaged().map(Into::into),
             is_staged: change.is_staged(),
             is_unstaged: change.is_unstaged(),
+        }
+    }
+}
+
+impl GitStashPayload {
+    pub(crate) fn from_stash(stash: &GitStash) -> Self {
+        Self {
+            selector: stash.selector().to_owned(),
+            commit: stash.commit().to_owned(),
+            timestamp: stash.timestamp(),
+            message: stash.message().to_owned(),
         }
     }
 }

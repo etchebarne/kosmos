@@ -12,26 +12,44 @@ import {
   Save,
   Trash2,
   Upload,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  applyGitStash,
   commitGitChanges,
   discardAllGitChanges,
   discardStagedGitChanges,
+  dropGitStash,
   fetchGitChanges,
+  getGitStashes,
   getGitStatus,
   pullGitChanges,
   pushGitChanges,
   stageAllGitChanges,
   stageGitPaths,
-  stashGitChanges,
+  stashStagedGitChanges,
   switchGitBranch,
   unstageAllGitChanges,
   unstageGitPaths,
 } from "@/renderer/ipc";
 import { Button } from "@/renderer/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/renderer/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/renderer/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,6 +72,7 @@ import type {
   GitChange,
   GitChangeKind,
   GitRepositorySnapshot,
+  GitStash,
   GitTabParams,
   TabId,
   WorkspaceId,
@@ -85,7 +104,9 @@ type GitOperationId =
   | "unstagePaths"
   | "switchBranch"
   | "commit"
-  | "stash"
+  | "stashStaged"
+  | "applyStash"
+  | "dropStash"
   | "discardStaged"
   | "discardAll"
   | `remote:${RemoteGitActionId}`;
@@ -96,6 +117,17 @@ type RemoteGitAction = {
   icon: LucideIcon;
   confirmMessage?: string;
   run(params: GitTabParams): Promise<boolean>;
+};
+
+type GitStashListState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; stashes: GitStash[] }
+  | { status: "error"; message: string };
+
+type ActiveStashAction = {
+  selector: string;
+  operationId: "applyStash" | "dropStash";
 };
 
 const CHECKBOX_HIT_WIDTH = 26;
@@ -149,6 +181,7 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     workspaceId,
     tabId,
   });
+  const [stashDialogOpen, setStashDialogOpen] = useState(false);
   const [primaryRemoteActionId, setPrimaryRemoteActionId] = useState<RemoteGitActionId>("pull");
   const [activeOperation, setActiveOperation] = useState<GitOperationId | null>(null);
   const [successfulOperation, setSuccessfulOperation] = useState<GitOperationId | null>(null);
@@ -245,7 +278,9 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
           activeOperation={activeOperation}
           successfulOperation={successfulOperation}
           primaryRemoteActionId={primaryRemoteActionId}
+          stashDialogOpen={stashDialogOpen}
           onPrimaryRemoteActionChange={setPrimaryRemoteActionId}
+          onStashDialogOpenChange={setStashDialogOpen}
           onOperationFinish={finishOperation}
           onOperationStart={startOperation}
           onOperationSuccess={showOperationSuccess}
@@ -263,7 +298,9 @@ function LoadedGitTab({
   activeOperation,
   successfulOperation,
   primaryRemoteActionId,
+  stashDialogOpen,
   onPrimaryRemoteActionChange,
+  onStashDialogOpenChange,
   onOperationFinish,
   onOperationStart,
   onOperationSuccess,
@@ -275,7 +312,9 @@ function LoadedGitTab({
   activeOperation: GitOperationId | null;
   successfulOperation: GitOperationId | null;
   primaryRemoteActionId: RemoteGitActionId;
+  stashDialogOpen: boolean;
   onPrimaryRemoteActionChange(actionId: RemoteGitActionId): void;
+  onStashDialogOpenChange(open: boolean): void;
   onOperationFinish(): void;
   onOperationStart(operationId: GitOperationId): void;
   onOperationSuccess(operationId: GitOperationId): void;
@@ -386,6 +425,21 @@ function LoadedGitTab({
               successfulOperation={successfulOperation}
             />
           </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            disabled={busy || stagedCount === 0}
+            aria-label="Stash staged changes"
+            onClick={() => void runOperation("stashStaged", () => stashStagedGitChanges(tabParams))}
+          >
+            <OperationIcon
+              defaultIcon={Save}
+              operationId="stashStaged"
+              activeOperation={activeOperation}
+              successfulOperation={successfulOperation}
+            />
+          </Button>
           <GitActionsMenu
             activeOperation={activeOperation}
             successfulOperation={successfulOperation}
@@ -393,10 +447,19 @@ function LoadedGitTab({
             hasChanges={hasChanges}
             hasStagedChanges={stagedCount > 0}
             tabParams={tabParams}
+            onOpenStashes={() => onStashDialogOpenChange(true)}
             onRun={runOperation}
           />
         </div>
       </div>
+
+      <GitStashesDialog
+        open={stashDialogOpen}
+        busy={busy}
+        tabParams={tabParams}
+        onOpenChange={onStashDialogOpenChange}
+        onRun={runOperation}
+      />
 
       <div className="relative min-h-0 flex-1 overflow-hidden border-b">
         {hasChanges ? (
@@ -578,6 +641,7 @@ function GitActionsMenu({
   hasChanges,
   hasStagedChanges,
   tabParams,
+  onOpenStashes,
   onRun,
 }: {
   activeOperation: GitOperationId | null;
@@ -586,6 +650,7 @@ function GitActionsMenu({
   hasChanges: boolean;
   hasStagedChanges: boolean;
   tabParams: GitTabParams;
+  onOpenStashes(): void;
   onRun(
     operationId: GitOperationId,
     operation: () => Promise<unknown>,
@@ -609,9 +674,9 @@ function GitActionsMenu({
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Local</DropdownMenuLabel>
-          <DropdownMenuItem disabled={!hasChanges} onClick={() => void onRun("stash", () => stashGitChanges(tabParams))}>
+          <DropdownMenuItem onClick={onOpenStashes}>
             <Save />
-            Stash
+            Stashes
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
@@ -647,6 +712,243 @@ function GitActionsMenu({
   );
 }
 
+function GitStashesDialog({
+  busy,
+  open,
+  tabParams,
+  onOpenChange,
+  onRun,
+}: {
+  busy: boolean;
+  open: boolean;
+  tabParams: GitTabParams;
+  onOpenChange(open: boolean): void;
+  onRun(
+    operationId: GitOperationId,
+    operation: () => Promise<unknown>,
+    options?: { refresh?: boolean; clearCommitMessage?: boolean },
+  ): Promise<boolean>;
+}) {
+  const [listState, setListState] = useState<GitStashListState>({ status: "idle" });
+  const [activeStashAction, setActiveStashAction] = useState<ActiveStashAction | null>(null);
+  const mountedRef = useRef(true);
+  const requestIdRef = useRef(0);
+
+  const loadStashes = async () => {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+
+    requestIdRef.current = requestId;
+    setListState({ status: "loading" });
+
+    try {
+      const stashes = await getGitStashes(tabParams);
+
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setListState({ status: "loaded", stashes });
+      }
+    } catch (caughtError: unknown) {
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setListState({ status: "error", message: errorMessage(caughtError) });
+      }
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      requestIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    void loadStashes();
+  }, [open, tabParams.workspaceId, tabParams.tabId]);
+
+  const runStashAction = async (
+    operationId: "applyStash" | "dropStash",
+    selector: string,
+    operation: () => Promise<unknown>,
+    options?: { refresh?: boolean; clearCommitMessage?: boolean },
+  ) => {
+    setActiveStashAction({ selector, operationId });
+
+    try {
+      const succeeded = await onRun(operationId, operation, options);
+
+      if (succeeded && mountedRef.current) {
+        await loadStashes();
+      }
+    } finally {
+      if (mountedRef.current) {
+        setActiveStashAction((currentAction) =>
+          currentAction?.selector === selector && currentAction.operationId === operationId ? null : currentAction,
+        );
+      }
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[min(32rem,calc(100vh-2rem))] max-w-xl overflow-hidden p-0">
+        <div className="px-4 pt-4 pr-12">
+          <DialogHeader>
+            <DialogTitle>Git stashes</DialogTitle>
+            <DialogDescription>Apply or remove saved work for this repository.</DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <div className="min-h-40 overflow-y-auto px-4 pb-4">
+          {listState.status === "idle" || listState.status === "loading" ? (
+            <GitStashesMessage message="Loading stashes..." />
+          ) : null}
+          {listState.status === "error" ? <GitStashesMessage message={listState.message} /> : null}
+          {listState.status === "loaded" && listState.stashes.length === 0 ? (
+            <GitStashesMessage message="No stashes" />
+          ) : null}
+          {listState.status === "loaded" && listState.stashes.length > 0 ? (
+            <ul className="space-y-3">
+              {listState.stashes.map((stash) => (
+                <GitStashRow
+                  key={stash.selector}
+                  stash={stash}
+                  busy={busy}
+                  activeAction={activeStashAction}
+                  onApply={() =>
+                    void runStashAction("applyStash", stash.selector, () =>
+                      applyGitStash({ ...tabParams, selector: stash.selector }),
+                    )
+                  }
+                  onDrop={() => {
+                    if (!window.confirm(`Remove ${stash.selector}? This cannot be undone.`)) {
+                      return;
+                    }
+
+                    void runStashAction(
+                      "dropStash",
+                      stash.selector,
+                      () => dropGitStash({ ...tabParams, selector: stash.selector }),
+                      { refresh: false },
+                    );
+                  }}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GitStashRow({
+  activeAction,
+  busy,
+  stash,
+  onApply,
+  onDrop,
+}: {
+  activeAction: ActiveStashAction | null;
+  busy: boolean;
+  stash: GitStash;
+  onApply(): void;
+  onDrop(): void;
+}) {
+  const applying = activeAction?.selector === stash.selector && activeAction.operationId === "applyStash";
+  const dropping = activeAction?.selector === stash.selector && activeAction.operationId === "dropStash";
+  const details = stashMessageDetails(stash.message);
+
+  return (
+    <li>
+      <Card size="sm" className="gap-0 bg-background/70 py-0">
+        <CardHeader className="items-center border-b px-3 py-2">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] font-medium leading-none text-foreground">
+                {stash.selector}
+              </span>
+              <CardTitle className="truncate text-xs font-medium leading-none">{details.scope}</CardTitle>
+            </div>
+            <span className="shrink-0 text-xs leading-none text-muted-foreground">
+              {formatStashTimestamp(stash.timestamp)}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="py-2">
+          <p className="break-words text-sm leading-5 text-foreground">{details.summary}</p>
+        </CardContent>
+        <CardFooter className="justify-end gap-2 bg-muted/30 px-3 py-2">
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onApply}>
+            {applying ? <LoaderCircle className="animate-spin" /> : <Undo2 />}
+            Apply
+          </Button>
+          <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={onDrop}>
+            {dropping ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+            Remove
+          </Button>
+        </CardFooter>
+      </Card>
+    </li>
+  );
+}
+
+function GitStashesMessage({ message }: { message: string }) {
+  return (
+    <div className="grid min-h-40 place-items-center rounded-lg border border-dashed p-5 text-center">
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function stashMessageDetails(message: string): { scope: string; summary: string } {
+  const normalizedMessage = message.trim();
+
+  if (!normalizedMessage) {
+    return { scope: "Stashed changes", summary: "No message" };
+  }
+
+  for (const prefix of ["WIP on ", "On "]) {
+    if (!normalizedMessage.startsWith(prefix)) {
+      continue;
+    }
+
+    const rest = normalizedMessage.slice(prefix.length);
+    const separatorIndex = rest.indexOf(": ");
+
+    if (separatorIndex > 0) {
+      return {
+        scope: rest.slice(0, separatorIndex),
+        summary: rest.slice(separatorIndex + 2) || "Stashed changes",
+      };
+    }
+  }
+
+  return { scope: "Stashed changes", summary: normalizedMessage };
+}
+
+function formatStashTimestamp(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  const options: Intl.DateTimeFormatOptions = {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+  };
+
+  if (date.getFullYear() !== new Date().getFullYear()) {
+    options.year = "numeric";
+  }
+
+  return date.toLocaleString(undefined, options);
+}
+
 function remoteGitAction(actionId: RemoteGitActionId): RemoteGitAction {
   return REMOTE_GIT_ACTIONS.find((action) => action.id === actionId) ?? REMOTE_GIT_ACTIONS[0]!;
 }
@@ -656,7 +958,7 @@ function remoteOperationId(actionId: RemoteGitActionId): GitOperationId {
 }
 
 function isLocalMenuOperation(operation: GitOperationId | null): boolean {
-  return operation === "stash" || operation === "discardStaged" || operation === "discardAll";
+  return operation === "discardStaged" || operation === "discardAll";
 }
 
 function GitChangeSummary({ snapshot }: { snapshot: GitRepositorySnapshot }) {

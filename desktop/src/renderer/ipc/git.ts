@@ -2,6 +2,8 @@ import type {
   CommitGitChangesParams,
   GitPathsParams,
   GitRepositorySnapshot,
+  GitStash,
+  GitStashParams,
   GitTabParams,
   PullGitChangesParams,
   PushGitChangesParams,
@@ -56,6 +58,22 @@ export function stashGitChanges(params: GitTabParams): Promise<boolean> {
   return requestServer(DOMAIN, "stash", params);
 }
 
+export function stashStagedGitChanges(params: GitTabParams): Promise<boolean> {
+  return requestServer(DOMAIN, "stashStaged", params);
+}
+
+export function getGitStashes(params: GitTabParams): Promise<GitStash[]> {
+  return requestServer(DOMAIN, "stashes", params);
+}
+
+export function applyGitStash(params: GitStashParams): Promise<boolean> {
+  return requestServer(DOMAIN, "applyStash", params);
+}
+
+export function dropGitStash(params: GitStashParams): Promise<boolean> {
+  return requestServer(DOMAIN, "dropStash", params);
+}
+
 export function discardAllGitChanges(params: GitTabParams): Promise<boolean> {
   return requestServer(DOMAIN, "discardAll", params);
 }
@@ -68,6 +86,8 @@ export type {
   CommitGitChangesParams,
   GitPathsParams,
   GitRepositorySnapshot,
+  GitStash,
+  GitStashParams,
   GitTabParams,
   PullGitChangesParams,
   PushGitChangesParams,

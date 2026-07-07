@@ -37,6 +37,13 @@ export type GitRepositorySnapshot = {
   changes: GitChange[];
 };
 
+export type GitStash = {
+  selector: string;
+  commit: string;
+  timestamp: number;
+  message: string;
+};
+
 export type GitTabParams = {
   workspaceId?: WorkspaceId | null;
   tabId: TabId;
@@ -60,4 +67,8 @@ export type PullGitChangesParams = GitTabParams & {
 
 export type PushGitChangesParams = GitTabParams & {
   force: boolean;
+};
+
+export type GitStashParams = GitTabParams & {
+  selector: string;
 };

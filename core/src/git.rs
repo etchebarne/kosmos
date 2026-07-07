@@ -37,6 +37,14 @@ pub struct GitChange {
     unstaged: Option<GitChangeKind>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitStash {
+    selector: String,
+    commit: String,
+    timestamp: i64,
+    message: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GitChangeKind {
     Added,
@@ -144,6 +152,45 @@ impl GitRepository {
         git(&repository_root, ["stash", "push", "--include-untracked"]).map(|_| ())
     }
 
+    pub fn stash_staged_changes(directory: impl AsRef<Path>) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let staged_paths = staged_paths(&repository_root)?;
+
+        if staged_paths.is_empty() {
+            return Ok(());
+        }
+
+        git(
+            &repository_root,
+            ["stash", "push", "--staged", "--message", "Staged changes"],
+        )
+        .map(|_| ())
+    }
+
+    pub fn stashes(directory: impl AsRef<Path>) -> Result<Vec<GitStash>> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let bytes = git_bytes(
+            &repository_root,
+            ["stash", "list", "--format=%gd%x00%H%x00%ct%x00%gs%x1e"],
+        )?;
+
+        parse_stashes(&bytes)
+    }
+
+    pub fn apply_stash(directory: impl AsRef<Path>, selector: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let selector = normalize_stash_selector(selector)?;
+
+        git(&repository_root, ["stash", "apply", selector]).map(|_| ())
+    }
+
+    pub fn drop_stash(directory: impl AsRef<Path>, selector: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let selector = normalize_stash_selector(selector)?;
+
+        git(&repository_root, ["stash", "drop", selector]).map(|_| ())
+    }
+
     pub fn discard_all_changes(directory: impl AsRef<Path>) -> Result<()> {
         let repository_root = repository_root(directory.as_ref())?;
         git(&repository_root, ["reset", "--hard", "HEAD"])?;
@@ -249,6 +296,24 @@ impl GitChange {
     }
 }
 
+impl GitStash {
+    pub fn selector(&self) -> &str {
+        &self.selector
+    }
+
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[derive(Debug)]
 pub enum GitError {
     BranchRequired,
@@ -256,6 +321,7 @@ pub enum GitError {
     CommitMessageRequired,
     Discover { directory: PathBuf, message: String },
     InvalidPath(String),
+    InvalidStash(String),
     Io(io::Error),
     NotWorktree(PathBuf),
     TabNotFound,
@@ -277,6 +343,7 @@ impl fmt::Display for GitError {
                 directory.display()
             ),
             Self::InvalidPath(path) => write!(formatter, "invalid git path: {path}"),
+            Self::InvalidStash(selector) => write!(formatter, "invalid git stash: {selector}"),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::NotWorktree(path) => write!(
                 formatter,
@@ -299,6 +366,7 @@ impl StdError for GitError {
             | Self::CommitMessageRequired
             | Self::Discover { .. }
             | Self::InvalidPath(_)
+            | Self::InvalidStash(_)
             | Self::NotWorktree(_)
             | Self::TabNotFound
             | Self::Utf8(_)
@@ -567,6 +635,46 @@ fn parse_branch_line(line: &[u8]) -> Option<GitBranch> {
     })
 }
 
+fn parse_stashes(bytes: &[u8]) -> Result<Vec<GitStash>> {
+    bytes
+        .split(|byte| *byte == 0x1e)
+        .map(trim_stash_record)
+        .filter(|record| !record.is_empty())
+        .map(parse_stash_record)
+        .collect()
+}
+
+fn trim_stash_record(mut record: &[u8]) -> &[u8] {
+    while matches!(record.first(), Some(b'\n' | b'\r')) {
+        record = &record[1..];
+    }
+
+    while matches!(record.last(), Some(b'\n' | b'\r')) {
+        record = &record[..record.len() - 1];
+    }
+
+    record
+}
+
+fn parse_stash_record(record: &[u8]) -> Result<GitStash> {
+    let fields = record.split(|byte| *byte == 0).collect::<Vec<_>>();
+
+    if fields.len() < 4 {
+        return Err(GitError::InvalidStash(record_to_string(record)?));
+    }
+
+    let timestamp = record_to_string(fields[2])?
+        .parse::<i64>()
+        .map_err(|_| GitError::InvalidStash(record_to_string(record).unwrap_or_default()))?;
+
+    Ok(GitStash {
+        selector: record_to_string(fields[0])?,
+        commit: record_to_string(fields[1])?,
+        timestamp,
+        message: record_to_string(fields[3])?,
+    })
+}
+
 fn diff_stats(repository_root: &Path, changes: &[GitChange]) -> Result<GitDiffStats> {
     let mut stats = GitDiffStats::default();
 
@@ -756,6 +864,22 @@ fn normalize_branch_name(branch: &str) -> Result<&str> {
     }
 }
 
+fn normalize_stash_selector(selector: &str) -> Result<&str> {
+    let selector = selector.trim();
+
+    if selector.len() <= "stash@{}".len()
+        || !selector.starts_with("stash@{")
+        || !selector.ends_with('}')
+        || !selector[7..selector.len() - 1]
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return Err(GitError::InvalidStash(selector.to_owned()));
+    }
+
+    Ok(selector)
+}
+
 fn normalize_paths(paths: &[String]) -> Result<Vec<String>> {
     if paths.is_empty() {
         return Err(GitError::InvalidPath("empty selection".to_owned()));
@@ -848,6 +972,21 @@ mod tests {
         assert_eq!(branches[0].upstream(), Some("origin/main"));
         assert_eq!(branches[1].name(), "feature");
         assert!(!branches[1].current());
+    }
+
+    #[test]
+    fn parses_stash_records() {
+        let stashes = parse_stashes(
+            b"stash@{0}\x00abc1234\x001783456789\x00On main: Staged changes\x1e\nstash@{1}\x00def5678\x001783456000\x00WIP on main\x1e\n",
+        )
+        .expect("stashes should parse");
+
+        assert_eq!(stashes.len(), 2);
+        assert_eq!(stashes[0].selector(), "stash@{0}");
+        assert_eq!(stashes[0].commit(), "abc1234");
+        assert_eq!(stashes[0].timestamp(), 1_783_456_789);
+        assert_eq!(stashes[0].message(), "On main: Staged changes");
+        assert_eq!(stashes[1].selector(), "stash@{1}");
     }
 
     #[test]

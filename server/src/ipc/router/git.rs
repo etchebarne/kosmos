@@ -2,8 +2,9 @@ use core::git::GitError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::git::{
-    CommitGitChangesParams, GitPathsParams, GitRepositorySnapshotPayload, GitTabParams,
-    PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
+    CommitGitChangesParams, GitPathsParams, GitRepositorySnapshotPayload, GitStashParams,
+    GitStashPayload, GitTabParams, PullGitChangesParams, PushGitChangesParams,
+    SwitchGitBranchParams,
 };
 use super::{parse_params, unsupported_action};
 
@@ -20,6 +21,10 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "pull" => pull(state, request),
         "push" => push(state, request),
         "stash" => stash(state, request),
+        "stashStaged" => stash_staged(state, request),
+        "stashes" => stashes(state, request),
+        "applyStash" => apply_stash(state, request),
+        "dropStash" => drop_stash(state, request),
         "discardAll" => discard_all(state, request),
         "discardStaged" => discard_staged(state, request),
         _ => unsupported_action(request),
@@ -166,6 +171,65 @@ fn stash(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     }
 }
 
+fn stash_staged(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => command_result(
+            state.stash_staged_git_changes(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn stashes(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => {
+            match state.git_stashes(params.workspace_id.map(Into::into), params.tab_id.into()) {
+                Ok(stashes) => ServerMessage::ok(
+                    request.id,
+                    stashes
+                        .iter()
+                        .map(GitStashPayload::from_stash)
+                        .collect::<Vec<_>>(),
+                ),
+                Err(error) => git_error(request.id, error),
+            }
+        }
+        Err(response) => response,
+    }
+}
+
+fn apply_stash(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitStashParams>(request) {
+        Ok(params) => command_result(
+            state.apply_git_stash(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.selector,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn drop_stash(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitStashParams>(request) {
+        Ok(params) => command_result(
+            state.drop_git_stash(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.selector,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
 fn discard_all(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<GitTabParams>(request) {
         Ok(params) => command_result(
@@ -208,6 +272,7 @@ fn git_error_code(error: &GitError) -> &'static str {
         GitError::Discover { .. } => "git.repository_not_found",
         GitError::NotWorktree(_) => "git.not_worktree",
         GitError::InvalidPath(_) => "git.invalid_path",
+        GitError::InvalidStash(_) => "git.invalid_stash",
         GitError::CommitMessageRequired => "git.commit_message_required",
         GitError::BranchRequired => "git.branch_required",
         GitError::CommandFailed { .. } => "git.command_failed",
