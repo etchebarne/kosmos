@@ -17,6 +17,8 @@ const validDomains = new Set<KosmosIpcDomain>([
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 
+app.commandLine.appendSwitch("use-webgpu-adapter", "opengles");
+
 function registerIpcHandlers(): void {
   ipcMain.handle("kosmos:request", async (_event, request: KosmosIpcRequest): Promise<KosmosIpcRequestResult> => {
     validateRequest(request);
