@@ -4,18 +4,25 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::{
     ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
 };
-use super::{
-    RoutedResponse, command_response, parse_params, unsupported_action, workspace_list_response,
-};
+use super::{RouteDefinition, command_response, parse_params, workspace_list_response};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
-    match request.action.as_str() {
-        "list" => RoutedResponse::none(workspace_list_response(request.id, state)),
-        "open" => RoutedResponse::full(open_workspace(state, request)),
-        "activate" => RoutedResponse::active_workspace(activate_workspace(state, request)),
-        "close" => RoutedResponse::full(close_workspace(state, request)),
-        _ => RoutedResponse::none(unsupported_action(request)),
+pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
+    match action {
+        "list" => Some(RouteDefinition::snapshot(list_workspaces)),
+        "flush" => Some(RouteDefinition::persistence_barrier(flush_persistence)),
+        "open" => Some(RouteDefinition::full(open_workspace)),
+        "activate" => Some(RouteDefinition::active_workspace(activate_workspace)),
+        "close" => Some(RouteDefinition::full(close_workspace)),
+        _ => None,
     }
+}
+
+fn flush_persistence(_state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    ServerMessage::ok(request.id, true)
+}
+
+fn list_workspaces(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    workspace_list_response(request.id, state)
 }
 
 fn open_workspace(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

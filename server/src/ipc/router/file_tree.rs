@@ -7,20 +7,20 @@ use super::super::messages::file_tree::{
     RenameFileTreeEntryParams, ResolveFileTreePathParams, SetFileTreeExpandedPathsParams,
     TransferFileTreeEntriesParams,
 };
-use super::{RoutedResponse, parse_params, unsupported_action};
+use super::{RouteDefinition, parse_params};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
-    match request.action.as_str() {
-        "get" => RoutedResponse::none(get_file_tree(state, request)),
-        "getChildren" => RoutedResponse::none(get_file_tree_children(state, request)),
-        "setExpandedPaths" => RoutedResponse::full(set_expanded_paths(state, request)),
-        "createEntry" => RoutedResponse::none(create_entry(state, request)),
-        "renameEntry" => RoutedResponse::none(rename_entry(state, request)),
-        "moveEntries" => RoutedResponse::none(move_entries(state, request)),
-        "copyEntries" => RoutedResponse::none(copy_entries(state, request)),
-        "deleteEntries" => RoutedResponse::none(delete_entries(state, request)),
-        "resolvePath" => RoutedResponse::none(resolve_path(state, request)),
-        _ => RoutedResponse::none(unsupported_action(request)),
+pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
+    match action {
+        "get" => Some(RouteDefinition::external(get_file_tree)),
+        "getChildren" => Some(RouteDefinition::external(get_file_tree_children)),
+        "setExpandedPaths" => Some(RouteDefinition::full(set_expanded_paths)),
+        "createEntry" => Some(RouteDefinition::external(create_entry)),
+        "renameEntry" => Some(RouteDefinition::external(rename_entry)),
+        "moveEntries" => Some(RouteDefinition::external(move_entries)),
+        "copyEntries" => Some(RouteDefinition::external(copy_entries)),
+        "deleteEntries" => Some(RouteDefinition::external(delete_entries)),
+        "resolvePath" => Some(RouteDefinition::external(resolve_path)),
+        _ => None,
     }
 }
 

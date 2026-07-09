@@ -11,6 +11,14 @@ export function App() {
     void initializeWorkspaces();
   }, [initializeWorkspaces]);
 
+  useEffect(
+    () =>
+      window.kosmos.onFlushState(() =>
+        useWorkspaceStore.getState().flushPendingState(),
+      ),
+    [],
+  );
+
   return (
     <main className="flex h-full flex-col gap-2 overflow-hidden bg-muted text-foreground">
       <Header />

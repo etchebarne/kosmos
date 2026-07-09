@@ -3,10 +3,10 @@ use std::io;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::connection;
+use super::dispatcher::Dispatcher;
 
 pub(crate) fn run(
     socket_path: PathBuf,
@@ -17,19 +17,17 @@ pub(crate) fn run(
 
     let listener = bind_socket(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
-    let state = Arc::new(Mutex::new(state));
-    let store = Arc::new(store);
+    let dispatcher = Dispatcher::new(state, store)?;
 
     println!("kosmos server listening on {}", socket_path.display());
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let state = Arc::clone(&state);
-                let store = Arc::clone(&store);
+                let dispatcher = dispatcher.clone();
 
                 thread::spawn(move || {
-                    if let Err(error) = connection::handle(stream, state, store) {
+                    if let Err(error) = connection::handle(stream, dispatcher) {
                         eprintln!("IPC connection failed: {error}");
                     }
                 });

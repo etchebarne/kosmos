@@ -3,7 +3,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,8 @@ use crate::tree::{TabId, WorkspaceId};
 pub type Result<T> = std::result::Result<T, TerminalError>;
 
 const MAX_BUFFERED_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_INPUT_BYTES: usize = 256 * 1024;
+const MAX_PENDING_INPUTS: usize = 64;
 const EXIT_OUTPUT_GRACE_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,6 +166,16 @@ impl TerminalSessions {
             .retain(|key, _| key.workspace_id != workspace_id);
     }
 
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(WorkspaceId, TabId) -> bool) {
+        self.sessions
+            .retain(|key, _| keep(key.workspace_id, key.tab_id));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.sessions.len()
+    }
+
     fn session_mut(
         &mut self,
         workspace_id: WorkspaceId,
@@ -201,7 +213,7 @@ impl TerminalSessionKey {
 
 struct TerminalSession {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    input: mpsc::SyncSender<Vec<u8>>,
     child: Box<dyn Child + Send + Sync>,
     output: Arc<Mutex<TerminalOutputBuffer>>,
     exit_status: Option<TerminalExitStatus>,
@@ -226,13 +238,14 @@ impl TerminalSession {
 
         let reader = master.try_clone_reader().map_err(TerminalError::pty)?;
         let writer = master.take_writer().map_err(TerminalError::pty)?;
+        let input = spawn_writer(writer);
         let output = Arc::new(Mutex::new(TerminalOutputBuffer::default()));
 
         spawn_reader(reader, Arc::clone(&output));
 
         Ok(Self {
             master,
-            writer,
+            input,
             child,
             output,
             exit_status: None,
@@ -241,10 +254,13 @@ impl TerminalSession {
     }
 
     fn write_input(&mut self, input: &str) -> Result<()> {
-        self.writer.write_all(input.as_bytes())?;
-        self.writer.flush()?;
+        let input = terminal_input(input)?;
 
-        Ok(())
+        match self.input.try_send(input) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => Err(TerminalError::InputBufferFull),
+            Err(mpsc::TrySendError::Disconnected(_)) => Err(TerminalError::WriterUnavailable),
+        }
     }
 
     fn read_output(&mut self) -> Result<TerminalOutput> {
@@ -293,6 +309,17 @@ impl TerminalSession {
     }
 }
 
+fn terminal_input(input: &str) -> Result<Vec<u8>> {
+    if input.len() > MAX_INPUT_BYTES {
+        Err(TerminalError::InputTooLarge {
+            size: input.len(),
+            limit: MAX_INPUT_BYTES,
+        })
+    } else {
+        Ok(input.as_bytes().to_vec())
+    }
+}
+
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         if self.exit_status.is_some() {
@@ -310,6 +337,8 @@ impl Drop for TerminalSession {
 
 #[derive(Debug)]
 pub enum TerminalError {
+    InputBufferFull,
+    InputTooLarge { size: usize, limit: usize },
     InvalidSize { columns: u16, rows: u16 },
     Io(io::Error),
     Pty(String),
@@ -317,6 +346,7 @@ pub enum TerminalError {
     SessionNotFound,
     TabNotFound,
     WorkspaceNotFound,
+    WriterUnavailable,
 }
 
 impl TerminalError {
@@ -328,6 +358,13 @@ impl TerminalError {
 impl fmt::Display for TerminalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InputBufferFull => formatter.write_str("terminal input buffer is full"),
+            Self::InputTooLarge { size, limit } => {
+                write!(
+                    formatter,
+                    "terminal input is {size} bytes; limit is {limit}"
+                )
+            }
             Self::InvalidSize { columns, rows } => write!(
                 formatter,
                 "terminal size must be non-zero, got {columns} columns and {rows} rows"
@@ -340,6 +377,7 @@ impl fmt::Display for TerminalError {
             Self::SessionNotFound => formatter.write_str("terminal session does not exist"),
             Self::TabNotFound => formatter.write_str("terminal tab does not exist"),
             Self::WorkspaceNotFound => formatter.write_str("workspace does not exist"),
+            Self::WriterUnavailable => formatter.write_str("terminal input writer is unavailable"),
         }
     }
 }
@@ -348,12 +386,15 @@ impl StdError for TerminalError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::InvalidSize { .. }
+            Self::InputBufferFull
+            | Self::InputTooLarge { .. }
+            | Self::InvalidSize { .. }
             | Self::Pty(_)
             | Self::ReadBufferUnavailable
             | Self::SessionNotFound
             | Self::TabNotFound
-            | Self::WorkspaceNotFound => None,
+            | Self::WorkspaceNotFound
+            | Self::WriterUnavailable => None,
         }
     }
 }
@@ -475,6 +516,24 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<TerminalOutp
     });
 }
 
+fn spawn_writer(mut writer: Box<dyn Write + Send>) -> mpsc::SyncSender<Vec<u8>> {
+    let (input, pending_input) = mpsc::sync_channel::<Vec<u8>>(MAX_PENDING_INPUTS);
+
+    thread::spawn(move || {
+        while let Ok(input) = pending_input.recv() {
+            if writer
+                .write_all(&input)
+                .and_then(|_| writer.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    input
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,6 +550,18 @@ mod tests {
             }
         ));
         assert!(TerminalSize::new(80, 24).is_ok());
+    }
+
+    #[test]
+    fn terminal_input_size_is_bounded() {
+        let input = "x".repeat(MAX_INPUT_BYTES + 1);
+        let error = terminal_input(&input).expect_err("oversized input should fail");
+
+        assert!(matches!(
+            error,
+            TerminalError::InputTooLarge { size, limit }
+                if size == MAX_INPUT_BYTES + 1 && limit == MAX_INPUT_BYTES
+        ));
     }
 
     #[test]

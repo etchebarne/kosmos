@@ -22,11 +22,14 @@ export class KosmosIpcRequestError extends Error {
 }
 
 export class KosmosServerClient {
+  private activeRequests = 0;
   private buffer = "";
   private connecting: Promise<void> | undefined;
   private nextRequestId = 1;
+  private shuttingDown = false;
   private socket: net.Socket | undefined;
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly idleWaiters = new Set<() => void>();
 
   constructor(readonly socketPath = defaultSocketPath()) {}
 
@@ -34,6 +37,31 @@ export class KosmosServerClient {
     domain: KosmosIpcDomain,
     action: string,
     params: KosmosIpcParams = {},
+  ): Promise<T> {
+    if (this.shuttingDown) {
+      throw new Error("IPC client is shutting down");
+    }
+
+    this.activeRequests += 1;
+
+    try {
+      return await this.sendRequest(domain, action, params);
+    } finally {
+      this.activeRequests -= 1;
+      this.notifyIdle();
+    }
+  }
+
+  async flushPersistence(): Promise<void> {
+    this.shuttingDown = true;
+    await this.waitForIdle();
+    await this.sendRequest("workspace", "flush", {});
+  }
+
+  private async sendRequest<T = unknown>(
+    domain: KosmosIpcDomain,
+    action: string,
+    params: KosmosIpcParams,
   ): Promise<T> {
     await this.connect();
 
@@ -168,6 +196,26 @@ export class KosmosServerClient {
     }
 
     this.pending.clear();
+  }
+
+  private waitForIdle(): Promise<void> {
+    if (this.activeRequests === 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+
+  private notifyIdle(): void {
+    if (this.activeRequests !== 0) {
+      return;
+    }
+
+    for (const resolve of this.idleWaiters) {
+      resolve();
+    }
+
+    this.idleWaiters.clear();
   }
 }
 

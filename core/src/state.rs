@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
@@ -23,6 +24,27 @@ pub struct State {
     next_pane_id: u64,
     next_split_id: u64,
     next_tab_id: u64,
+    instance_id: u64,
+    persistent_revision: u64,
+}
+
+#[derive(Debug)]
+pub struct PersistentStateCandidate {
+    state: State,
+    source_instance_id: u64,
+    source_revision: u64,
+}
+
+static NEXT_STATE_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+impl PersistentStateCandidate {
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
 }
 
 impl State {
@@ -90,6 +112,55 @@ impl State {
         &self.git_diff_view_states
     }
 
+    pub fn persistent_candidate(&self) -> PersistentStateCandidate {
+        PersistentStateCandidate {
+            state: Self {
+                workspaces: self.workspaces.clone(),
+                file_tree_view_states: self.file_tree_view_states.clone(),
+                git_diff_view_states: self.git_diff_view_states.clone(),
+                terminal_sessions: TerminalSessions::default(),
+                next_workspace_id: self.next_workspace_id,
+                next_pane_id: self.next_pane_id,
+                next_split_id: self.next_split_id,
+                next_tab_id: self.next_tab_id,
+                instance_id: self.instance_id,
+                persistent_revision: self.persistent_revision,
+            },
+            source_instance_id: self.instance_id,
+            source_revision: self.persistent_revision,
+        }
+    }
+
+    pub fn commit_persistent_candidate(&mut self, candidate: PersistentStateCandidate) -> bool {
+        if !self.accepts_persistent_candidate(&candidate) {
+            return false;
+        }
+        let Some(next_revision) = self.persistent_revision.checked_add(1) else {
+            return false;
+        };
+
+        let candidate = candidate.state;
+
+        self.terminal_sessions
+            .retain(|workspace_id, tab_id| candidate.is_terminal_tab(workspace_id, tab_id));
+        self.workspaces = candidate.workspaces;
+        self.file_tree_view_states = candidate.file_tree_view_states;
+        self.git_diff_view_states = candidate.git_diff_view_states;
+        self.next_workspace_id = candidate.next_workspace_id;
+        self.next_pane_id = candidate.next_pane_id;
+        self.next_split_id = candidate.next_split_id;
+        self.next_tab_id = candidate.next_tab_id;
+        self.persistent_revision = next_revision;
+
+        true
+    }
+
+    pub fn accepts_persistent_candidate(&self, candidate: &PersistentStateCandidate) -> bool {
+        candidate.source_instance_id == self.instance_id
+            && candidate.source_revision == self.persistent_revision
+            && self.persistent_revision < u64::MAX
+    }
+
     pub fn file_tree(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -131,6 +202,8 @@ impl State {
         tab_id: TabId,
         expanded_paths: Vec<String>,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -253,6 +326,8 @@ impl State {
         git_tab_id: TabId,
         path: &str,
     ) -> Result<(), GitError> {
+        self.mark_persistent_change();
+
         let workspace_id = self
             .resolve_workspace_id(workspace_id)
             .ok_or(GitError::WorkspaceNotFound)?;
@@ -560,6 +635,8 @@ impl State {
     }
 
     pub fn open_workspace(&mut self, directory: impl Into<PathBuf>) -> WorkspaceId {
+        self.mark_persistent_change();
+
         let directory = directory.into();
 
         if let Some(workspace_id) = self
@@ -583,10 +660,13 @@ impl State {
     }
 
     pub fn activate_workspace(&mut self, workspace_id: WorkspaceId) -> bool {
+        self.mark_persistent_change();
         self.workspaces.activate_workspace(workspace_id)
     }
 
     pub fn close_workspace(&mut self, workspace_id: Option<WorkspaceId>) -> Option<Workspace> {
+        self.mark_persistent_change();
+
         let closed_workspace = match workspace_id {
             Some(workspace_id) => self.workspaces.close_workspace(workspace_id),
             None => self.workspaces.close_active_workspace(),
@@ -608,6 +688,8 @@ impl State {
         axis: SplitAxis,
         new_pane_first: bool,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -629,6 +711,8 @@ impl State {
     }
 
     pub fn activate_pane(&mut self, workspace_id: Option<WorkspaceId>, pane_id: PaneId) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -647,6 +731,8 @@ impl State {
         axis: SplitAxis,
         new_pane_first: bool,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -665,6 +751,8 @@ impl State {
         title: Option<String>,
         kind: TabKind,
     ) -> bool {
+        self.mark_persistent_change();
+
         if kind == TabKind::Diff {
             return false;
         }
@@ -693,6 +781,8 @@ impl State {
         pane_id: PaneId,
         tab_id: TabId,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -710,6 +800,8 @@ impl State {
         tab_id: TabId,
         kind: TabKind,
     ) -> bool {
+        self.mark_persistent_change();
+
         if kind == TabKind::Diff {
             return false;
         }
@@ -751,6 +843,8 @@ impl State {
         axis: SplitAxis,
         new_pane_first: bool,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -803,6 +897,8 @@ impl State {
         pane_id: PaneId,
         tab_id: TabId,
     ) -> Option<Tab> {
+        self.mark_persistent_change();
+
         let workspace_id = self.resolve_workspace_id(workspace_id)?;
         let fallback_pane = self.blank_pane();
         let workspace = self.workspace_mut(workspace_id)?;
@@ -832,6 +928,8 @@ impl State {
         tab_id: TabId,
         target_index: usize,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -848,6 +946,8 @@ impl State {
         split_id: SplitPaneId,
         ratio: f32,
     ) -> bool {
+        self.mark_persistent_change();
+
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
         };
@@ -860,6 +960,10 @@ impl State {
 
     fn workspace_mut(&mut self, workspace_id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.workspace_mut(workspace_id)
+    }
+
+    fn mark_persistent_change(&mut self) {
+        self.persistent_revision = self.persistent_revision.saturating_add(1);
     }
 
     fn resolve_workspace_id(&self, workspace_id: Option<WorkspaceId>) -> Option<WorkspaceId> {
@@ -1088,6 +1192,8 @@ impl State {
             next_pane_id: next_ids.pane_id,
             next_split_id: next_ids.split_id,
             next_tab_id: next_ids.tab_id,
+            instance_id: next_state_instance_id(),
+            persistent_revision: 0,
         })
     }
 }
@@ -1246,8 +1352,14 @@ impl Default for State {
             next_pane_id: 1,
             next_split_id: 1,
             next_tab_id: 1,
+            instance_id: next_state_instance_id(),
+            persistent_revision: 0,
         }
     }
+}
+
+fn next_state_instance_id() -> u64 {
+    NEXT_STATE_INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -1263,6 +1375,113 @@ mod tests {
         assert_eq!(workspace_id, WorkspaceId::new(1));
         assert_eq!(state.workspaces().active_workspace_id(), Some(workspace_id));
         assert_eq!(state.workspaces().workspaces().len(), 1);
+    }
+
+    #[test]
+    fn persistent_candidates_are_isolated_until_commit() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/first");
+        let mut candidate = state.persistent_candidate();
+
+        candidate.state_mut().open_workspace("/workspaces/second");
+
+        assert_eq!(state.workspaces().workspaces().len(), 1);
+
+        assert!(state.commit_persistent_candidate(candidate));
+
+        assert_eq!(state.workspaces().workspaces().len(), 2);
+        assert_eq!(
+            state
+                .workspaces()
+                .active_workspace()
+                .expect("workspace should be active")
+                .directory(),
+            Path::new("/workspaces/second")
+        );
+    }
+
+    #[test]
+    fn committing_candidates_preserves_valid_terminal_sessions() {
+        let root = test_directory("persistent-terminal");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Terminal,
+        ));
+        state
+            .open_terminal(Some(workspace_id), TabId::new(1), 80, 24)
+            .expect("terminal should open");
+        let mut candidate = state.persistent_candidate();
+        assert!(candidate.state_mut().open_tab(
+            Some(workspace_id),
+            Some(PaneId::new(1)),
+            None,
+            TabKind::Search,
+        ));
+
+        assert!(state.commit_persistent_candidate(candidate));
+
+        assert_eq!(state.terminal_sessions.len(), 1);
+        assert!(
+            state
+                .read_terminal_output(Some(workspace_id), TabId::new(1))
+                .is_ok()
+        );
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn committing_candidates_removes_invalid_terminal_sessions() {
+        let root = test_directory("closed-persistent-terminal");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Terminal,
+        ));
+        state
+            .open_terminal(Some(workspace_id), TabId::new(1), 80, 24)
+            .expect("terminal should open");
+        let mut candidate = state.persistent_candidate();
+        assert!(candidate.state_mut().set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Search,
+        ));
+
+        assert!(state.commit_persistent_candidate(candidate));
+
+        assert_eq!(state.terminal_sessions.len(), 0);
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_and_cross_state_candidates_are_rejected() {
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        let first_candidate = state.persistent_candidate();
+        let stale_candidate = state.persistent_candidate();
+        let other_candidate = State::new().persistent_candidate();
+
+        assert!(state.commit_persistent_candidate(first_candidate));
+        assert!(!state.commit_persistent_candidate(stale_candidate));
+        assert!(!state.commit_persistent_candidate(other_candidate));
+
+        let candidate_before_direct_mutation = state.persistent_candidate();
+        state.open_workspace("/workspaces/direct");
+
+        assert!(!state.commit_persistent_candidate(candidate_before_direct_mutation));
+        assert_eq!(state.workspaces().workspaces().len(), 2);
     }
 
     #[test]

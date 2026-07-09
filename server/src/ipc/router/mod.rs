@@ -10,51 +10,107 @@ use serde::de::DeserializeOwned;
 use super::messages::envelope::{Domain, RequestEnvelope, ServerMessage};
 use super::messages::workspace::WorkspaceListSnapshot;
 
-pub(crate) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
-    match request.domain {
-        Domain::Workspace => workspace::route(state, request),
-        Domain::Pane => pane::route(state, request),
-        Domain::Tab => tab::route(state, request),
-        Domain::FileTree => file_tree::route(state, request),
-        Domain::Git => git::route(state, request),
-        Domain::Terminal => terminal::route(state, request),
+type RouteHandler = fn(&mut core::State, &RequestEnvelope) -> ServerMessage;
+
+pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerMessage> {
+    let definition = match request.domain {
+        Domain::Workspace => workspace::resolve(&request.action),
+        Domain::Pane => pane::resolve(&request.action),
+        Domain::Tab => tab::resolve(&request.action),
+        Domain::FileTree => file_tree::resolve(&request.action),
+        Domain::Git => git::resolve(&request.action),
+        Domain::Terminal => terminal::resolve(&request.action),
     }
+    .ok_or_else(|| unsupported_action(&request))?;
+
+    Ok(PreparedRoute {
+        request,
+        definition,
+    })
 }
 
-pub(crate) struct RoutedResponse {
-    response: ServerMessage,
-    persistence: PersistenceMode,
+pub(crate) struct PreparedRoute {
+    request: RequestEnvelope,
+    definition: RouteDefinition,
 }
 
-impl RoutedResponse {
-    fn new(response: ServerMessage, persistence: PersistenceMode) -> Self {
+impl PreparedRoute {
+    pub(crate) fn request_id(&self) -> u64 {
+        self.request.id
+    }
+
+    pub(crate) fn mode(&self) -> ExecutionMode {
+        self.definition.mode
+    }
+
+    pub(crate) fn execute(&self, state: &mut core::State) -> ServerMessage {
+        (self.definition.handler)(state, &self.request)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(request_id: u64, mode: ExecutionMode, handler: RouteHandler) -> Self {
         Self {
-            response,
-            persistence,
+            request: RequestEnvelope {
+                id: request_id,
+                domain: Domain::Workspace,
+                action: "test".to_owned(),
+                params: serde_json::Value::Null,
+            },
+            definition: RouteDefinition::new(handler, mode),
         }
     }
+}
 
-    pub(super) fn none(response: ServerMessage) -> Self {
-        Self::new(response, PersistenceMode::None)
+pub(super) struct RouteDefinition {
+    handler: RouteHandler,
+    mode: ExecutionMode,
+}
+
+impl RouteDefinition {
+    pub(super) const fn snapshot(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::Snapshot)
     }
 
-    pub(super) fn active_workspace(response: ServerMessage) -> Self {
-        Self::new(response, PersistenceMode::ActiveWorkspace)
+    pub(super) const fn external(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::External)
     }
 
-    pub(super) fn full(response: ServerMessage) -> Self {
-        Self::new(response, PersistenceMode::Full)
+    pub(super) const fn live(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::Live)
     }
 
-    pub(crate) fn into_parts(self) -> (ServerMessage, PersistenceMode) {
-        (self.response, self.persistence)
+    pub(super) const fn active_workspace(handler: RouteHandler) -> Self {
+        Self::new(
+            handler,
+            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
+        )
+    }
+
+    pub(super) const fn full(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Full))
+    }
+
+    pub(super) const fn persistence_barrier(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Barrier))
+    }
+
+    const fn new(handler: RouteHandler, mode: ExecutionMode) -> Self {
+        Self { handler, mode }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExecutionMode {
+    Snapshot,
+    External,
+    Live,
+    Persistent(PersistenceMode),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PersistenceMode {
-    None,
     ActiveWorkspace,
+    Barrier,
     Full,
 }
 
@@ -100,40 +156,103 @@ mod tests {
     use super::*;
 
     #[test]
-    fn persistence_is_declared_by_the_routed_operation() {
-        let mut state = core::State::new();
-
-        assert_eq!(
-            persistence_for(&mut state, Domain::Workspace, "list"),
-            PersistenceMode::None
+    fn execution_modes_are_declared_by_the_routed_operation() {
+        assert_modes(Domain::Workspace, &["list"], ExecutionMode::Snapshot);
+        assert_modes(
+            Domain::Workspace,
+            &["flush"],
+            ExecutionMode::Persistent(PersistenceMode::Barrier),
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::Workspace, "activate"),
-            PersistenceMode::ActiveWorkspace
+        assert_modes(
+            Domain::Workspace,
+            &["activate"],
+            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::FileTree, "createEntry"),
-            PersistenceMode::None
+        assert_modes(
+            Domain::Workspace,
+            &["open", "close"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::FileTree, "setExpandedPaths"),
-            PersistenceMode::Full
+        assert_modes(
+            Domain::Pane,
+            &["split", "activate", "move", "resize"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::Git, "status"),
-            PersistenceMode::None
+        assert_modes(
+            Domain::Tab,
+            &["open", "activate", "setKind", "close", "move", "split"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::Git, "openDiffTab"),
-            PersistenceMode::Full
+        assert_modes(
+            Domain::FileTree,
+            &[
+                "get",
+                "getChildren",
+                "createEntry",
+                "renameEntry",
+                "moveEntries",
+                "copyEntries",
+                "deleteEntries",
+                "resolvePath",
+            ],
+            ExecutionMode::External,
         );
-        assert_eq!(
-            persistence_for(&mut state, Domain::Terminal, "open"),
-            PersistenceMode::None
+        assert_modes(
+            Domain::FileTree,
+            &["setExpandedPaths"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::Git,
+            &[
+                "init",
+                "status",
+                "diff",
+                "stagePaths",
+                "unstagePaths",
+                "stageAll",
+                "unstageAll",
+                "commit",
+                "switchBranch",
+                "trackRemoteBranch",
+                "createBranch",
+                "deleteBranch",
+                "fetch",
+                "pull",
+                "push",
+                "stash",
+                "stashStaged",
+                "stashes",
+                "applyStash",
+                "dropStash",
+                "discardAll",
+                "discardStaged",
+            ],
+            ExecutionMode::External,
+        );
+        assert_modes(
+            Domain::Git,
+            &["openDiffTab"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::Terminal,
+            &["open", "read", "write", "resize"],
+            ExecutionMode::Live,
         );
     }
 
-    fn persistence_for(state: &mut core::State, domain: Domain, action: &str) -> PersistenceMode {
+    fn assert_modes(domain: Domain, actions: &[&str], expected: ExecutionMode) {
+        for action in actions {
+            assert_eq!(
+                mode_for(domain, action),
+                expected,
+                "unexpected {action} mode"
+            );
+        }
+    }
+
+    fn mode_for(domain: Domain, action: &str) -> ExecutionMode {
         let request = RequestEnvelope {
             id: 1,
             domain,
@@ -141,6 +260,6 @@ mod tests {
             params: serde_json::Value::Null,
         };
 
-        route(state, &request).into_parts().1
+        prepare(request).expect("route should exist").mode()
     }
 }

@@ -52,6 +52,7 @@ type WorkspaceStore = {
   addWorkspace(): Promise<void>;
   closeTab(paneId: PaneId, tabId: TabId): void;
   closeWorkspace(workspaceId: WorkspaceId): Promise<void>;
+  flushPendingState(): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
   openGitDiffTab(tabId: TabId, path: string): void;
@@ -73,6 +74,10 @@ type WorkspaceStore = {
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   const fileTreeExpansionFlushers = new Set<FileTreeExpansionFlusher>();
   const pendingFileTreeExpansionSaves = new Set<Promise<void>>();
+  let pendingResizeRequests = 0;
+  let resizeFallbackSnapshot: WorkspaceListSnapshot | null = null;
+  let resizeNeedsReconciliation = false;
+  let resizeRequestId = 0;
 
   function updateFromServer(request: WorkspaceRequest): void {
     set({ error: null });
@@ -191,6 +196,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         }
       }
     },
+    flushPendingState() {
+      return flushFileTreeExpansionSaves();
+    },
     async initializeWorkspaces() {
       const requestId = get().loadRequestId + 1;
 
@@ -257,16 +265,61 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       if (!activeWorkspace) {
         return;
       }
+      const previousSnapshot = get().snapshot;
 
       set((state) => ({
         error: null,
         snapshot: resizeSplitLocally(state.snapshot, activeWorkspace.id, splitId, ratio),
       }));
-      void resizeSplitIpc({ workspaceId: activeWorkspace.id, splitId, ratio }).catch(
-        (caughtError: unknown) => {
-          set({ error: errorMessage(caughtError) });
-        },
-      );
+      if (pendingResizeRequests === 0) {
+        resizeFallbackSnapshot = previousSnapshot;
+      }
+      pendingResizeRequests += 1;
+      const requestId = ++resizeRequestId;
+
+      void resizeSplitIpc({ workspaceId: activeWorkspace.id, splitId, ratio })
+        .then((snapshot) => {
+          resizeFallbackSnapshot = snapshot;
+
+          if (resizeRequestId === requestId || resizeNeedsReconciliation) {
+            set({ snapshot });
+          }
+        })
+        .catch(async (caughtError: unknown) => {
+          if (resizeRequestId !== requestId) {
+            return;
+          }
+
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            if (attempt > 0) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 50));
+            }
+
+            try {
+              const snapshot = await listWorkspaces();
+              resizeFallbackSnapshot = snapshot;
+
+              if (resizeRequestId === requestId) {
+                resizeNeedsReconciliation = false;
+                set({ error: errorMessage(caughtError), snapshot });
+              }
+              return;
+            } catch {
+              // Retry after the ordered request queue has had time to drain.
+            }
+          }
+
+          resizeNeedsReconciliation = true;
+          set({ error: errorMessage(caughtError), snapshot: resizeFallbackSnapshot });
+        })
+        .finally(() => {
+          pendingResizeRequests -= 1;
+
+          if (pendingResizeRequests === 0) {
+            resizeFallbackSnapshot = null;
+            resizeNeedsReconciliation = false;
+          }
+        });
     },
     saveFileTreeExpandedPaths(params) {
       const save = setFileTreeExpandedPathsIpc(params)

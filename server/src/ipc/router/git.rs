@@ -6,37 +6,37 @@ use super::super::messages::git::{
     GitRepositorySnapshotPayload, GitStashParams, GitStashPayload, GitTabParams,
     OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
 };
-use super::{RoutedResponse, parse_params, unsupported_action, workspace_list_response};
+use super::{RouteDefinition, parse_params, workspace_list_response};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
-    let response = match request.action.as_str() {
-        "init" => init(state, request),
-        "status" => status(state, request),
-        "openDiffTab" => return RoutedResponse::full(open_diff_tab(state, request)),
-        "diff" => diff(state, request),
-        "stagePaths" => stage_paths(state, request),
-        "unstagePaths" => unstage_paths(state, request),
-        "stageAll" => stage_all(state, request),
-        "unstageAll" => unstage_all(state, request),
-        "commit" => commit(state, request),
-        "switchBranch" => switch_branch(state, request),
-        "trackRemoteBranch" => track_remote_branch(state, request),
-        "createBranch" => create_branch(state, request),
-        "deleteBranch" => delete_branch(state, request),
-        "fetch" => fetch(state, request),
-        "pull" => pull(state, request),
-        "push" => push(state, request),
-        "stash" => stash(state, request),
-        "stashStaged" => stash_staged(state, request),
-        "stashes" => stashes(state, request),
-        "applyStash" => apply_stash(state, request),
-        "dropStash" => drop_stash(state, request),
-        "discardAll" => discard_all(state, request),
-        "discardStaged" => discard_staged(state, request),
-        _ => return RoutedResponse::none(unsupported_action(request)),
+pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
+    let handler = match action {
+        "init" => init,
+        "status" => status,
+        "openDiffTab" => return Some(RouteDefinition::full(open_diff_tab)),
+        "diff" => diff,
+        "stagePaths" => stage_paths,
+        "unstagePaths" => unstage_paths,
+        "stageAll" => stage_all,
+        "unstageAll" => unstage_all,
+        "commit" => commit,
+        "switchBranch" => switch_branch,
+        "trackRemoteBranch" => track_remote_branch,
+        "createBranch" => create_branch,
+        "deleteBranch" => delete_branch,
+        "fetch" => fetch,
+        "pull" => pull,
+        "push" => push,
+        "stash" => stash,
+        "stashStaged" => stash_staged,
+        "stashes" => stashes,
+        "applyStash" => apply_stash,
+        "dropStash" => drop_stash,
+        "discardAll" => discard_all,
+        "discardStaged" => discard_staged,
+        _ => return None,
     };
 
-    RoutedResponse::none(response)
+    Some(RouteDefinition::external(handler))
 }
 
 fn open_diff_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

@@ -5,18 +5,18 @@ use super::super::messages::terminal::{
     OpenTerminalParams, ResizeTerminalParams, TerminalOutputSnapshot, TerminalTabParams,
     WriteTerminalInputParams,
 };
-use super::{RoutedResponse, parse_params, unsupported_action};
+use super::{RouteDefinition, parse_params};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
-    let response = match request.action.as_str() {
-        "open" => open_terminal(state, request),
-        "read" => read_terminal_output(state, request),
-        "write" => write_terminal_input(state, request),
-        "resize" => resize_terminal(state, request),
-        _ => return RoutedResponse::none(unsupported_action(request)),
+pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
+    let handler = match action {
+        "open" => open_terminal,
+        "read" => read_terminal_output,
+        "write" => write_terminal_input,
+        "resize" => resize_terminal,
+        _ => return None,
     };
 
-    RoutedResponse::none(response)
+    Some(RouteDefinition::live(handler))
 }
 
 fn open_terminal(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
@@ -89,6 +89,8 @@ fn resize_terminal(state: &mut core::State, request: &RequestEnvelope) -> Server
 
 fn terminal_error_code(error: &TerminalError) -> &'static str {
     match error {
+        TerminalError::InputBufferFull => "terminal.input_buffer_full",
+        TerminalError::InputTooLarge { .. } => "terminal.input_too_large",
         TerminalError::WorkspaceNotFound => "terminal.workspace_not_found",
         TerminalError::TabNotFound => "terminal.tab_not_found",
         TerminalError::SessionNotFound => "terminal.session_not_found",
@@ -96,5 +98,6 @@ fn terminal_error_code(error: &TerminalError) -> &'static str {
         TerminalError::ReadBufferUnavailable => "terminal.output_unavailable",
         TerminalError::Pty(_) => "terminal.process_failed",
         TerminalError::Io(_) => "terminal.io_failed",
+        TerminalError::WriterUnavailable => "terminal.writer_unavailable",
     }
 }
