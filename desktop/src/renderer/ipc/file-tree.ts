@@ -1,7 +1,6 @@
 import type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
-  DeleteFileTreeEntryParams,
   FileTreeChildrenSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,
@@ -49,10 +48,6 @@ export function copyFileTreeEntries(params: TransferFileTreeEntriesParams): Prom
   return requestServer(DOMAIN, "copyEntries", params);
 }
 
-export function deleteFileTreeEntry(params: DeleteFileTreeEntryParams): Promise<boolean> {
-  return requestServer(DOMAIN, "deleteEntry", params);
-}
-
 export function deleteFileTreeEntries(params: DeleteFileTreeEntriesParams): Promise<boolean> {
   return requestServer(DOMAIN, "deleteEntries", params);
 }
@@ -71,7 +66,6 @@ export async function revealFileTreePath(params: ResolveFileTreePathParams): Pro
 export type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
-  DeleteFileTreeEntryParams,
   FileTreeChildrenSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,

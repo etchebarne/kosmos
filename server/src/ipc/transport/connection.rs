@@ -2,8 +2,8 @@ use std::io::{self, BufReader};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
-use crate::ipc::messages::envelope::{ClientMessage, Domain, RequestEnvelope, ServerMessage};
-use crate::ipc::router;
+use crate::ipc::messages::envelope::{ClientMessage, ServerMessage};
+use crate::ipc::router::{self, PersistenceMode, RoutedResponse};
 
 use super::codec;
 
@@ -29,7 +29,7 @@ pub(crate) fn handle(
 
                 let response = router::route(&mut state, &request);
 
-                persist_successful_request(&request, response, &state, &store)
+                persist_successful_request(request.id, response, &state, &store)
             }
             Err(error) => ServerMessage::error(0, "ipc.invalid_message", error.to_string()),
         };
@@ -41,16 +41,18 @@ pub(crate) fn handle(
 }
 
 fn persist_successful_request(
-    request: &RequestEnvelope,
-    response: ServerMessage,
+    request_id: u64,
+    routed: RoutedResponse,
     state: &core::State,
     store: &core::persistence::StateStore,
 ) -> ServerMessage {
+    let (response, persistence) = routed.into_parts();
+
     if !response.is_ok() {
         return response;
     }
 
-    let result = match persistence_mode(request) {
+    let result = match persistence {
         PersistenceMode::None => Ok(()),
         PersistenceMode::ActiveWorkspace => store.save_active_workspace(state),
         PersistenceMode::Full => store.save(state),
@@ -59,24 +61,7 @@ fn persist_successful_request(
     match result {
         Ok(()) => response,
         Err(error) => {
-            ServerMessage::error(request.id, "persistence.save_failed", error.to_string())
+            ServerMessage::error(request_id, "persistence.save_failed", error.to_string())
         }
     }
-}
-
-fn persistence_mode(request: &RequestEnvelope) -> PersistenceMode {
-    match (request.domain, request.action.as_str()) {
-        (Domain::Workspace, "list") => PersistenceMode::None,
-        (Domain::Workspace, "activate") => PersistenceMode::ActiveWorkspace,
-        (Domain::FileTree, "get" | "getChildren") => PersistenceMode::None,
-        (Domain::Git, _) => PersistenceMode::None,
-        (Domain::Terminal, _) => PersistenceMode::None,
-        _ => PersistenceMode::Full,
-    }
-}
-
-enum PersistenceMode {
-    None,
-    ActiveWorkspace,
-    Full,
 }

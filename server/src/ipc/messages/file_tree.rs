@@ -1,8 +1,7 @@
 use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind};
 use serde::{Deserialize, Serialize};
 
-use super::pane::WorkspaceIdParam;
-use super::tab::TabIdParam;
+use super::ids::{TabIdParam, WorkspaceIdParam};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,14 +68,6 @@ pub(crate) struct TransferFileTreeEntriesParams {
     pub(crate) tab_id: TabIdParam,
     pub(crate) source_paths: Vec<String>,
     pub(crate) target_directory_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DeleteFileTreeEntryParams {
-    pub(crate) workspace_id: Option<WorkspaceIdParam>,
-    pub(crate) tab_id: TabIdParam,
-    pub(crate) path: String,
 }
 
 #[derive(Debug, Deserialize)]

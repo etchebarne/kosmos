@@ -15,8 +15,8 @@ const validDomains = new Set<KosmosIpcDomain>([
 
 export function registerIpcHandlers(serverClient: KosmosServerClient): void {
   ipcMain.handle("kosmos:request", async (_event, request: KosmosIpcRequest): Promise<KosmosIpcRequestResult> => {
-    validateRequest(request);
     try {
+      validateRequest(request);
       const result = await serverClient.request(request.domain, request.action, request.params ?? {});
 
       return { ok: true, result };
@@ -24,8 +24,6 @@ export function registerIpcHandlers(serverClient: KosmosServerClient): void {
       return { ok: false, error: ipcRequestError(caughtError) };
     }
   });
-
-  ipcMain.handle("kosmos:socketPath", () => serverClient.socketPath);
 
   ipcMain.handle("kosmos:selectWorkspaceDirectory", async () => {
     const result = await dialog.showOpenDialog({

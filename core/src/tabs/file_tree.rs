@@ -97,7 +97,7 @@ impl FileTree {
     ) -> Result<FileTreeDirectory> {
         let root = root.as_ref();
         ensure_directory(root)?;
-        let normalized_path = normalize_relative_path(directory_path, PathUsage::Directory)?;
+        let normalized_path = normalize_relative_path(directory_path)?;
         let directory = resolve_directory(root, &normalized_path)?;
         let relative_directory = path_to_str(&normalized_path);
         let mut paths = Vec::new();
@@ -169,8 +169,7 @@ impl FileTree {
         let root = root.as_ref();
         ensure_directory(root)?;
         let source = resolve_existing_entry(root, source_path)?;
-        let destination_relative_path =
-            normalize_relative_path(destination_path, PathUsage::Entry)?;
+        let destination_relative_path = normalize_relative_path(destination_path)?;
         let destination = root.join(&destination_relative_path);
 
         if source == destination {
@@ -232,18 +231,10 @@ impl FileTree {
         Ok(destinations)
     }
 
-    pub fn delete_entry(root: impl AsRef<Path>, path: &str) -> Result<()> {
-        let root = root.as_ref();
-        ensure_directory(root)?;
-        let path = resolve_existing_entry(root, path)?;
-
-        delete_resolved_entry(path)
-    }
-
     pub fn delete_entries(root: impl AsRef<Path>, paths: &[String]) -> Result<()> {
         let root = root.as_ref();
         ensure_directory(root)?;
-        let paths = prepare_delete_paths(root, paths)?;
+        let paths = resolve_selected_paths(root, paths)?;
 
         for path in paths {
             delete_resolved_entry(path)?;
@@ -411,7 +402,7 @@ fn ensure_directory(root: &Path) -> Result<()> {
 fn resolve_existing_directory(root: &Path, path: Option<&str>) -> Result<PathBuf> {
     match path {
         Some(path) if !path.trim().is_empty() => {
-            let path = normalize_relative_path(path, PathUsage::Directory)?;
+            let path = normalize_relative_path(path)?;
             resolve_directory(root, &path)
         }
         _ => Ok(root.to_path_buf()),
@@ -419,11 +410,11 @@ fn resolve_existing_directory(root: &Path, path: Option<&str>) -> Result<PathBuf
 }
 
 fn resolve_existing_entry(root: &Path, path: &str) -> Result<PathBuf> {
-    let path = normalize_relative_path(path, PathUsage::Entry)?;
+    let path = normalize_relative_path(path)?;
     ensure_existing_parent_directory(root, &path)?;
     let resolved_path = root.join(path);
 
-    if resolved_path.exists() {
+    if entry_exists(&resolved_path)? {
         Ok(resolved_path)
     } else {
         Err(FileTreeError::EntryNotFound(resolved_path))
@@ -455,10 +446,18 @@ fn ensure_existing_parent_directory(root: &Path, path: &Path) -> Result<PathBuf>
 }
 
 fn ensure_missing(path: &Path) -> Result<()> {
-    if path.exists() {
+    if entry_exists(path)? {
         Err(FileTreeError::EntryAlreadyExists(path.to_path_buf()))
     } else {
         Ok(())
+    }
+}
+
+fn entry_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io_error(path, error)),
     }
 }
 
@@ -486,15 +485,10 @@ fn prepare_directory_transfers(
     source_paths: &[String],
     target_directory: &Path,
 ) -> Result<Vec<EntryTransfer>> {
-    if source_paths.is_empty() {
-        return Err(FileTreeError::InvalidPath("empty selection".to_owned()));
-    }
-
     let mut transfers = Vec::new();
     let mut destinations = HashSet::new();
 
-    for source_path in source_paths {
-        let source = resolve_existing_entry(root, source_path)?;
+    for source in resolve_selected_paths(root, source_paths)? {
         let destination = target_directory.join(entry_name(&source)?);
 
         ensure_not_descendant_move(&source, &destination)?;
@@ -521,15 +515,10 @@ fn prepare_copy_transfers(
     source_paths: &[String],
     target_directory: &Path,
 ) -> Result<Vec<EntryTransfer>> {
-    if source_paths.is_empty() {
-        return Err(FileTreeError::InvalidPath("empty selection".to_owned()));
-    }
-
     let mut transfers = Vec::new();
     let mut destinations = HashSet::new();
 
-    for source_path in source_paths {
-        let source = resolve_existing_entry(root, source_path)?;
+    for source in resolve_selected_paths(root, source_paths)? {
         let destination = target_directory.join(entry_name(&source)?);
         let source_is_directory = fs::symlink_metadata(&source)
             .map_err(|error| io_error(source.clone(), error))?
@@ -555,14 +544,14 @@ fn available_copy_destination(
     is_directory: bool,
     reserved_destinations: &HashSet<PathBuf>,
 ) -> Result<PathBuf> {
-    if !destination.exists() && !reserved_destinations.contains(destination) {
+    if !entry_exists(destination)? && !reserved_destinations.contains(destination) {
         return Ok(destination.to_path_buf());
     }
 
     for index in 2.. {
         let destination = copy_destination_with_suffix(destination, is_directory, index)?;
 
-        if !destination.exists() && !reserved_destinations.contains(&destination) {
+        if !entry_exists(&destination)? && !reserved_destinations.contains(&destination) {
             return Ok(destination);
         }
     }
@@ -604,7 +593,7 @@ fn copy_name_with_suffix(name: &str, is_directory: bool, index: usize) -> String
     format!("{stem} {index}.{extension}")
 }
 
-fn prepare_delete_paths(root: &Path, source_paths: &[String]) -> Result<Vec<PathBuf>> {
+fn resolve_selected_paths(root: &Path, source_paths: &[String]) -> Result<Vec<PathBuf>> {
     if source_paths.is_empty() {
         return Err(FileTreeError::InvalidPath("empty selection".to_owned()));
     }
@@ -651,12 +640,28 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
     if file_type.is_dir() {
         copy_directory(source, destination)
     } else if file_type.is_file() {
-        fs::copy(source, destination)
-            .map(|_| ())
-            .map_err(|error| io_error(source, error))
+        copy_file(source, destination)
     } else {
         Err(FileTreeError::UnsupportedEntry(source.to_path_buf()))
     }
+}
+
+fn copy_file(source: &Path, destination: &Path) -> Result<()> {
+    let mut source_file = fs::File::open(source).map_err(|error| io_error(source, error))?;
+    let permissions = source_file
+        .metadata()
+        .map_err(|error| io_error(source, error))?
+        .permissions();
+    let mut destination_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| io_error(destination, error))?;
+
+    io::copy(&mut source_file, &mut destination_file).map_err(|error| io_error(source, error))?;
+    destination_file
+        .set_permissions(permissions)
+        .map_err(|error| io_error(destination, error))
 }
 
 fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
@@ -689,11 +694,8 @@ fn normalize_entry_name(name: &str) -> Result<&str> {
     }
 }
 
-fn normalize_relative_path(path: &str, usage: PathUsage) -> Result<PathBuf> {
-    let normalized_path = match usage {
-        PathUsage::Directory => path.trim().strip_suffix('/').unwrap_or(path.trim()),
-        PathUsage::Entry => path.trim().strip_suffix('/').unwrap_or(path.trim()),
-    };
+fn normalize_relative_path(path: &str) -> Result<PathBuf> {
+    let normalized_path = path.trim().strip_suffix('/').unwrap_or(path.trim());
 
     if normalized_path.is_empty()
         || normalized_path.starts_with('/')
@@ -716,12 +718,6 @@ fn normalize_relative_path(path: &str, usage: PathUsage) -> Result<PathBuf> {
 fn path_to_str(path: &Path) -> &str {
     path.to_str()
         .expect("validated file tree paths must be valid UTF-8")
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PathUsage {
-    Directory,
-    Entry,
 }
 
 #[derive(Debug)]
@@ -1109,6 +1105,26 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlinks_are_existing_entries() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("dangling-symlink");
+        let outside = root.with_extension("outside");
+        symlink(&outside, root.join("link")).expect("symlink should be created");
+
+        let error = FileTree::create_entry(&root, None, "link", FileTreeEntryKind::File)
+            .expect_err("dangling symlinks must not be overwritten");
+
+        assert!(
+            matches!(error, FileTreeError::EntryAlreadyExists(path) if path == root.join("link"))
+        );
+        assert!(!outside.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn renames_entries_with_destination_validation() {
         let root = test_root("rename");
@@ -1148,6 +1164,27 @@ mod tests {
     }
 
     #[test]
+    fn transfers_parent_and_descendant_selections_once() {
+        let root = test_root("move-parent-selection");
+        fs::create_dir_all(root.join("src/components")).expect("source should be created");
+        fs::create_dir(root.join("dest")).expect("target should be created");
+        fs::write(root.join("src/components/button.tsx"), b"export {}")
+            .expect("file should be written");
+
+        let destinations = FileTree::move_entries(
+            &root,
+            &["src/".to_owned(), "src/components/button.tsx".to_owned()],
+            Some("dest"),
+        )
+        .expect("parent selection should subsume its descendant");
+
+        assert_eq!(destinations, &[root.join("dest/src")]);
+        assert!(root.join("dest/src/components/button.tsx").is_file());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn copies_directories_recursively() {
         let root = test_root("copy");
         fs::create_dir_all(root.join("src/components")).expect("source should be created");
@@ -1161,6 +1198,21 @@ mod tests {
         assert_eq!(destinations, &[root.join("dest/src")]);
         assert!(root.join("src/components/button.tsx").is_file());
         assert!(root.join("dest/src/components/button.tsx").is_file());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn copy_file_does_not_overwrite_a_destination_created_after_validation() {
+        let root = test_root("copy-race");
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, b"source").expect("source should be written");
+        fs::write(&destination, b"existing").expect("destination should be written");
+
+        copy_file(&source, &destination).expect_err("existing destination should be preserved");
+
+        assert_eq!(fs::read(&destination).unwrap(), b"existing");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1197,8 +1249,8 @@ mod tests {
         fs::create_dir_all(root.join("src/components")).expect("directory should be created");
         fs::write(root.join("README.md"), b"readme").expect("file should be written");
 
-        FileTree::delete_entry(&root, "README.md").expect("file should be deleted");
-        FileTree::delete_entry(&root, "src/").expect("directory should be deleted");
+        FileTree::delete_entries(&root, &["README.md".to_owned(), "src/".to_owned()])
+            .expect("entries should be deleted");
 
         assert!(!root.join("README.md").exists());
         assert!(!root.join("src").exists());

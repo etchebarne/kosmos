@@ -1,8 +1,7 @@
 use core::tabs::terminal::TerminalOutput;
 use serde::{Deserialize, Serialize};
 
-use super::pane::WorkspaceIdParam;
-use super::tab::TabIdParam;
+use super::ids::{TabIdParam, WorkspaceIdParam};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +40,7 @@ pub(crate) struct ResizeTerminalParams {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalOutputSnapshot {
     output: String,
+    truncated: bool,
     exited: bool,
     exit_code: Option<u32>,
     signal: Option<String>,
@@ -52,6 +52,7 @@ impl TerminalOutputSnapshot {
 
         Self {
             output: output.output().to_owned(),
+            truncated: output.truncated(),
             exited: output.exited(),
             exit_code: exit_status.map(|status| status.exit_code()),
             signal: exit_status.and_then(|status| status.signal().map(str::to_owned)),

@@ -17,7 +17,12 @@ impl ServerMessage {
     where
         T: Serialize,
     {
-        let result = serde_json::to_value(result).expect("IPC responses must serialize");
+        let result = match serde_json::to_value(result) {
+            Ok(result) => result,
+            Err(error) => {
+                return Self::error(id, "ipc.serialization_failed", error.to_string());
+            }
+        };
 
         Self::Response(ResponseEnvelope {
             id,
@@ -83,4 +88,17 @@ pub(crate) struct ResponseEnvelope {
 struct ErrorEnvelope {
     code: String,
     message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn response_serialization_failures_return_errors_instead_of_panicking() {
+        let response = ServerMessage::ok(1, HashMap::from([(vec![1, 2], true)]));
+
+        assert!(!response.is_ok());
+    }
 }

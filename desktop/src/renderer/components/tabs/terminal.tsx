@@ -128,6 +128,10 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       setStatus({ kind: "error", message });
     };
     const handleOutput = (output: TerminalOutput): boolean => {
+      if (output.truncated) {
+        terminal.writeln("\r\n[terminal output truncated]\r\n");
+      }
+
       if (output.output.length > 0) {
         terminal.write(output.output);
       }

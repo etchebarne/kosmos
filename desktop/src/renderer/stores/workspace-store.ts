@@ -26,12 +26,12 @@ import {
   type WorkspaceListSnapshot,
 } from "@/renderer/ipc";
 import type {
+  OpenableTabKind,
   PaneId,
   SplitAxis,
   SplitPaneId,
   SetFileTreeExpandedPathsParams,
   TabId,
-  TabKind,
   WorkspaceId,
 } from "@/shared/ipc";
 
@@ -59,7 +59,7 @@ type WorkspaceStore = {
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
   saveFileTreeExpandedPaths(params: SetFileTreeExpandedPathsParams): Promise<void>;
-  setTabKind(paneId: PaneId, tabId: TabId, kind: TabKind): void;
+  setTabKind(paneId: PaneId, tabId: TabId, kind: OpenableTabKind): void;
   splitTab(
     paneId: PaneId,
     tabId: TabId,

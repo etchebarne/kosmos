@@ -1,18 +1,18 @@
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
-import type { TabKind } from "@/shared/ipc";
+import type { OpenableTabKind } from "@/shared/ipc";
 
 export type BlankTabOption = {
   icon: LucideIcon;
-  kind: TabKind;
+  kind: OpenableTabKind;
   label: string;
 };
 
 type BlankTabProps = {
   options: BlankTabOption[];
   onActivatePane(): void;
-  onSelectKind(kind: TabKind): void;
+  onSelectKind(kind: OpenableTabKind): void;
 };
 
 export function BlankTab({ options, onActivatePane, onSelectKind }: BlankTabProps) {

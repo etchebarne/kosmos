@@ -1,7 +1,8 @@
 use core::tree::{Workspace, WorkspaceList};
 use serde::{Deserialize, Serialize};
 
-use super::pane::{PaneNodeSnapshot, WorkspaceIdParam};
+use super::ids::WorkspaceIdParam;
+use super::pane::PaneNodeSnapshot;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

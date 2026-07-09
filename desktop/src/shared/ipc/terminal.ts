@@ -23,6 +23,7 @@ export type ResizeTerminalParams = TerminalTabParams & {
 
 export type TerminalOutput = {
   output: string;
+  truncated: boolean;
   exited: boolean;
   exitCode?: number | null;
   signal?: string | null;

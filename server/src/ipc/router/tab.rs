@@ -1,21 +1,22 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::tab::{
-    ActivateTabParams, CloseTabParams, MoveTabParams, OpenTabParams, ReorderTabParams,
-    SetTabKindParams, SplitTabParams,
+    ActivateTabParams, CloseTabParams, MoveTabParams, OpenTabParams, SetTabKindParams,
+    SplitTabParams,
 };
-use super::{command_response, parse_params, unsupported_action};
+use super::{RoutedResponse, command_response, parse_params, unsupported_action};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match request.action.as_str() {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
+    let response = match request.action.as_str() {
         "open" => open_tab(state, request),
         "activate" => activate_tab(state, request),
         "setKind" => set_tab_kind(state, request),
         "close" => close_tab(state, request),
-        "reorder" => reorder_tab(state, request),
         "move" => move_tab(state, request),
         "split" => split_tab(state, request),
-        _ => unsupported_action(request),
-    }
+        _ => return RoutedResponse::none(unsupported_action(request)),
+    };
+
+    RoutedResponse::full(response)
 }
 
 fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
@@ -25,7 +26,7 @@ fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage
             state.open_tab(
                 params.workspace_id.map(Into::into),
                 params.pane_id.map(Into::into),
-                params.title.unwrap_or_else(|| "Blank".to_owned()),
+                params.title,
                 params.kind.unwrap_or_default().into(),
             ),
             state,
@@ -85,24 +86,6 @@ fn close_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessag
             state,
             "tab.not_found",
             "tab does not exist",
-        ),
-        Err(response) => response,
-    }
-}
-
-fn reorder_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<ReorderTabParams>(request) {
-        Ok(params) => command_response(
-            request.id,
-            state.reorder_tab(
-                params.workspace_id.map(Into::into),
-                params.pane_id.into(),
-                params.tab_id.into(),
-                params.target_index,
-            ),
-            state,
-            "tab.reorder_failed",
-            "tab could not be reordered",
         ),
         Err(response) => response,
     }

@@ -22,9 +22,6 @@ const kosmos: KosmosApi = {
 
     throw new KosmosPreloadRequestError(response.error.code, response.error.message);
   },
-  getSocketPath(): Promise<string> {
-    return ipcRenderer.invoke("kosmos:socketPath") as Promise<string>;
-  },
   selectWorkspaceDirectory(): Promise<string | undefined> {
     return ipcRenderer.invoke("kosmos:selectWorkspaceDirectory") as Promise<string | undefined>;
   },

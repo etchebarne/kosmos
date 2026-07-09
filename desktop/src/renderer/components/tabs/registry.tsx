@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
+import type { OpenableTabKind, PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 
 import { BlankTab, type BlankTabOption } from "./blank";
 import { DiffTab } from "./diff";
@@ -25,7 +25,7 @@ type TabContentProps = {
   workspaceId: WorkspaceId;
   isActive: boolean;
   onActivatePane(): void;
-  onSetTabKind(kind: TabKind): void;
+  onSetTabKind(kind: OpenableTabKind): void;
 };
 
 type TabDefinition = {
@@ -35,7 +35,7 @@ type TabDefinition = {
   render(props: TabContentProps): ReactNode;
 };
 
-const TAB_KIND_ORDER: TabKind[] = [
+const TAB_KIND_ORDER: OpenableTabKind[] = [
   "blank",
   "fileTree",
   "editor",

@@ -1,7 +1,8 @@
-use core::tree::{Tab, TabId, TabKind, TabLifecycle};
+use core::tree::{Tab, TabKind, TabLifecycle};
 use serde::{Deserialize, Serialize};
 
-use super::pane::{PaneIdParam, SplitAxisPayload, WorkspaceIdParam};
+use super::ids::{PaneIdParam, TabIdParam, WorkspaceIdParam};
+use super::pane::SplitAxisPayload;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,15 +40,6 @@ pub(crate) struct CloseTabParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ReorderTabParams {
-    pub(crate) workspace_id: Option<WorkspaceIdParam>,
-    pub(crate) pane_id: PaneIdParam,
-    pub(crate) tab_id: TabIdParam,
-    pub(crate) target_index: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct MoveTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) pane_id: PaneIdParam,
@@ -65,15 +57,6 @@ pub(crate) struct SplitTabParams {
     pub(crate) tab_id: TabIdParam,
     pub(crate) axis: SplitAxisPayload,
     pub(crate) new_pane_first: Option<bool>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub(crate) struct TabIdParam(u64);
-
-impl From<TabIdParam> for TabId {
-    fn from(value: TabIdParam) -> Self {
-        Self::new(value.0)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]

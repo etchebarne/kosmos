@@ -8,10 +8,6 @@ export function requestServer<T = unknown>(
   return kosmosApi().request<T>({ domain, action, params });
 }
 
-export function getSocketPath(): Promise<string> {
-  return kosmosApi().getSocketPath();
-}
-
 export function selectWorkspaceDirectory(): Promise<string | undefined> {
   return kosmosApi().selectWorkspaceDirectory();
 }

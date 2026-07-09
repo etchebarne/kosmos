@@ -5,12 +5,16 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::tree::{TabId, WorkspaceId};
 
 pub type Result<T> = std::result::Result<T, TerminalError>;
+
+const MAX_BUFFERED_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const EXIT_OUTPUT_GRACE_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalSize {
@@ -65,19 +69,25 @@ impl From<portable_pty::ExitStatus> for TerminalExitStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalOutput {
     output: String,
+    truncated: bool,
     exit_status: Option<TerminalExitStatus>,
 }
 
 impl TerminalOutput {
-    fn new(output: String, exit_status: Option<TerminalExitStatus>) -> Self {
+    fn new(output: String, truncated: bool, exit_status: Option<TerminalExitStatus>) -> Self {
         Self {
             output,
+            truncated,
             exit_status,
         }
     }
 
     pub fn output(&self) -> &str {
         &self.output
+    }
+
+    pub fn truncated(&self) -> bool {
+        self.truncated
     }
 
     pub fn exit_status(&self) -> Option<&TerminalExitStatus> {
@@ -193,8 +203,9 @@ struct TerminalSession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
-    output: Arc<Mutex<Vec<u8>>>,
+    output: Arc<Mutex<TerminalOutputBuffer>>,
     exit_status: Option<TerminalExitStatus>,
+    exit_observed_at: Option<Instant>,
 }
 
 impl TerminalSession {
@@ -215,7 +226,7 @@ impl TerminalSession {
 
         let reader = master.try_clone_reader().map_err(TerminalError::pty)?;
         let writer = master.take_writer().map_err(TerminalError::pty)?;
-        let output = Arc::new(Mutex::new(Vec::new()));
+        let output = Arc::new(Mutex::new(TerminalOutputBuffer::default()));
 
         spawn_reader(reader, Arc::clone(&output));
 
@@ -225,6 +236,7 @@ impl TerminalSession {
             child,
             output,
             exit_status: None,
+            exit_observed_at: None,
         })
     }
 
@@ -236,10 +248,14 @@ impl TerminalSession {
     }
 
     fn read_output(&mut self) -> Result<TerminalOutput> {
-        let output = self.drain_output()?;
         let exit_status = self.exit_status()?;
+        let grace_period_elapsed = self
+            .exit_observed_at
+            .is_some_and(|observed_at| observed_at.elapsed() >= EXIT_OUTPUT_GRACE_PERIOD);
+        let (output, truncated, reader_finished) = self.drain_output(grace_period_elapsed)?;
+        let exit_status = exit_status.filter(|_| reader_finished || grace_period_elapsed);
 
-        Ok(TerminalOutput::new(output, exit_status))
+        Ok(TerminalOutput::new(output, truncated, exit_status))
     }
 
     fn resize(&mut self, size: TerminalSize) -> Result<()> {
@@ -248,24 +264,29 @@ impl TerminalSession {
             .map_err(TerminalError::pty)
     }
 
-    fn drain_output(&self) -> Result<String> {
-        let bytes = {
+    fn drain_output(&self, flush_incomplete: bool) -> Result<(String, bool, bool)> {
+        let (bytes, truncated, reader_finished) = {
             let mut output = self
                 .output
                 .lock()
                 .map_err(|_| TerminalError::ReadBufferUnavailable)?;
 
-            std::mem::take(&mut *output)
+            output.drain(flush_incomplete)
         };
 
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Ok((
+            String::from_utf8_lossy(&bytes).into_owned(),
+            truncated,
+            reader_finished,
+        ))
     }
 
     fn exit_status(&mut self) -> Result<Option<TerminalExitStatus>> {
-        if self.exit_status.is_none() {
-            if let Some(status) = self.child.try_wait()? {
-                self.exit_status = Some(status.into());
-            }
+        if self.exit_status.is_none()
+            && let Some(status) = self.child.try_wait()?
+        {
+            self.exit_status = Some(status.into());
+            self.exit_observed_at = Some(Instant::now());
         }
 
         Ok(self.exit_status.clone())
@@ -343,7 +364,93 @@ impl From<io::Error> for TerminalError {
     }
 }
 
-fn spawn_reader(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<Vec<u8>>>) {
+#[derive(Default)]
+struct TerminalOutputBuffer {
+    bytes: Vec<u8>,
+    finished: bool,
+    truncated: bool,
+}
+
+impl TerminalOutputBuffer {
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.len() >= MAX_BUFFERED_OUTPUT_BYTES {
+            self.bytes.clear();
+            let start = next_utf8_boundary(bytes, bytes.len() - MAX_BUFFERED_OUTPUT_BYTES);
+            self.bytes.extend_from_slice(&bytes[start..]);
+            self.truncated = true;
+            return;
+        }
+
+        let overflow = self
+            .bytes
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(MAX_BUFFERED_OUTPUT_BYTES);
+
+        if overflow > 0 {
+            let end = next_utf8_boundary(&self.bytes, overflow);
+            self.bytes.drain(..end);
+            self.truncated = true;
+        }
+
+        self.bytes.extend_from_slice(bytes);
+    }
+
+    fn finish(&mut self) {
+        self.finished = true;
+    }
+
+    fn drain(&mut self, flush_incomplete: bool) -> (Vec<u8>, bool, bool) {
+        let retained_bytes = if self.finished || flush_incomplete {
+            0
+        } else {
+            incomplete_utf8_suffix_len(&self.bytes)
+        };
+        let incomplete = self.bytes.split_off(self.bytes.len() - retained_bytes);
+        let bytes = std::mem::replace(&mut self.bytes, incomplete);
+        let truncated = std::mem::take(&mut self.truncated);
+
+        (bytes, truncated, self.finished)
+    }
+}
+
+fn next_utf8_boundary(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && bytes[index] & 0b1100_0000 == 0b1000_0000 {
+        index += 1;
+    }
+
+    index
+}
+
+fn incomplete_utf8_suffix_len(bytes: &[u8]) -> usize {
+    let first_candidate = bytes.len().saturating_sub(3);
+
+    for start in (first_candidate..bytes.len()).rev() {
+        let expected_len = utf8_sequence_len(bytes[start]);
+        let actual_len = bytes.len() - start;
+
+        if expected_len > actual_len
+            && bytes[start + 1..]
+                .iter()
+                .all(|byte| byte & 0b1100_0000 == 0b1000_0000)
+        {
+            return actual_len;
+        }
+    }
+
+    0
+}
+
+fn utf8_sequence_len(first_byte: u8) -> usize {
+    match first_byte {
+        0xC2..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF4 => 4,
+        _ => 1,
+    }
+}
+
+fn spawn_reader(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<TerminalOutputBuffer>>) {
     thread::spawn(move || {
         let mut buffer = [0; 8192];
 
@@ -355,11 +462,15 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, output: Arc<Mutex<Vec<u8>>>) {
                         break;
                     };
 
-                    output.extend_from_slice(&buffer[..bytes_read]);
+                    output.append(&buffer[..bytes_read]);
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
+        }
+
+        if let Ok(mut output) = output.lock() {
+            output.finish();
         }
     });
 }
@@ -380,5 +491,54 @@ mod tests {
             }
         ));
         assert!(TerminalSize::new(80, 24).is_ok());
+    }
+
+    #[test]
+    fn terminal_output_buffer_is_bounded() {
+        let mut output = TerminalOutputBuffer::default();
+
+        output.append(&vec![b'x'; MAX_BUFFERED_OUTPUT_BYTES + 32]);
+        let (bytes, truncated, _) = output.drain(false);
+
+        assert_eq!(bytes.len(), MAX_BUFFERED_OUTPUT_BYTES);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn terminal_output_buffer_preserves_incomplete_utf8_sequences() {
+        let mut output = TerminalOutputBuffer::default();
+
+        output.append(&[0xE2, 0x82]);
+        assert_eq!(output.drain(false), (Vec::new(), false, false));
+
+        output.append(&[0xAC]);
+        let (bytes, truncated, _) = output.drain(false);
+
+        assert_eq!(String::from_utf8(bytes).unwrap(), "\u{20ac}");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn terminal_output_buffer_truncates_at_utf8_boundaries() {
+        let mut output = TerminalOutputBuffer::default();
+        let bytes = [0xE2, 0x82, 0xAC].repeat(MAX_BUFFERED_OUTPUT_BYTES / 3 + 2);
+
+        output.append(&bytes);
+        let (bytes, truncated, _) = output.drain(false);
+
+        assert!(String::from_utf8(bytes).is_ok());
+        assert!(truncated);
+    }
+
+    #[test]
+    fn terminal_output_buffer_flushes_incomplete_utf8_after_reader_finishes() {
+        let mut output = TerminalOutputBuffer::default();
+        output.append(&[0xE2, 0x82]);
+        output.finish();
+
+        let (bytes, _, finished) = output.drain(false);
+
+        assert_eq!(bytes, [0xE2, 0x82]);
+        assert!(finished);
     }
 }

@@ -5,17 +5,18 @@ use super::super::messages::terminal::{
     OpenTerminalParams, ResizeTerminalParams, TerminalOutputSnapshot, TerminalTabParams,
     WriteTerminalInputParams,
 };
-use super::{parse_params, unsupported_action};
+use super::{RoutedResponse, parse_params, unsupported_action};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match request.action.as_str() {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
+    let response = match request.action.as_str() {
         "open" => open_terminal(state, request),
         "read" => read_terminal_output(state, request),
         "write" => write_terminal_input(state, request),
         "resize" => resize_terminal(state, request),
-        "close" => close_terminal(state, request),
-        _ => unsupported_action(request),
-    }
+        _ => return RoutedResponse::none(unsupported_action(request)),
+    };
+
+    RoutedResponse::none(response)
 }
 
 fn open_terminal(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
@@ -82,16 +83,6 @@ fn resize_terminal(state: &mut core::State, request: &RequestEnvelope) -> Server
                 ServerMessage::error(request.id, terminal_error_code(&error), error.to_string())
             }
         },
-        Err(response) => response,
-    }
-}
-
-fn close_terminal(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<TerminalTabParams>(request) {
-        Ok(params) => ServerMessage::ok(
-            request.id,
-            state.close_terminal(params.workspace_id.map(Into::into), params.tab_id.into()),
-        ),
         Err(response) => response,
     }
 }

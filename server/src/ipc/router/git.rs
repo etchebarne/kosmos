@@ -6,13 +6,13 @@ use super::super::messages::git::{
     GitRepositorySnapshotPayload, GitStashParams, GitStashPayload, GitTabParams,
     OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
 };
-use super::{parse_params, unsupported_action, workspace_list_response};
+use super::{RoutedResponse, parse_params, unsupported_action, workspace_list_response};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match request.action.as_str() {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
+    let response = match request.action.as_str() {
         "init" => init(state, request),
         "status" => status(state, request),
-        "openDiffTab" => open_diff_tab(state, request),
+        "openDiffTab" => return RoutedResponse::full(open_diff_tab(state, request)),
         "diff" => diff(state, request),
         "stagePaths" => stage_paths(state, request),
         "unstagePaths" => unstage_paths(state, request),
@@ -33,8 +33,10 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "dropStash" => drop_stash(state, request),
         "discardAll" => discard_all(state, request),
         "discardStaged" => discard_staged(state, request),
-        _ => unsupported_action(request),
-    }
+        _ => return RoutedResponse::none(unsupported_action(request)),
+    };
+
+    RoutedResponse::none(response)
 }
 
 fn open_diff_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

@@ -66,7 +66,10 @@ impl StateStore {
     }
 
     fn connection(&self) -> Result<Connection> {
-        Ok(Connection::open(&self.path)?)
+        let connection = Connection::open(&self.path)?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+
+        Ok(connection)
     }
 }
 
@@ -112,8 +115,6 @@ impl From<rusqlite::Error> for PersistenceError {
 fn migrate(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "
-        PRAGMA foreign_keys = ON;
-
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY NOT NULL,
             value TEXT NOT NULL
@@ -180,6 +181,16 @@ fn migrate(connection: &Connection) -> Result<()> {
         UPDATE tabs
         SET kind = 'blank'
         WHERE kind NOT IN ('blank', 'diff', 'file_tree', 'editor', 'git', 'search', 'terminal');
+
+        UPDATE tabs
+        SET kind = 'blank', title = 'Blank'
+        WHERE kind = 'diff'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM git_diff_tabs
+              WHERE git_diff_tabs.workspace_id = tabs.workspace_id
+                AND git_diff_tabs.tab_id = tabs.id
+          );
         ",
     )?;
 
@@ -802,13 +813,67 @@ mod tests {
     }
 
     #[test]
+    fn every_store_connection_enforces_foreign_keys() {
+        let path = test_db_path("foreign-keys");
+        let store = StateStore::open(&path).expect("store should open");
+        let connection = store.connection().expect("connection should open");
+        let enabled = connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, bool>(0))
+            .expect("foreign key setting should be readable");
+
+        assert!(enabled);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrates_legacy_diff_tabs_without_view_state_to_blank() {
+        let path = test_db_path("legacy-diff-tab");
+        let store = StateStore::open(&path).expect("store should open");
+        let connection = store.connection().expect("connection should open");
+        connection
+            .execute(
+                "INSERT INTO workspaces (id, position, name, directory, active_pane_id) VALUES (1, 0, 'main', '/workspaces/main', 1)",
+                [],
+            )
+            .expect("workspace should be inserted");
+        connection
+            .execute(
+                "INSERT INTO panes (workspace_id, id, active_tab_id) VALUES (1, 1, 1)",
+                [],
+            )
+            .expect("pane should be inserted");
+        connection
+            .execute(
+                "INSERT INTO tabs (workspace_id, pane_id, position, id, title, kind) VALUES (1, 1, 0, 1, 'Diff', 'diff')",
+                [],
+            )
+            .expect("legacy diff tab should be inserted");
+        drop(connection);
+
+        let reopened = StateStore::open(&path).expect("store should reopen");
+        let connection = reopened.connection().expect("connection should open");
+        let (title, kind) = connection
+            .query_row(
+                "SELECT title, kind FROM tabs WHERE workspace_id = 1 AND id = 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("tab should load");
+
+        assert_eq!((title.as_str(), kind.as_str()), ("Blank", "blank"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn saves_and_loads_workspace_tree() {
         let path = test_db_path("round-trip");
         let store = StateStore::open(&path).expect("store should open");
         let mut state = State::new();
 
         state.open_workspace("/workspaces/main");
-        assert!(state.open_tab(None, None, "Search", TabKind::Search));
+        assert!(state.open_tab(None, None, Some("Search".to_owned()), TabKind::Search,));
         assert!(state.split_pane(None, None, SplitAxis::Horizontal, false));
         assert!(state.resize_split(None, SplitPaneId::new(1), 0.65));
         assert!(state.activate_pane(None, PaneId::new(1)));
@@ -820,7 +885,7 @@ mod tests {
 
         assert_eq!(loaded.workspaces(), state.workspaces());
 
-        assert!(loaded.open_tab(None, None, "Terminal", TabKind::Terminal));
+        assert!(loaded.open_tab(None, None, None, TabKind::Terminal));
         let workspace = loaded
             .workspaces()
             .active_workspace()

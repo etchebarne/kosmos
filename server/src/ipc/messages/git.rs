@@ -4,8 +4,7 @@ use core::tabs::git::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::pane::WorkspaceIdParam;
-use super::tab::TabIdParam;
+use super::ids::{TabIdParam, WorkspaceIdParam};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

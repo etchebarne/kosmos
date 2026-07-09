@@ -9,6 +9,8 @@ type PendingRequest = {
   reject(error: Error): void;
 };
 
+const MAX_RESPONSE_FRAME_CHARS = 64 * 1024 * 1024;
+
 export class KosmosIpcRequestError extends Error {
   constructor(
     readonly code: string,
@@ -82,7 +84,13 @@ export class KosmosServerClient {
         this.socket = socket;
         this.buffer = "";
 
-        socket.on("data", (chunk) => this.handleData(chunk));
+        socket.on("data", (chunk) => {
+          try {
+            this.handleData(chunk);
+          } catch (caughtError: unknown) {
+            this.failConnection(asError(caughtError));
+          }
+        });
         socket.on("error", (error) => this.rejectAll(error));
         socket.on("close", () => this.handleClose());
 
@@ -106,10 +114,18 @@ export class KosmosServerClient {
   private handleData(chunk: string | Buffer): void {
     this.buffer += chunk.toString();
 
+    if (this.buffer.length > MAX_RESPONSE_FRAME_CHARS && !this.buffer.includes("\n")) {
+      throw new Error(`IPC response exceeds the ${MAX_RESPONSE_FRAME_CHARS}-character limit`);
+    }
+
     const frames = this.buffer.split("\n");
     this.buffer = frames.pop() ?? "";
 
     for (const frame of frames) {
+      if (frame.length > MAX_RESPONSE_FRAME_CHARS) {
+        throw new Error(`IPC response exceeds the ${MAX_RESPONSE_FRAME_CHARS}-character limit`);
+      }
+
       const trimmed = frame.trim();
       if (trimmed.length > 0) {
         this.handleFrame(trimmed);
@@ -128,11 +144,7 @@ export class KosmosServerClient {
     this.pending.delete(response.id);
 
     if (!response.ok) {
-      const error = response.error ?? {
-        code: "ipc.server_error",
-        message: "server returned an IPC error",
-      };
-      pending.reject(new KosmosIpcRequestError(error.code, error.message));
+      pending.reject(new KosmosIpcRequestError(response.error.code, response.error.message));
       return;
     }
 
@@ -142,6 +154,12 @@ export class KosmosServerClient {
   private handleClose(): void {
     this.socket = undefined;
     this.rejectAll(new Error("IPC server closed the connection"));
+  }
+
+  private failConnection(error: Error): void {
+    this.socket?.destroy();
+    this.socket = undefined;
+    this.rejectAll(error);
   }
 
   private rejectAll(error: Error): void {
@@ -164,11 +182,42 @@ export function defaultSocketPath(): string {
 }
 
 function parseResponse(frame: string): KosmosServerResponse {
-  const response = JSON.parse(frame) as Partial<KosmosServerResponse>;
+  const response: unknown = JSON.parse(frame);
 
-  if (response.type !== "response" || typeof response.id !== "number") {
+  if (
+    !response ||
+    typeof response !== "object" ||
+    !("type" in response) ||
+    response.type !== "response" ||
+    !("id" in response) ||
+    typeof response.id !== "number" ||
+    !Number.isSafeInteger(response.id) ||
+    response.id < 0 ||
+    !("ok" in response) ||
+    typeof response.ok !== "boolean"
+  ) {
     throw new Error("Invalid IPC response from server");
   }
 
+  if (response.ok) {
+    if (!("result" in response)) {
+      throw new Error("Invalid successful IPC response from server");
+    }
+  } else if (
+    !("error" in response) ||
+    !response.error ||
+    typeof response.error !== "object" ||
+    !("code" in response.error) ||
+    typeof response.error.code !== "string" ||
+    !("message" in response.error) ||
+    typeof response.error.message !== "string"
+  ) {
+    throw new Error("Invalid failed IPC response from server");
+  }
+
   return response as KosmosServerResponse;
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

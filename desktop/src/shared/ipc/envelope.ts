@@ -13,13 +13,9 @@ export type KosmosIpcError = {
   message: string;
 };
 
-export type KosmosServerResponse = {
-  type: "response";
-  id: number;
-  ok: boolean;
-  result?: unknown;
-  error?: KosmosIpcError;
-};
+export type KosmosServerResponse =
+  | { type: "response"; id: number; ok: true; result: unknown }
+  | { type: "response"; id: number; ok: false; error: KosmosIpcError };
 
 export type KosmosIpcRequestResult<T = unknown> =
   | { ok: true; result: T }
@@ -27,7 +23,6 @@ export type KosmosIpcRequestResult<T = unknown> =
 
 export type KosmosApi = {
   request<T = unknown>(request: KosmosIpcRequest): Promise<T>;
-  getSocketPath(): Promise<string>;
   selectWorkspaceDirectory(): Promise<string | undefined>;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;

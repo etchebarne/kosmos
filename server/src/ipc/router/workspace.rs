@@ -4,15 +4,17 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::{
     ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
 };
-use super::{command_response, parse_params, unsupported_action, workspace_list_response};
+use super::{
+    RoutedResponse, command_response, parse_params, unsupported_action, workspace_list_response,
+};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
     match request.action.as_str() {
-        "list" => workspace_list_response(request.id, state),
-        "open" => open_workspace(state, request),
-        "activate" => activate_workspace(state, request),
-        "close" => close_workspace(state, request),
-        _ => unsupported_action(request),
+        "list" => RoutedResponse::none(workspace_list_response(request.id, state)),
+        "open" => RoutedResponse::full(open_workspace(state, request)),
+        "activate" => RoutedResponse::active_workspace(activate_workspace(state, request)),
+        "close" => RoutedResponse::full(close_workspace(state, request)),
+        _ => RoutedResponse::none(unsupported_action(request)),
     }
 }
 

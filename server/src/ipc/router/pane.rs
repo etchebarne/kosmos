@@ -2,16 +2,18 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::pane::{
     ActivatePaneParams, MovePaneParams, ResizeSplitParams, SplitPaneParams,
 };
-use super::{command_response, parse_params, unsupported_action};
+use super::{RoutedResponse, command_response, parse_params, unsupported_action};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match request.action.as_str() {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
+    let response = match request.action.as_str() {
         "split" => split_pane(state, request),
         "activate" => activate_pane(state, request),
         "move" => move_pane(state, request),
         "resize" => resize_split(state, request),
-        _ => unsupported_action(request),
-    }
+        _ => return RoutedResponse::none(unsupported_action(request)),
+    };
+
+    RoutedResponse::full(response)
 }
 
 fn split_pane(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

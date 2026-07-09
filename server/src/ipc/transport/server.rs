@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,8 @@ pub(crate) fn run(
 ) -> io::Result<()> {
     prepare_socket_path(&socket_path)?;
 
-    let listener = UnixListener::bind(&socket_path)?;
+    let listener = bind_socket(&socket_path)?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     let state = Arc::new(Mutex::new(state));
     let store = Arc::new(store);
 
@@ -38,6 +39,16 @@ pub(crate) fn run(
     }
 
     Ok(())
+}
+
+fn bind_socket(socket_path: &Path) -> io::Result<UnixListener> {
+    // The server is still single-threaded here, so temporarily tightening the process umask is
+    // safe and prevents a connectable socket from existing before chmod runs.
+    let previous_umask = unsafe { libc::umask(0o177) };
+    let listener = UnixListener::bind(socket_path);
+    unsafe { libc::umask(previous_umask) };
+
+    listener
 }
 
 fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
@@ -129,6 +140,22 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert!(path.exists());
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn server_sockets_can_be_restricted_to_the_owner() {
+        let path = socket_path("permissions");
+        let listener = bind_socket(&path).expect("test socket should bind");
+        let mode = fs::metadata(&path)
+            .expect("socket metadata should load")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(mode, 0o600);
+
+        drop(listener);
         let _ = fs::remove_file(path);
     }
 }

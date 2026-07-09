@@ -41,12 +41,6 @@ export type TransferFileTreeEntriesParams = {
   targetDirectoryPath?: string | null;
 };
 
-export type DeleteFileTreeEntryParams = {
-  workspaceId?: WorkspaceId | null;
-  tabId: TabId;
-  path: string;
-};
-
 export type DeleteFileTreeEntriesParams = {
   workspaceId?: WorkspaceId | null;
   tabId: TabId;

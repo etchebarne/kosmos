@@ -102,11 +102,11 @@ impl GitRepository {
 
     pub fn snapshot(directory: impl AsRef<Path>) -> Result<GitRepositorySnapshot> {
         let repository_root = repository_root(directory.as_ref())?;
-        let status = parse_status(&git_bytes(
+        let status = parse_status(&git(
             &repository_root,
             ["status", "--porcelain=v1", "-z", "--branch"],
         )?)?;
-        let branches = parse_branches(&git_bytes(
+        let branches = parse_branches(&git(
             &repository_root,
             [
                 "for-each-ref",
@@ -135,10 +135,7 @@ impl GitRepository {
     pub fn diff(directory: impl AsRef<Path>, focused_path: &str) -> Result<GitDiff> {
         let repository_root = repository_root(directory.as_ref())?;
         let focused_path = normalize_path(focused_path)?;
-        let status = parse_status(&git_bytes(
-            &repository_root,
-            ["status", "--porcelain=v1", "-z"],
-        )?)?;
+        let status = parse_status(&git(&repository_root, ["status", "--porcelain=v1", "-z"])?)?;
 
         Ok(GitDiff {
             focused_path: Some(focused_path),
@@ -255,7 +252,7 @@ impl GitRepository {
 
     pub fn stashes(directory: impl AsRef<Path>) -> Result<Vec<GitStash>> {
         let repository_root = repository_root(directory.as_ref())?;
-        let bytes = git_bytes(
+        let bytes = git(
             &repository_root,
             ["stash", "list", "--format=%gd%x00%H%x00%ct%x00%gs%x1e"],
         )?;
@@ -585,22 +582,45 @@ struct GitDiffStats {
 }
 
 fn repository_root(directory: &Path) -> Result<PathBuf> {
-    let repository = gix::discover(directory).map_err(|error| GitError::Discover {
-        directory: directory.to_path_buf(),
-        message: error.to_string(),
-    })?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()?;
 
-    repository
-        .workdir()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| GitError::NotWorktree(repository.path().to_path_buf()))
+    if output.status.success() {
+        let path =
+            String::from_utf8(output.stdout).map_err(|error| GitError::Utf8(error.to_string()))?;
+        let path = path.strip_suffix('\n').unwrap_or(&path);
+
+        return if path.is_empty() {
+            Err(GitError::Discover {
+                directory: directory.to_path_buf(),
+                message: "Git returned an empty repository root".to_owned(),
+            })
+        } else {
+            Ok(PathBuf::from(path))
+        };
+    }
+
+    let bare_output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(["rev-parse", "--is-bare-repository"])
+        .output()?;
+
+    if bare_output.status.success() && bare_output.stdout.starts_with(b"true") {
+        return Err(GitError::NotWorktree(directory.to_path_buf()));
+    }
+
+    Err(GitError::Discover {
+        directory: directory.to_path_buf(),
+        message: command_stderr(&output.stderr),
+    })
 }
 
 fn staged_paths(repository_root: &Path) -> Result<Vec<String>> {
-    let status = parse_status(&git_bytes(
-        repository_root,
-        ["status", "--porcelain=v1", "-z"],
-    )?)?;
+    let status = parse_status(&git(repository_root, ["status", "--porcelain=v1", "-z"])?)?;
 
     Ok(status
         .changes
@@ -808,7 +828,7 @@ fn parse_branches(bytes: &[u8]) -> Vec<GitBranch> {
 
 fn parse_branch_line(line: &[u8]) -> Option<GitBranch> {
     let mut fields = line.split(|byte| *byte == 0);
-    let name = non_empty_string(&String::from_utf8_lossy(fields.next()?).to_string())?;
+    let name = non_empty_string(String::from_utf8_lossy(fields.next()?).as_ref())?;
     let current = fields
         .next()
         .is_some_and(|field| String::from_utf8_lossy(field).trim() == "*");
@@ -887,28 +907,29 @@ fn diff_stats(repository_root: &Path, changes: &[GitChange]) -> Result<GitDiffSt
 }
 
 fn latest_commit(repository_root: &Path) -> Result<Option<String>> {
-    match git_bytes(repository_root, ["log", "-1", "--pretty=%s"]) {
-        Ok(output) => Ok(non_empty_string(&String::from_utf8_lossy(&output))),
-        Err(GitError::CommandFailed { stderr, .. })
-            if stderr.contains("does not have any commits") =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
+    if !has_head(repository_root)? {
+        return Ok(None);
     }
+
+    git(repository_root, ["log", "-1", "--pretty=%s"])
+        .map(|output| non_empty_string(&String::from_utf8_lossy(&output)))
 }
 
 fn has_head(repository_root: &Path) -> Result<bool> {
-    match git(repository_root, ["rev-parse", "--verify", "HEAD"]) {
-        Ok(_) => Ok(true),
-        Err(GitError::CommandFailed { stderr, .. })
-            if stderr.contains("Needed a single revision")
-                || stderr.contains("unknown revision")
-                || stderr.contains("ambiguous argument") =>
-        {
-            Ok(false)
-        }
-        Err(error) => Err(error),
+    let args = ["rev-parse", "--verify", "--quiet", "HEAD"];
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository_root)
+        .args(args)
+        .output()?;
+
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(GitError::CommandFailed {
+            command: format!("git {}", args.join(" ")),
+            stderr: command_stderr(&output.stderr),
+        }),
     }
 }
 
@@ -953,7 +974,19 @@ fn add_untracked_stats(
 }
 
 fn add_untracked_path_stats(path: &Path, stats: &mut GitDiffStats) -> Result<()> {
-    if path.is_dir() {
+    let file_type = fs::symlink_metadata(path)
+        .map_err(|error| io_error(path, error))?
+        .file_type();
+
+    if file_type.is_symlink() {
+        let target = fs::read_link(path).map_err(|error| io_error(path, error))?;
+        stats.insertions = stats
+            .insertions
+            .saturating_add(line_count(target.to_string_lossy().as_bytes()));
+        return Ok(());
+    }
+
+    if file_type.is_dir() {
         for entry in fs::read_dir(path).map_err(|error| io_error(path, error))? {
             let entry = entry.map_err(|error| io_error(path, error))?;
             add_untracked_path_stats(&entry.path(), stats)?;
@@ -962,7 +995,7 @@ fn add_untracked_path_stats(path: &Path, stats: &mut GitDiffStats) -> Result<()>
         return Ok(());
     }
 
-    if path.is_file() {
+    if file_type.is_file() {
         let bytes = fs::read(path).map_err(|error| io_error(path, error))?;
         stats.insertions = stats.insertions.saturating_add(line_count(&bytes));
     }
@@ -1040,8 +1073,15 @@ fn git_patch(repository_root: &Path, args: &[&str], path: &str) -> Result<String
 
 fn untracked_patch(repository_root: &Path, path: &str) -> Result<String> {
     let full_path = repository_root.join(path.trim_end_matches('/'));
+    let file_type = fs::symlink_metadata(&full_path)
+        .map_err(|error| io_error(&full_path, error))?
+        .file_type();
 
-    if full_path.is_dir() {
+    if file_type.is_symlink() {
+        return untracked_symlink_patch(&full_path, path);
+    }
+
+    if file_type.is_dir() {
         let mut files = Vec::new();
         collect_files(&full_path, &mut files)?;
         files.sort();
@@ -1061,14 +1101,37 @@ fn untracked_patch(repository_root: &Path, path: &str) -> Result<String> {
     untracked_file_patch(repository_root, path)
 }
 
+fn untracked_symlink_patch(full_path: &Path, relative_path: &str) -> Result<String> {
+    let target = fs::read_link(full_path).map_err(|error| io_error(full_path, error))?;
+    let target = target.to_string_lossy();
+    let insertion_count = line_count(target.as_bytes());
+    let old_path = format!("a/{relative_path}");
+    let new_path = format!("b/{relative_path}");
+    let mut added_lines = String::new();
+
+    for line in target.split_inclusive('\n') {
+        added_lines.push('+');
+        added_lines.push_str(line);
+    }
+
+    if !target.ends_with('\n') {
+        added_lines.push_str("\n\\ No newline at end of file\n");
+    }
+
+    Ok(format!(
+        "diff --git {old_path:?} {new_path:?}\nnew file mode 120000\n--- /dev/null\n+++ {new_path:?}\n@@ -0,0 +1,{insertion_count} @@\n{added_lines}"
+    ))
+}
+
 fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(directory).map_err(|error| io_error(directory, error))? {
         let entry = entry.map_err(|error| io_error(directory, error))?;
         let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| io_error(&path, error))?;
 
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_files(&path, files)?;
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             files.push(path);
         }
     }
@@ -1341,6 +1404,52 @@ mod tests {
         assert!(license.sections()[0].patch().contains("+license"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repository_discovery_preserves_trailing_path_whitespace() {
+        let parent = test_directory("repository-whitespace");
+        let root = parent.join("repository \n");
+        fs::create_dir(&root).expect("repository directory should be created");
+        GitRepository::init(&root).expect("repository should initialize");
+
+        assert_eq!(repository_root(&root).unwrap(), root);
+
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untracked_file_collection_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_directory("untracked-symlink");
+        let outside = root.with_extension("outside");
+        fs::create_dir(&outside).expect("outside directory should be created");
+        fs::write(outside.join("private.txt"), "private\n")
+            .expect("outside file should be written");
+        symlink(&outside, root.join("linked")).expect("symlink should be created");
+        symlink("first\nsecond", root.join("multiline"))
+            .expect("multiline symlink should be created");
+        let mut stats = GitDiffStats::default();
+        let mut files = Vec::new();
+
+        add_untracked_path_stats(&root.join("linked"), &mut stats)
+            .expect("symlink stats should be safe");
+        collect_files(&root, &mut files).expect("file collection should succeed");
+        let patch = untracked_patch(&root, "linked").expect("symlink patch should be generated");
+        let multiline_patch =
+            untracked_patch(&root, "multiline").expect("multiline patch should be generated");
+
+        assert_eq!(stats.insertions, 1);
+        assert!(files.is_empty());
+        assert!(patch.contains(outside.to_string_lossy().as_ref()));
+        assert!(!patch.contains("private\n"));
+        assert!(multiline_patch.contains("@@ -0,0 +1,2 @@"));
+        assert!(multiline_patch.contains("+first\n+second"));
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     fn test_directory(name: &str) -> PathBuf {

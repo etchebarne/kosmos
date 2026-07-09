@@ -2,26 +2,25 @@ use core::tabs::file_tree::FileTreeError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::file_tree::{
-    CreateFileTreeEntryParams, DeleteFileTreeEntriesParams, DeleteFileTreeEntryParams,
-    FileTreeChildrenSnapshot, FileTreeResolvedPath, FileTreeSnapshot, GetFileTreeChildrenParams,
-    GetFileTreeParams, RenameFileTreeEntryParams, ResolveFileTreePathParams,
-    SetFileTreeExpandedPathsParams, TransferFileTreeEntriesParams,
+    CreateFileTreeEntryParams, DeleteFileTreeEntriesParams, FileTreeChildrenSnapshot,
+    FileTreeResolvedPath, FileTreeSnapshot, GetFileTreeChildrenParams, GetFileTreeParams,
+    RenameFileTreeEntryParams, ResolveFileTreePathParams, SetFileTreeExpandedPathsParams,
+    TransferFileTreeEntriesParams,
 };
-use super::{parse_params, unsupported_action};
+use super::{RoutedResponse, parse_params, unsupported_action};
 
-pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> RoutedResponse {
     match request.action.as_str() {
-        "get" => get_file_tree(state, request),
-        "getChildren" => get_file_tree_children(state, request),
-        "setExpandedPaths" => set_expanded_paths(state, request),
-        "createEntry" => create_entry(state, request),
-        "renameEntry" => rename_entry(state, request),
-        "moveEntries" => move_entries(state, request),
-        "copyEntries" => copy_entries(state, request),
-        "deleteEntry" => delete_entry(state, request),
-        "deleteEntries" => delete_entries(state, request),
-        "resolvePath" => resolve_path(state, request),
-        _ => unsupported_action(request),
+        "get" => RoutedResponse::none(get_file_tree(state, request)),
+        "getChildren" => RoutedResponse::none(get_file_tree_children(state, request)),
+        "setExpandedPaths" => RoutedResponse::full(set_expanded_paths(state, request)),
+        "createEntry" => RoutedResponse::none(create_entry(state, request)),
+        "renameEntry" => RoutedResponse::none(rename_entry(state, request)),
+        "moveEntries" => RoutedResponse::none(move_entries(state, request)),
+        "copyEntries" => RoutedResponse::none(copy_entries(state, request)),
+        "deleteEntries" => RoutedResponse::none(delete_entries(state, request)),
+        "resolvePath" => RoutedResponse::none(resolve_path(state, request)),
+        _ => RoutedResponse::none(unsupported_action(request)),
     }
 }
 
@@ -143,22 +142,6 @@ fn copy_entries(state: &mut core::State, request: &RequestEnvelope) -> ServerMes
             params.tab_id.into(),
             &params.source_paths,
             params.target_directory_path.as_deref(),
-        ) {
-            Ok(()) => ServerMessage::ok(request.id, true),
-            Err(error) => {
-                ServerMessage::error(request.id, file_tree_error_code(&error), error.to_string())
-            }
-        },
-        Err(response) => response,
-    }
-}
-
-fn delete_entry(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<DeleteFileTreeEntryParams>(request) {
-        Ok(params) => match state.delete_file_tree_entry(
-            params.workspace_id.map(Into::into),
-            params.tab_id.into(),
-            &params.path,
         ) {
             Ok(()) => ServerMessage::ok(request.id, true),
             Err(error) => {

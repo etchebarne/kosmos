@@ -26,10 +26,6 @@ export function resizeTerminal(params: ResizeTerminalParams): Promise<boolean> {
   return requestServer(DOMAIN, "resize", params);
 }
 
-export function closeTerminal(params: TerminalTabParams): Promise<boolean> {
-  return requestServer(DOMAIN, "close", params);
-}
-
 export type {
   OpenTerminalParams,
   ResizeTerminalParams,

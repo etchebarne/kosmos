@@ -1,6 +1,7 @@
-use core::tree::{Pane, PaneId, PaneNode, SplitAxis, SplitPaneId};
+use core::tree::{Pane, PaneNode, SplitAxis};
 use serde::{Deserialize, Serialize};
 
+use super::ids::{PaneIdParam, SplitPaneIdParam, WorkspaceIdParam};
 use super::tab::TabSnapshot;
 
 #[derive(Debug, Deserialize)]
@@ -35,33 +36,6 @@ pub(crate) struct ResizeSplitParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) split_id: SplitPaneIdParam,
     pub(crate) ratio: f32,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub(crate) struct WorkspaceIdParam(u64);
-
-impl From<WorkspaceIdParam> for core::tree::WorkspaceId {
-    fn from(value: WorkspaceIdParam) -> Self {
-        Self::new(value.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub(crate) struct PaneIdParam(u64);
-
-impl From<PaneIdParam> for PaneId {
-    fn from(value: PaneIdParam) -> Self {
-        Self::new(value.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub(crate) struct SplitPaneIdParam(u64);
-
-impl From<SplitPaneIdParam> for SplitPaneId {
-    fn from(value: SplitPaneIdParam) -> Self {
-        Self::new(value.0)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
