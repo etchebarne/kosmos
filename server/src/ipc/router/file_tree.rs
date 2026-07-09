@@ -1,4 +1,4 @@
-use core::file_tree::FileTreeError;
+use core::tabs::file_tree::FileTreeError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::file_tree::{

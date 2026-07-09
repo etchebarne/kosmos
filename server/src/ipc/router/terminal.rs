@@ -1,4 +1,4 @@
-use core::terminal::TerminalError;
+use core::tabs::terminal::TerminalError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::terminal::{

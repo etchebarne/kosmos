@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::file_tree::{
+use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
-use crate::git::{
+use crate::tabs::git::{
     GitDiff, GitDiffViewState, GitError, GitRepository, GitRepositorySnapshot, GitStash,
 };
-use crate::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
+use crate::tabs::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,

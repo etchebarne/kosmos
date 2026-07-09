@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::State;
-use crate::file_tree::FileTreeViewState;
-use crate::git::GitDiffViewState;
+use crate::tabs::file_tree::FileTreeViewState;
+use crate::tabs::git::GitDiffViewState;
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
 };

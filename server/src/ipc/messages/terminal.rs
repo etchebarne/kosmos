@@ -1,4 +1,4 @@
-use core::terminal::TerminalOutput;
+use core::tabs::terminal::TerminalOutput;
 use serde::{Deserialize, Serialize};
 
 use super::pane::WorkspaceIdParam;

@@ -1,4 +1,4 @@
-use core::git::{
+use core::tabs::git::{
     GitBranch, GitChange, GitChangeKind, GitDiff, GitDiffFile, GitDiffSection, GitDiffSectionKind,
     GitRepositorySnapshot, GitStash,
 };

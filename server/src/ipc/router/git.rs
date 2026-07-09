@@ -1,4 +1,4 @@
-use core::git::GitError;
+use core::tabs::git::GitError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::git::{

@@ -1,4 +1,4 @@
-use core::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind};
+use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind};
 use serde::{Deserialize, Serialize};
 
 use super::pane::WorkspaceIdParam;
