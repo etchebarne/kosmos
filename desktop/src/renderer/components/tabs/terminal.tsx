@@ -36,6 +36,7 @@ const MIN_COLUMNS = 10;
 const MIN_ROWS = 3;
 const POLL_INTERVAL_MS = 50;
 const INPUT_FLUSH_DELAY_MS = 8;
+const PTY_RESIZE_DEBOUNCE_MS = 200;
 const TERMINAL_FONT_FAMILY =
   '"Adwaita Mono", "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", monospace';
 const TERMINAL_FONT_SIZE = 13;
@@ -74,6 +75,7 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
     let pollInFlight = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let inputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let ptyResizeTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingInput = "";
     let terminalExited = false;
     let size = DEFAULT_TERMINAL_SIZE;
@@ -190,6 +192,30 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
         inputFlushTimer = setTimeout(flushInput, INPUT_FLUSH_DELAY_MS);
       }
     };
+    const schedulePtyResize = (nextSize: TerminalDimensions) => {
+      if (!sessionOpen) {
+        return;
+      }
+
+      if (ptyResizeTimer !== null) {
+        clearTimeout(ptyResizeTimer);
+      }
+
+      ptyResizeTimer = setTimeout(() => {
+        ptyResizeTimer = null;
+
+        void resizeTerminal({
+          workspaceId,
+          tabId,
+          columns: nextSize.columns,
+          rows: nextSize.rows,
+        }).catch((caughtError: unknown) => {
+          if (!disposed) {
+            failTerminal(caughtError);
+          }
+        });
+      }, PTY_RESIZE_DEBOUNCE_MS);
+    };
     const applySize = () => {
       if (!isElementVisible(container)) {
         return;
@@ -203,16 +229,7 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
 
       size = nextSize;
       terminal.resize(size.columns, size.rows);
-
-      if (sessionOpen) {
-        void resizeTerminal({ workspaceId, tabId, columns: size.columns, rows: size.rows }).catch(
-          (caughtError: unknown) => {
-            if (!disposed) {
-              failTerminal(caughtError);
-            }
-          },
-        );
-      }
+      schedulePtyResize(nextSize);
     };
     const startSession = async () => {
       try {
@@ -226,11 +243,12 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
           size = fitTerminal(terminal, fitAddon);
         }
 
+        const openedSize = size;
         const output = await openTerminal({
           workspaceId,
           tabId,
-          columns: size.columns,
-          rows: size.rows,
+          columns: openedSize.columns,
+          rows: openedSize.rows,
         });
 
         if (disposed) {
@@ -239,6 +257,10 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
 
         sessionOpen = true;
         setStatus({ kind: "running" });
+
+        if (!dimensionsEqual(openedSize, size)) {
+          schedulePtyResize(size);
+        }
 
         if (!handleOutput(output)) {
           startPolling();
@@ -273,6 +295,10 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
 
       if (inputFlushTimer !== null) {
         clearTimeout(inputFlushTimer);
+      }
+
+      if (ptyResizeTimer !== null) {
+        clearTimeout(ptyResizeTimer);
       }
 
       terminal.dispose();
