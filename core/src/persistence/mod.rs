@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::State;
 use crate::file_tree::FileTreeViewState;
+use crate::git::GitDiffViewState;
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
 };
@@ -168,9 +169,17 @@ fn migrate(connection: &Connection) -> Result<()> {
             FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS git_diff_tabs (
+            workspace_id INTEGER NOT NULL,
+            tab_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, tab_id),
+            FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
+        );
+
         UPDATE tabs
         SET kind = 'blank'
-        WHERE kind NOT IN ('blank', 'file_tree', 'editor', 'git', 'search', 'terminal');
+        WHERE kind NOT IN ('blank', 'diff', 'file_tree', 'editor', 'git', 'search', 'terminal');
         ",
     )?;
 
@@ -180,6 +189,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM metadata", [])?;
     transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
+    transaction.execute("DELETE FROM git_diff_tabs", [])?;
     transaction.execute("DELETE FROM tabs", [])?;
     transaction.execute("DELETE FROM panes", [])?;
     transaction.execute("DELETE FROM pane_nodes", [])?;
@@ -213,6 +223,7 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
     }
 
     save_file_tree_view_states(transaction, state)?;
+    save_git_diff_view_states(transaction, state)?;
 
     Ok(())
 }
@@ -345,6 +356,24 @@ fn save_file_tree_view_states(transaction: &Transaction<'_>, state: &State) -> R
     Ok(())
 }
 
+fn save_git_diff_view_states(transaction: &Transaction<'_>, state: &State) -> Result<()> {
+    for view_state in state.git_diff_view_states() {
+        transaction.execute(
+            "
+            INSERT INTO git_diff_tabs (workspace_id, tab_id, path)
+            VALUES (?1, ?2, ?3)
+            ",
+            params![
+                to_i64(view_state.workspace_id().value(), "workspace id")?,
+                to_i64(view_state.tab_id().value(), "tab id")?,
+                view_state.path(),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn load_state(connection: &Connection) -> Result<State> {
     let active_workspace_id = load_active_workspace_id(connection)?;
     let workspace_rows = load_workspace_rows(connection)?;
@@ -365,11 +394,13 @@ fn load_state(connection: &Connection) -> Result<State> {
     }
 
     let file_tree_view_states = load_file_tree_view_states(connection)?;
+    let git_diff_view_states = load_git_diff_view_states(connection)?;
 
-    State::from_workspaces_with_file_tree_view_states(
+    State::from_workspaces_with_view_states(
         workspaces,
         active_workspace_id,
         file_tree_view_states,
+        git_diff_view_states,
     )
     .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
 }
@@ -621,6 +652,36 @@ fn load_file_tree_view_states(connection: &Connection) -> Result<Vec<FileTreeVie
     Ok(view_states)
 }
 
+fn load_git_diff_view_states(connection: &Connection) -> Result<Vec<GitDiffViewState>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT workspace_id, tab_id, path
+        FROM git_diff_tabs
+        ORDER BY workspace_id, tab_id
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut view_states = Vec::new();
+
+    for row in rows {
+        let (workspace_id, tab_id, path) = row?;
+
+        view_states.push(GitDiffViewState::new(
+            WorkspaceId::new(to_u64(workspace_id, "workspace id")?),
+            TabId::new(to_u64(tab_id, "tab id")?),
+            path,
+        ));
+    }
+
+    Ok(view_states)
+}
+
 fn push_file_tree_view_state(
     view_states: &mut Vec<FileTreeViewState>,
     key: Option<(WorkspaceId, TabId)>,
@@ -663,6 +724,7 @@ fn parse_split_axis(axis: String) -> Result<SplitAxis> {
 fn tab_kind_name(kind: &TabKind) -> &'static str {
     match kind {
         TabKind::Blank => "blank",
+        TabKind::Diff => "diff",
         TabKind::FileTree => "file_tree",
         TabKind::Editor => "editor",
         TabKind::Git => "git",
@@ -674,6 +736,7 @@ fn tab_kind_name(kind: &TabKind) -> &'static str {
 fn parse_tab_kind(kind: &str) -> Result<TabKind> {
     match kind {
         "blank" => Ok(TabKind::Blank),
+        "diff" => Ok(TabKind::Diff),
         "file_tree" => Ok(TabKind::FileTree),
         "editor" => Ok(TabKind::Editor),
         "git" => Ok(TabKind::Git),
@@ -825,6 +888,38 @@ mod tests {
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(workspace_path);
+    }
+
+    #[test]
+    fn saves_and_loads_git_diff_view_state() {
+        let path = test_db_path("git-diff-view-state");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Git,
+        ));
+        state
+            .open_git_diff_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .expect("diff tab should open");
+
+        store.save(&state).expect("state should save");
+
+        let loaded = store.load().expect("state should load");
+        let view_state = loaded
+            .git_diff_view_states()
+            .first()
+            .expect("diff view state should load");
+
+        assert_eq!(view_state.workspace_id(), workspace_id);
+        assert_eq!(view_state.tab_id(), TabId::new(2));
+        assert_eq!(view_state.path(), "src/main.rs");
+
+        let _ = fs::remove_file(path);
     }
 
     fn test_db_path(name: &str) -> PathBuf {

@@ -81,6 +81,7 @@ impl From<TabIdParam> for TabId {
 pub(crate) enum TabKindPayload {
     #[default]
     Blank,
+    Diff,
     FileTree,
     Editor,
     Git,
@@ -92,6 +93,7 @@ impl From<TabKindPayload> for TabKind {
     fn from(value: TabKindPayload) -> Self {
         match value {
             TabKindPayload::Blank => Self::Blank,
+            TabKindPayload::Diff => Self::Diff,
             TabKindPayload::FileTree => Self::FileTree,
             TabKindPayload::Editor => Self::Editor,
             TabKindPayload::Git => Self::Git,
@@ -105,6 +107,7 @@ impl From<&TabKind> for TabKindPayload {
     fn from(value: &TabKind) -> Self {
         match value {
             TabKind::Blank => Self::Blank,
+            TabKind::Diff => Self::Diff,
             TabKind::FileTree => Self::FileTree,
             TabKind::Editor => Self::Editor,
             TabKind::Git => Self::Git,

@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
-use crate::git::{GitError, GitRepository, GitRepositorySnapshot, GitStash};
+use crate::git::{
+    GitDiff, GitDiffViewState, GitError, GitRepository, GitRepositorySnapshot, GitStash,
+};
 use crate::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
@@ -14,6 +16,7 @@ use crate::tree::{
 pub struct State {
     workspaces: WorkspaceList,
     file_tree_view_states: Vec<FileTreeViewState>,
+    git_diff_view_states: Vec<GitDiffViewState>,
     terminal_sessions: TerminalSessions,
     next_workspace_id: u64,
     next_pane_id: u64,
@@ -42,6 +45,20 @@ impl State {
         active_workspace_id: Option<WorkspaceId>,
         file_tree_view_states: Vec<FileTreeViewState>,
     ) -> Option<Self> {
+        Self::from_workspaces_with_view_states(
+            workspaces,
+            active_workspace_id,
+            file_tree_view_states,
+            Vec::new(),
+        )
+    }
+
+    pub fn from_workspaces_with_view_states(
+        workspaces: Vec<Workspace>,
+        active_workspace_id: Option<WorkspaceId>,
+        file_tree_view_states: Vec<FileTreeViewState>,
+        git_diff_view_states: Vec<GitDiffViewState>,
+    ) -> Option<Self> {
         let mut workspace_list = WorkspaceList::new();
 
         for workspace in workspaces {
@@ -57,7 +74,7 @@ impl State {
             _ => return None,
         }
 
-        Self::from_workspace_list(workspace_list, file_tree_view_states)
+        Self::from_workspace_list(workspace_list, file_tree_view_states, git_diff_view_states)
     }
 
     pub fn workspaces(&self) -> &WorkspaceList {
@@ -66,6 +83,10 @@ impl State {
 
     pub fn file_tree_view_states(&self) -> &[FileTreeViewState] {
         &self.file_tree_view_states
+    }
+
+    pub fn git_diff_view_states(&self) -> &[GitDiffViewState] {
+        &self.git_diff_view_states
     }
 
     pub fn file_tree(
@@ -210,6 +231,75 @@ impl State {
         let directory = self.git_workspace_directory(workspace_id, tab_id)?;
 
         GitRepository::snapshot(directory)
+    }
+
+    pub fn git_diff(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<GitDiff, GitError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let view_state = self
+            .git_diff_view_state(workspace_id, tab_id)
+            .ok_or(GitError::TabNotFound)?;
+
+        if !self.is_git_diff_tab(workspace_id, tab_id) {
+            return Err(GitError::TabNotFound);
+        }
+
+        GitRepository::diff(workspace.directory(), view_state.path())
+    }
+
+    pub fn open_git_diff_tab(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        git_tab_id: TabId,
+        path: &str,
+    ) -> Result<(), GitError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let path = GitRepository::normalize_path(path)?;
+
+        self.git_workspace_directory(Some(workspace_id), git_tab_id)?;
+
+        if let Some((pane_id, tab_id)) = self.git_diff_tab(workspace_id) {
+            self.update_git_diff_view_state(workspace_id, tab_id, path);
+
+            return if self.activate_tab(Some(workspace_id), pane_id, tab_id) {
+                Ok(())
+            } else {
+                Err(GitError::TabNotFound)
+            };
+        }
+
+        let target_pane_id = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?
+            .root()
+            .largest_pane_id();
+        let tab = self.next_tab(TabKind::Diff.default_title(), TabKind::Diff);
+        let tab_id = tab.id();
+        let view_state = GitDiffViewState::new(workspace_id, tab_id, path);
+        let workspace = self
+            .workspace_mut(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+
+        if !workspace.add_tab_to_pane(target_pane_id, tab) {
+            return Err(GitError::TabNotFound);
+        }
+
+        workspace.activate_tab(target_pane_id, tab_id);
+        self.git_diff_view_states.push(view_state);
+
+        Ok(())
     }
 
     pub fn init_git_repository(
@@ -521,6 +611,7 @@ impl State {
 
         if let Some(workspace) = &closed_workspace {
             self.remove_workspace_file_tree_view_states(workspace.id());
+            self.remove_workspace_git_diff_view_states(workspace.id());
             self.terminal_sessions.close_workspace(workspace.id());
         }
 
@@ -633,6 +724,7 @@ impl State {
         kind: TabKind,
     ) -> bool {
         let keep_file_tree_state = kind == TabKind::FileTree;
+        let keep_git_diff_state = kind == TabKind::Diff;
         let keep_terminal_session = kind == TabKind::Terminal;
         let Some(workspace_id) = self.resolve_workspace_id(workspace_id) else {
             return false;
@@ -647,6 +739,10 @@ impl State {
 
         if updated && !keep_file_tree_state {
             self.remove_file_tree_view_state(workspace_id, tab_id);
+        }
+
+        if updated && !keep_git_diff_state {
+            self.remove_git_diff_view_state(workspace_id, tab_id);
         }
 
         if updated && close_terminal_session {
@@ -725,6 +821,7 @@ impl State {
 
         if removed_tab.is_some() {
             self.remove_file_tree_view_state(workspace_id, tab_id);
+            self.remove_git_diff_view_state(workspace_id, tab_id);
         }
 
         if removed_tab
@@ -851,6 +948,51 @@ impl State {
             .retain(|state| state.workspace_id() != workspace_id);
     }
 
+    fn git_diff_view_state(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Option<&GitDiffViewState> {
+        self.git_diff_view_states
+            .iter()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+    }
+
+    fn git_diff_tab(&self, workspace_id: WorkspaceId) -> Option<(PaneId, TabId)> {
+        self.git_diff_view_states
+            .iter()
+            .find(|state| state.workspace_id() == workspace_id)
+            .and_then(|state| {
+                tab_pane_id_in_workspace_list(&self.workspaces, workspace_id, state.tab_id())
+                    .map(|pane_id| (pane_id, state.tab_id()))
+            })
+    }
+
+    fn update_git_diff_view_state(
+        &mut self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        path: impl Into<String>,
+    ) {
+        if let Some(state) = self
+            .git_diff_view_states
+            .iter_mut()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+        {
+            state.set_path(path);
+        }
+    }
+
+    fn remove_git_diff_view_state(&mut self, workspace_id: WorkspaceId, tab_id: TabId) {
+        self.git_diff_view_states
+            .retain(|state| state.workspace_id() != workspace_id || state.tab_id() != tab_id);
+    }
+
+    fn remove_workspace_git_diff_view_states(&mut self, workspace_id: WorkspaceId) {
+        self.git_diff_view_states
+            .retain(|state| state.workspace_id() != workspace_id);
+    }
+
     fn is_file_tree_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
     }
@@ -861,6 +1003,10 @@ impl State {
 
     fn is_git_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Git)
+    }
+
+    fn is_git_diff_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Diff)
     }
 
     fn file_tree_workspace_directory(
@@ -943,6 +1089,7 @@ impl State {
     fn from_workspace_list(
         workspaces: WorkspaceList,
         file_tree_view_states: Vec<FileTreeViewState>,
+        git_diff_view_states: Vec<GitDiffViewState>,
     ) -> Option<Self> {
         let next_ids = NextIds::from_workspaces(&workspaces)?;
 
@@ -953,9 +1100,17 @@ impl State {
             return None;
         }
 
+        if git_diff_view_states.iter().any(|state| {
+            tab_kind_in_workspace_list(&workspaces, state.workspace_id(), state.tab_id())
+                != Some(&TabKind::Diff)
+        }) {
+            return None;
+        }
+
         Some(Self {
             workspaces,
             file_tree_view_states,
+            git_diff_view_states,
             terminal_sessions: TerminalSessions::default(),
             next_workspace_id: next_ids.workspace_id,
             next_pane_id: next_ids.pane_id,
@@ -1038,6 +1193,16 @@ fn tab_kind_in_workspace_list(
     tab_kind_in_node(workspace.root(), tab_id)
 }
 
+fn tab_pane_id_in_workspace_list(
+    workspaces: &WorkspaceList,
+    workspace_id: WorkspaceId,
+    tab_id: TabId,
+) -> Option<PaneId> {
+    let workspace = workspaces.workspace(workspace_id)?;
+
+    tab_pane_id_in_node(workspace.root(), tab_id)
+}
+
 fn tab_kind_in_node(node: &PaneNode, tab_id: TabId) -> Option<&TabKind> {
     match node {
         PaneNode::Leaf(pane) => pane
@@ -1050,11 +1215,21 @@ fn tab_kind_in_node(node: &PaneNode, tab_id: TabId) -> Option<&TabKind> {
     }
 }
 
+fn tab_pane_id_in_node(node: &PaneNode, tab_id: TabId) -> Option<PaneId> {
+    match node {
+        PaneNode::Leaf(pane) if pane.contains_tab(tab_id) => Some(pane.id()),
+        PaneNode::Leaf(_) => None,
+        PaneNode::Split(split) => tab_pane_id_in_node(split.first(), tab_id)
+            .or_else(|| tab_pane_id_in_node(split.second(), tab_id)),
+    }
+}
+
 impl Default for State {
     fn default() -> Self {
         Self {
             workspaces: WorkspaceList::new(),
             file_tree_view_states: Vec::new(),
+            git_diff_view_states: Vec::new(),
             terminal_sessions: TerminalSessions::default(),
             next_workspace_id: 1,
             next_pane_id: 1,
@@ -1136,6 +1311,77 @@ mod tests {
 
         assert_eq!(pane.active_tab().title(), "Git");
         assert_eq!(pane.active_tab().kind(), &TabKind::Git);
+    }
+
+    #[test]
+    fn opening_git_diff_tab_places_it_in_largest_pane() {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Git,
+        ));
+        assert!(state.split_pane(
+            Some(workspace_id),
+            Some(PaneId::new(1)),
+            SplitAxis::Horizontal,
+            false,
+        ));
+        assert!(state.resize_split(Some(workspace_id), SplitPaneId::new(1), 0.7));
+
+        state
+            .open_git_diff_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .expect("diff tab should open");
+
+        let workspace = state
+            .workspaces()
+            .workspace(workspace_id)
+            .expect("workspace should exist");
+        let largest_pane = workspace
+            .root()
+            .find_pane(PaneId::new(1))
+            .expect("largest pane should exist");
+
+        assert_eq!(workspace.active_pane_id(), PaneId::new(1));
+        assert_eq!(largest_pane.active_tab_id(), TabId::new(3));
+        assert_eq!(largest_pane.active_tab().kind(), &TabKind::Diff);
+        assert_eq!(state.git_diff_view_states()[0].path(), "src/main.rs");
+    }
+
+    #[test]
+    fn opening_existing_git_diff_tab_reuses_it_and_updates_focus_path() {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace("/workspaces/main");
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Git,
+        ));
+
+        state
+            .open_git_diff_tab(Some(workspace_id), TabId::new(1), "README.md")
+            .expect("diff tab should open");
+        state
+            .open_git_diff_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .expect("existing diff tab should activate");
+
+        let workspace = state
+            .workspaces()
+            .workspace(workspace_id)
+            .expect("workspace should exist");
+        let pane = workspace
+            .root()
+            .find_pane(PaneId::new(1))
+            .expect("pane should exist");
+
+        assert_eq!(pane.tabs().len(), 2);
+        assert_eq!(state.git_diff_view_states().len(), 1);
+        assert_eq!(state.git_diff_view_states()[0].path(), "src/main.rs");
+        assert_eq!(pane.active_tab_id(), TabId::new(2));
+        assert_eq!(pane.active_tab().title(), "Diff");
     }
 
     #[test]

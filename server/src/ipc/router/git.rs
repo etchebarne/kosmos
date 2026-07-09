@@ -2,16 +2,18 @@ use core::git::GitError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::git::{
-    CommitGitChangesParams, CreateGitBranchParams, GitPathsParams, GitRepositorySnapshotPayload,
-    GitStashParams, GitStashPayload, GitTabParams, PullGitChangesParams, PushGitChangesParams,
-    SwitchGitBranchParams,
+    CommitGitChangesParams, CreateGitBranchParams, GitDiffPayload, GitPathsParams,
+    GitRepositorySnapshotPayload, GitStashParams, GitStashPayload, GitTabParams,
+    OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
 };
-use super::{parse_params, unsupported_action};
+use super::{parse_params, unsupported_action, workspace_list_response};
 
 pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match request.action.as_str() {
         "init" => init(state, request),
         "status" => status(state, request),
+        "openDiffTab" => open_diff_tab(state, request),
+        "diff" => diff(state, request),
         "stagePaths" => stage_paths(state, request),
         "unstagePaths" => unstage_paths(state, request),
         "stageAll" => stage_all(state, request),
@@ -32,6 +34,32 @@ pub(super) fn route(state: &mut core::State, request: &RequestEnvelope) -> Serve
         "discardAll" => discard_all(state, request),
         "discardStaged" => discard_staged(state, request),
         _ => unsupported_action(request),
+    }
+}
+
+fn open_diff_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<OpenGitDiffTabParams>(request) {
+        Ok(params) => match state.open_git_diff_tab(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            &params.path,
+        ) {
+            Ok(()) => workspace_list_response(request.id, state),
+            Err(error) => git_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn diff(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => {
+            match state.git_diff(params.workspace_id.map(Into::into), params.tab_id.into()) {
+                Ok(diff) => ServerMessage::ok(request.id, GitDiffPayload::from_diff(&diff)),
+                Err(error) => git_error(request.id, error),
+            }
+        }
+        Err(response) => response,
     }
 }
 

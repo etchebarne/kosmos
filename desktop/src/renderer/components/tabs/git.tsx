@@ -80,6 +80,7 @@ import {
   TooltipTrigger,
 } from "@/renderer/components/ui/tooltip";
 import { errorMessage } from "@/renderer/lib/errors";
+import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   GitChange,
   GitChangeKind,
@@ -197,6 +198,7 @@ const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
 ];
 
 export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
+  const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
   const [loadState, setLoadState] = useState<GitLoadState>({
     status: "loading",
     workspaceId,
@@ -285,6 +287,7 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     try {
       await initGitRepository({ workspaceId, tabId });
       await loadGitStatus(workspaceId, tabId, false);
+      bumpGitRevision(workspaceId);
     } catch (caughtError: unknown) {
       window.alert(errorMessage(caughtError));
     } finally {
@@ -375,6 +378,8 @@ function LoadedGitTab({
   onReload(): Promise<void>;
 }) {
   const [commitMessage, setCommitMessage] = useState("");
+  const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
+  const openGitDiffTab = useWorkspaceStore((state) => state.openGitDiffTab);
   const treePaths = gitTreePaths(snapshot.changes);
   const stagedCount = snapshot.changes.filter((change) => change.isStaged).length;
   const unstagedCount = snapshot.changes.filter((change) => change.isUnstaged).length;
@@ -400,6 +405,7 @@ function LoadedGitTab({
         await onReload();
       }
 
+      bumpGitRevision(workspaceId);
       onOperationSuccess(operationId);
 
       return true;
@@ -560,6 +566,7 @@ function LoadedGitTab({
               changes={snapshot.changes}
               paths={treePaths}
               disabled={busy}
+              onOpenDiff={(path) => openGitDiffTab(tabId, path)}
               onToggleStage={toggleStagePaths}
             />
           ) : (
@@ -1444,23 +1451,36 @@ function GitChangeTree({
   changes,
   paths,
   disabled,
+  onOpenDiff,
   onToggleStage,
 }: {
   changes: GitChange[];
   paths: string[];
   disabled: boolean;
+  onOpenDiff(path: string): void;
   onToggleStage(paths: string[]): void;
 }) {
+  const modelRef = useRef<FileTreeModel | null>(null);
+  const changedPaths = new Set(changes.map((change) => change.path));
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: false,
     gitStatus: gitStatusEntries(changes),
     initialExpansion: "open",
+    onSelectionChange: (selectedPaths) => {
+      const selectedChangedPath = selectedPaths.find((path) => changedPaths.has(path));
+
+      if (selectedChangedPath) {
+        onOpenDiff(selectedChangedPath);
+        requestAnimationFrame(() => modelRef.current?.getItem(selectedChangedPath)?.deselect());
+      }
+    },
     paths,
     renderRowDecoration: ({ item }) => ({ text: statusLabel(changes, item.path), title: statusTitle(changes, item.path) }),
     stickyFolders: true,
     unsafeCSS: gitTreeCheckboxCss(),
   });
+  modelRef.current = model;
 
   return (
     <div className="relative h-full min-h-0">

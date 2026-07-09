@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   File,
+  FileDiff,
   FileText,
   FolderTree,
   GitBranch,
@@ -12,6 +13,7 @@ import {
 import type { PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 
 import { BlankTab, type BlankTabOption } from "./blank";
+import { DiffTab } from "./diff";
 import { FileTreeTab } from "./file-tree";
 import { GitTab } from "./git";
 import { PlaceholderTab } from "./placeholder";
@@ -52,6 +54,19 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
         options={BLANK_TAB_OPTIONS}
         onActivatePane={onActivatePane}
         onSelectKind={onSetTabKind}
+      />
+    ),
+  },
+  diff: {
+    icon: FileDiff,
+    label: "Diff",
+    showInBlankPicker: false,
+    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+      <DiffTab
+        workspaceId={workspaceId}
+        tabId={tab.id}
+        isActive={isActive}
+        onActivatePane={onActivatePane}
       />
     ),
   },

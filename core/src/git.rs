@@ -6,6 +6,8 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use crate::tree::{TabId, WorkspaceId};
+
 pub type Result<T> = std::result::Result<T, GitError>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +46,40 @@ pub struct GitStash {
     commit: String,
     timestamp: i64,
     message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitDiff {
+    focused_path: Option<String>,
+    files: Vec<GitDiffFile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitDiffFile {
+    path: String,
+    original_path: Option<String>,
+    staged: Option<GitChangeKind>,
+    unstaged: Option<GitChangeKind>,
+    sections: Vec<GitDiffSection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitDiffSection {
+    kind: GitDiffSectionKind,
+    patch: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GitDiffSectionKind {
+    Staged,
+    Unstaged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitDiffViewState {
+    workspace_id: WorkspaceId,
+    tab_id: TabId,
+    path: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,6 +130,28 @@ impl GitRepository {
             branches,
             changes: status.changes,
         })
+    }
+
+    pub fn diff(directory: impl AsRef<Path>, focused_path: &str) -> Result<GitDiff> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let focused_path = normalize_path(focused_path)?;
+        let status = parse_status(&git_bytes(
+            &repository_root,
+            ["status", "--porcelain=v1", "-z"],
+        )?)?;
+
+        Ok(GitDiff {
+            focused_path: Some(focused_path),
+            files: status
+                .changes
+                .iter()
+                .map(|change| diff_file(&repository_root, change))
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+
+    pub fn normalize_path(path: &str) -> Result<String> {
+        normalize_path(path)
     }
 
     pub fn stage_paths(directory: impl AsRef<Path>, paths: &[String]) -> Result<()> {
@@ -353,6 +411,94 @@ impl GitStash {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+}
+
+impl GitDiff {
+    pub fn focused_path(&self) -> Option<&str> {
+        self.focused_path.as_deref()
+    }
+
+    pub fn files(&self) -> &[GitDiffFile] {
+        &self.files
+    }
+}
+
+impl GitDiffFile {
+    fn new(
+        path: impl Into<String>,
+        original_path: Option<String>,
+        staged: Option<GitChangeKind>,
+        unstaged: Option<GitChangeKind>,
+        sections: Vec<GitDiffSection>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            original_path,
+            staged,
+            unstaged,
+            sections,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn original_path(&self) -> Option<&str> {
+        self.original_path.as_deref()
+    }
+
+    pub fn staged(&self) -> Option<GitChangeKind> {
+        self.staged
+    }
+
+    pub fn unstaged(&self) -> Option<GitChangeKind> {
+        self.unstaged
+    }
+
+    pub fn sections(&self) -> &[GitDiffSection] {
+        &self.sections
+    }
+}
+
+impl GitDiffSection {
+    fn new(kind: GitDiffSectionKind, patch: String) -> Self {
+        Self { kind, patch }
+    }
+
+    pub fn kind(&self) -> GitDiffSectionKind {
+        self.kind
+    }
+
+    pub fn patch(&self) -> &str {
+        &self.patch
+    }
+}
+
+impl GitDiffViewState {
+    pub fn new(workspace_id: WorkspaceId, tab_id: TabId, path: impl Into<String>) -> Self {
+        Self {
+            workspace_id,
+            tab_id,
+            path: path.into(),
+        }
+    }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub fn tab_id(&self) -> TabId {
+        self.tab_id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn set_path(&mut self, path: impl Into<String>) {
+        self.path = path.into();
     }
 }
 
@@ -852,6 +998,102 @@ where
     git(repository_root, args)
 }
 
+fn diff_file(repository_root: &Path, change: &GitChange) -> Result<GitDiffFile> {
+    let mut sections = Vec::new();
+
+    if change.is_staged() {
+        sections.push(GitDiffSection::new(
+            GitDiffSectionKind::Staged,
+            git_patch(repository_root, &["diff", "--cached", "--"], change.path())?,
+        ));
+    }
+
+    if change.is_unstaged() {
+        let patch = if change.unstaged() == Some(GitChangeKind::Untracked) {
+            untracked_patch(repository_root, change.path())?
+        } else {
+            git_patch(repository_root, &["diff", "--"], change.path())?
+        };
+
+        sections.push(GitDiffSection::new(GitDiffSectionKind::Unstaged, patch));
+    }
+
+    Ok(GitDiffFile::new(
+        change.path(),
+        change.original_path().map(ToOwned::to_owned),
+        change.staged(),
+        change.unstaged(),
+        sections,
+    ))
+}
+
+fn git_patch(repository_root: &Path, args: &[&str], path: &str) -> Result<String> {
+    let paths = [path.to_owned()];
+
+    String::from_utf8(git_with_paths(
+        repository_root,
+        args.iter().copied(),
+        &paths,
+    )?)
+    .map_err(|error| GitError::Utf8(error.to_string()))
+}
+
+fn untracked_patch(repository_root: &Path, path: &str) -> Result<String> {
+    let full_path = repository_root.join(path.trim_end_matches('/'));
+
+    if full_path.is_dir() {
+        let mut files = Vec::new();
+        collect_files(&full_path, &mut files)?;
+        files.sort();
+
+        let mut patch = String::new();
+        for file in files {
+            let relative_path = file
+                .strip_prefix(repository_root)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| file.to_string_lossy().into_owned());
+            patch.push_str(&untracked_file_patch(repository_root, &relative_path)?);
+        }
+
+        return Ok(patch);
+    }
+
+    untracked_file_patch(repository_root, path)
+}
+
+fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(directory).map_err(|error| io_error(directory, error))? {
+        let entry = entry.map_err(|error| io_error(directory, error))?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_files(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn untracked_file_patch(repository_root: &Path, path: &str) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository_root)
+        .args(["diff", "--no-index", "--", "/dev/null"])
+        .arg(path)
+        .output()?;
+
+    if output.status.success() || output.status.code() == Some(1) {
+        String::from_utf8(output.stdout).map_err(|error| GitError::Utf8(error.to_string()))
+    } else {
+        Err(GitError::CommandFailed {
+            command: format!("git diff --no-index -- /dev/null {path}"),
+            stderr: command_stderr(&output.stderr),
+        })
+    }
+}
+
 fn git_with_paths<I, S>(repository_root: &Path, args: I, paths: &[String]) -> Result<Vec<u8>>
 where
     I: IntoIterator<Item = S>,
@@ -1063,5 +1305,57 @@ mod tests {
         assert!(normalize_path("src/main.rs").is_ok());
         assert!(normalize_path("../main.rs").is_err());
         assert!(normalize_path("/tmp/main.rs").is_err());
+    }
+
+    #[test]
+    fn builds_repository_diff_with_focused_path() {
+        let root = test_directory("repository-diff");
+        let readme_path = root.join("README.md");
+        let license_path = root.join("LICENSE");
+
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(&readme_path, "hello\n").expect("file should be written");
+        fs::write(&license_path, "license\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["README.md".to_owned()])
+            .expect("file should be staged");
+
+        let diff = GitRepository::diff(&root, "LICENSE").expect("diff should load");
+        let readme = diff
+            .files()
+            .iter()
+            .find(|file| file.path() == "README.md")
+            .expect("staged file should be in diff");
+        let license = diff
+            .files()
+            .iter()
+            .find(|file| file.path() == "LICENSE")
+            .expect("unstaged file should be in diff");
+
+        assert_eq!(diff.focused_path(), Some("LICENSE"));
+        assert_eq!(diff.files().len(), 2);
+        assert_eq!(readme.staged(), Some(GitChangeKind::Added));
+        assert_eq!(readme.sections()[0].kind(), GitDiffSectionKind::Staged);
+        assert!(readme.sections()[0].patch().contains("+hello"));
+        assert_eq!(license.unstaged(), Some(GitChangeKind::Untracked));
+        assert_eq!(license.sections()[0].kind(), GitDiffSectionKind::Unstaged);
+        assert!(license.sections()[0].patch().contains("+license"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_directory(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-core-git-{}-{name}-{nanos}",
+            std::process::id()
+        ));
+
+        fs::create_dir_all(&root).expect("test root should be created");
+
+        root
     }
 }

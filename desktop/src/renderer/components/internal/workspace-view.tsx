@@ -82,12 +82,12 @@ export function WorkspaceView() {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-sm">
+    <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-sm">
       {snapshot.workspaces.map((workspace) => {
         const isWorkspaceActive = workspace.id === activeWorkspaceId;
 
         return (
-          <div key={workspace.id} hidden={!isWorkspaceActive} className="flex min-h-0 flex-1">
+          <div key={workspace.id} hidden={!isWorkspaceActive} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <PaneNodeView
               node={workspace.root}
               workspaceId={workspace.id}
@@ -139,7 +139,7 @@ function PaneNodeView({
         [firstPanelId]: firstSize,
         [secondPanelId]: secondSize,
       }}
-      className={cn("min-h-0", isRoot && "flex-1")}
+      className={cn("min-h-0 min-w-0 overflow-hidden", isRoot && "flex-1")}
       onLayoutChanged={(layout, meta) => {
         if (!meta.isUserInteraction) {
           return;
@@ -208,7 +208,7 @@ function PaneLeaf({
   return (
     <article
       className={cn(
-        "relative flex min-h-0 flex-col overflow-hidden bg-card text-card-foreground",
+        "relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-card text-card-foreground",
         isRoot ? "flex-1" : "h-full",
       )}
       onDragLeave={(event) => {
@@ -260,7 +260,7 @@ function PaneLeaf({
     >
       <Tabs
         value={tabValue(pane.activeTabId)}
-        className="h-full min-h-0 gap-0"
+        className="h-full min-h-0 min-w-0 gap-0"
         onValueChange={(value) => activateTabFromValue(value, pane, activateTab)}
       >
         <div
@@ -328,7 +328,7 @@ function PaneLeaf({
               key={tab.id}
               value={tabValue(tab.id)}
               keepMounted={tab.lifecycle === "keepAlive"}
-              className="min-h-0 p-0"
+              className="min-h-0 min-w-0 overflow-hidden p-0"
             >
               {shouldRenderTabBody ? (
                 <TabBody

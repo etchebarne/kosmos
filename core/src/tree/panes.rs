@@ -90,6 +90,10 @@ impl PaneNode {
         }
     }
 
+    pub fn largest_pane_id(&self) -> PaneId {
+        self.largest_pane(1.0).0
+    }
+
     pub fn split_pane(
         &mut self,
         split_id: SplitPaneId,
@@ -183,6 +187,18 @@ impl PaneNode {
                 } else {
                     split.second_mut().set_split_ratio(split_id, ratio)
                 }
+            }
+        }
+    }
+
+    fn largest_pane(&self, area: f32) -> (PaneId, f32) {
+        match self {
+            Self::Leaf(pane) => (pane.id(), area),
+            Self::Split(split) => {
+                let first = split.first().largest_pane(area * split.ratio());
+                let second = split.second().largest_pane(area * (1.0 - split.ratio()));
+
+                if first.1 >= second.1 { first } else { second }
             }
         }
     }
@@ -549,5 +565,36 @@ mod tests {
         assert!(!root.contains_pane(PaneId::new(1)));
         assert!(root.contains_pane(PaneId::new(2)));
         assert_eq!(root.pane_count(), 1);
+    }
+
+    #[test]
+    fn largest_pane_follows_split_ratios() {
+        let first_pane = Pane::new(
+            PaneId::new(1),
+            Tab::new(TabId::new(1), "First", TabKind::Blank),
+        );
+        let nested_first_pane = Pane::new(
+            PaneId::new(2),
+            Tab::new(TabId::new(2), "Second", TabKind::Blank),
+        );
+        let nested_second_pane = Pane::new(
+            PaneId::new(3),
+            Tab::new(TabId::new(3), "Third", TabKind::Blank),
+        );
+        let root = PaneNode::split(
+            SplitPaneId::new(1),
+            SplitAxis::Horizontal,
+            0.4,
+            PaneNode::leaf(first_pane),
+            PaneNode::split(
+                SplitPaneId::new(2),
+                SplitAxis::Vertical,
+                0.75,
+                PaneNode::leaf(nested_first_pane),
+                PaneNode::leaf(nested_second_pane),
+            ),
+        );
+
+        assert_eq!(root.largest_pane_id(), PaneId::new(2));
     }
 }

@@ -1,14 +1,17 @@
 import type {
   CommitGitChangesParams,
   CreateGitBranchParams,
+  GitDiff,
   GitPathsParams,
   GitRepositorySnapshot,
   GitStash,
   GitStashParams,
   GitTabParams,
+  OpenGitDiffTabParams,
   PullGitChangesParams,
   PushGitChangesParams,
   SwitchGitBranchParams,
+  WorkspaceListSnapshot,
 } from "@/shared/ipc";
 
 import { requestServer } from "./transport";
@@ -17,6 +20,14 @@ const DOMAIN = "git";
 
 export function getGitStatus(params: GitTabParams): Promise<GitRepositorySnapshot> {
   return requestServer(DOMAIN, "status", params);
+}
+
+export function openGitDiffTab(params: OpenGitDiffTabParams): Promise<WorkspaceListSnapshot> {
+  return requestServer(DOMAIN, "openDiffTab", params);
+}
+
+export function getGitDiff(params: GitTabParams): Promise<GitDiff> {
+  return requestServer(DOMAIN, "diff", params);
 }
 
 export function initGitRepository(params: GitTabParams): Promise<boolean> {
@@ -102,11 +113,13 @@ export function discardStagedGitChanges(params: GitTabParams): Promise<boolean> 
 export type {
   CommitGitChangesParams,
   CreateGitBranchParams,
+  GitDiff,
   GitPathsParams,
   GitRepositorySnapshot,
   GitStash,
   GitStashParams,
   GitTabParams,
+  OpenGitDiffTabParams,
   PullGitChangesParams,
   PushGitChangesParams,
   SwitchGitBranchParams,

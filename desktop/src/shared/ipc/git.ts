@@ -45,6 +45,26 @@ export type GitStash = {
   message: string;
 };
 
+export type GitDiffSectionKind = "staged" | "unstaged";
+
+export type GitDiffSection = {
+  kind: GitDiffSectionKind;
+  patch: string;
+};
+
+export type GitDiffFile = {
+  path: string;
+  originalPath?: string | null;
+  staged?: GitChangeKind | null;
+  unstaged?: GitChangeKind | null;
+  sections: GitDiffSection[];
+};
+
+export type GitDiff = {
+  focusedPath?: string | null;
+  files: GitDiffFile[];
+};
+
 export type GitTabParams = {
   workspaceId?: WorkspaceId | null;
   tabId: TabId;
@@ -52,6 +72,10 @@ export type GitTabParams = {
 
 export type GitPathsParams = GitTabParams & {
   paths: string[];
+};
+
+export type OpenGitDiffTabParams = GitTabParams & {
+  path: string;
 };
 
 export type CommitGitChangesParams = GitTabParams & {

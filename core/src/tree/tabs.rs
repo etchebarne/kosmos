@@ -52,6 +52,7 @@ impl Tab {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TabKind {
     Blank,
+    Diff,
     FileTree,
     Editor,
     Git,
@@ -69,6 +70,7 @@ impl TabKind {
     pub fn default_title(&self) -> &'static str {
         match self {
             Self::Blank => "Blank",
+            Self::Diff => "Diff",
             Self::FileTree => "File Tree",
             Self::Editor => "Editor",
             Self::Git => "Git",
@@ -80,7 +82,7 @@ impl TabKind {
     pub fn lifecycle(&self) -> TabLifecycle {
         match self {
             Self::Terminal => TabLifecycle::KeepAlive,
-            Self::Blank | Self::FileTree | Self::Editor | Self::Git | Self::Search => {
+            Self::Blank | Self::Diff | Self::FileTree | Self::Editor | Self::Git | Self::Search => {
                 TabLifecycle::Ephemeral
             }
         }

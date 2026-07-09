@@ -1,4 +1,7 @@
-use core::git::{GitBranch, GitChange, GitChangeKind, GitRepositorySnapshot, GitStash};
+use core::git::{
+    GitBranch, GitChange, GitChangeKind, GitDiff, GitDiffFile, GitDiffSection, GitDiffSectionKind,
+    GitRepositorySnapshot, GitStash,
+};
 use serde::{Deserialize, Serialize};
 
 use super::pane::WorkspaceIdParam;
@@ -17,6 +20,14 @@ pub(crate) struct GitPathsParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
     pub(crate) paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenGitDiffTabParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +101,37 @@ pub(crate) struct GitStashPayload {
     commit: String,
     timestamp: i64,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitDiffPayload {
+    focused_path: Option<String>,
+    files: Vec<GitDiffFilePayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitDiffFilePayload {
+    path: String,
+    original_path: Option<String>,
+    staged: Option<GitChangeKindPayload>,
+    unstaged: Option<GitChangeKindPayload>,
+    sections: Vec<GitDiffSectionPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitDiffSectionPayload {
+    kind: GitDiffSectionKindPayload,
+    patch: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum GitDiffSectionKindPayload {
+    Staged,
+    Unstaged,
 }
 
 #[derive(Debug, Serialize)]
@@ -184,6 +226,44 @@ impl GitStashPayload {
     }
 }
 
+impl GitDiffPayload {
+    pub(crate) fn from_diff(diff: &GitDiff) -> Self {
+        Self {
+            focused_path: diff.focused_path().map(ToOwned::to_owned),
+            files: diff
+                .files()
+                .iter()
+                .map(GitDiffFilePayload::from_file)
+                .collect(),
+        }
+    }
+}
+
+impl GitDiffFilePayload {
+    fn from_file(file: &GitDiffFile) -> Self {
+        Self {
+            path: file.path().to_owned(),
+            original_path: file.original_path().map(ToOwned::to_owned),
+            staged: file.staged().map(Into::into),
+            unstaged: file.unstaged().map(Into::into),
+            sections: file
+                .sections()
+                .iter()
+                .map(GitDiffSectionPayload::from_section)
+                .collect(),
+        }
+    }
+}
+
+impl GitDiffSectionPayload {
+    fn from_section(section: &GitDiffSection) -> Self {
+        Self {
+            kind: section.kind().into(),
+            patch: section.patch().to_owned(),
+        }
+    }
+}
+
 impl From<GitChangeKind> for GitChangeKindPayload {
     fn from(kind: GitChangeKind) -> Self {
         match kind {
@@ -194,6 +274,15 @@ impl From<GitChangeKind> for GitChangeKindPayload {
             GitChangeKind::Modified => Self::Modified,
             GitChangeKind::Renamed => Self::Renamed,
             GitChangeKind::Untracked => Self::Untracked,
+        }
+    }
+}
+
+impl From<GitDiffSectionKind> for GitDiffSectionKindPayload {
+    fn from(kind: GitDiffSectionKind) -> Self {
+        match kind {
+            GitDiffSectionKind::Staged => Self::Staged,
+            GitDiffSectionKind::Unstaged => Self::Unstaged,
         }
     }
 }

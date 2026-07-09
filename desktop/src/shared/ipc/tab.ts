@@ -1,7 +1,7 @@
 import type { PaneId, TabId, WorkspaceId } from "./ids";
 import type { SplitAxis } from "./pane";
 
-export type TabKind = "blank" | "fileTree" | "editor" | "git" | "search" | "terminal";
+export type TabKind = "blank" | "diff" | "fileTree" | "editor" | "git" | "search" | "terminal";
 
 export type TabLifecycle = "ephemeral" | "keepAlive";
 

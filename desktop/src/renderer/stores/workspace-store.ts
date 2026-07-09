@@ -15,6 +15,7 @@ import {
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
   moveTab as moveTabIpc,
+  openGitDiffTab as openGitDiffTabIpc,
   openTab as openTabIpc,
   openWorkspace,
   resizeSplit as resizeSplitIpc,
@@ -34,6 +35,8 @@ import type {
   WorkspaceId,
 } from "@/shared/ipc";
 
+import { useGitStore } from "./git-store";
+
 type WorkspaceRequest = () => Promise<WorkspaceListSnapshot>;
 type FileTreeExpansionFlusher = () => Promise<void> | void;
 
@@ -51,6 +54,7 @@ type WorkspaceStore = {
   closeWorkspace(workspaceId: WorkspaceId): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
+  openGitDiffTab(tabId: TabId, path: string): void;
   openTab(paneId: PaneId): void;
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
@@ -216,6 +220,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       updateFromServer(() =>
         moveTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId, targetPaneId, targetIndex }),
+      );
+    },
+    openGitDiffTab(tabId, path) {
+      const activeWorkspace = activeWorkspaceFrom(get().snapshot);
+      if (!activeWorkspace) {
+        return;
+      }
+
+      updateFromServer(() =>
+        openGitDiffTabIpc({ workspaceId: activeWorkspace.id, tabId, path }).then((snapshot) => {
+          useGitStore.getState().bumpGitRevision(activeWorkspace.id);
+          return snapshot;
+        }),
       );
     },
     openTab(paneId) {
