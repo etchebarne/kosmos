@@ -29,22 +29,43 @@ function ContextMenuTrigger({
 
 function ContextMenuContent({
   className,
+  positionerClassName,
   align = "start",
   alignOffset = 4,
+  anchor,
+  collisionAvoidance,
+  collisionBoundary,
+  collisionPadding,
+  positionMethod,
   side = "right",
   sideOffset = 0,
   ...props
 }: ContextMenuPrimitive.Popup.Props &
   Pick<
     ContextMenuPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
-  >) {
+    | "align"
+    | "alignOffset"
+    | "anchor"
+    | "collisionAvoidance"
+    | "collisionBoundary"
+    | "collisionPadding"
+    | "positionMethod"
+    | "side"
+    | "sideOffset"
+  > & {
+    positionerClassName?: string
+  }) {
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Positioner
-        className="isolate z-50 outline-none"
+        className={cn("isolate z-50 outline-none", positionerClassName)}
         align={align}
         alignOffset={alignOffset}
+        anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
+        collisionBoundary={collisionBoundary}
+        collisionPadding={collisionPadding}
+        positionMethod={positionMethod}
         side={side}
         sideOffset={sideOffset}
       >
