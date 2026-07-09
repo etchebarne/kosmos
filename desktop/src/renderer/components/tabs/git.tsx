@@ -48,6 +48,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/renderer/components/ui/card";
+import { Checkbox } from "@/renderer/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -146,20 +147,21 @@ type ActiveStashAction = {
   operationId: "applyStash" | "dropStash";
 };
 
+type StageCheckboxState = "checked" | "mixed" | "unchecked";
+
+type StageCheckboxOverlayItem = {
+  centerY: number;
+  path: string;
+  paths: string[];
+  state: StageCheckboxState;
+  title: string;
+};
+
 const OPERATION_FEEDBACK_DISABLED = new Set<GitOperationId>(["stageAll", "unstageAll"]);
 const GIT_REPOSITORY_NOT_FOUND_CODE = "git.repository_not_found";
 
-const CHECKBOX_HIT_WIDTH = 26;
+const TREE_CHECKBOX_LEFT = 5;
 const SUCCESS_FEEDBACK_MS = 1000;
-const CHECKBOX_UNCHECKED_IMAGE = cssSvgDataUrl(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" fill="none" stroke="#737373" stroke-width="1"/></svg>`,
-);
-const CHECKBOX_CHECKED_IMAGE = cssSvgDataUrl(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="1"/><path d="M3.1 6.1 5 8l3.9-4.2" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-);
-const CHECKBOX_MIXED_IMAGE = cssSvgDataUrl(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" fill="#075985" stroke="#0ea5e9" stroke-width="1"/><path d="M3.2 6h5.6" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round"/></svg>`,
-);
 const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
   {
     id: "fetch",
@@ -1457,27 +1459,27 @@ function GitChangeTree({
     paths,
     renderRowDecoration: ({ item }) => ({ text: statusLabel(changes, item.path), title: statusTitle(changes, item.path) }),
     stickyFolders: true,
-    unsafeCSS: gitTreeCheckboxCss(changes, paths, disabled),
+    unsafeCSS: gitTreeCheckboxCss(),
   });
 
   return (
-    <>
+    <div className="relative h-full min-h-0">
       <PierreFileTree
         model={model}
         className="h-full min-h-0 w-full overflow-hidden bg-card text-card-foreground [--trees-accent-override:var(--accent)] [--trees-bg-muted-override:var(--accent)] [--trees-bg-override:var(--card)] [--trees-border-color-override:var(--border)] [--trees-fg-muted-override:var(--muted-foreground)] [--trees-fg-override:var(--card-foreground)] [--trees-focus-ring-color-override:var(--ring)] [--trees-input-bg-override:var(--input)] [--trees-item-row-gap-override:6px] [--trees-padding-inline-override:0px] [--trees-scrollbar-gutter-override:0px] [--trees-search-bg-override:var(--input)] [--trees-search-fg-override:var(--foreground)] [--trees-selected-bg-override:var(--accent)] [--trees-selected-fg-override:var(--accent-foreground)] [--trees-selected-focused-border-color-override:var(--ring)]"
         style={{ height: "100%" }}
       />
-      <GitStageCheckboxController
+      <GitStageCheckboxOverlay
         model={model}
         changes={changes}
         disabled={disabled}
         onToggleStage={onToggleStage}
       />
-    </>
+    </div>
   );
 }
 
-function GitStageCheckboxController({
+function GitStageCheckboxOverlay({
   model,
   changes,
   disabled,
@@ -1488,53 +1490,67 @@ function GitStageCheckboxController({
   disabled: boolean;
   onToggleStage(paths: string[]): void;
 }) {
-  useEffect(() => {
-    if (disabled) {
-      return undefined;
-    }
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const [items, setItems] = useState<StageCheckboxOverlayItem[]>([]);
 
+  useEffect(() => {
     let frameId = 0;
     let cleanup: (() => void) | undefined;
-    const attach = () => {
+    let mutationObserver: MutationObserver | undefined;
+    let resizeObserver: ResizeObserver | undefined;
+
+    const updateItems = () => {
+      frameId = 0;
+
+      const overlay = overlayRef.current;
       const shadowRoot = model.getFileTreeContainer()?.shadowRoot;
 
-      if (!shadowRoot) {
+      if (!overlay || !shadowRoot) {
+        return;
+      }
+
+      const overlayRect = overlay.getBoundingClientRect();
+      const rows = Array.from(shadowRoot.querySelectorAll<HTMLElement>(`[data-type="item"][data-item-path]`));
+
+      setItems(
+        rows
+          .map((row) => checkboxOverlayItem(row, overlayRect, changes))
+          .filter((item): item is StageCheckboxOverlayItem => Boolean(item)),
+      );
+    };
+
+    const scheduleUpdate = () => {
+      if (frameId !== 0) {
+        return;
+      }
+
+      frameId = requestAnimationFrame(updateItems);
+    };
+
+    const attach = () => {
+      frameId = 0;
+      const container = model.getFileTreeContainer();
+      const shadowRoot = container?.shadowRoot;
+
+      if (!container || !shadowRoot || !overlayRef.current) {
         frameId = requestAnimationFrame(attach);
         return;
       }
 
-      const handlePointerDown = (event: Event) => {
-        if (!(event instanceof PointerEvent)) {
-          return;
-        }
+      shadowRoot.addEventListener("scroll", scheduleUpdate, true);
+      window.addEventListener("resize", scheduleUpdate);
+      mutationObserver = new MutationObserver(scheduleUpdate);
+      mutationObserver.observe(shadowRoot, { attributes: true, childList: true, subtree: true });
+      resizeObserver = new ResizeObserver(scheduleUpdate);
+      resizeObserver.observe(container);
+      scheduleUpdate();
 
-        const row = rowElementFromEvent(event);
-        if (!row) {
-          return;
-        }
-
-        const rowRect = row.getBoundingClientRect();
-        if (event.clientX > rowRect.left + CHECKBOX_HIT_WIDTH) {
-          return;
-        }
-
-        const path = row.dataset.itemPath;
-        if (!path) {
-          return;
-        }
-
-        const paths = changedPathsForTreePath(changes, path);
-        if (paths.length === 0) {
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        onToggleStage(paths);
+      cleanup = () => {
+        shadowRoot.removeEventListener("scroll", scheduleUpdate, true);
+        window.removeEventListener("resize", scheduleUpdate);
+        mutationObserver?.disconnect();
+        resizeObserver?.disconnect();
       };
-
-      shadowRoot.addEventListener("pointerdown", handlePointerDown, true);
-      cleanup = () => shadowRoot.removeEventListener("pointerdown", handlePointerDown, true);
     };
 
     frameId = requestAnimationFrame(attach);
@@ -1543,23 +1559,26 @@ function GitStageCheckboxController({
       cancelAnimationFrame(frameId);
       cleanup?.();
     };
-  }, [model, changes, disabled, onToggleStage]);
+  }, [model, changes]);
 
-  return null;
-}
-
-function rowElementFromEvent(event: PointerEvent): HTMLElement | null {
-  for (const element of event.composedPath()) {
-    if (!(element instanceof HTMLElement)) {
-      continue;
-    }
-
-    if (element.dataset.type === "item" && element.dataset.itemPath !== undefined) {
-      return element;
-    }
-  }
-
-  return null;
+  return (
+    <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-10">
+      {items.map((item) => (
+        <Checkbox
+          key={item.path}
+          checked={item.state === "checked"}
+          indeterminate={item.state === "mixed"}
+          disabled={disabled}
+          aria-label={`Stage ${item.path}`}
+          title={item.title}
+          className="pointer-events-auto absolute size-3.5 rounded-[3px] bg-background after:-inset-1 [&>svg]:size-3"
+          style={{ left: TREE_CHECKBOX_LEFT, top: item.centerY, transform: "translateY(-50%)" }}
+          onCheckedChange={() => onToggleStage(item.paths)}
+          onPointerDown={(event) => event.stopPropagation()}
+        />
+      ))}
+    </div>
+  );
 }
 
 function gitTreePaths(changes: GitChange[]): string[] {
@@ -1613,64 +1632,54 @@ function gitStatusFromKind(kind: GitChangeKind): GitStatus {
   }
 }
 
-function gitTreeCheckboxCss(changes: GitChange[], paths: string[], disabled: boolean): string {
-  const stageState = stageStateForTreePaths(changes, paths);
-  const checkedSelectors = selectorList(stageState.checked);
-  const mixedSelectors = selectorList(stageState.mixed);
-
-  return [
-    `[data-type="item"]{padding-left:24px!important;background-image:${CHECKBOX_UNCHECKED_IMAGE};background-repeat:no-repeat;background-size:12px 12px;background-position:6px center;${disabled ? "opacity:.7;" : ""}}`,
-    checkedSelectors.length > 0
-      ? `${checkedSelectors}{background-image:${CHECKBOX_CHECKED_IMAGE};}`
-      : "",
-    mixedSelectors.length > 0
-      ? `${mixedSelectors}{background-image:${CHECKBOX_MIXED_IMAGE};}`
-      : "",
-  ].join("\n");
+function gitTreeCheckboxCss(): string {
+  return `[data-type="item"]{padding-left:24px!important;}`;
 }
 
-function cssSvgDataUrl(svg: string): string {
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-
-function stageStateForTreePaths(
+function checkboxOverlayItem(
+  row: HTMLElement,
+  overlayRect: DOMRect,
   changes: GitChange[],
-  paths: string[],
-): { checked: string[]; mixed: string[] } {
-  const checked: string[] = [];
-  const mixed: string[] = [];
+): StageCheckboxOverlayItem | null {
+  const path = row.dataset.itemPath;
 
-  for (const path of paths) {
-    const pathChanges = changedPathsForTreePath(changes, path)
-      .map((changedPath) => changeForPath(changes, changedPath))
-      .filter((change): change is GitChange => Boolean(change));
-
-    if (pathChanges.length === 0) {
-      continue;
-    }
-
-    const stagedCount = pathChanges.filter((change) => change.isStaged).length;
-
-    if (stagedCount === 0) {
-      continue;
-    }
-
-    if (stagedCount === pathChanges.length) {
-      checked.push(path);
-    } else {
-      mixed.push(path);
-    }
+  if (!path) {
+    return null;
   }
 
-  return { checked, mixed };
+  const paths = changedPathsForTreePath(changes, path);
+
+  if (paths.length === 0) {
+    return null;
+  }
+
+  const rowRect = row.getBoundingClientRect();
+
+  return {
+    centerY: rowRect.top - overlayRect.top + rowRect.height / 2,
+    path,
+    paths,
+    state: stageStateForTreePath(changes, path),
+    title: statusTitle(changes, path),
+  };
 }
 
-function selectorList(paths: string[]): string {
-  return paths.map((path) => `[data-type="item"][data-item-path=${cssString(path)}]`).join(",");
-}
+function stageStateForTreePath(changes: GitChange[], path: string): StageCheckboxState {
+  const pathChanges = changedPathsForTreePath(changes, path)
+    .map((changedPath) => changeForPath(changes, changedPath))
+    .filter((change): change is GitChange => Boolean(change));
 
-function cssString(value: string): string {
-  return JSON.stringify(value);
+  if (pathChanges.length === 0) {
+    return "unchecked";
+  }
+
+  const stagedCount = pathChanges.filter((change) => change.isStaged).length;
+
+  if (stagedCount === 0) {
+    return "unchecked";
+  }
+
+  return stagedCount === pathChanges.length ? "checked" : "mixed";
 }
 
 function changedPathsForTreePath(changes: GitChange[], path: string): string[] {
