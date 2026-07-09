@@ -371,6 +371,23 @@ function TabTrigger({
             data-kosmos-tab-trigger=""
             className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs after:hidden data-active:!bg-foreground/10 data-active:!text-foreground"
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
+            onPointerDown={(event) => {
+              if (event.button !== 1) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onAuxClick={(event) => {
+              if (event.button !== 1) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+              closeTab(pane.id, tab.id);
+            }}
           >
             <TabIcon
               className="size-3.5 shrink-0 text-muted-foreground group-data-active/tab:text-foreground"
