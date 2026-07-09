@@ -2,7 +2,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import type { KosmosIpcDomain, KosmosIpcParams, KosmosServerResponse } from "../shared/ipc";
+import type { KosmosIpcDomain, KosmosIpcParams, KosmosServerResponse } from "../../shared/ipc";
 
 type PendingRequest = {
   resolve(value: unknown): void;

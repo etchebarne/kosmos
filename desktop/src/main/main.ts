@@ -1,169 +1,20 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from "electron";
-import fs from "node:fs";
-import path from "node:path";
+import { app, BrowserWindow, Menu, dialog } from "electron";
 
-import type { KosmosIpcDomain, KosmosIpcError, KosmosIpcRequest, KosmosIpcRequestResult } from "../shared/ipc";
-import { KosmosIpcRequestError, KosmosServerClient } from "./server-client";
-import { KosmosServerProcess } from "./server-process";
+import { errorMessage } from "./error-message";
+import { registerIpcHandlers } from "./ipc/handlers";
+import { KosmosServerClient } from "./server/client";
+import { KosmosServerProcess } from "./server/process";
+import { createMainWindow } from "./window/main-window";
 
-const validDomains = new Set<KosmosIpcDomain>([
-  "workspace",
-  "pane",
-  "tab",
-  "fileTree",
-  "git",
-  "terminal",
-]);
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 
 app.commandLine.appendSwitch("use-webgpu-adapter", "opengles");
 
-function registerIpcHandlers(): void {
-  ipcMain.handle("kosmos:request", async (_event, request: KosmosIpcRequest): Promise<KosmosIpcRequestResult> => {
-    validateRequest(request);
-    try {
-      const result = await serverClient.request(request.domain, request.action, request.params ?? {});
-
-      return { ok: true, result };
-    } catch (caughtError: unknown) {
-      return { ok: false, error: ipcRequestError(caughtError) };
-    }
-  });
-
-  ipcMain.handle("kosmos:socketPath", () => serverClient.socketPath);
-
-  ipcMain.handle("kosmos:selectWorkspaceDirectory", async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openDirectory"],
-      title: "Open Workspace",
-    });
-
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  ipcMain.handle("kosmos:window:minimize", (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.minimize();
-  });
-
-  ipcMain.handle("kosmos:window:toggleMaximize", (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender);
-
-    if (!window) {
-      return;
-    }
-
-    if (window.isMaximized()) {
-      window.unmaximize();
-    } else {
-      window.maximize();
-    }
-  });
-
-  ipcMain.handle("kosmos:window:close", (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
-  });
-
-  ipcMain.handle("kosmos:revealPath", (_event, targetPath: unknown) => {
-    if (typeof targetPath !== "string" || targetPath.length === 0) {
-      throw new Error("Reveal path must be a non-empty string");
-    }
-
-    shell.showItemInFolder(targetPath);
-  });
-}
-
-function createMainWindow(): void {
-  const runtimeDirectory = getRuntimeDirectory();
-  const appIconPath = getAppIconPath();
-  const window = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    title: "Kosmos",
-    frame: false,
-    autoHideMenuBar: true,
-    backgroundColor: "#111217",
-    icon: appIconPath,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(runtimeDirectory, "preload.cjs"),
-      sandbox: false,
-    },
-  });
-
-  registerWindowShortcuts(window);
-
-  void window.loadFile(path.join(runtimeDirectory, "renderer", "index.html"));
-}
-
-function getAppIconPath(): string {
-  const assetsDirectory = app.isPackaged ? process.resourcesPath : app.getAppPath();
-
-  return path.resolve(assetsDirectory, "assets", "icon", "icon-512.png");
-}
-
-function registerWindowShortcuts(window: BrowserWindow): void {
-  window.webContents.on("before-input-event", (event, input) => {
-    const key = input.key.toLowerCase();
-    const togglesDevTools =
-      input.key === "F12" || ((input.control || input.meta) && input.shift && key === "i");
-
-    if (!togglesDevTools) {
-      return;
-    }
-
-    event.preventDefault();
-
-    if (window.webContents.isDevToolsOpened()) {
-      window.webContents.closeDevTools();
-    } else {
-      window.webContents.openDevTools({ mode: "detach" });
-    }
-  });
-}
-
-function getRuntimeDirectory(): string {
-  const packageJsonPath = path.join(app.getAppPath(), "package.json");
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
-    main?: unknown;
-  };
-
-  if (typeof packageJson.main !== "string" || packageJson.main.length === 0) {
-    throw new Error("package.json must define the Electron main entry");
-  }
-
-  return path.dirname(path.resolve(app.getAppPath(), packageJson.main));
-}
-
-function validateRequest(request: KosmosIpcRequest): void {
-  if (!request || typeof request !== "object") {
-    throw new Error("IPC request must be an object");
-  }
-
-  if (!validDomains.has(request.domain)) {
-    throw new Error(`Unsupported IPC domain: ${String(request.domain)}`);
-  }
-
-  if (typeof request.action !== "string" || request.action.length === 0) {
-    throw new Error("IPC request action must be a non-empty string");
-  }
-}
-
-function ipcRequestError(error: unknown): KosmosIpcError {
-  if (error instanceof KosmosIpcRequestError) {
-    return { code: error.code, message: error.messageWithoutCode };
-  }
-
-  return { code: "ipc.request_failed", message: errorMessage(error) };
-}
-
 async function startApp(): Promise<void> {
   Menu.setApplicationMenu(null);
   await serverProcess.start();
-  registerIpcHandlers();
+  registerIpcHandlers(serverClient);
   createMainWindow();
 
   app.on("activate", () => {
@@ -171,10 +22,6 @@ async function startApp(): Promise<void> {
       createMainWindow();
     }
   });
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 app.whenReady().then(startApp).catch((error: unknown) => {
