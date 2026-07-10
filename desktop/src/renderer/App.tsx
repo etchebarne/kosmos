@@ -2,14 +2,19 @@ import { useEffect } from "react";
 
 import { Header } from "@/renderer/components/internal/header";
 import { WorkspaceView } from "@/renderer/components/internal/workspace-view";
-import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
+import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 
 export function App() {
   const initializeWorkspaces = useWorkspaceStore((state) => state.initializeWorkspaces);
+  const initializeSettings = useSettingsStore((state) => state.initializeSettings);
 
   useEffect(() => {
     void initializeWorkspaces();
   }, [initializeWorkspaces]);
+
+  useEffect(() => {
+    void initializeSettings();
+  }, [initializeSettings]);
 
   useEffect(
     () =>

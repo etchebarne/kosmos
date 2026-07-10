@@ -2,6 +2,7 @@ mod editor;
 mod file_tree;
 mod git;
 mod pane;
+mod settings;
 mod tab;
 mod terminal;
 mod workspace;
@@ -22,6 +23,7 @@ pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerM
         Domain::Editor => editor::resolve(&request.action),
         Domain::Git => git::resolve(&request.action),
         Domain::Terminal => terminal::resolve(&request.action),
+        Domain::Settings => settings::resolve(&request.action),
     }
     .ok_or_else(|| unsupported_action(&request))?;
 
@@ -92,6 +94,13 @@ impl RouteDefinition {
         Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Full))
     }
 
+    pub(super) const fn settings(handler: RouteHandler) -> Self {
+        Self::new(
+            handler,
+            ExecutionMode::Persistent(PersistenceMode::Settings),
+        )
+    }
+
     pub(super) const fn persistence_barrier(handler: RouteHandler) -> Self {
         Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Barrier))
     }
@@ -114,6 +123,7 @@ pub(crate) enum PersistenceMode {
     ActiveWorkspace,
     Barrier,
     Full,
+    Settings,
 }
 
 pub(super) fn parse_params<T>(request: &RequestEnvelope) -> Result<T, ServerMessage>
@@ -257,6 +267,12 @@ mod tests {
             Domain::Terminal,
             &["open", "read", "write", "resize"],
             ExecutionMode::Live,
+        );
+        assert_modes(Domain::Settings, &["get"], ExecutionMode::Snapshot);
+        assert_modes(
+            Domain::Settings,
+            &["update"],
+            ExecutionMode::Persistent(PersistenceMode::Settings),
         );
     }
 

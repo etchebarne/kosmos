@@ -12,6 +12,7 @@ const validDomains = new Set<KosmosIpcDomain>([
   "editor",
   "git",
   "terminal",
+  "settings",
 ]);
 
 export function registerIpcHandlers(serverClient: KosmosServerClient): void {

@@ -80,6 +80,7 @@ pub(crate) enum Domain {
     Editor,
     Git,
     Terminal,
+    Settings,
 }
 
 #[derive(Clone, Debug, Serialize)]

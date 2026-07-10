@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::State;
+use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::EditorViewState;
 use crate::tabs::file_tree::FileTreeViewState;
 use crate::tabs::git::GitDiffViewState;
@@ -66,6 +67,16 @@ impl StateStore {
         Ok(())
     }
 
+    pub fn save_settings(&self, state: &State) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+
+        replace_settings(&transaction, state.settings())?;
+        transaction.commit()?;
+
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection> {
         let connection = Connection::open(&self.path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -118,6 +129,12 @@ fn migrate(connection: &Connection) -> Result<()> {
         "
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY NOT NULL,
+            value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number')),
             value TEXT NOT NULL
         );
 
@@ -219,6 +236,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 
 fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM metadata", [])?;
+    transaction.execute("DELETE FROM settings", [])?;
     transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
     transaction.execute("DELETE FROM git_diff_tabs", [])?;
     transaction.execute("DELETE FROM editor_tabs", [])?;
@@ -232,6 +250,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
 
 fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
     insert_active_workspace_metadata(transaction, state.workspaces().active_workspace_id())?;
+    insert_settings(transaction, state.settings())?;
 
     for (position, workspace) in state.workspaces().workspaces().iter().enumerate() {
         let workspace_id = to_i64(workspace.id().value(), "workspace id")?;
@@ -281,6 +300,31 @@ fn insert_active_workspace_metadata(
     }
 
     Ok(())
+}
+
+fn replace_settings(transaction: &Transaction<'_>, settings: &Settings) -> Result<()> {
+    transaction.execute("DELETE FROM settings", [])?;
+    insert_settings(transaction, settings)
+}
+
+fn insert_settings(transaction: &Transaction<'_>, settings: &Settings) -> Result<()> {
+    for (key, value) in settings.overrides() {
+        let (value_type, value) = encode_setting_value(value);
+        transaction.execute(
+            "INSERT INTO settings (key, value_type, value) VALUES (?1, ?2, ?3)",
+            params![key, value_type, value],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn encode_setting_value(value: &SettingValue) -> (&'static str, String) {
+    match value {
+        SettingValue::Boolean(value) => ("boolean", if *value { "1" } else { "0" }.to_owned()),
+        SettingValue::String(value) => ("string", value.clone()),
+        SettingValue::Number(value) => ("number", value.to_string()),
+    }
 }
 
 fn save_node(
@@ -447,15 +491,68 @@ fn load_state(connection: &Connection) -> Result<State> {
     let file_tree_view_states = load_file_tree_view_states(connection)?;
     let git_diff_view_states = load_git_diff_view_states(connection)?;
     let editor_view_states = load_editor_view_states(connection)?;
+    let settings = load_settings(connection)?;
 
-    State::from_workspaces_with_all_view_states(
+    State::from_persisted(
         workspaces,
         active_workspace_id,
         file_tree_view_states,
         git_diff_view_states,
         editor_view_states,
+        settings,
     )
     .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
+}
+
+fn load_settings(connection: &Connection) -> Result<Settings> {
+    let mut statement =
+        connection.prepare("SELECT key, value_type, value FROM settings ORDER BY key")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut settings = Settings::default();
+
+    for row in rows {
+        let (key, value_type, value) = row?;
+        if settings.value(&key).is_none() {
+            continue;
+        }
+
+        let value = decode_setting_value(&key, &value_type, value)?;
+        settings
+            .update(&key, value)
+            .map_err(persisted_setting_error)?;
+    }
+
+    Ok(settings)
+}
+
+fn decode_setting_value(key: &str, value_type: &str, value: String) -> Result<SettingValue> {
+    match value_type {
+        "boolean" => match value.as_str() {
+            "0" => Ok(SettingValue::Boolean(false)),
+            "1" => Ok(SettingValue::Boolean(true)),
+            _ => Err(invalid_state(format!(
+                "setting `{key}` has an invalid boolean value"
+            ))),
+        },
+        "string" => Ok(SettingValue::String(value)),
+        "number" => value
+            .parse::<f64>()
+            .map(SettingValue::Number)
+            .map_err(|_| invalid_state(format!("setting `{key}` has an invalid number value"))),
+        _ => Err(invalid_state(format!(
+            "setting `{key}` has an unknown value type"
+        ))),
+    }
+}
+
+fn persisted_setting_error(error: SettingsError) -> PersistenceError {
+    invalid_state(format!("persisted {error}"))
 }
 
 fn load_active_workspace_id(connection: &Connection) -> Result<Option<WorkspaceId>> {
@@ -1034,6 +1131,58 @@ mod tests {
             Some(first_workspace_id)
         );
         assert_eq!(loaded.workspaces().workspaces().len(), 2);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_settings() {
+        let path = test_db_path("settings");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+
+        state
+            .update_setting(
+                crate::settings::EDITOR_SOFT_WRAP,
+                SettingValue::Boolean(true),
+            )
+            .expect("setting should update");
+        store.save_settings(&state).expect("settings should save");
+
+        let loaded = store.load().expect("settings should load");
+
+        assert_eq!(
+            loaded.settings().boolean(crate::settings::EDITOR_SOFT_WRAP),
+            Some(true)
+        );
+        assert_eq!(
+            loaded.settings().boolean(crate::settings::EDITOR_MINIMAP),
+            Some(false)
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn settings_only_save_preserves_workspace_state() {
+        let path = test_db_path("settings-only");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        store.save(&state).expect("state should save");
+
+        state
+            .update_setting(crate::settings::EDITOR_MINIMAP, SettingValue::Boolean(true))
+            .expect("setting should update");
+        store.save_settings(&state).expect("settings should save");
+
+        let loaded = store.load().expect("state should load");
+
+        assert_eq!(loaded.workspaces(), state.workspaces());
+        assert_eq!(
+            loaded.settings().boolean(crate::settings::EDITOR_MINIMAP),
+            Some(true)
+        );
 
         let _ = fs::remove_file(path);
     }

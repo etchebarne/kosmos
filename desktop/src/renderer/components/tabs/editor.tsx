@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { getEditorDocument, saveEditorDocument } from "@/renderer/ipc";
 import { getOrCreateEditorBuffer } from "@/renderer/lib/editor-buffers";
+import { editorSettings } from "@/renderer/lib/editor-settings";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
-import { useWorkspaceStore } from "@/renderer/stores";
+import { useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import type { EditorDocument, TabId, WorkspaceId } from "@/shared/ipc";
 
 type EditorTabProps = {
@@ -103,6 +104,8 @@ function LoadedEditor({
   const saveRequestIdRef = useRef(0);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const setEditorDirty = useWorkspaceStore((state) => state.setEditorDirty);
+  const minimap = useSettingsStore((state) => editorSettings(state.snapshot).minimap);
+  const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -124,16 +127,18 @@ function LoadedEditor({
       () => monaco.editor.createModel(document.content, undefined, uri),
     );
     const { model } = buffer;
+    const initialSettings = editorSettings(useSettingsStore.getState().snapshot);
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
       bracketPairColorization: { enabled: true },
       fontSize: 13,
-      minimap: { enabled: false },
+      minimap: { enabled: initialSettings.minimap },
       padding: { top: 8 },
       scrollBeyondLastLine: false,
       smoothScrolling: true,
       theme: "kosmos",
+      wordWrap: initialSettings.softWrap ? "on" : "off",
     });
     editorRef.current = editor;
     const updateDirtyState = () => {
@@ -184,6 +189,13 @@ function LoadedEditor({
       editorRef.current = null;
     };
   }, [workspaceId, tabId, document, setEditorDirty]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({
+      minimap: { enabled: minimap },
+      wordWrap: softWrap ? "on" : "off",
+    });
+  }, [minimap, softWrap]);
 
   useEffect(() => {
     const editor = editorRef.current;

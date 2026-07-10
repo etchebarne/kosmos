@@ -1,4 +1,5 @@
-import { Minus, Plus, Square, X } from "lucide-react";
+import { Menu, Minus, Plus, Settings, Square, X } from "lucide-react";
+import { useState } from "react";
 
 import {
   closeWindow,
@@ -9,13 +10,21 @@ import { useWorkspaceStore } from "@/renderer/stores";
 import { Button } from "@/renderer/components/ui/button";
 import { ButtonGroup } from "@/renderer/components/ui/button-group";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/renderer/components/ui/dropdown-menu";
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/renderer/components/ui/context-menu";
+import { SettingsDialog } from "./settings-dialog";
 
 export function Header() {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const addWorkspace = useWorkspaceStore((state) => state.addWorkspace);
   const closeWorkspace = useWorkspaceStore((state) => state.closeWorkspace);
   const error = useWorkspaceStore((state) => state.error);
@@ -26,6 +35,24 @@ export function Header() {
 
   return (
     <header className="relative flex h-8 shrink-0 items-center justify-center px-2 [-webkit-app-region:drag]">
+      <div className="absolute left-1 flex items-center [-webkit-app-region:no-drag]">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button type="button" variant="ghost" size="icon-xs" aria-label="Open application menu" />
+            }
+          >
+            <Menu className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-44">
+            <DropdownMenuItem onClick={() => setIsSettingsOpen(true)}>
+              <Settings />
+              Settings
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       {error ? (
         <p
           className="absolute right-24 max-w-72 truncate text-xs text-destructive [-webkit-app-region:no-drag]"
@@ -114,6 +141,7 @@ export function Header() {
           <X className="size-3.5" />
         </Button>
       </div>
+      <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </header>
   );
 }

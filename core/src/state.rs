@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
     EditorDocument, EditorError, EditorViewState, normalize_path as normalize_editor_path,
     save_document,
@@ -21,6 +22,7 @@ use crate::tree::{
 
 #[derive(Debug)]
 pub struct State {
+    settings: Settings,
     workspaces: WorkspaceList,
     file_tree_view_states: Vec<FileTreeViewState>,
     git_diff_view_states: Vec<GitDiffViewState>,
@@ -131,6 +133,37 @@ impl State {
         &self.workspaces
     }
 
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<(), SettingsError> {
+        if self.settings.update(id, value)? {
+            self.mark_persistent_change();
+        }
+
+        Ok(())
+    }
+
+    pub fn from_persisted(
+        workspaces: Vec<Workspace>,
+        active_workspace_id: Option<WorkspaceId>,
+        file_tree_view_states: Vec<FileTreeViewState>,
+        git_diff_view_states: Vec<GitDiffViewState>,
+        editor_view_states: Vec<EditorViewState>,
+        settings: Settings,
+    ) -> Option<Self> {
+        let mut state = Self::from_workspaces_with_all_view_states(
+            workspaces,
+            active_workspace_id,
+            file_tree_view_states,
+            git_diff_view_states,
+            editor_view_states,
+        )?;
+        state.settings = settings;
+        Some(state)
+    }
+
     pub fn file_tree_view_states(&self) -> &[FileTreeViewState] {
         &self.file_tree_view_states
     }
@@ -146,6 +179,7 @@ impl State {
     pub fn persistent_candidate(&self) -> PersistentStateCandidate {
         PersistentStateCandidate {
             state: Self {
+                settings: self.settings.clone(),
                 workspaces: self.workspaces.clone(),
                 file_tree_view_states: self.file_tree_view_states.clone(),
                 git_diff_view_states: self.git_diff_view_states.clone(),
@@ -175,6 +209,7 @@ impl State {
 
         self.terminal_sessions
             .retain(|workspace_id, tab_id| candidate.is_terminal_tab(workspace_id, tab_id));
+        self.settings = candidate.settings;
         self.workspaces = candidate.workspaces;
         self.file_tree_view_states = candidate.file_tree_view_states;
         self.git_diff_view_states = candidate.git_diff_view_states;
@@ -1427,6 +1462,7 @@ impl State {
         }
 
         Some(Self {
+            settings: Settings::default(),
             workspaces,
             file_tree_view_states,
             git_diff_view_states,
@@ -1631,6 +1667,7 @@ fn editor_tabs_have_view_state(
 impl Default for State {
     fn default() -> Self {
         Self {
+            settings: Settings::default(),
             workspaces: WorkspaceList::new(),
             file_tree_view_states: Vec::new(),
             git_diff_view_states: Vec::new(),

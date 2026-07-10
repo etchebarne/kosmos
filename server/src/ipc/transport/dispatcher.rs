@@ -373,6 +373,7 @@ fn execute_persistent(
         PersistenceMode::ActiveWorkspace => store.save_active_workspace(candidate.state()),
         PersistenceMode::Barrier => unreachable!("barriers return before persistence"),
         PersistenceMode::Full => store.save(candidate.state()),
+        PersistenceMode::Settings => store.save_settings(candidate.state()),
     };
 
     if let Err(error) = save_result {

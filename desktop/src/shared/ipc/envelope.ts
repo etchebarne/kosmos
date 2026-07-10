@@ -7,7 +7,8 @@ export type KosmosIpcDomain =
   | "fileTree"
   | "editor"
   | "git"
-  | "terminal";
+  | "terminal"
+  | "settings";
 
 export type KosmosIpcParams = Record<string, unknown>;
 
