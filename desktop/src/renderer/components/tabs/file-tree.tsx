@@ -9,9 +9,23 @@ import type {
   FileTreeRenameEvent,
 } from "@pierre/trees";
 import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
+import { FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/renderer/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/renderer/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/renderer/components/ui/tooltip";
 import {
   copyFileTreeEntries,
   createFileTreeEntry,
@@ -23,13 +37,7 @@ import {
   revealFileTreePath,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
-import { useWorkspaceStore } from "@/renderer/stores";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-} from "@/renderer/components/ui/context-menu";
+import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type { FileTreeEntryKind, FileTreeSnapshot, TabId, WorkspaceId } from "@/shared/ipc";
 
 type FileTreeTabProps = {
@@ -72,6 +80,7 @@ type FileTreeContextMenuClose = (options?: FileTreeContextMenuCloseOptions) => v
 const EXPANSION_SAVE_DELAY_MS = 250;
 
 export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabProps) {
+  const workspaceRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
   const [loadState, setLoadState] = useState<FileTreeLoadState>({
     status: "loading",
     workspaceId,
@@ -79,8 +88,20 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
   });
   const requestIdRef = useRef(0);
   const revisionRef = useRef(0);
+  const snapshotSignatureRef = useRef<string | null>(null);
+  const observedWorkspaceRevisionRef = useRef(workspaceRevision);
+  const revisionLoadInFlightRef = useRef(false);
+  const revisionLoadPendingRef = useRef(false);
+  const revisionLoadTargetRef = useRef({ workspaceId, tabId });
 
-  const loadFileTree = async (targetWorkspaceId: WorkspaceId, targetTabId: TabId, showLoading: boolean) => {
+  revisionLoadTargetRef.current = { workspaceId, tabId };
+
+  const loadFileTree = async (
+    targetWorkspaceId: WorkspaceId,
+    targetTabId: TabId,
+    showLoading: boolean,
+    forceUpdate: boolean,
+  ) => {
     const requestId = requestIdRef.current + 1;
 
     requestIdRef.current = requestId;
@@ -93,6 +114,12 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
       const snapshot = await getFileTree({ workspaceId: targetWorkspaceId, tabId: targetTabId });
 
       if (requestIdRef.current === requestId) {
+        const signature = JSON.stringify(snapshot);
+        if (!forceUpdate && snapshotSignatureRef.current === signature) {
+          return;
+        }
+
+        snapshotSignatureRef.current = signature;
         revisionRef.current += 1;
         setLoadState({
           status: "loaded",
@@ -104,6 +131,7 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
       }
     } catch (caughtError: unknown) {
       if (requestIdRef.current === requestId) {
+        snapshotSignatureRef.current = null;
         setLoadState({
           status: "error",
           workspaceId: targetWorkspaceId,
@@ -114,9 +142,38 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
     }
   };
 
+  const loadWorkspaceRevision = async () => {
+    if (revisionLoadInFlightRef.current) {
+      revisionLoadPendingRef.current = true;
+      return;
+    }
+
+    revisionLoadInFlightRef.current = true;
+    try {
+      do {
+        revisionLoadPendingRef.current = false;
+        const target = revisionLoadTargetRef.current;
+        await loadFileTree(target.workspaceId, target.tabId, false, false);
+      } while (revisionLoadPendingRef.current);
+    } finally {
+      revisionLoadInFlightRef.current = false;
+    }
+  };
+
   useEffect(() => {
-    void loadFileTree(workspaceId, tabId, true);
+    observedWorkspaceRevisionRef.current = workspaceRevision;
+    snapshotSignatureRef.current = null;
+    void loadFileTree(workspaceId, tabId, true, true);
   }, [workspaceId, tabId]);
+
+  useEffect(() => {
+    if (workspaceRevision === observedWorkspaceRevisionRef.current) {
+      return;
+    }
+
+    observedWorkspaceRevisionRef.current = workspaceRevision;
+    void loadWorkspaceRevision();
+  }, [workspaceRevision, workspaceId, tabId]);
 
   const currentLoadState: FileTreeLoadState =
     loadState.workspaceId === workspaceId && loadState.tabId === tabId
@@ -135,7 +192,7 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
           workspaceId={workspaceId}
           tabId={tabId}
           snapshot={currentLoadState.snapshot}
-          onReload={() => loadFileTree(workspaceId, tabId, false)}
+          onReload={() => loadFileTree(workspaceId, tabId, false, true)}
         />
       ) : null}
     </div>
@@ -207,24 +264,26 @@ function LoadedFileTree({
   };
   const { model } = useFileTree({
     dragAndDrop: {
-      canDrag: (paths) => paths.length > 0,
+      canDrag: (paths) => paths.length > 0 && !paths.includes(snapshot.rootPath),
       canDrop: (event) => event.target.kind === "root" || event.target.directoryPath !== null,
       onDropComplete: moveDroppedEntries,
       onDropError: (message) => window.alert(message),
     },
     density: "compact",
-    flattenEmptyDirectories: true,
+    flattenEmptyDirectories: false,
     initialExpandedPaths: snapshot.expandedPaths,
     initialExpansion: "closed",
     paths: snapshot.paths,
     renaming: {
-      canRename: () => true,
+      canRename: (item) => item.path !== snapshot.rootPath,
       onError: (message) => {
         removePendingCreates();
         window.alert(message);
       },
       onRename: renameEntry,
     },
+    stickyFolders: true,
+    unsafeCSS: rootActionPaddingCss(snapshot.rootPath),
   });
   useEffect(() => {
     return model.onMutation("*", (event) => {
@@ -311,13 +370,14 @@ function LoadedFileTree({
     }
   };
   const startInlineCreate = (kind: FileTreeEntryKind, parentPath: string | null) => {
-    const placeholderPath = nextUntitledPath(model, parentPath, kind);
+    const targetParentPath = parentPath ?? snapshot.rootPath;
+    const placeholderPath = nextUntitledPath(model, targetParentPath, kind);
     const sourcePath = renameSourcePath(placeholderPath);
 
     pendingCreatesRef.current.set(sourcePath, { kind });
     setHasInlineCreate(true);
 
-    const parent = parentPath ? model.getItem(parentPath) : null;
+    const parent = model.getItem(targetParentPath);
     if (isDirectoryHandle(parent)) {
       parent.expand();
     }
@@ -358,7 +418,10 @@ function LoadedFileTree({
       return;
     }
 
-    openEditorTab(tabId, path);
+    const relativePath = workspaceRelativeTreePath(snapshot.rootPath, path);
+    if (relativePath) {
+      openEditorTab(tabId, relativePath);
+    }
   };
 
   return (
@@ -374,6 +437,7 @@ function LoadedFileTree({
             context={context}
             item={item}
             model={model}
+            rootPath={snapshot.rootPath}
             tabId={tabId}
             workspaceId={workspaceId}
             onClipboardChange={setClipboard}
@@ -385,7 +449,13 @@ function LoadedFileTree({
           />
         )}
       />
-      {snapshot.paths.length === 0 && !hasInlineCreate ? (
+      <FileTreeRootActions
+        model={model}
+        rootPath={snapshot.rootPath}
+        onCreateInline={startInlineCreate}
+        onReload={onReload}
+      />
+      {snapshot.paths.length === 1 && !hasInlineCreate ? (
         <div className="pointer-events-none absolute inset-0">
           <FileTreeMessage message="This workspace is empty." />
         </div>
@@ -415,6 +485,81 @@ function LoadedFileTree({
         />
       ) : null}
     </div>
+  );
+}
+
+function FileTreeRootActions({
+  model,
+  rootPath,
+  onCreateInline,
+  onReload,
+}: {
+  model: FileTreeModel;
+  rootPath: string;
+  onCreateInline(kind: FileTreeEntryKind, parentPath: string | null): void;
+  onReload(): Promise<void>;
+}) {
+  const [isReloading, setIsReloading] = useState(false);
+  const createEntry = (kind: FileTreeEntryKind) => {
+    onCreateInline(kind, selectedCreationParentPath(model, rootPath));
+  };
+  const reload = async () => {
+    if (isReloading) {
+      return;
+    }
+
+    setIsReloading(true);
+    try {
+      await onReload();
+    } finally {
+      setIsReloading(false);
+    }
+  };
+
+  return (
+    <TooltipProvider>
+      <div className="absolute right-1 top-0 z-10 flex h-6 items-center gap-0">
+        <FileTreeRootAction label="New file" onClick={() => createEntry("file")}>
+          <FilePlus2 />
+        </FileTreeRootAction>
+        <FileTreeRootAction label="New folder" onClick={() => createEntry("directory")}>
+          <FolderPlus />
+        </FileTreeRootAction>
+        <FileTreeRootAction label="Reload" disabled={isReloading} onClick={() => void reload()}>
+          <RefreshCw className={isReloading ? "animate-spin" : undefined} />
+        </FileTreeRootAction>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function FileTreeRootAction({
+  children,
+  disabled,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+  label: string;
+  onClick(): void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={disabled}
+          aria-label={label}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -519,6 +664,7 @@ function FileTreeContextMenu({
   context,
   item,
   model,
+  rootPath,
   tabId,
   workspaceId,
   onClipboardChange,
@@ -532,6 +678,7 @@ function FileTreeContextMenu({
   context: FileTreeContextMenuOpenContext;
   item: FileTreeContextMenuItem;
   model: FileTreeModel;
+  rootPath: string;
   tabId: TabId;
   workspaceId: WorkspaceId;
   onClipboardChange(clipboard: FileTreeClipboard | null): void;
@@ -542,12 +689,14 @@ function FileTreeContextMenu({
   onMutation(mutation: () => Promise<unknown>): Promise<void>;
 }) {
   const itemTargetDirectoryPath = targetDirectoryPathForItem(item);
+  const itemIsRoot = item.path === rootPath;
   const itemIsPendingCreate = onIsPendingCreate(item.path);
   const selectedPaths = selectedOrItemPaths(model, item.path);
   const selectedCount = selectedPaths.length;
   const selectedPendingPaths = selectedPaths.filter(onIsPendingCreate);
   const selectedRealPaths = selectedPaths.filter((path) => !onIsPendingCreate(path));
   const hasPendingSelection = selectedPendingPaths.length > 0;
+  const hasRootSelection = selectedPaths.includes(rootPath);
 
   return (
     <FileTreeContextMenuSurface
@@ -581,7 +730,7 @@ function FileTreeContextMenu({
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
-              disabled={selectedCount !== 1}
+              disabled={selectedCount !== 1 || itemIsRoot}
               onClick={() => {
                 close({ restoreFocus: false });
                 model.startRenaming(item.path);
@@ -590,7 +739,7 @@ function FileTreeContextMenu({
               Rename
             </ContextMenuItem>
             <ContextMenuItem
-              disabled={hasPendingSelection}
+              disabled={hasPendingSelection || hasRootSelection}
               onClick={() => {
                 onClipboardChange({ action: "copy", paths: selectedPaths });
                 close();
@@ -599,7 +748,7 @@ function FileTreeContextMenu({
               {selectedCount === 1 ? "Copy" : `Copy ${selectedCount} items`}
             </ContextMenuItem>
             <ContextMenuItem
-              disabled={hasPendingSelection}
+              disabled={hasPendingSelection || hasRootSelection}
               onClick={() => {
                 onClipboardChange({ action: "cut", paths: selectedPaths });
                 close();
@@ -651,6 +800,7 @@ function FileTreeContextMenu({
             <ContextMenuSeparator />
             <ContextMenuItem
               variant="destructive"
+              disabled={hasRootSelection}
               onClick={() => {
                 if (selectedRealPaths.length === 0) {
                   close();
@@ -822,6 +972,34 @@ function targetDirectoryPathForItem(item: FileTreeContextMenuItem): string | nul
   }
 
   return parentDirectoryPath(item.path);
+}
+
+function selectedCreationParentPath(model: FileTreeModel, rootPath: string): string {
+  const focusedPath = model.getFocusedPath();
+  const selectedPaths = model.getSelectedPaths();
+  const selectedPath =
+    focusedPath && selectedPaths.includes(focusedPath) ? focusedPath : selectedPaths[0];
+  const selectedItem = selectedPath ? model.getItem(selectedPath) : null;
+
+  if (!selectedPath || !selectedItem) {
+    return rootPath;
+  }
+
+  const parentPath = selectedItem.isDirectory()
+    ? targetDirectoryPath(selectedPath)
+    : parentDirectoryPath(selectedPath);
+
+  return parentPath ?? rootPath;
+}
+
+function workspaceRelativeTreePath(rootPath: string, path: string): string | null {
+  const relativePath = path.startsWith(rootPath) ? path.slice(rootPath.length) : "";
+
+  return relativePath.length > 0 ? relativePath : null;
+}
+
+function rootActionPaddingCss(rootPath: string): string {
+  return `[data-type="item"][data-item-path=${cssString(rootPath)}]{padding-inline-end:76px}`;
 }
 
 function targetDirectoryPath(path: string | null): string | null {

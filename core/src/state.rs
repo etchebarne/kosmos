@@ -255,6 +255,14 @@ impl State {
         FileTree::scan_with_expanded_paths(workspace.directory(), expanded_paths)
     }
 
+    pub fn file_tree_root(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<&Path, FileTreeError> {
+        self.file_tree_workspace_directory(workspace_id, tab_id)
+    }
+
     pub fn file_tree_children(
         &self,
         workspace_id: Option<WorkspaceId>,

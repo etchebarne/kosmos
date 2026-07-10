@@ -59,6 +59,7 @@ export type FileTreeResolvedPath = {
 
 export type FileTreeSnapshot = {
   root: string;
+  rootPath: string;
   paths: string[];
   expandedPaths: string[];
   deferredPaths: string[];

@@ -1,4 +1,6 @@
-use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind};
+use std::path::Path;
+
+use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError};
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
@@ -90,6 +92,7 @@ pub(crate) struct ResolveFileTreePathParams {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeSnapshot {
     root: String,
+    root_path: String,
     paths: Vec<String>,
     expanded_paths: Vec<String>,
     deferred_paths: Vec<String>,
@@ -108,28 +111,117 @@ pub(crate) struct FileTreeResolvedPath {
     path: String,
 }
 
+pub(crate) struct FileTreePathMapper {
+    root_path: String,
+}
+
 impl FileTreeSnapshot {
     pub(crate) fn from_file_tree(file_tree: &FileTree) -> Self {
+        let mapper = FileTreePathMapper::new(file_tree.root());
+
         Self {
             root: file_tree.root().to_string_lossy().into_owned(),
-            paths: file_tree.paths().to_vec(),
-            expanded_paths: file_tree.expanded_paths().to_vec(),
-            deferred_paths: file_tree.deferred_paths().to_vec(),
+            root_path: mapper.root_path().to_owned(),
+            paths: std::iter::once(mapper.root_path().to_owned())
+                .chain(file_tree.paths().iter().map(|path| mapper.tree_path(path)))
+                .collect(),
+            expanded_paths: std::iter::once(mapper.root_path().to_owned())
+                .chain(
+                    file_tree
+                        .expanded_paths()
+                        .iter()
+                        .map(|path| mapper.tree_path(path)),
+                )
+                .collect(),
+            deferred_paths: file_tree
+                .deferred_paths()
+                .iter()
+                .map(|path| mapper.tree_path(path))
+                .collect(),
         }
     }
 }
 
 impl FileTreeChildrenSnapshot {
-    pub(crate) fn from_directory(directory: &FileTreeDirectory) -> Self {
+    pub(crate) fn from_directory(
+        directory: &FileTreeDirectory,
+        mapper: &FileTreePathMapper,
+    ) -> Self {
         Self {
-            paths: directory.paths().to_vec(),
-            deferred_paths: directory.deferred_paths().to_vec(),
+            paths: directory
+                .paths()
+                .iter()
+                .map(|path| mapper.tree_path(path))
+                .collect(),
+            deferred_paths: directory
+                .deferred_paths()
+                .iter()
+                .map(|path| mapper.tree_path(path))
+                .collect(),
         }
+    }
+}
+
+impl FileTreePathMapper {
+    pub(crate) fn new(root: &Path) -> Self {
+        let name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("workspace");
+
+        Self {
+            root_path: format!("{name}/"),
+        }
+    }
+
+    pub(crate) fn root_path(&self) -> &str {
+        &self.root_path
+    }
+
+    pub(crate) fn tree_path(&self, relative_path: &str) -> String {
+        format!("{}{relative_path}", self.root_path)
+    }
+
+    pub(crate) fn relative_path(&self, path: &str) -> Result<Option<String>, FileTreeError> {
+        if path == self.root_path || path == self.root_path.trim_end_matches('/') {
+            return Ok(None);
+        }
+
+        path.strip_prefix(&self.root_path)
+            .filter(|path| !path.is_empty())
+            .map(|path| Some(path.to_owned()))
+            .ok_or_else(|| FileTreeError::InvalidPath(path.to_owned()))
+    }
+
+    pub(crate) fn relative_entry_path(&self, path: &str) -> Result<String, FileTreeError> {
+        self.relative_path(path)?
+            .ok_or_else(|| FileTreeError::InvalidPath(path.to_owned()))
     }
 }
 
 impl FileTreeResolvedPath {
     pub(crate) fn new(path: impl Into<String>) -> Self {
         Self { path: path.into() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_between_workspace_relative_and_rooted_tree_paths() {
+        let mapper = FileTreePathMapper::new(Path::new("/home/user/kosmos"));
+
+        assert_eq!(mapper.root_path(), "kosmos/");
+        assert_eq!(mapper.tree_path("src/main.rs"), "kosmos/src/main.rs");
+        assert_eq!(mapper.relative_path("kosmos/").unwrap(), None);
+        assert_eq!(
+            mapper.relative_path("kosmos/src/main.rs").unwrap(),
+            Some("src/main.rs".to_owned())
+        );
+        assert!(mapper.relative_path("other/src/main.rs").is_err());
+        assert!(mapper.relative_entry_path("kosmos/").is_err());
     }
 }
