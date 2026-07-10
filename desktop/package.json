@@ -2,7 +2,12 @@
   "name": "kosmos-desktop",
   "version": "0.1.0",
   "description": "A code editor where every view is a tab you can place anywhere.",
-  "author": "etchebarne",
+  "author": {
+    "name": "Martin Etchebarne",
+    "email": "martin@etchebarne.net"
+  },
+  "homepage": "https://github.com/etchebarne/kosmos",
+  "license": "MIT",
   "desktopName": "kosmos.desktop",
   "main": "dist/main.cjs",
   "type": "module",
@@ -14,7 +19,7 @@
     "build:renderer": "vite build",
     "clean": "rm -rf dist",
     "dev": "bun run build && electron .",
-    "package:linux": "electron-builder --linux AppImage",
+    "package:linux": "electron-builder --linux",
     "start": "electron .",
     "typecheck": "tsc --noEmit"
   },
@@ -50,7 +55,7 @@
     "zustand": "^5.0.14"
   },
   "build": {
-    "appId": "com.etchebarne.kosmos",
+    "appId": "net.etchebarne.kosmos",
     "productName": "Kosmos",
     "artifactName": "Kosmos-${version}-${arch}.${ext}",
     "asar": true,
@@ -75,11 +80,20 @@
     ],
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb",
+        "rpm"
       ],
-      "category": "Development",
+      "category": "Development;IDE;TextEditor",
       "executableName": "kosmos",
+      "synopsis": "A code editor where every view is a tab you can place anywhere.",
       "syncDesktopName": true
+    },
+    "deb": {
+      "packageName": "kosmos"
+    },
+    "rpm": {
+      "packageName": "kosmos"
     }
   }
 }

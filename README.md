@@ -19,6 +19,13 @@ Most editors dictate where things go. Kosmos lets you treat every view as a tab 
 
 Kosmos only runs on Linux. Windows and macOS are not supported, and support for those platforms is not planned at this time.
 
+## Installation
+
+- Debian, Ubuntu, Linux Mint, and Pop!_OS: install the `.deb` package from the [latest release](https://github.com/etchebarne/kosmos/releases/latest).
+- Fedora and openSUSE: install the `.rpm` package from the [latest release](https://github.com/etchebarne/kosmos/releases/latest).
+- Arch Linux and derivatives: install [`kosmos-bin`](https://aur.archlinux.org/packages/kosmos-bin) from the AUR, for example with `yay -S kosmos-bin`.
+- Other distributions: download the AppImage from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), make it executable, and run it.
+
 ## Project layout
 
 - `core/` contains the Rust logic layer.
@@ -30,7 +37,8 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 - Run the app with `./scripts/run.sh`.
 - Test the Rust workspace with `cargo test --workspace`.
 - Build the Electron desktop app with `bun install --cwd desktop` and `bun run --cwd desktop build`.
-- Build a production Linux AppImage with `./scripts/bundle-linux.sh`. Artifacts are written to `desktop/release/`.
+- Build production Linux AppImage, deb, and rpm packages with `./scripts/bundle-linux.sh`. Artifacts are written to `desktop/release/`.
+- Building the rpm locally requires `rpmbuild`; install it with `sudo pacman -S rpm-tools` on Arch Linux, `sudo apt-get install rpm` on Debian-based systems, or `sudo dnf install rpm-build` on Fedora.
 - The AppImage-based AUR package template lives in `aur/kosmos-bin/`.
 - Bump release metadata with `./scripts/bump-version.sh patch|minor|major|x.y.z`.
 

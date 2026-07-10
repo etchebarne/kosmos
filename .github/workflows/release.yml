@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (for example, v0.1.0)"
+        required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate release version
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have the form vX.Y.Z: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          version="${RELEASE_TAG#v}"
+          desktop_version="$(bun -e 'console.log(require("./desktop/package.json").version)')"
+          core_version="$(awk -F '"' '/^version = "/ { print $2; exit }' core/Cargo.toml)"
+          server_version="$(awk -F '"' '/^version = "/ { print $2; exit }' server/Cargo.toml)"
+
+          for package_version in "$desktop_version" "$core_version" "$server_version"; do
+            if [[ "$package_version" != "$version" ]]; then
+              echo "Tag $RELEASE_TAG does not match package version $package_version" >&2
+              exit 1
+            fi
+          done
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install desktop dependencies
+        run: bun install --cwd desktop --frozen-lockfile
+
+      - name: Build Linux packages
+        run: ./scripts/bundle-linux.sh
+
+      - name: Verify release artifacts
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          artifacts=(
+            "desktop/release/Kosmos-${VERSION}-x86_64.AppImage"
+            "desktop/release/Kosmos-${VERSION}-amd64.deb"
+            "desktop/release/Kosmos-${VERSION}-x86_64.rpm"
+          )
+
+          for artifact in "${artifacts[@]}"; do
+            test -f "$artifact" || {
+              echo "Missing release artifact: $artifact" >&2
+              exit 1
+            }
+          done
+
+          (
+            cd desktop/release
+            sha256sum \
+              "Kosmos-${VERSION}-x86_64.AppImage" \
+              "Kosmos-${VERSION}-amd64.deb" \
+              "Kosmos-${VERSION}-x86_64.rpm" \
+              > SHA256SUMS
+          )
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          artifacts=(
+            "desktop/release/Kosmos-${VERSION}-x86_64.AppImage"
+            "desktop/release/Kosmos-${VERSION}-amd64.deb"
+            "desktop/release/Kosmos-${VERSION}-x86_64.rpm"
+            "desktop/release/SHA256SUMS"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${artifacts[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Kosmos $RELEASE_TAG" \
+              --draft \
+              --generate-notes \
+              --verify-tag \
+              "${artifacts[@]}"
+          fi
