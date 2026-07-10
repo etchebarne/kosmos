@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
 import { getEditorDocument, saveEditorDocument } from "@/renderer/ipc";
-import { getOrCreateEditorBuffer } from "@/renderer/lib/editor-buffers";
+import {
+  getOrCreateEditorBuffer,
+  reconcileEditorBuffer,
+  type EditorBuffer,
+} from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
-import { useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
+import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import type { EditorDocument, TabId, WorkspaceId } from "@/shared/ipc";
 
 type EditorTabProps = {
@@ -32,35 +36,106 @@ type SaveState =
   | { status: "error"; message: string };
 
 export function EditorTab({ workspaceId, tabId, isActive, onActivatePane }: EditorTabProps) {
+  const workspaceRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
+  const isTabDirty = useWorkspaceStore(
+    (state) => state.dirtyTabs[workspaceId]?.[tabId] === true,
+  );
   const [loadState, setLoadState] = useState<EditorLoadState>({
     status: "loading",
     workspaceId,
     tabId,
   });
   const requestIdRef = useRef(0);
+  const revisionRef = useRef(workspaceRevision);
+  const revisionLoadInFlightRef = useRef(false);
+  const revisionLoadPendingRef = useRef(false);
+  const revisionLoadTargetRef = useRef({ workspaceId, tabId });
+  const isTabDirtyRef = useRef(isTabDirty);
 
-  useEffect(() => {
+  revisionLoadTargetRef.current = { workspaceId, tabId };
+  isTabDirtyRef.current = isTabDirty;
+
+  const loadDocument = async (
+    targetWorkspaceId: WorkspaceId,
+    targetTabId: TabId,
+    showLoading: boolean,
+  ) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setLoadState({ status: "loading", workspaceId, tabId });
 
-    void getEditorDocument({ workspaceId, tabId })
-      .then((document) => {
-        if (requestIdRef.current === requestId) {
-          setLoadState({ status: "loaded", workspaceId, tabId, document });
-        }
-      })
-      .catch((caughtError: unknown) => {
-        if (requestIdRef.current === requestId) {
-          setLoadState({
-            status: "error",
-            workspaceId,
-            tabId,
-            message: errorMessage(caughtError),
-          });
-        }
+    if (showLoading) {
+      setLoadState({ status: "loading", workspaceId: targetWorkspaceId, tabId: targetTabId });
+    }
+
+    try {
+      const document = await getEditorDocument({
+        workspaceId: targetWorkspaceId,
+        tabId: targetTabId,
       });
+
+      if (requestIdRef.current === requestId) {
+        setLoadState({
+          status: "loaded",
+          workspaceId: targetWorkspaceId,
+          tabId: targetTabId,
+          document,
+        });
+      }
+    } catch (caughtError: unknown) {
+      if (requestIdRef.current === requestId) {
+        setLoadState((current) => {
+          if (
+            !showLoading &&
+            isTabDirtyRef.current &&
+            current.status === "loaded" &&
+            current.workspaceId === targetWorkspaceId &&
+            current.tabId === targetTabId
+          ) {
+            return current;
+          }
+
+          return {
+            status: "error",
+            workspaceId: targetWorkspaceId,
+            tabId: targetTabId,
+            message: errorMessage(caughtError),
+          };
+        });
+      }
+    }
+  };
+
+  const loadDocumentRevision = async () => {
+    if (revisionLoadInFlightRef.current) {
+      revisionLoadPendingRef.current = true;
+      return;
+    }
+
+    revisionLoadInFlightRef.current = true;
+    try {
+      do {
+        revisionLoadPendingRef.current = false;
+        const target = revisionLoadTargetRef.current;
+        await loadDocument(target.workspaceId, target.tabId, false);
+      } while (revisionLoadPendingRef.current);
+    } finally {
+      revisionLoadInFlightRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    revisionRef.current = workspaceRevision;
+    void loadDocument(workspaceId, tabId, true);
   }, [workspaceId, tabId]);
+
+  useEffect(() => {
+    if (workspaceRevision === revisionRef.current) {
+      return;
+    }
+
+    revisionRef.current = workspaceRevision;
+    void loadDocumentRevision();
+  }, [workspaceRevision, workspaceId, tabId]);
 
   const currentLoadState: EditorLoadState =
     loadState.workspaceId === workspaceId && loadState.tabId === tabId
@@ -101,6 +176,7 @@ function LoadedEditor({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const bufferRef = useRef<EditorBuffer | null>(null);
   const saveRequestIdRef = useRef(0);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
@@ -126,6 +202,7 @@ function LoadedEditor({
       document.content,
       () => monaco.editor.createModel(document.content, undefined, uri),
     );
+    bufferRef.current = buffer;
     const { model } = buffer;
     const initialSettings = editorSettings(useSettingsStore.getState().snapshot);
     const editor = monaco.editor.create(container, {
@@ -187,8 +264,27 @@ function LoadedEditor({
       saveAction.dispose();
       editor.dispose();
       editorRef.current = null;
+      if (bufferRef.current === buffer) {
+        bufferRef.current = null;
+      }
     };
-  }, [workspaceId, tabId, document, setTabDirty]);
+  }, [workspaceId, tabId, document.path, setTabDirty]);
+
+  useEffect(() => {
+    const buffer = bufferRef.current;
+    if (!buffer || buffer.path !== document.path) {
+      return;
+    }
+
+    const isDirty = reconcileEditorBuffer(buffer, document.content);
+    setTabDirty(workspaceId, tabId, isDirty);
+    setSaveState((current) => {
+      if (current.status === "saving") {
+        return current;
+      }
+      return isDirty ? { status: "dirty" } : { status: "clean" };
+    });
+  }, [workspaceId, tabId, document.path, document.content, setTabDirty]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({

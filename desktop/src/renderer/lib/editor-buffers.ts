@@ -34,6 +34,17 @@ export function getOrCreateEditorBuffer(
   return buffer;
 }
 
+export function reconcileEditorBuffer(buffer: EditorBuffer, content: string): boolean {
+  const wasDirty = buffer.model.getValue() !== buffer.savedContent;
+  buffer.savedContent = content;
+
+  if (!wasDirty && buffer.model.getValue() !== content) {
+    buffer.model.setValue(content);
+  }
+
+  return buffer.model.getValue() !== buffer.savedContent;
+}
+
 export function disposeEditorBuffer(workspaceId: number, tabId: number): void {
   const key = bufferKey(workspaceId, tabId);
   const buffer = buffers.get(key);

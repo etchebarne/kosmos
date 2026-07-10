@@ -43,6 +43,9 @@ type SaveState =
 
 export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTabProps) {
   const gitRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
+  const isTabDirty = useWorkspaceStore(
+    (state) => state.dirtyTabs[workspaceId]?.[tabId] === true,
+  );
   const [loadState, setLoadState] = useState<DiffLoadState>({
     status: "loading",
     workspaceId,
@@ -53,8 +56,10 @@ export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTa
   const revisionLoadInFlightRef = useRef(false);
   const revisionLoadPendingRef = useRef(false);
   const revisionLoadTargetRef = useRef({ workspaceId, tabId });
+  const isTabDirtyRef = useRef(isTabDirty);
 
   revisionLoadTargetRef.current = { workspaceId, tabId };
+  isTabDirtyRef.current = isTabDirty;
 
   const loadDiff = async (targetWorkspaceId: WorkspaceId, targetTabId: TabId, showLoading: boolean) => {
     const requestId = requestIdRef.current + 1;
@@ -72,11 +77,23 @@ export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTa
       }
     } catch (caughtError: unknown) {
       if (requestIdRef.current === requestId) {
-        setLoadState({
-          status: "error",
-          workspaceId: targetWorkspaceId,
-          tabId: targetTabId,
-          message: errorMessage(caughtError),
+        setLoadState((current) => {
+          if (
+            !showLoading &&
+            isTabDirtyRef.current &&
+            current.status === "loaded" &&
+            current.workspaceId === targetWorkspaceId &&
+            current.tabId === targetTabId
+          ) {
+            return current;
+          }
+
+          return {
+            status: "error",
+            workspaceId: targetWorkspaceId,
+            tabId: targetTabId,
+            message: errorMessage(caughtError),
+          };
         });
       }
     }
@@ -149,7 +166,8 @@ function LoadedDiff({
   diff: GitDiff;
   isActive: boolean;
 }) {
-  const [selectedPath, setSelectedPath] = useState(() => selectedDiffPath(diff));
+  const [displayedDiff, setDisplayedDiff] = useState(diff);
+  const [selectedPath, setSelectedPath] = useState(() => selectedDiffPath(displayedDiff));
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
   const updateDirtyState = (dirty: boolean) => {
@@ -158,28 +176,36 @@ function LoadedDiff({
   };
 
   useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setDisplayedDiff(diff);
+    }
+  }, [diff, hasUnsavedChanges]);
+
+  useEffect(() => {
     if (
       !hasUnsavedChanges &&
-      diff.focusedPath &&
-      diff.files.some((file) => file.path === diff.focusedPath)
+      displayedDiff.focusedPath &&
+      displayedDiff.files.some((file) => file.path === displayedDiff.focusedPath)
     ) {
-      setSelectedPath(diff.focusedPath);
+      setSelectedPath(displayedDiff.focusedPath);
     }
-  }, [diff.focusedPath]);
+  }, [displayedDiff, hasUnsavedChanges]);
 
   useEffect(() => {
     setSelectedPath((currentPath) => {
-      return diff.files.some((file) => file.path === currentPath)
+      return displayedDiff.files.some((file) => file.path === currentPath)
         ? currentPath
-        : (diff.files[0]?.path ?? "");
+        : (displayedDiff.files[0]?.path ?? "");
     });
-  }, [diff.files]);
+  }, [displayedDiff.files]);
 
-  if (diff.files.length === 0) {
+  if (displayedDiff.files.length === 0) {
     return <DiffMessage message="No diff" />;
   }
 
-  const file = diff.files.find((candidate) => candidate.path === selectedPath) ?? diff.files[0];
+  const file =
+    displayedDiff.files.find((candidate) => candidate.path === selectedPath) ??
+    displayedDiff.files[0];
   if (!file) {
     return <DiffMessage message="No diff" />;
   }
@@ -201,7 +227,7 @@ function LoadedDiff({
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="start">
-            {diff.files.map((candidate) => (
+            {displayedDiff.files.map((candidate) => (
               <SelectItem key={candidate.path} value={candidate.path}>
                 <span className="min-w-0 truncate">{candidate.path}</span>
               </SelectItem>
