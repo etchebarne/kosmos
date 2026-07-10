@@ -2,8 +2,9 @@ use core::tabs::git::GitError;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::git::{
-    CommitGitChangesParams, CreateGitBranchParams, GitDiffPayload, GitPathsParams,
-    GitRepositorySnapshotPayload, GitStashParams, GitStashPayload, GitTabParams,
+    AddGitRemoteParams, CommitGitChangesParams, CreateGitBranchParams, GitDiffPayload,
+    GitPathsParams, GitRemoteParams, GitRemotePayload, GitRepositorySnapshotPayload,
+    GitStashParams, GitStashPayload, GitTabParams, GitTagParams, GitTagPayload,
     OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
 };
 use super::{RouteDefinition, parse_params, workspace_list_response};
@@ -31,6 +32,12 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         "stashes" => stashes,
         "applyStash" => apply_stash,
         "dropStash" => drop_stash,
+        "remotes" => remotes,
+        "addRemote" => add_remote,
+        "removeRemote" => remove_remote,
+        "tags" => tags,
+        "createTag" => create_tag,
+        "deleteTag" => delete_tag,
         "discardAll" => discard_all,
         "discardStaged" => discard_staged,
         _ => return None,
@@ -317,6 +324,96 @@ fn drop_stash(state: &mut core::State, request: &RequestEnvelope) -> ServerMessa
     }
 }
 
+fn remotes(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => {
+            match state.git_remotes(params.workspace_id.map(Into::into), params.tab_id.into()) {
+                Ok(remotes) => ServerMessage::ok(
+                    request.id,
+                    remotes
+                        .iter()
+                        .map(GitRemotePayload::from_remote)
+                        .collect::<Vec<_>>(),
+                ),
+                Err(error) => git_error(request.id, error),
+            }
+        }
+        Err(response) => response,
+    }
+}
+
+fn add_remote(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<AddGitRemoteParams>(request) {
+        Ok(params) => command_result(
+            state.add_git_remote(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.name,
+                &params.url,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn remove_remote(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitRemoteParams>(request) {
+        Ok(params) => command_result(
+            state.remove_git_remote(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.name,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn tags(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTabParams>(request) {
+        Ok(params) => {
+            match state.git_tags(params.workspace_id.map(Into::into), params.tab_id.into()) {
+                Ok(tags) => ServerMessage::ok(
+                    request.id,
+                    tags.iter().map(GitTagPayload::from_tag).collect::<Vec<_>>(),
+                ),
+                Err(error) => git_error(request.id, error),
+            }
+        }
+        Err(response) => response,
+    }
+}
+
+fn create_tag(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTagParams>(request) {
+        Ok(params) => command_result(
+            state.create_git_tag(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.name,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
+fn delete_tag(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GitTagParams>(request) {
+        Ok(params) => command_result(
+            state.delete_git_tag(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.name,
+            ),
+            request.id,
+        ),
+        Err(response) => response,
+    }
+}
+
 fn discard_all(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<GitTabParams>(request) {
         Ok(params) => command_result(
@@ -362,6 +459,9 @@ fn git_error_code(error: &GitError) -> &'static str {
         GitError::InvalidStash(_) => "git.invalid_stash",
         GitError::CommitMessageRequired => "git.commit_message_required",
         GitError::BranchRequired => "git.branch_required",
+        GitError::RemoteNameRequired => "git.remote_name_required",
+        GitError::RemoteUrlRequired => "git.remote_url_required",
+        GitError::TagNameRequired => "git.tag_name_required",
         GitError::CommandFailed { .. } => "git.command_failed",
         GitError::Io(_) => "git.io_failed",
         GitError::Utf8(_) => "git.invalid_utf8",

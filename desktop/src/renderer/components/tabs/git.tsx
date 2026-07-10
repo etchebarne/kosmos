@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Cloud,
   Download,
   GitBranch as GitBranchIcon,
   LoaderCircle,
@@ -12,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Tag,
   Trash2,
   Upload,
   Undo2,
@@ -21,19 +23,25 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  addGitRemote,
   applyGitStash,
   commitGitChanges,
   createGitBranch,
+  createGitTag,
   deleteGitBranch,
+  deleteGitTag,
   discardAllGitChanges,
   discardStagedGitChanges,
   dropGitStash,
   fetchGitChanges,
   getGitStashes,
   getGitStatus,
+  getGitRemotes,
+  getGitTags,
   initGitRepository,
   pullGitChanges,
   pushGitChanges,
+  removeGitRemote,
   stageAllGitChanges,
   stageGitPaths,
   stashStagedGitChanges,
@@ -87,8 +95,10 @@ import type {
   GitChange,
   GitChangeKind,
   GitBranch,
+  GitRemote,
   GitRepositorySnapshot,
   GitStash,
+  GitTag,
   GitTabParams,
   TabId,
   WorkspaceId,
@@ -126,6 +136,10 @@ type GitOperationId =
   | "stashStaged"
   | "applyStash"
   | "dropStash"
+  | "addRemote"
+  | "removeRemote"
+  | "createTag"
+  | "deleteTag"
   | "discardStaged"
   | "discardAll"
   | `remote:${RemoteGitActionId}`;
@@ -149,6 +163,12 @@ type ActiveStashAction = {
   selector: string;
   operationId: "applyStash" | "dropStash";
 };
+
+type GitListState<T> =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; items: T[] }
+  | { status: "error"; message: string };
 
 type StageCheckboxState = "checked" | "mixed" | "unchecked";
 
@@ -212,6 +232,8 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     tabId,
   });
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [primaryRemoteActionId, setPrimaryRemoteActionId] = useState<RemoteGitActionId>("pull");
   const [activeOperation, setActiveOperation] = useState<GitOperationId | null>(null);
@@ -375,9 +397,13 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
           successfulOperation={successfulOperation}
           primaryRemoteActionId={primaryRemoteActionId}
           stashDialogOpen={stashDialogOpen}
+          remoteDialogOpen={remoteDialogOpen}
+          tagDialogOpen={tagDialogOpen}
           branchDialogOpen={branchDialogOpen}
           onPrimaryRemoteActionChange={setPrimaryRemoteActionId}
           onStashDialogOpenChange={setStashDialogOpen}
+          onRemoteDialogOpenChange={setRemoteDialogOpen}
+          onTagDialogOpenChange={setTagDialogOpen}
           onBranchDialogOpenChange={setBranchDialogOpen}
           onOperationFinish={finishOperation}
           onOperationStart={startOperation}
@@ -397,9 +423,13 @@ function LoadedGitTab({
   successfulOperation,
   primaryRemoteActionId,
   stashDialogOpen,
+  remoteDialogOpen,
+  tagDialogOpen,
   branchDialogOpen,
   onPrimaryRemoteActionChange,
   onStashDialogOpenChange,
+  onRemoteDialogOpenChange,
+  onTagDialogOpenChange,
   onBranchDialogOpenChange,
   onOperationFinish,
   onOperationStart,
@@ -413,9 +443,13 @@ function LoadedGitTab({
   successfulOperation: GitOperationId | null;
   primaryRemoteActionId: RemoteGitActionId;
   stashDialogOpen: boolean;
+  remoteDialogOpen: boolean;
+  tagDialogOpen: boolean;
   branchDialogOpen: boolean;
   onPrimaryRemoteActionChange(actionId: RemoteGitActionId): void;
   onStashDialogOpenChange(open: boolean): void;
+  onRemoteDialogOpenChange(open: boolean): void;
+  onTagDialogOpenChange(open: boolean): void;
   onBranchDialogOpenChange(open: boolean): void;
   onOperationFinish(): void;
   onOperationStart(operationId: GitOperationId): void;
@@ -578,6 +612,8 @@ function LoadedGitTab({
               canDiscardStaged={hasCommittedHistory && stagedCount > 0}
               tabParams={tabParams}
               onOpenStashes={() => onStashDialogOpenChange(true)}
+              onOpenRemotes={() => onRemoteDialogOpenChange(true)}
+              onOpenTags={() => onTagDialogOpenChange(true)}
               onRun={runOperation}
             />
           </div>
@@ -588,6 +624,22 @@ function LoadedGitTab({
           busy={busy}
           tabParams={tabParams}
           onOpenChange={onStashDialogOpenChange}
+          onRun={runOperation}
+        />
+
+        <GitRemotesDialog
+          open={remoteDialogOpen}
+          busy={busy}
+          tabParams={tabParams}
+          onOpenChange={onRemoteDialogOpenChange}
+          onRun={runOperation}
+        />
+
+        <GitTagsDialog
+          open={tagDialogOpen}
+          busy={busy}
+          tabParams={tabParams}
+          onOpenChange={onTagDialogOpenChange}
           onRun={runOperation}
         />
 
@@ -748,6 +800,7 @@ function GitBranchesDialog({
             <Button
               type="button"
               size="sm"
+              className="h-8"
               disabled={busy || branches.length === 0}
               onClick={() => setCreateDialogOpen(true)}
             >
@@ -1166,7 +1219,9 @@ function GitActionsMenu({
   busy,
   canDiscardAll,
   tabParams,
+  onOpenRemotes,
   onOpenStashes,
+  onOpenTags,
   onRun,
 }: {
   activeOperation: GitOperationId | null;
@@ -1175,7 +1230,9 @@ function GitActionsMenu({
   busy: boolean;
   canDiscardAll: boolean;
   tabParams: GitTabParams;
+  onOpenRemotes(): void;
   onOpenStashes(): void;
+  onOpenTags(): void;
   onRun(
     operationId: GitOperationId,
     operation: () => Promise<unknown>,
@@ -1204,6 +1261,14 @@ function GitActionsMenu({
           <DropdownMenuItem onClick={onOpenStashes}>
             <Save />
             Stashes
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onOpenRemotes}>
+            <Cloud />
+            Remotes
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onOpenTags}>
+            <Tag />
+            Tags
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
@@ -1332,7 +1397,7 @@ function GitStashesDialog({
           </DialogHeader>
         </div>
 
-        <div className="min-h-40 overflow-y-auto px-4 pb-4">
+        <div className="min-h-40 overflow-y-auto px-4 pt-px pb-4">
           {listState.status === "idle" || listState.status === "loading" ? (
             <GitDialogMessage message="Loading stashes..." />
           ) : null}
@@ -1424,6 +1489,400 @@ function GitStashRow({
       </Card>
     </li>
   );
+}
+
+function GitRemotesDialog({
+  busy,
+  open,
+  tabParams,
+  onOpenChange,
+  onRun,
+}: {
+  busy: boolean;
+  open: boolean;
+  tabParams: GitTabParams;
+  onOpenChange(open: boolean): void;
+  onRun(
+    operationId: GitOperationId,
+    operation: () => Promise<unknown>,
+    options?: { refresh?: boolean; clearCommitMessage?: boolean },
+  ): Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [listState, loadRemotes] = useGitDialogList(open, tabParams, getGitRemotes);
+  const canAdd = name.trim().length > 0 && url.trim().length > 0;
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setUrl("");
+    }
+  }, [open]);
+
+  const runRemoteAction = async (
+    operationId: "addRemote" | "removeRemote",
+    action: string,
+    operation: () => Promise<unknown>,
+  ) => {
+    setActiveAction(action);
+
+    try {
+      const succeeded = await onRun(operationId, operation);
+
+      if (succeeded) {
+        await loadRemotes();
+      }
+
+      return succeeded;
+    } finally {
+      setActiveAction((currentAction) => (currentAction === action ? null : currentAction));
+    }
+  };
+  const addRemote = async () => {
+    const remoteName = name.trim();
+    const remoteUrl = url.trim();
+
+    if (!remoteName || !remoteUrl) {
+      return;
+    }
+
+    const succeeded = await runRemoteAction("addRemote", "add", () =>
+      addGitRemote({ ...tabParams, name: remoteName, url: remoteUrl }),
+    );
+
+    if (succeeded) {
+      setName("");
+      setUrl("");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="!flex max-h-[min(34rem,calc(100vh-2rem))] max-w-xl flex-col overflow-hidden p-0">
+        <div className="px-4 pt-4 pr-12">
+          <DialogHeader>
+            <DialogTitle>Git remotes</DialogTitle>
+            <DialogDescription>Add or remove remote repositories.</DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <form
+          className="flex gap-2 px-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void addRemote();
+          }}
+        >
+          <input
+            value={name}
+            placeholder="Name"
+            aria-label="Remote name"
+            className="h-8 w-28 rounded-lg border bg-background px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+            disabled={busy}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <input
+            value={url}
+            placeholder="Repository URL"
+            aria-label="Remote repository URL"
+            className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+            disabled={busy}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+          <Button type="submit" size="sm" className="h-8" disabled={busy || !canAdd}>
+            {activeAction === "add" ? <LoaderCircle className="animate-spin" /> : <Plus />}
+            Add
+          </Button>
+        </form>
+
+        <div className="scrollbar-themed min-h-40 flex-1 overflow-y-auto px-4 pb-4">
+          {listState.status === "idle" || listState.status === "loading" ? (
+            <GitDialogMessage message="Loading remotes..." />
+          ) : null}
+          {listState.status === "error" ? <GitDialogMessage message={listState.message} /> : null}
+          {listState.status === "loaded" && listState.items.length === 0 ? (
+            <GitDialogMessage message="No remotes" />
+          ) : null}
+          {listState.status === "loaded" && listState.items.length > 0 ? (
+            <ul className="space-y-2">
+              {listState.items.map((remote) => (
+                <GitRemoteRow
+                  key={remote.name}
+                  remote={remote}
+                  busy={busy}
+                  removing={activeAction === `remove:${remote.name}`}
+                  onRemove={() => {
+                    if (!window.confirm(`Remove remote ${remote.name}?`)) {
+                      return;
+                    }
+
+                    void runRemoteAction("removeRemote", `remove:${remote.name}`, () =>
+                      removeGitRemote({ ...tabParams, name: remote.name }),
+                    );
+                  }}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GitRemoteRow({
+  busy,
+  remote,
+  removing,
+  onRemove,
+}: {
+  busy: boolean;
+  remote: GitRemote;
+  removing: boolean;
+  onRemove(): void;
+}) {
+  const sameUrls = remote.fetchUrls.join("\n") === remote.pushUrls.join("\n");
+
+  return (
+    <li className="flex items-center gap-3 rounded-lg border bg-background/60 p-2.5">
+      <Cloud className="size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{remote.name}</p>
+        {remote.fetchUrls.map((url, index) => (
+          <p key={`fetch:${index}:${url}`} className="truncate text-xs text-muted-foreground" title={url}>
+            {sameUrls ? "Fetch / push" : "Fetch"}: {url}
+          </p>
+        ))}
+        {!sameUrls
+          ? remote.pushUrls.map((url, index) => (
+              <p key={`push:${index}:${url}`} className="truncate text-xs text-muted-foreground" title={url}>
+                Push: {url}
+              </p>
+            ))
+          : null}
+      </div>
+      <Button
+        type="button"
+        variant="destructive"
+        size="icon-sm"
+        disabled={busy}
+        aria-label={`Remove remote ${remote.name}`}
+        onClick={onRemove}
+      >
+        {removing ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+      </Button>
+    </li>
+  );
+}
+
+function GitTagsDialog({
+  busy,
+  open,
+  tabParams,
+  onOpenChange,
+  onRun,
+}: {
+  busy: boolean;
+  open: boolean;
+  tabParams: GitTabParams;
+  onOpenChange(open: boolean): void;
+  onRun(
+    operationId: GitOperationId,
+    operation: () => Promise<unknown>,
+    options?: { refresh?: boolean; clearCommitMessage?: boolean },
+  ): Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [listState, loadTags] = useGitDialogList(open, tabParams, getGitTags);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+    }
+  }, [open]);
+
+  const runTagAction = async (
+    operationId: "createTag" | "deleteTag",
+    action: string,
+    operation: () => Promise<unknown>,
+  ) => {
+    setActiveAction(action);
+
+    try {
+      const succeeded = await onRun(operationId, operation, { refresh: false });
+
+      if (succeeded) {
+        await loadTags();
+      }
+
+      return succeeded;
+    } finally {
+      setActiveAction((currentAction) => (currentAction === action ? null : currentAction));
+    }
+  };
+  const createTag = async () => {
+    const tagName = name.trim();
+
+    if (!tagName) {
+      return;
+    }
+
+    const succeeded = await runTagAction("createTag", "create", () =>
+      createGitTag({ ...tabParams, name: tagName }),
+    );
+
+    if (succeeded) {
+      setName("");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="!flex max-h-[min(34rem,calc(100vh-2rem))] max-w-xl flex-col overflow-hidden p-0">
+        <div className="px-4 pt-4 pr-12">
+          <DialogHeader>
+            <DialogTitle>Git tags</DialogTitle>
+            <DialogDescription>Create a tag at HEAD or remove an existing tag.</DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <form
+          className="flex gap-2 px-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createTag();
+          }}
+        >
+          <input
+            value={name}
+            placeholder="Tag name"
+            aria-label="Tag name"
+            className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+            disabled={busy}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-8"
+            disabled={busy || name.trim().length === 0}
+          >
+            {activeAction === "create" ? <LoaderCircle className="animate-spin" /> : <Plus />}
+            Create
+          </Button>
+        </form>
+
+        <div className="scrollbar-themed min-h-40 flex-1 overflow-y-auto px-4 pb-4">
+          {listState.status === "idle" || listState.status === "loading" ? (
+            <GitDialogMessage message="Loading tags..." />
+          ) : null}
+          {listState.status === "error" ? <GitDialogMessage message={listState.message} /> : null}
+          {listState.status === "loaded" && listState.items.length === 0 ? (
+            <GitDialogMessage message="No tags" />
+          ) : null}
+          {listState.status === "loaded" && listState.items.length > 0 ? (
+            <ul className="space-y-2">
+              {listState.items.map((tag) => (
+                <GitTagRow
+                  key={tag.name}
+                  tag={tag}
+                  busy={busy}
+                  deleting={activeAction === `delete:${tag.name}`}
+                  onDelete={() => {
+                    if (!window.confirm(`Delete tag ${tag.name}?`)) {
+                      return;
+                    }
+
+                    void runTagAction("deleteTag", `delete:${tag.name}`, () =>
+                      deleteGitTag({ ...tabParams, name: tag.name }),
+                    );
+                  }}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GitTagRow({
+  busy,
+  deleting,
+  tag,
+  onDelete,
+}: {
+  busy: boolean;
+  deleting: boolean;
+  tag: GitTag;
+  onDelete(): void;
+}) {
+  return (
+    <li className="flex items-center gap-3 rounded-lg border bg-background/60 p-2.5">
+      <Tag className="size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{tag.name}</p>
+        <p className="truncate font-mono text-xs text-muted-foreground">{tag.target}</p>
+      </div>
+      <Button
+        type="button"
+        variant="destructive"
+        size="icon-sm"
+        disabled={busy}
+        aria-label={`Delete tag ${tag.name}`}
+        onClick={onDelete}
+      >
+        {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+      </Button>
+    </li>
+  );
+}
+
+function useGitDialogList<T>(
+  open: boolean,
+  tabParams: GitTabParams,
+  getItems: (params: GitTabParams) => Promise<T[]>,
+): [GitListState<T>, () => Promise<void>] {
+  const [listState, setListState] = useState<GitListState<T>>({ status: "idle" });
+  const mountedRef = useRef(true);
+  const requestIdRef = useRef(0);
+  const loadItems = async () => {
+    const requestId = requestIdRef.current + 1;
+
+    requestIdRef.current = requestId;
+    setListState({ status: "loading" });
+
+    try {
+      const items = await getItems(tabParams);
+
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setListState({ status: "loaded", items });
+      }
+    } catch (caughtError: unknown) {
+      if (mountedRef.current && requestIdRef.current === requestId) {
+        setListState({ status: "error", message: errorMessage(caughtError) });
+      }
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      requestIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      void loadItems();
+    }
+  }, [open, tabParams.workspaceId, tabParams.tabId]);
+
+  return [listState, loadItems];
 }
 
 function GitDialogMessage({ message }: { message: string }) {

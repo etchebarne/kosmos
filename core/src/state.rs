@@ -10,7 +10,8 @@ use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
 use crate::tabs::git::{
-    GitDiff, GitDiffViewState, GitError, GitRepository, GitRepositorySnapshot, GitStash,
+    GitDiff, GitDiffViewState, GitError, GitRemote, GitRepository, GitRepositorySnapshot, GitStash,
+    GitTag,
 };
 use crate::tabs::terminal::{TerminalError, TerminalOutput, TerminalSessions, TerminalSize};
 use crate::tree::{
@@ -693,6 +694,71 @@ impl State {
         let directory = self.git_workspace_directory(workspace_id, tab_id)?;
 
         GitRepository::drop_stash(directory, selector)
+    }
+
+    pub fn git_remotes(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Vec<GitRemote>, GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::remotes(directory)
+    }
+
+    pub fn add_git_remote(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        name: &str,
+        url: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::add_remote(directory, name, url)
+    }
+
+    pub fn remove_git_remote(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        name: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::remove_remote(directory, name)
+    }
+
+    pub fn git_tags(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Vec<GitTag>, GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::tags(directory)
+    }
+
+    pub fn create_git_tag(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        name: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::create_tag(directory, name)
+    }
+
+    pub fn delete_git_tag(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        name: &str,
+    ) -> Result<(), GitError> {
+        let directory = self.git_workspace_directory(workspace_id, tab_id)?;
+
+        GitRepository::delete_tag(directory, name)
     }
 
     pub fn discard_all_git_changes(

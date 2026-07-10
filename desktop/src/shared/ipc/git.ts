@@ -45,6 +45,17 @@ export type GitStash = {
   message: string;
 };
 
+export type GitRemote = {
+  name: string;
+  fetchUrls: string[];
+  pushUrls: string[];
+};
+
+export type GitTag = {
+  name: string;
+  target: string;
+};
+
 export type GitDiffSectionKind = "staged" | "unstaged";
 
 export type GitDiffSection = {
@@ -101,4 +112,16 @@ export type PushGitChangesParams = GitTabParams & {
 
 export type GitStashParams = GitTabParams & {
   selector: string;
+};
+
+export type GitRemoteParams = GitTabParams & {
+  name: string;
+};
+
+export type AddGitRemoteParams = GitRemoteParams & {
+  url: string;
+};
+
+export type GitTagParams = GitTabParams & {
+  name: string;
 };

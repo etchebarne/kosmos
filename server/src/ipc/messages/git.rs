@@ -1,6 +1,6 @@
 use core::tabs::git::{
     GitBranch, GitChange, GitChangeKind, GitDiff, GitDiffFile, GitDiffSection, GitDiffSectionKind,
-    GitRepositorySnapshot, GitStash,
+    GitRemote, GitRepositorySnapshot, GitStash, GitTag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,31 @@ pub(crate) struct GitStashParams {
     pub(crate) selector: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitRemoteParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AddGitRemoteParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) name: String,
+    pub(crate) url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitTagParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) name: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitRepositorySnapshotPayload {
@@ -100,6 +125,21 @@ pub(crate) struct GitStashPayload {
     commit: String,
     timestamp: i64,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitRemotePayload {
+    name: String,
+    fetch_urls: Vec<String>,
+    push_urls: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitTagPayload {
+    name: String,
+    target: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -221,6 +261,25 @@ impl GitStashPayload {
             commit: stash.commit().to_owned(),
             timestamp: stash.timestamp(),
             message: stash.message().to_owned(),
+        }
+    }
+}
+
+impl GitRemotePayload {
+    pub(crate) fn from_remote(remote: &GitRemote) -> Self {
+        Self {
+            name: remote.name().to_owned(),
+            fetch_urls: remote.fetch_urls().to_vec(),
+            push_urls: remote.push_urls().to_vec(),
+        }
+    }
+}
+
+impl GitTagPayload {
+    pub(crate) fn from_tag(tag: &GitTag) -> Self {
+        Self {
+            name: tag.name().to_owned(),
+            target: tag.target().to_owned(),
         }
     }
 }

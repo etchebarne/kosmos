@@ -49,6 +49,19 @@ pub struct GitStash {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitRemote {
+    name: String,
+    fetch_urls: Vec<String>,
+    push_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitTag {
+    name: String,
+    target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitDiff {
     focused_path: Option<String>,
     files: Vec<GitDiffFile>,
@@ -274,6 +287,69 @@ impl GitRepository {
         git(&repository_root, ["stash", "drop", selector]).map(|_| ())
     }
 
+    pub fn remotes(directory: impl AsRef<Path>) -> Result<Vec<GitRemote>> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let names = parse_lines(&git(&repository_root, ["remote"])?)?;
+
+        names
+            .into_iter()
+            .map(|name| {
+                let fetch_urls = remote_urls(&repository_root, &name, false)?;
+                let push_urls = remote_urls(&repository_root, &name, true)?;
+
+                Ok(GitRemote {
+                    name,
+                    fetch_urls,
+                    push_urls,
+                })
+            })
+            .collect()
+    }
+
+    pub fn add_remote(directory: impl AsRef<Path>, name: &str, url: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let name = normalize_remote_name(name)?;
+        let url = normalize_remote_url(url)?;
+
+        git(&repository_root, ["remote", "add", "--", name, url]).map(|_| ())
+    }
+
+    pub fn remove_remote(directory: impl AsRef<Path>, name: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let name = normalize_remote_name(name)?;
+
+        git(&repository_root, ["remote", "remove", "--", name]).map(|_| ())
+    }
+
+    pub fn tags(directory: impl AsRef<Path>) -> Result<Vec<GitTag>> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let bytes = git(
+            &repository_root,
+            [
+                "tag",
+                "--list",
+                "--sort=-version:refname",
+                "--format=%(refname:short)%00%(if)%(*objectname)%(then)%(*objectname:short)%(else)%(objectname:short)%(end)",
+            ],
+        )?;
+
+        parse_tags(&bytes)
+    }
+
+    pub fn create_tag(directory: impl AsRef<Path>, name: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let name = normalize_tag_name(name)?;
+
+        git(&repository_root, ["tag", "--", name]).map(|_| ())
+    }
+
+    pub fn delete_tag(directory: impl AsRef<Path>, name: &str) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let name = normalize_tag_name(name)?;
+
+        git(&repository_root, ["tag", "--delete", "--", name]).map(|_| ())
+    }
+
     pub fn discard_all_changes(directory: impl AsRef<Path>) -> Result<()> {
         let repository_root = repository_root(directory.as_ref())?;
 
@@ -411,6 +487,30 @@ impl GitStash {
     }
 }
 
+impl GitRemote {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn fetch_urls(&self) -> &[String] {
+        &self.fetch_urls
+    }
+
+    pub fn push_urls(&self) -> &[String] {
+        &self.push_urls
+    }
+}
+
+impl GitTag {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+}
+
 impl GitDiff {
     pub fn focused_path(&self) -> Option<&str> {
         self.focused_path.as_deref()
@@ -509,7 +609,10 @@ pub enum GitError {
     InvalidStash(String),
     Io(io::Error),
     NotWorktree(PathBuf),
+    RemoteNameRequired,
+    RemoteUrlRequired,
     TabNotFound,
+    TagNameRequired,
     Utf8(String),
     WorkspaceNotFound,
 }
@@ -535,7 +638,10 @@ impl fmt::Display for GitError {
                 "git repository has no worktree: {}",
                 path.display()
             ),
+            Self::RemoteNameRequired => formatter.write_str("remote name is required"),
+            Self::RemoteUrlRequired => formatter.write_str("remote URL is required"),
             Self::TabNotFound => formatter.write_str("git tab does not exist"),
+            Self::TagNameRequired => formatter.write_str("tag name is required"),
             Self::Utf8(message) => formatter.write_str(message),
             Self::WorkspaceNotFound => formatter.write_str("workspace does not exist"),
         }
@@ -553,7 +659,10 @@ impl StdError for GitError {
             | Self::InvalidPath(_)
             | Self::InvalidStash(_)
             | Self::NotWorktree(_)
+            | Self::RemoteNameRequired
+            | Self::RemoteUrlRequired
             | Self::TabNotFound
+            | Self::TagNameRequired
             | Self::Utf8(_)
             | Self::WorkspaceNotFound => None,
         }
@@ -923,6 +1032,49 @@ fn parse_stash_record(record: &[u8]) -> Result<GitStash> {
     })
 }
 
+fn remote_urls(repository_root: &Path, name: &str, push: bool) -> Result<Vec<String>> {
+    let output = if push {
+        git(
+            repository_root,
+            ["remote", "get-url", "--push", "--all", "--", name],
+        )?
+    } else {
+        git(repository_root, ["remote", "get-url", "--all", "--", name])?
+    };
+
+    parse_lines(&output)
+}
+
+fn parse_lines(bytes: &[u8]) -> Result<Vec<String>> {
+    let output =
+        String::from_utf8(bytes.to_vec()).map_err(|error| GitError::Utf8(error.to_string()))?;
+
+    Ok(output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
+fn parse_tags(bytes: &[u8]) -> Result<Vec<GitTag>> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            let mut fields = record.splitn(2, |byte| *byte == 0);
+            let name = fields.next().unwrap_or_default();
+            let target = fields
+                .next()
+                .ok_or_else(|| GitError::Utf8("git returned an invalid tag record".to_owned()))?;
+
+            Ok(GitTag {
+                name: record_to_string(name)?,
+                target: record_to_string(target)?,
+            })
+        })
+        .collect()
+}
+
 fn diff_stats(repository_root: &Path, changes: &[GitChange]) -> Result<GitDiffStats> {
     let mut stats = GitDiffStats::default();
 
@@ -1283,6 +1435,36 @@ fn normalize_stash_selector(selector: &str) -> Result<&str> {
     Ok(selector)
 }
 
+fn normalize_remote_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+
+    if name.is_empty() || name.starts_with('-') || name.contains('\0') {
+        Err(GitError::RemoteNameRequired)
+    } else {
+        Ok(name)
+    }
+}
+
+fn normalize_remote_url(url: &str) -> Result<&str> {
+    let url = url.trim();
+
+    if url.is_empty() || url.contains('\0') {
+        Err(GitError::RemoteUrlRequired)
+    } else {
+        Ok(url)
+    }
+}
+
+fn normalize_tag_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+
+    if name.is_empty() || name.starts_with('-') || name.contains('\0') {
+        Err(GitError::TagNameRequired)
+    } else {
+        Ok(name)
+    }
+}
+
 fn normalize_paths(paths: &[String]) -> Result<Vec<String>> {
     if paths.is_empty() {
         return Err(GitError::InvalidPath("empty selection".to_owned()));
@@ -1396,6 +1578,79 @@ mod tests {
         assert_eq!(stashes[0].timestamp(), 1_783_456_789);
         assert_eq!(stashes[0].message(), "On main: Staged changes");
         assert_eq!(stashes[1].selector(), "stash@{1}");
+    }
+
+    #[test]
+    fn parses_tag_records() {
+        let tags = parse_tags(b"v2.0.0\0def5678\nv1.0.0\0abc1234\n").expect("tags should parse");
+
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name(), "v2.0.0");
+        assert_eq!(tags[0].target(), "def5678");
+        assert_eq!(tags[1].name(), "v1.0.0");
+    }
+
+    #[test]
+    fn rejects_unsafe_remote_and_tag_names() {
+        assert!(normalize_remote_name("origin").is_ok());
+        assert!(normalize_remote_name("--upload-pack=bad").is_err());
+        assert!(normalize_tag_name("v1.0.0").is_ok());
+        assert!(normalize_tag_name("--contains").is_err());
+    }
+
+    #[test]
+    fn manages_repository_remotes_and_tags() {
+        let root = test_directory("repository-remotes-tags");
+
+        GitRepository::init(&root).expect("repository should initialize");
+        GitRepository::add_remote(&root, "origin", "https://example.com/repository.git")
+            .expect("remote should be added");
+
+        let remotes = GitRepository::remotes(&root).expect("remotes should load");
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].name(), "origin");
+        assert_eq!(
+            remotes[0].fetch_urls(),
+            &["https://example.com/repository.git"]
+        );
+        assert_eq!(remotes[0].push_urls(), remotes[0].fetch_urls());
+
+        GitRepository::remove_remote(&root, "origin").expect("remote should be removed");
+        assert!(
+            GitRepository::remotes(&root)
+                .expect("remotes should reload")
+                .is_empty()
+        );
+
+        git(
+            &root,
+            [
+                "-c",
+                "user.name=Kosmos Test",
+                "-c",
+                "user.email=kosmos@example.com",
+                "commit",
+                "--allow-empty",
+                "--message",
+                "Initial commit",
+            ],
+        )
+        .expect("commit should be created");
+        GitRepository::create_tag(&root, "v1.0.0").expect("tag should be created");
+
+        let tags = GitRepository::tags(&root).expect("tags should load");
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name(), "v1.0.0");
+        assert!(!tags[0].target().is_empty());
+
+        GitRepository::delete_tag(&root, "v1.0.0").expect("tag should be deleted");
+        assert!(
+            GitRepository::tags(&root)
+                .expect("tags should reload")
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
