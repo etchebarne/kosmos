@@ -491,6 +491,29 @@ impl State {
         GitRepository::diff(workspace.directory(), view_state.path())
     }
 
+    pub fn save_git_diff_file(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: &str,
+        content: &str,
+        stage: bool,
+    ) -> Result<(), GitError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+
+        if !self.is_git_diff_tab(workspace_id, tab_id) {
+            return Err(GitError::TabNotFound);
+        }
+
+        GitRepository::save_diff_file(workspace.directory(), path, content, stage)
+    }
+
     pub fn open_git_diff_tab(
         &mut self,
         workspace_id: Option<WorkspaceId>,

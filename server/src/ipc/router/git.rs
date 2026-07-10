@@ -5,7 +5,8 @@ use super::super::messages::git::{
     AddGitRemoteParams, CommitGitChangesParams, CreateGitBranchParams, GitDiffPayload,
     GitPathsParams, GitRemoteParams, GitRemotePayload, GitRepositorySnapshotPayload,
     GitStashParams, GitStashPayload, GitTabParams, GitTagParams, GitTagPayload,
-    OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SwitchGitBranchParams,
+    OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SaveGitDiffFileParams,
+    SwitchGitBranchParams,
 };
 use super::{RouteDefinition, parse_params, workspace_list_response};
 
@@ -15,6 +16,7 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         "status" => status,
         "openDiffTab" => return Some(RouteDefinition::full(open_diff_tab)),
         "diff" => diff,
+        "saveDiffFile" => save_diff_file,
         "stagePaths" => stage_paths,
         "unstagePaths" => unstage_paths,
         "stageAll" => stage_all,
@@ -68,6 +70,22 @@ fn diff(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
                 Err(error) => git_error(request.id, error),
             }
         }
+        Err(response) => response,
+    }
+}
+
+fn save_diff_file(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SaveGitDiffFileParams>(request) {
+        Ok(params) => command_result(
+            state.save_git_diff_file(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                &params.path,
+                &params.content,
+                params.stage,
+            ),
+            request.id,
+        ),
         Err(response) => response,
     }
 }
@@ -457,6 +475,7 @@ fn git_error_code(error: &GitError) -> &'static str {
         GitError::NotWorktree(_) => "git.not_worktree",
         GitError::InvalidPath(_) => "git.invalid_path",
         GitError::InvalidStash(_) => "git.invalid_stash",
+        GitError::File(_) => "git.diff_file_failed",
         GitError::CommitMessageRequired => "git.commit_message_required",
         GitError::BranchRequired => "git.branch_required",
         GitError::RemoteNameRequired => "git.remote_name_required",

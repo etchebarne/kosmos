@@ -49,6 +49,16 @@ export function applyMonacoTheme(): void {
     base: document.documentElement.classList.contains("dark") ? "vs-dark" : "vs",
     inherit: true,
     colors: {
+      "diffEditor.border": color("--border"),
+      "diffEditor.insertedLineBackground": withAlpha(color("--diff-added"), "18"),
+      "diffEditor.insertedTextBackground": withAlpha(color("--diff-added"), "38"),
+      "diffEditor.removedLineBackground": withAlpha(color("--destructive"), "18"),
+      "diffEditor.removedTextBackground": withAlpha(color("--destructive"), "38"),
+      "diffEditor.unchangedCodeBackground": withAlpha(color("--muted"), "40"),
+      "diffEditor.unchangedRegionBackground": color("--background"),
+      "diffEditor.unchangedRegionForeground": color("--muted-foreground"),
+      "diffEditorGutter.insertedLineBackground": withAlpha(color("--diff-added"), "24"),
+      "diffEditorGutter.removedLineBackground": withAlpha(color("--destructive"), "24"),
       "editor.background": color("--background"),
       "editor.foreground": color("--foreground"),
       "editorGutter.background": color("--background"),
@@ -123,6 +133,10 @@ function themeColor(
 
 function tokenColor(color: string): string {
   return color.slice(1);
+}
+
+function withAlpha(color: string, alpha: string): string {
+  return `${color.slice(0, 7)}${alpha}`;
 }
 
 export { monaco };

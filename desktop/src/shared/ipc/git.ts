@@ -60,7 +60,9 @@ export type GitDiffSectionKind = "staged" | "unstaged";
 
 export type GitDiffSection = {
   kind: GitDiffSectionKind;
-  patch: string;
+  originalContent?: string | null;
+  modifiedContent?: string | null;
+  editable: boolean;
 };
 
 export type GitDiffFile = {
@@ -87,6 +89,12 @@ export type GitPathsParams = GitTabParams & {
 
 export type OpenGitDiffTabParams = GitTabParams & {
   path: string;
+};
+
+export type SaveGitDiffFileParams = GitTabParams & {
+  path: string;
+  content: string;
+  stage: boolean;
 };
 
 export type CommitGitChangesParams = GitTabParams & {

@@ -13,7 +13,6 @@ import {
 import type { OpenableTabKind, PaneId, TabKind, TabSnapshot, WorkspaceId } from "@/shared/ipc";
 
 import { BlankTab, type BlankTabOption } from "./blank";
-import { DiffTab } from "./diff";
 import { FileTreeTab } from "./file-tree";
 import { GitTab } from "./git";
 import { PlaceholderTab } from "./placeholder";
@@ -38,6 +37,7 @@ type TabDefinition = {
 const EditorTab = lazy(() =>
   import("./editor").then((module) => ({ default: module.EditorTab })),
 );
+const DiffTab = lazy(() => import("./diff").then((module) => ({ default: module.DiffTab })));
 
 const TAB_KIND_ORDER: OpenableTabKind[] = [
   "blank",
@@ -64,12 +64,15 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
     icon: FileDiff,
     label: "Diff",
     showInBlankPicker: false,
-    render: ({ tab, workspaceId, onActivatePane }) => (
-      <DiffTab
-        workspaceId={workspaceId}
-        tabId={tab.id}
-        onActivatePane={onActivatePane}
-      />
+    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+      <Suspense fallback={<TabLoading message="Loading diff..." onActivatePane={onActivatePane} />}>
+        <DiffTab
+          workspaceId={workspaceId}
+          tabId={tab.id}
+          isActive={isActive}
+          onActivatePane={onActivatePane}
+        />
+      </Suspense>
     ),
   },
   fileTree: {
@@ -85,7 +88,7 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
     label: "Editor",
     showInBlankPicker: false,
     render: ({ tab, workspaceId, isActive, onActivatePane }) => (
-      <Suspense fallback={<EditorLoading onActivatePane={onActivatePane} />}>
+      <Suspense fallback={<TabLoading message="Loading editor..." onActivatePane={onActivatePane} />}>
         <EditorTab
           workspaceId={workspaceId}
           tabId={tab.id}
@@ -135,13 +138,13 @@ export function tabKindIcon(kind: TabKind): LucideIcon {
   return TAB_DEFINITIONS[kind].icon;
 }
 
-function EditorLoading({ onActivatePane }: { onActivatePane(): void }) {
+function TabLoading({ message, onActivatePane }: { message: string; onActivatePane(): void }) {
   return (
     <div
       className="grid h-full min-h-0 place-items-center overflow-hidden bg-background p-5 text-center"
       onPointerDown={onActivatePane}
     >
-      <p className="text-sm text-muted-foreground">Loading editor...</p>
+      <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }

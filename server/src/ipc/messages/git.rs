@@ -31,6 +31,16 @@ pub(crate) struct OpenGitDiffTabParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SaveGitDiffFileParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
+    pub(crate) content: String,
+    pub(crate) stage: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CommitGitChangesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
@@ -163,7 +173,9 @@ struct GitDiffFilePayload {
 #[serde(rename_all = "camelCase")]
 struct GitDiffSectionPayload {
     kind: GitDiffSectionKindPayload,
-    patch: String,
+    original_content: Option<String>,
+    modified_content: Option<String>,
+    editable: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -317,7 +329,9 @@ impl GitDiffSectionPayload {
     fn from_section(section: &GitDiffSection) -> Self {
         Self {
             kind: section.kind().into(),
-            patch: section.patch().to_owned(),
+            original_content: section.original_content().map(ToOwned::to_owned),
+            modified_content: section.modified_content().map(ToOwned::to_owned),
+            editable: section.editable(),
         }
     }
 }

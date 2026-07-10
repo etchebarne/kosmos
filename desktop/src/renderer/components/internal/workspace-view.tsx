@@ -360,8 +360,8 @@ function TabTrigger({
 }) {
   const TabIcon = tabKindIcon(tab.kind);
   const closeTab = useWorkspaceStore((state) => state.closeTab);
-  const isEditorDirty = useWorkspaceStore(
-    (state) => state.dirtyEditorTabs[workspaceId]?.[tab.id] === true,
+  const isTabDirty = useWorkspaceStore(
+    (state) => state.dirtyTabs[workspaceId]?.[tab.id] === true,
   );
 
   return (
@@ -375,7 +375,7 @@ function TabTrigger({
             render={<div />}
             data-kosmos-tab-trigger=""
             className="group/tab max-w-52 flex-none cursor-default justify-start px-2 text-xs after:hidden data-active:!bg-foreground/10 data-active:!text-foreground"
-            aria-label={isEditorDirty ? `${tab.title}, unsaved changes` : tab.title}
+            aria-label={isTabDirty ? `${tab.title}, unsaved changes` : tab.title}
             onDragStart={(event) => writeDraggedTab(event, pane.id, tab.id, tab.title)}
             onPointerDown={(event) => {
               if (event.button !== 1) {
@@ -405,7 +405,7 @@ function TabTrigger({
               draggable={false}
               className={cn(
                 "group/close relative ml-1 -mr-1 grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                isEditorDirty
+                isTabDirty
                   ? "opacity-100"
                   : "opacity-0 group-data-active/tab:opacity-60 group-hover/tab:opacity-60 focus-visible:opacity-100",
               )}
@@ -423,11 +423,11 @@ function TabTrigger({
               <X
                 className={cn(
                   "absolute size-3 transition-opacity",
-                  isEditorDirty &&
+                  isTabDirty &&
                     "opacity-0 group-hover/tab:opacity-100 group-focus-visible/close:opacity-100",
                 )}
               />
-              {isEditorDirty ? (
+              {isTabDirty ? (
                 <span
                   aria-hidden="true"
                   title="Unsaved changes"

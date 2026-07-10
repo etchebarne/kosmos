@@ -15,6 +15,7 @@ import type {
   OpenGitDiffTabParams,
   PullGitChangesParams,
   PushGitChangesParams,
+  SaveGitDiffFileParams,
   SwitchGitBranchParams,
   WorkspaceListSnapshot,
 } from "@/shared/ipc";
@@ -33,6 +34,10 @@ export function openGitDiffTab(params: OpenGitDiffTabParams): Promise<WorkspaceL
 
 export function getGitDiff(params: GitTabParams): Promise<GitDiff> {
   return requestServer(DOMAIN, "diff", params);
+}
+
+export function saveGitDiffFile(params: SaveGitDiffFileParams): Promise<boolean> {
+  return requestServer(DOMAIN, "saveDiffFile", params);
 }
 
 export function initGitRepository(params: GitTabParams): Promise<boolean> {
@@ -156,5 +161,6 @@ export type {
   OpenGitDiffTabParams,
   PullGitChangesParams,
   PushGitChangesParams,
+  SaveGitDiffFileParams,
   SwitchGitBranchParams,
 } from "@/shared/ipc";

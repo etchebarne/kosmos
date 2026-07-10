@@ -46,7 +46,7 @@ type WorkspaceRequest = () => Promise<WorkspaceListSnapshot>;
 type FileTreeExpansionFlusher = () => Promise<void> | void;
 
 type WorkspaceStore = {
-  dirtyEditorTabs: Record<WorkspaceId, Record<TabId, true>>;
+  dirtyTabs: Record<WorkspaceId, Record<TabId, true>>;
   error: string | null;
   isAddingWorkspace: boolean;
   isLoadingWorkspaces: boolean;
@@ -67,7 +67,7 @@ type WorkspaceStore = {
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
   saveFileTreeExpandedPaths(params: SetFileTreeExpandedPathsParams): Promise<void>;
-  setEditorDirty(workspaceId: WorkspaceId, tabId: TabId, isDirty: boolean): void;
+  setTabDirty(workspaceId: WorkspaceId, tabId: TabId, isDirty: boolean): void;
   setTabKind(paneId: PaneId, tabId: TabId, kind: OpenableTabKind): void;
   splitTab(
     paneId: PaneId,
@@ -134,7 +134,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   }
 
   return {
-    dirtyEditorTabs: {},
+    dirtyTabs: {},
     error: null,
     isAddingWorkspace: false,
     isLoadingWorkspaces: true,
@@ -183,7 +183,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       updateFromServer(() =>
         closeTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId }).then((snapshot) => {
           window.setTimeout(() => disposeEditorBuffer(activeWorkspace.id, tabId), 0);
-          get().setEditorDirty(activeWorkspace.id, tabId, false);
+          get().setTabDirty(activeWorkspace.id, tabId, false);
           return snapshot;
         }),
       );
@@ -203,14 +203,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         const nextSnapshot = await closeWorkspaceIpc(workspaceId);
         disposeWorkspaceEditorBuffers(workspaceId);
         set((state) => {
-          if (!state.dirtyEditorTabs[workspaceId]) {
+          if (!state.dirtyTabs[workspaceId]) {
             return {};
           }
 
-          const dirtyEditorTabs = { ...state.dirtyEditorTabs };
-          delete dirtyEditorTabs[workspaceId];
+          const dirtyTabs = { ...state.dirtyTabs };
+          delete dirtyTabs[workspaceId];
 
-          return { dirtyEditorTabs };
+          return { dirtyTabs };
         });
 
         if (get().switchRequestId === requestId) {
@@ -366,30 +366,30 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       return trackFileTreeExpansionSave(save);
     },
-    setEditorDirty(workspaceId, tabId, isDirty) {
+    setTabDirty(workspaceId, tabId, isDirty) {
       set((state) => {
-        const workspaceTabs = state.dirtyEditorTabs[workspaceId] ?? {};
+        const workspaceTabs = state.dirtyTabs[workspaceId] ?? {};
         const wasDirty = workspaceTabs[tabId] === true;
 
         if (wasDirty === isDirty) {
           return {};
         }
 
-        const dirtyEditorTabs = { ...state.dirtyEditorTabs };
+        const dirtyTabs = { ...state.dirtyTabs };
 
         if (isDirty) {
-          dirtyEditorTabs[workspaceId] = { ...workspaceTabs, [tabId]: true };
+          dirtyTabs[workspaceId] = { ...workspaceTabs, [tabId]: true };
         } else {
           const { [tabId]: _removed, ...remainingTabs } = workspaceTabs;
 
           if (Object.keys(remainingTabs).length === 0) {
-            delete dirtyEditorTabs[workspaceId];
+            delete dirtyTabs[workspaceId];
           } else {
-            dirtyEditorTabs[workspaceId] = remainingTabs;
+            dirtyTabs[workspaceId] = remainingTabs;
           }
         }
 
-        return { dirtyEditorTabs };
+        return { dirtyTabs };
       });
     },
     setTabKind(paneId, tabId, kind) {

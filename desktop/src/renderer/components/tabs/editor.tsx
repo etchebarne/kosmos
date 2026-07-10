@@ -103,7 +103,7 @@ function LoadedEditor({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const saveRequestIdRef = useRef(0);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
-  const setEditorDirty = useWorkspaceStore((state) => state.setEditorDirty);
+  const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
   const minimap = useSettingsStore((state) => editorSettings(state.snapshot).minimap);
   const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
 
@@ -144,7 +144,7 @@ function LoadedEditor({
     const updateDirtyState = () => {
       const isDirty = model.getValue() !== buffer.savedContent;
 
-      setEditorDirty(workspaceId, tabId, isDirty);
+      setTabDirty(workspaceId, tabId, isDirty);
       setSaveState(isDirty ? { status: "dirty" } : { status: "clean" });
     };
 
@@ -174,7 +174,7 @@ function LoadedEditor({
           })
           .catch((caughtError: unknown) => {
             if (saveRequestIdRef.current === requestId) {
-              setEditorDirty(workspaceId, tabId, true);
+              setTabDirty(workspaceId, tabId, true);
               setSaveState({ status: "error", message: errorMessage(caughtError) });
             }
           });
@@ -188,7 +188,7 @@ function LoadedEditor({
       editor.dispose();
       editorRef.current = null;
     };
-  }, [workspaceId, tabId, document, setEditorDirty]);
+  }, [workspaceId, tabId, document, setTabDirty]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({

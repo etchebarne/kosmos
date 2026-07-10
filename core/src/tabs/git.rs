@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use crate::tabs::editor::{EditorError, MAX_EDITOR_FILE_BYTES, save_document};
 use crate::tree::{TabId, WorkspaceId};
 
 pub type Result<T> = std::result::Result<T, GitError>;
@@ -79,7 +80,9 @@ pub struct GitDiffFile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitDiffSection {
     kind: GitDiffSectionKind,
-    patch: String,
+    original_content: Option<String>,
+    modified_content: Option<String>,
+    editable: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -148,7 +151,10 @@ impl GitRepository {
     pub fn diff(directory: impl AsRef<Path>, focused_path: &str) -> Result<GitDiff> {
         let repository_root = repository_root(directory.as_ref())?;
         let focused_path = normalize_path(focused_path)?;
-        let status = parse_status(&git(&repository_root, ["status", "--porcelain=v1", "-z"])?)?;
+        let status = parse_status(&git(
+            &repository_root,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?)?;
 
         Ok(GitDiff {
             focused_path: Some(focused_path),
@@ -158,6 +164,37 @@ impl GitRepository {
                 .map(|change| diff_file(&repository_root, change))
                 .collect::<Result<Vec<_>>>()?,
         })
+    }
+
+    pub fn save_diff_file(
+        directory: impl AsRef<Path>,
+        path: &str,
+        content: &str,
+        stage: bool,
+    ) -> Result<()> {
+        let repository_root = repository_root(directory.as_ref())?;
+        let path = normalize_path(path)?;
+        let status = parse_status(&git(
+            &repository_root,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?)?;
+        let change = status
+            .changes
+            .iter()
+            .find(|change| change.path() == path)
+            .ok_or_else(|| GitError::InvalidPath(path.clone()))?;
+
+        if !change.is_unstaged() || change.unstaged() == Some(GitChangeKind::Deleted) {
+            return Err(GitError::InvalidPath(path));
+        }
+
+        save_document(&repository_root, &path, content)?;
+
+        if stage {
+            Self::stage_paths(&repository_root, &[path])?;
+        }
+
+        Ok(())
     }
 
     pub fn normalize_path(path: &str) -> Result<String> {
@@ -560,16 +597,34 @@ impl GitDiffFile {
 }
 
 impl GitDiffSection {
-    fn new(kind: GitDiffSectionKind, patch: String) -> Self {
-        Self { kind, patch }
+    fn new(
+        kind: GitDiffSectionKind,
+        original_content: Option<String>,
+        modified_content: Option<String>,
+        editable: bool,
+    ) -> Self {
+        Self {
+            kind,
+            original_content,
+            modified_content,
+            editable,
+        }
     }
 
     pub fn kind(&self) -> GitDiffSectionKind {
         self.kind
     }
 
-    pub fn patch(&self) -> &str {
-        &self.patch
+    pub fn original_content(&self) -> Option<&str> {
+        self.original_content.as_deref()
+    }
+
+    pub fn modified_content(&self) -> Option<&str> {
+        self.modified_content.as_deref()
+    }
+
+    pub fn editable(&self) -> bool {
+        self.editable
     }
 }
 
@@ -607,6 +662,7 @@ pub enum GitError {
     Discover { directory: PathBuf, message: String },
     InvalidPath(String),
     InvalidStash(String),
+    File(EditorError),
     Io(io::Error),
     NotWorktree(PathBuf),
     RemoteNameRequired,
@@ -632,6 +688,7 @@ impl fmt::Display for GitError {
             ),
             Self::InvalidPath(path) => write!(formatter, "invalid git path: {path}"),
             Self::InvalidStash(selector) => write!(formatter, "invalid git stash: {selector}"),
+            Self::File(error) => error.fmt(formatter),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::NotWorktree(path) => write!(
                 formatter,
@@ -652,6 +709,7 @@ impl StdError for GitError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::File(error) => Some(error),
             Self::BranchRequired
             | Self::CommandFailed { .. }
             | Self::CommitMessageRequired
@@ -672,6 +730,12 @@ impl StdError for GitError {
 impl From<io::Error> for GitError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<EditorError> for GitError {
+    fn from(error: EditorError) -> Self {
+        Self::File(error)
     }
 }
 
@@ -1220,21 +1284,42 @@ where
 fn diff_file(repository_root: &Path, change: &GitChange) -> Result<GitDiffFile> {
     let mut sections = Vec::new();
 
-    if change.is_staged() {
-        sections.push(GitDiffSection::new(
-            GitDiffSectionKind::Staged,
-            git_patch(repository_root, &["diff", "--cached", "--"], change.path())?,
-        ));
-    }
+    if change.staged() == Some(GitChangeKind::Conflicted) {
+        let ours = git_blob_content(repository_root, &format!(":2:{}", change.path()), true)?;
+        let (working, editable) = working_tree_content(repository_root, change.path())?;
 
-    if change.is_unstaged() {
-        let patch = if change.unstaged() == Some(GitChangeKind::Untracked) {
-            untracked_patch(repository_root, change.path())?
+        sections.push(GitDiffSection::new(
+            GitDiffSectionKind::Unstaged,
+            ours,
+            working,
+            editable,
+        ));
+    } else {
+        let original_content = original_content(repository_root, change)?;
+        let staged_content = if change.is_staged() {
+            let content = index_content(repository_root, change)?;
+
+            sections.push(GitDiffSection::new(
+                GitDiffSectionKind::Staged,
+                original_content.clone(),
+                content.clone(),
+                false,
+            ));
+            content
         } else {
-            git_patch(repository_root, &["diff", "--"], change.path())?
+            original_content
         };
 
-        sections.push(GitDiffSection::new(GitDiffSectionKind::Unstaged, patch));
+        if change.is_unstaged() {
+            let (working, editable) = working_tree_content(repository_root, change.path())?;
+
+            sections.push(GitDiffSection::new(
+                GitDiffSectionKind::Unstaged,
+                staged_content,
+                working,
+                editable,
+            ));
+        }
     }
 
     Ok(GitDiffFile::new(
@@ -1246,100 +1331,82 @@ fn diff_file(repository_root: &Path, change: &GitChange) -> Result<GitDiffFile> 
     ))
 }
 
-fn git_patch(repository_root: &Path, args: &[&str], path: &str) -> Result<String> {
-    let paths = [path.to_owned()];
+fn original_content(repository_root: &Path, change: &GitChange) -> Result<Option<String>> {
+    if change.staged() == Some(GitChangeKind::Added)
+        || change.unstaged() == Some(GitChangeKind::Untracked)
+    {
+        return Ok(Some(String::new()));
+    }
 
-    String::from_utf8(git_with_paths(
-        repository_root,
-        args.iter().copied(),
-        &paths,
-    )?)
-    .map_err(|error| GitError::Utf8(error.to_string()))
+    let path = change.original_path().unwrap_or_else(|| change.path());
+    git_blob_content(repository_root, &format!("HEAD:{path}"), false)
 }
 
-fn untracked_patch(repository_root: &Path, path: &str) -> Result<String> {
-    let full_path = repository_root.join(path.trim_end_matches('/'));
-    let file_type = fs::symlink_metadata(&full_path)
-        .map_err(|error| io_error(&full_path, error))?
-        .file_type();
-
-    if file_type.is_symlink() {
-        return untracked_symlink_patch(&full_path, path);
+fn index_content(repository_root: &Path, change: &GitChange) -> Result<Option<String>> {
+    if change.staged() == Some(GitChangeKind::Deleted) {
+        Ok(Some(String::new()))
+    } else {
+        git_blob_content(repository_root, &format!(":{}", change.path()), false)
     }
-
-    if file_type.is_dir() {
-        let mut files = Vec::new();
-        collect_files(&full_path, &mut files)?;
-        files.sort();
-
-        let mut patch = String::new();
-        for file in files {
-            let relative_path = file
-                .strip_prefix(repository_root)
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| file.to_string_lossy().into_owned());
-            patch.push_str(&untracked_file_patch(repository_root, &relative_path)?);
-        }
-
-        return Ok(patch);
-    }
-
-    untracked_file_patch(repository_root, path)
 }
 
-fn untracked_symlink_patch(full_path: &Path, relative_path: &str) -> Result<String> {
-    let target = fs::read_link(full_path).map_err(|error| io_error(full_path, error))?;
-    let target = target.to_string_lossy();
-    let insertion_count = line_count(target.as_bytes());
-    let old_path = format!("a/{relative_path}");
-    let new_path = format!("b/{relative_path}");
-    let mut added_lines = String::new();
-
-    for line in target.split_inclusive('\n') {
-        added_lines.push('+');
-        added_lines.push_str(line);
-    }
-
-    if !target.ends_with('\n') {
-        added_lines.push_str("\n\\ No newline at end of file\n");
-    }
-
-    Ok(format!(
-        "diff --git {old_path:?} {new_path:?}\nnew file mode 120000\n--- /dev/null\n+++ {new_path:?}\n@@ -0,0 +1,{insertion_count} @@\n{added_lines}"
-    ))
-}
-
-fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(directory).map_err(|error| io_error(directory, error))? {
-        let entry = entry.map_err(|error| io_error(directory, error))?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| io_error(&path, error))?;
-
-        if file_type.is_dir() {
-            collect_files(&path, files)?;
-        } else if file_type.is_file() {
-            files.push(path);
-        }
-    }
-
-    Ok(())
-}
-
-fn untracked_file_patch(repository_root: &Path, path: &str) -> Result<String> {
+fn git_blob_content(
+    repository_root: &Path,
+    object: &str,
+    missing_as_empty: bool,
+) -> Result<Option<String>> {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repository_root)
-        .args(["diff", "--no-index", "--", "/dev/null"])
-        .arg(path)
+        .args(["show", "--no-textconv", object])
         .output()?;
 
-    if output.status.success() || output.status.code() == Some(1) {
-        String::from_utf8(output.stdout).map_err(|error| GitError::Utf8(error.to_string()))
+    if output.status.success() {
+        return Ok(diff_text(output.stdout));
+    }
+
+    if missing_as_empty {
+        return Ok(Some(String::new()));
+    }
+
+    Err(GitError::CommandFailed {
+        command: format!("git show --no-textconv {object}"),
+        stderr: command_stderr(&output.stderr),
+    })
+}
+
+fn working_tree_content(repository_root: &Path, path: &str) -> Result<(Option<String>, bool)> {
+    let full_path = repository_root.join(path);
+    let metadata = match fs::symlink_metadata(&full_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok((Some(String::new()), false));
+        }
+        Err(error) => return Err(io_error(&full_path, error)),
+    };
+
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(&full_path).map_err(|error| io_error(&full_path, error))?;
+        return Ok((Some(target.to_string_lossy().into_owned()), false));
+    }
+
+    if !metadata.is_file() || metadata.len() > MAX_EDITOR_FILE_BYTES as u64 {
+        return Ok((None, false));
+    }
+
+    let bytes = fs::read(&full_path).map_err(|error| io_error(&full_path, error))?;
+    let content = diff_text(bytes);
+    let editable = content.is_some();
+
+    Ok((content, editable))
+}
+
+fn diff_text(bytes: Vec<u8>) -> Option<String> {
+    if bytes.len() > MAX_EDITOR_FILE_BYTES {
+        None
     } else {
-        Err(GitError::CommandFailed {
-            command: format!("git diff --no-index -- /dev/null {path}"),
-            stderr: command_stderr(&output.stderr),
-        })
+        String::from_utf8(bytes).ok()
     }
 }
 
@@ -1688,10 +1755,67 @@ mod tests {
         assert_eq!(diff.files().len(), 2);
         assert_eq!(readme.staged(), Some(GitChangeKind::Added));
         assert_eq!(readme.sections()[0].kind(), GitDiffSectionKind::Staged);
-        assert!(readme.sections()[0].patch().contains("+hello"));
+        assert_eq!(readme.sections()[0].original_content(), Some(""));
+        assert_eq!(readme.sections()[0].modified_content(), Some("hello\n"));
+        assert!(!readme.sections()[0].editable());
         assert_eq!(license.unstaged(), Some(GitChangeKind::Untracked));
         assert_eq!(license.sections()[0].kind(), GitDiffSectionKind::Unstaged);
-        assert!(license.sections()[0].patch().contains("+license"));
+        assert_eq!(license.sections()[0].original_content(), Some(""));
+        assert_eq!(license.sections()[0].modified_content(), Some("license\n"));
+        assert!(license.sections()[0].editable());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loads_and_resolves_conflicted_files() {
+        let root = test_directory("repository-conflict");
+        let file_path = root.join("conflict.txt");
+
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(&file_path, "original\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["conflict.txt".to_owned()])
+            .expect("file should be staged");
+        commit(&root, "Initial");
+        let main_branch = String::from_utf8(git(&root, ["branch", "--show-current"]).unwrap())
+            .unwrap()
+            .trim()
+            .to_owned();
+
+        git(&root, ["checkout", "-b", "incoming"]).expect("branch should be created");
+        fs::write(&file_path, "incoming\n").expect("file should be changed");
+        GitRepository::stage_paths(&root, &["conflict.txt".to_owned()])
+            .expect("file should be staged");
+        commit(&root, "Incoming");
+
+        git(&root, ["checkout", &main_branch]).expect("main branch should be restored");
+        fs::write(&file_path, "current\n").expect("file should be changed");
+        GitRepository::stage_paths(&root, &["conflict.txt".to_owned()])
+            .expect("file should be staged");
+        commit(&root, "Current");
+        assert!(git(&root, ["merge", "incoming"]).is_err());
+
+        let diff = GitRepository::diff(&root, "conflict.txt").expect("diff should load");
+        let file = &diff.files()[0];
+        let section = &file.sections()[0];
+        assert_eq!(file.staged(), Some(GitChangeKind::Conflicted));
+        assert_eq!(section.original_content(), Some("current\n"));
+        assert!(
+            section
+                .modified_content()
+                .is_some_and(|content| content.contains("<<<<<<<"))
+        );
+        assert!(section.editable());
+
+        GitRepository::save_diff_file(&root, "conflict.txt", "resolved\n", true)
+            .expect("conflict should be saved and staged");
+        let snapshot = GitRepository::snapshot(&root).expect("status should load");
+        assert_eq!(snapshot.changes().len(), 1);
+        assert_eq!(
+            snapshot.changes()[0].staged(),
+            Some(GitChangeKind::Modified)
+        );
+        assert!(!snapshot.changes()[0].is_unstaged());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1710,7 +1834,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn untracked_file_collection_does_not_follow_symlinks() {
+    fn working_tree_content_does_not_follow_symlinks() {
         use std::os::unix::fs::symlink;
 
         let root = test_directory("untracked-symlink");
@@ -1722,24 +1846,39 @@ mod tests {
         symlink("first\nsecond", root.join("multiline"))
             .expect("multiline symlink should be created");
         let mut stats = GitDiffStats::default();
-        let mut files = Vec::new();
 
         add_untracked_path_stats(&root.join("linked"), &mut stats)
             .expect("symlink stats should be safe");
-        collect_files(&root, &mut files).expect("file collection should succeed");
-        let patch = untracked_patch(&root, "linked").expect("symlink patch should be generated");
-        let multiline_patch =
-            untracked_patch(&root, "multiline").expect("multiline patch should be generated");
+        let (linked_content, linked_editable) =
+            working_tree_content(&root, "linked").expect("symlink should load");
+        let (multiline_content, multiline_editable) =
+            working_tree_content(&root, "multiline").expect("symlink should load");
 
         assert_eq!(stats.insertions, 1);
-        assert!(files.is_empty());
-        assert!(patch.contains(outside.to_string_lossy().as_ref()));
-        assert!(!patch.contains("private\n"));
-        assert!(multiline_patch.contains("@@ -0,0 +1,2 @@"));
-        assert!(multiline_patch.contains("+first\n+second"));
+        assert_eq!(linked_content.as_deref(), outside.to_str());
+        assert!(!linked_content.unwrap_or_default().contains("private\n"));
+        assert!(!linked_editable);
+        assert_eq!(multiline_content.as_deref(), Some("first\nsecond"));
+        assert!(!multiline_editable);
 
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    fn commit(root: &Path, message: &str) {
+        git(
+            root,
+            [
+                "-c",
+                "user.name=Kosmos Test",
+                "-c",
+                "user.email=kosmos@example.com",
+                "commit",
+                "--message",
+                message,
+            ],
+        )
+        .expect("commit should be created");
     }
 
     fn test_directory(name: &str) -> PathBuf {
