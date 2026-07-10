@@ -1527,7 +1527,7 @@ function GitChangeTree({
       text: statusLabel(changesRef.current, item.path),
       title: statusTitle(changesRef.current, item.path),
     }),
-    stickyFolders: true,
+    stickyFolders: false,
     unsafeCSS: gitTreeCheckboxCss(),
   });
   modelRef.current = model;
@@ -1596,12 +1596,17 @@ function GitStageCheckboxOverlay({
 
       const overlayRect = overlay.getBoundingClientRect();
       const rows = Array.from(shadowRoot.querySelectorAll<HTMLElement>(`[data-type="item"][data-item-path]`));
+      const items = new Map<string, StageCheckboxOverlayItem>();
 
-      setItems(
-        rows
-          .map((row) => checkboxOverlayItem(row, overlayRect, changesRef.current))
-          .filter((item): item is StageCheckboxOverlayItem => Boolean(item)),
-      );
+      for (const row of rows) {
+        const item = checkboxOverlayItem(row, overlayRect, changesRef.current);
+
+        if (item && !items.has(item.path)) {
+          items.set(item.path, item);
+        }
+      }
+
+      setItems([...items.values()]);
     };
 
     const scheduleUpdate = () => {
