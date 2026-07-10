@@ -1,6 +1,8 @@
 import type { FileTree as FileTreeModel, GitStatus, GitStatusEntry } from "@pierre/trees";
 import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   Download,
   GitBranch as GitBranchIcon,
@@ -132,6 +134,7 @@ type RemoteGitAction = {
   id: RemoteGitActionId;
   label: string;
   icon: LucideIcon;
+  pendingCommits?: "ahead" | "behind";
   confirmMessage?: string;
   run(params: GitTabParams): Promise<boolean>;
 };
@@ -173,24 +176,28 @@ const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
     id: "pull",
     label: "Pull",
     icon: Download,
+    pendingCommits: "behind",
     run: (params) => pullGitChanges({ ...params, rebase: false }),
   },
   {
     id: "pullRebase",
     label: "Pull (rebase)",
     icon: Download,
+    pendingCommits: "behind",
     run: (params) => pullGitChanges({ ...params, rebase: true }),
   },
   {
     id: "push",
     label: "Push",
     icon: Upload,
+    pendingCommits: "ahead",
     run: (params) => pushGitChanges({ ...params, force: false }),
   },
   {
     id: "pushForce",
     label: "Push (force)",
     icon: Upload,
+    pendingCommits: "ahead",
     confirmMessage: "Force push with lease?",
     run: (params) => pushGitChanges({ ...params, force: true }),
   },
@@ -631,7 +638,9 @@ function LoadedGitTab({
               <span className="min-w-0 truncate">{snapshot.branch ?? "Detached HEAD"}</span>
             </Button>
             <RemoteGitActions
+              ahead={snapshot.ahead}
               busy={busy}
+              behind={snapshot.behind}
               activeOperation={activeOperation}
               successfulOperation={successfulOperation}
               primaryActionId={primaryRemoteActionId}
@@ -1035,7 +1044,9 @@ function localBranchNameFromRemote(branch: string): string {
 }
 
 function RemoteGitActions({
+  ahead,
   activeOperation,
+  behind,
   successfulOperation,
   busy,
   primaryActionId,
@@ -1043,7 +1054,9 @@ function RemoteGitActions({
   onPrimaryActionChange,
   onRun,
 }: {
+  ahead: number;
   activeOperation: GitOperationId | null;
+  behind: number;
   successfulOperation: GitOperationId | null;
   busy: boolean;
   primaryActionId: RemoteGitActionId;
@@ -1089,7 +1102,7 @@ function RemoteGitActions({
           activeOperation={activeOperation}
           successfulOperation={successfulOperation}
         />
-        {primaryAction.label}
+        <RemoteGitActionLabel action={primaryAction} ahead={ahead} behind={behind} />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -1107,7 +1120,7 @@ function RemoteGitActions({
               return (
                 <DropdownMenuItem key={action.id} onClick={() => runRemoteAction(action)}>
                   <ActionIcon />
-                  {action.label}
+                  <RemoteGitActionLabel action={action} ahead={ahead} behind={behind} />
                 </DropdownMenuItem>
               );
             })}
@@ -1115,6 +1128,34 @@ function RemoteGitActions({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  );
+}
+
+function RemoteGitActionLabel({
+  action,
+  ahead,
+  behind,
+}: {
+  action: RemoteGitAction;
+  ahead: number;
+  behind: number;
+}) {
+  const pendingCommits = action.pendingCommits === "ahead" ? ahead : behind;
+
+  return (
+    <span className="flex items-center gap-1">
+      {action.label}
+      {action.pendingCommits && pendingCommits > 0 ? (
+        <span className="flex items-center gap-0.5 tabular-nums" aria-label={`${pendingCommits} pending commits`}>
+          {action.pendingCommits === "ahead" ? (
+            <ArrowUp className="size-3" aria-hidden="true" />
+          ) : (
+            <ArrowDown className="size-3" aria-hidden="true" />
+          )}
+          {pendingCommits}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
