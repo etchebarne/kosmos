@@ -1,6 +1,7 @@
 import { useState, type DragEvent, type WheelEvent } from "react";
 import { Plus, X } from "lucide-react";
 
+import { FileIcon, FileIconSprite } from "@/renderer/components/file-icon";
 import { Button } from "@/renderer/components/ui/button";
 import { TabErrorBoundary } from "@/renderer/components/tabs/error-boundary";
 import {
@@ -83,6 +84,7 @@ export function WorkspaceView() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-sm">
+      <FileIconSprite />
       {snapshot.workspaces.map((workspace) => {
         const isWorkspaceActive = workspace.id === activeWorkspaceId;
 
@@ -395,10 +397,17 @@ function TabTrigger({
               closeTab(pane.id, tab.id);
             }}
           >
-            <TabIcon
-              className="size-3.5 shrink-0 text-muted-foreground group-data-active/tab:text-foreground"
-              aria-hidden="true"
-            />
+            {tab.kind === "editor" ? (
+              <FileIcon
+                path={tab.title}
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+            ) : (
+              <TabIcon
+                className="size-3.5 shrink-0 text-muted-foreground group-data-active/tab:text-foreground"
+                aria-hidden="true"
+              />
+            )}
             <span className="truncate">{tab.title}</span>
             <button
               type="button"
