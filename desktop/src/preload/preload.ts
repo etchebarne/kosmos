@@ -1,6 +1,11 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
-import type { KosmosApi, KosmosIpcRequest, KosmosIpcRequestResult } from "../shared/ipc";
+import type {
+  KosmosApi,
+  KosmosIpcRequest,
+  KosmosIpcRequestResult,
+  WorkspaceId,
+} from "../shared/ipc";
 
 class KosmosPreloadRequestError extends Error {
   constructor(
@@ -44,6 +49,14 @@ const kosmos: KosmosApi = {
 
     ipcRenderer.on("kosmos:flushState", listener);
     return () => ipcRenderer.off("kosmos:flushState", listener);
+  },
+  onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void {
+    const listener = (_event: IpcRendererEvent, workspaceIds: WorkspaceId[]) => {
+      callback(workspaceIds);
+    };
+
+    ipcRenderer.on("kosmos:workspaceChanged", listener);
+    return () => ipcRenderer.off("kosmos:workspaceChanged", listener);
   },
 };
 

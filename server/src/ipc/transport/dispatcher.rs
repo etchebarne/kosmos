@@ -7,6 +7,7 @@ use std::thread;
 use crate::ipc::messages::envelope::ServerMessage;
 use crate::ipc::router::{ExecutionMode, PersistenceMode, PreparedRoute};
 
+use super::notifications::{NotificationHub, NotificationSubscription};
 use super::response::ResponseSender;
 
 const MAX_QUEUED_REQUESTS: usize = 64;
@@ -16,6 +17,7 @@ pub(crate) struct Dispatcher {
     state: Arc<Mutex<core::State>>,
     external_requests: mpsc::SyncSender<ExternalRequest>,
     persistent_requests: mpsc::SyncSender<PersistentRequest>,
+    notifications: NotificationHub,
 }
 
 impl Dispatcher {
@@ -23,18 +25,57 @@ impl Dispatcher {
         state: core::State,
         store: core::persistence::StateStore,
     ) -> io::Result<Self> {
+        let initial_workspaces = state.workspaces().clone();
+        let notifications = NotificationHub::default();
+        let (workspace_reconciler, workspace_changes) = match core::WorkspaceChangeWatcher::new() {
+            Ok((watcher, changes)) => {
+                match WorkspaceWatcherReconciler::new(watcher, notifications.clone()) {
+                    Ok(reconciler) => (Some(reconciler), Some(changes)),
+                    Err(error) => {
+                        eprintln!("workspace watcher worker failed to start: {error}");
+                        (None, None)
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("workspace watcher is unavailable: {error}");
+                (None, None)
+            }
+        };
         let state = Arc::new(Mutex::new(state));
         let (external_requests, external_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
         let (persistent_requests, persistent_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
 
         spawn_external_worker(external_receiver)?;
-        spawn_persistence_worker(Arc::clone(&state), store, persistent_receiver)?;
+        spawn_persistence_worker(
+            Arc::clone(&state),
+            store,
+            persistent_receiver,
+            workspace_reconciler.clone(),
+        )?;
+        if let Some(workspace_changes) = workspace_changes
+            && let Err(error) = spawn_notification_worker(
+                workspace_changes,
+                notifications.clone(),
+                workspace_reconciler.clone(),
+            )
+        {
+            eprintln!("workspace notification worker failed to start: {error}");
+        }
+        if let Some(workspace_reconciler) = workspace_reconciler {
+            workspace_reconciler.reconcile(initial_workspaces);
+        }
 
         Ok(Self {
             state,
             external_requests,
             persistent_requests,
+            notifications,
         })
+    }
+
+    pub(crate) fn subscribe(&self, responses: ResponseSender) -> NotificationSubscription {
+        self.notifications.subscribe(responses)
     }
 
     #[cfg(test)]
@@ -119,6 +160,87 @@ struct PersistentRequest {
     cancelled: Arc<AtomicBool>,
 }
 
+#[derive(Clone)]
+struct WorkspaceWatcherReconciler {
+    state: Arc<Mutex<WorkspaceWatcherState>>,
+    signal: mpsc::SyncSender<()>,
+}
+
+#[derive(Default)]
+struct WorkspaceWatcherState {
+    notify_after_reconcile: bool,
+    workspaces: Option<core::tree::WorkspaceList>,
+}
+
+impl WorkspaceWatcherReconciler {
+    fn new(
+        mut watcher: core::WorkspaceChangeWatcher,
+        notifications: NotificationHub,
+    ) -> io::Result<Self> {
+        let state = Arc::new(Mutex::new(WorkspaceWatcherState::default()));
+        let (signal, reconciliations) = mpsc::sync_channel(1);
+        let worker_state = Arc::clone(&state);
+
+        thread::Builder::new()
+            .name("kosmos-workspace-watcher".to_owned())
+            .spawn(move || {
+                while reconciliations.recv().is_ok() {
+                    let Some((workspaces, notify_after_reconcile)) =
+                        worker_state.lock().ok().and_then(|mut state| {
+                            let workspaces = state.workspaces.clone()?;
+                            let notify_after_reconcile = state.notify_after_reconcile;
+                            state.notify_after_reconcile = false;
+                            Some((workspaces, notify_after_reconcile))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    match watcher.reconcile(&workspaces) {
+                        Ok(()) if notify_after_reconcile => notifications.workspace_changed(
+                            workspaces
+                                .workspaces()
+                                .iter()
+                                .map(|workspace| workspace.id().value())
+                                .collect(),
+                        ),
+                        Ok(()) => {}
+                        Err(error) => {
+                            if notify_after_reconcile && let Ok(mut state) = worker_state.lock() {
+                                state.notify_after_reconcile = true;
+                            }
+                            eprintln!("workspace watcher reconciliation failed: {error}");
+                        }
+                    }
+                }
+            })?;
+
+        Ok(Self { state, signal })
+    }
+
+    fn reconcile(&self, workspaces: core::tree::WorkspaceList) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.workspaces.as_ref() == Some(&workspaces) {
+                return;
+            }
+
+            state.workspaces = Some(workspaces);
+            state.notify_after_reconcile = true;
+            let _ = self.signal.try_send(());
+        }
+    }
+
+    fn retry(&self) {
+        if self
+            .state
+            .lock()
+            .is_ok_and(|state| state.workspaces.is_some())
+        {
+            let _ = self.signal.try_send(());
+        }
+    }
+}
+
 fn spawn_external_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Result<()> {
     thread::Builder::new()
         .name("kosmos-external-operations".to_owned())
@@ -141,6 +263,7 @@ fn spawn_persistence_worker(
     state: Arc<Mutex<core::State>>,
     store: core::persistence::StateStore,
     requests: mpsc::Receiver<PersistentRequest>,
+    workspace_reconciler: Option<WorkspaceWatcherReconciler>,
 ) -> io::Result<()> {
     thread::Builder::new()
         .name("kosmos-persistent-operations".to_owned())
@@ -160,10 +283,39 @@ fn spawn_persistence_worker(
                     let _ = request.completion.send(());
                     continue;
                 };
-                let response = execute_persistent(&state, &store, &request.route, persistence);
+                let response = execute_persistent(
+                    &state,
+                    &store,
+                    &request.route,
+                    persistence,
+                    workspace_reconciler.as_ref(),
+                );
 
                 request.responses.send(response);
                 let _ = request.completion.send(());
+            }
+        })
+        .map(|_| ())
+}
+
+fn spawn_notification_worker(
+    workspace_changes: mpsc::Receiver<Vec<core::tree::WorkspaceId>>,
+    notifications: NotificationHub,
+    workspace_reconciler: Option<WorkspaceWatcherReconciler>,
+) -> io::Result<()> {
+    thread::Builder::new()
+        .name("kosmos-workspace-changes".to_owned())
+        .spawn(move || {
+            while let Ok(workspace_ids) = workspace_changes.recv() {
+                notifications.workspace_changed(
+                    workspace_ids
+                        .into_iter()
+                        .map(core::tree::WorkspaceId::value)
+                        .collect(),
+                );
+                if let Some(workspace_reconciler) = &workspace_reconciler {
+                    workspace_reconciler.retry();
+                }
             }
         })
         .map(|_| ())
@@ -192,6 +344,7 @@ fn execute_persistent(
     store: &core::persistence::StateStore,
     route: &PreparedRoute,
     persistence: PersistenceMode,
+    workspace_reconciler: Option<&WorkspaceWatcherReconciler>,
 ) -> ServerMessage {
     let mut candidate = match persistent_candidate(state, route.request_id()) {
         Ok(candidate) => candidate,
@@ -244,6 +397,13 @@ fn execute_persistent(
         };
 
         return ServerMessage::error(route.request_id(), "persistence.state_conflict", message);
+    }
+
+    let workspaces = state.workspaces().clone();
+    drop(state);
+
+    if let Some(workspace_reconciler) = workspace_reconciler {
+        workspace_reconciler.reconcile(workspaces);
     }
 
     response
@@ -666,7 +826,7 @@ mod tests {
         (store, path)
     }
 
-    fn test_response_channel() -> (ResponseSender, mpsc::Receiver<ServerMessage>) {
+    fn test_response_channel() -> (ResponseSender, response::ResponseReceiver) {
         let (stream, _peer) =
             std::os::unix::net::UnixStream::pair().expect("socket pair should open");
         let (responses, receiver, _) =

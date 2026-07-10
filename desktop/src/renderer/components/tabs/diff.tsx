@@ -9,7 +9,6 @@ import type { GitDiff, GitDiffFile, TabId, WorkspaceId } from "@/shared/ipc";
 type DiffTabProps = {
   workspaceId: WorkspaceId;
   tabId: TabId;
-  isActive: boolean;
   onActivatePane(): void;
 };
 
@@ -18,7 +17,6 @@ type DiffLoadState =
   | { status: "loaded"; workspaceId: WorkspaceId; tabId: TabId; diff: GitDiff }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
 
-const DIFF_REFRESH_INTERVAL_MS = 1500;
 const DIFF_THEME_OVERRIDES = `
 :host {
   color: var(--foreground);
@@ -59,7 +57,7 @@ const DIFF_RENDER_OPTIONS: PatchDiffProps<undefined>["options"] = {
   unsafeCSS: DIFF_THEME_OVERRIDES,
 };
 
-export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTabProps) {
+export function DiffTab({ workspaceId, tabId, onActivatePane }: DiffTabProps) {
   const gitRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
   const [loadState, setLoadState] = useState<DiffLoadState>({
     status: "loading",
@@ -68,6 +66,11 @@ export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTa
   });
   const requestIdRef = useRef(0);
   const revisionRef = useRef(gitRevision);
+  const revisionLoadInFlightRef = useRef(false);
+  const revisionLoadPendingRef = useRef(false);
+  const revisionLoadTargetRef = useRef({ workspaceId, tabId });
+
+  revisionLoadTargetRef.current = { workspaceId, tabId };
 
   const loadDiff = async (targetWorkspaceId: WorkspaceId, targetTabId: TabId, showLoading: boolean) => {
     const requestId = requestIdRef.current + 1;
@@ -96,6 +99,24 @@ export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTa
     }
   };
 
+  const loadDiffRevision = async () => {
+    if (revisionLoadInFlightRef.current) {
+      revisionLoadPendingRef.current = true;
+      return;
+    }
+
+    revisionLoadInFlightRef.current = true;
+    try {
+      do {
+        revisionLoadPendingRef.current = false;
+        const target = revisionLoadTargetRef.current;
+        await loadDiff(target.workspaceId, target.tabId, false);
+      } while (revisionLoadPendingRef.current);
+    } finally {
+      revisionLoadInFlightRef.current = false;
+    }
+  };
+
   useEffect(() => {
     revisionRef.current = gitRevision;
     void loadDiff(workspaceId, tabId, true);
@@ -107,20 +128,8 @@ export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTa
     }
 
     revisionRef.current = gitRevision;
-    void loadDiff(workspaceId, tabId, false);
+    void loadDiffRevision();
   }, [gitRevision, workspaceId, tabId]);
-
-  useEffect(() => {
-    if (!isActive) {
-      return undefined;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void loadDiff(workspaceId, tabId, false);
-    }, DIFF_REFRESH_INTERVAL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [isActive, workspaceId, tabId]);
 
   const currentLoadState: DiffLoadState =
     loadState.workspaceId === workspaceId && loadState.tabId === tabId

@@ -581,6 +581,39 @@ struct GitDiffStats {
     deletions: u32,
 }
 
+pub(crate) struct RepositoryWatchPaths {
+    pub(crate) metadata: Vec<PathBuf>,
+    pub(crate) worktree: PathBuf,
+}
+
+pub(crate) fn repository_watch_paths(directory: &Path) -> Result<RepositoryWatchPaths> {
+    let repository_root = repository_root(directory)?;
+    let output = git(
+        &repository_root,
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    )?;
+    let metadata_paths =
+        String::from_utf8(output).map_err(|error| GitError::Utf8(error.to_string()))?;
+    let mut metadata = metadata_paths
+        .lines()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+
+    metadata.sort();
+    metadata.dedup();
+
+    Ok(RepositoryWatchPaths {
+        metadata,
+        worktree: repository_root,
+    })
+}
+
 fn repository_root(directory: &Path) -> Result<PathBuf> {
     let output = Command::new("git")
         .arg("-C")
@@ -918,6 +951,7 @@ fn latest_commit(repository_root: &Path) -> Result<Option<String>> {
 fn has_head(repository_root: &Path) -> Result<bool> {
     let args = ["rev-parse", "--verify", "--quiet", "HEAD"];
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repository_root)
         .args(args)
@@ -1177,6 +1211,7 @@ where
         .collect::<Vec<_>>();
     args.extend(path_args);
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repository_root)
         .args(&args)

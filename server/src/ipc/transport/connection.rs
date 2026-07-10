@@ -22,11 +22,13 @@ pub(crate) fn handle(stream: UnixStream, dispatcher: Dispatcher) -> io::Result<(
     let mut reader = BufReader::new(reader_stream);
     let (responses, response_receiver, shutdown) = response::channel(&stream)?;
     let (requests, request_receiver) = mpsc::sync_channel(MAX_PENDING_REQUESTS);
+    let _notification_subscription = dispatcher.subscribe(responses.clone());
 
     thread::spawn(move || write_responses(stream, response_receiver, shutdown));
     thread::spawn({
         let closed = lifecycle.closed();
         let responses = responses.clone();
+        let dispatcher = dispatcher.clone();
         move || dispatch_requests(dispatcher, request_receiver, responses, closed)
     });
 
@@ -148,7 +150,7 @@ fn queue_request(
 
 fn write_responses(
     mut stream: UnixStream,
-    responses: mpsc::Receiver<ServerMessage>,
+    responses: response::ResponseReceiver,
     shutdown: Arc<UnixStream>,
 ) {
     while let Ok(response) = responses.recv() {

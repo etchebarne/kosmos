@@ -64,11 +64,10 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
     icon: FileDiff,
     label: "Diff",
     showInBlankPicker: false,
-    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+    render: ({ tab, workspaceId, onActivatePane }) => (
       <DiffTab
         workspaceId={workspaceId}
         tabId={tab.id}
-        isActive={isActive}
         onActivatePane={onActivatePane}
       />
     ),

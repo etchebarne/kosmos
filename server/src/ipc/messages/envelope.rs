@@ -6,10 +6,11 @@ pub(crate) enum ClientMessage {
     Request(RequestEnvelope),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum ServerMessage {
     Response(ResponseEnvelope),
+    Notification(NotificationEnvelope),
 }
 
 impl ServerMessage {
@@ -44,9 +45,17 @@ impl ServerMessage {
         })
     }
 
+    pub(crate) fn workspace_changed(workspace_ids: Vec<u64>) -> Self {
+        Self::Notification(NotificationEnvelope {
+            event: NotificationEvent::WorkspaceChanged,
+            workspace_ids,
+        })
+    }
+
     pub(crate) fn is_ok(&self) -> bool {
         match self {
             Self::Response(response) => response.ok,
+            Self::Notification(_) => false,
         }
     }
 }
@@ -73,7 +82,7 @@ pub(crate) enum Domain {
     Terminal,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResponseEnvelope {
     id: u64,
@@ -84,11 +93,24 @@ pub(crate) struct ResponseEnvelope {
     error: Option<ErrorEnvelope>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ErrorEnvelope {
     code: String,
     message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NotificationEnvelope {
+    event: NotificationEvent,
+    workspace_ids: Vec<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum NotificationEvent {
+    WorkspaceChanged,
 }
 
 #[cfg(test)]
@@ -101,5 +123,20 @@ mod tests {
         let response = ServerMessage::ok(1, HashMap::from([(vec![1, 2], true)]));
 
         assert!(!response.is_ok());
+    }
+
+    #[test]
+    fn workspace_change_notifications_serialize_without_a_request_id() {
+        let notification = serde_json::to_value(ServerMessage::workspace_changed(vec![1, 2]))
+            .expect("notification should serialize");
+
+        assert_eq!(
+            notification,
+            serde_json::json!({
+                "type": "notification",
+                "event": "workspaceChanged",
+                "workspaceIds": [1, 2]
+            })
+        );
     }
 }

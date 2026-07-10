@@ -14,10 +14,10 @@ pub(crate) fn run(
     store: core::persistence::StateStore,
 ) -> io::Result<()> {
     prepare_socket_path(&socket_path)?;
+    let dispatcher = Dispatcher::new(state, store)?;
 
     let listener = bind_socket(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
-    let dispatcher = Dispatcher::new(state, store)?;
 
     println!("kosmos server listening on {}", socket_path.display());
 

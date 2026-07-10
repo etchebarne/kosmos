@@ -44,6 +44,13 @@ async function startApp(): Promise<void> {
   Menu.setApplicationMenu(null);
   await serverProcess.start();
   registerIpcHandlers(serverClient);
+  serverClient.onWorkspaceChanged((workspaceIds) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send("kosmos:workspaceChanged", workspaceIds);
+      }
+    }
+  });
   createMainWindow();
 
   app.on("activate", () => {

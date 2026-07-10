@@ -105,7 +105,6 @@ type GitLoadState =
       workspaceId: WorkspaceId;
       tabId: TabId;
       snapshot: GitRepositorySnapshot;
-      revision: number;
     }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string; code?: string };
 
@@ -199,6 +198,7 @@ const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
 
 export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
+  const gitRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
   const [loadState, setLoadState] = useState<GitLoadState>({
     status: "loading",
     workspaceId,
@@ -210,8 +210,14 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
   const [activeOperation, setActiveOperation] = useState<GitOperationId | null>(null);
   const [successfulOperation, setSuccessfulOperation] = useState<GitOperationId | null>(null);
   const requestIdRef = useRef(0);
-  const revisionRef = useRef(0);
+  const snapshotSignatureRef = useRef<string | null>(null);
+  const observedGitRevisionRef = useRef(gitRevision);
+  const revisionLoadInFlightRef = useRef(false);
+  const revisionLoadPendingRef = useRef(false);
+  const revisionLoadTargetRef = useRef({ workspaceId, tabId });
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  revisionLoadTargetRef.current = { workspaceId, tabId };
 
   const clearSuccessTimeout = () => {
     if (successTimeoutRef.current !== null) {
@@ -259,17 +265,22 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
       const snapshot = await getGitStatus({ workspaceId: targetWorkspaceId, tabId: targetTabId });
 
       if (requestIdRef.current === requestId) {
-        revisionRef.current += 1;
+        const signature = JSON.stringify(snapshot);
+        if (snapshotSignatureRef.current === signature) {
+          return;
+        }
+
+        snapshotSignatureRef.current = signature;
         setLoadState({
           status: "loaded",
           workspaceId: targetWorkspaceId,
           tabId: targetTabId,
           snapshot,
-          revision: revisionRef.current,
         });
       }
     } catch (caughtError: unknown) {
       if (requestIdRef.current === requestId) {
+        snapshotSignatureRef.current = null;
         setLoadState({
           status: "error",
           workspaceId: targetWorkspaceId,
@@ -286,7 +297,6 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
 
     try {
       await initGitRepository({ workspaceId, tabId });
-      await loadGitStatus(workspaceId, tabId, false);
       bumpGitRevision(workspaceId);
     } catch (caughtError: unknown) {
       window.alert(errorMessage(caughtError));
@@ -295,9 +305,38 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
     }
   };
 
+  const loadGitRevision = async () => {
+    if (revisionLoadInFlightRef.current) {
+      revisionLoadPendingRef.current = true;
+      return;
+    }
+
+    revisionLoadInFlightRef.current = true;
+    try {
+      do {
+        revisionLoadPendingRef.current = false;
+        const target = revisionLoadTargetRef.current;
+        await loadGitStatus(target.workspaceId, target.tabId, false);
+      } while (revisionLoadPendingRef.current);
+    } finally {
+      revisionLoadInFlightRef.current = false;
+    }
+  };
+
   useEffect(() => {
+    observedGitRevisionRef.current = gitRevision;
+    snapshotSignatureRef.current = null;
     void loadGitStatus(workspaceId, tabId, true);
   }, [workspaceId, tabId]);
+
+  useEffect(() => {
+    if (gitRevision === observedGitRevisionRef.current) {
+      return;
+    }
+
+    observedGitRevisionRef.current = gitRevision;
+    void loadGitRevision();
+  }, [gitRevision, workspaceId, tabId]);
 
   useEffect(() => {
     return () => clearSuccessTimeout();
@@ -322,7 +361,6 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
       ) : null}
       {currentLoadState.status === "loaded" ? (
         <LoadedGitTab
-          key={currentLoadState.revision}
           workspaceId={workspaceId}
           tabId={tabId}
           snapshot={currentLoadState.snapshot}
@@ -402,10 +440,9 @@ function LoadedGitTab({
       }
 
       if (options.refresh !== false) {
-        await onReload();
+        bumpGitRevision(workspaceId);
       }
 
-      bumpGitRevision(workspaceId);
       onOperationSuccess(operationId);
 
       return true;
@@ -562,7 +599,6 @@ function LoadedGitTab({
         <div className="relative min-h-0 flex-1 overflow-hidden border-b">
           {hasChanges ? (
             <GitChangeTree
-              key={snapshot.changes.map((change) => `${change.path}:${change.staged}:${change.unstaged}`).join("|")}
               changes={snapshot.changes}
               paths={treePaths}
               disabled={busy}
@@ -1461,26 +1497,51 @@ function GitChangeTree({
   onToggleStage(paths: string[]): void;
 }) {
   const modelRef = useRef<FileTreeModel | null>(null);
-  const changedPaths = new Set(changes.map((change) => change.path));
+  const changesRef = useRef(changes);
+  const onOpenDiffRef = useRef(onOpenDiff);
+  const pathSignature = paths.join("\0");
+  const statusSignature = changes
+    .map((change) => `${change.path}:${change.staged ?? ""}:${change.unstaged ?? ""}`)
+    .join("\0");
+  const previousPathSignatureRef = useRef(pathSignature);
+  const previousStatusSignatureRef = useRef(statusSignature);
+
+  changesRef.current = changes;
+  onOpenDiffRef.current = onOpenDiff;
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: false,
     gitStatus: gitStatusEntries(changes),
     initialExpansion: "open",
     onSelectionChange: (selectedPaths) => {
+      const changedPaths = new Set(changesRef.current.map((change) => change.path));
       const selectedChangedPath = selectedPaths.find((path) => changedPaths.has(path));
 
       if (selectedChangedPath) {
-        onOpenDiff(selectedChangedPath);
+        onOpenDiffRef.current(selectedChangedPath);
         requestAnimationFrame(() => modelRef.current?.getItem(selectedChangedPath)?.deselect());
       }
     },
     paths,
-    renderRowDecoration: ({ item }) => ({ text: statusLabel(changes, item.path), title: statusTitle(changes, item.path) }),
+    renderRowDecoration: ({ item }) => ({
+      text: statusLabel(changesRef.current, item.path),
+      title: statusTitle(changesRef.current, item.path),
+    }),
     stickyFolders: true,
     unsafeCSS: gitTreeCheckboxCss(),
   });
   modelRef.current = model;
+
+  useEffect(() => {
+    if (previousPathSignatureRef.current !== pathSignature) {
+      previousPathSignatureRef.current = pathSignature;
+      model.resetPaths(paths);
+    }
+    if (previousStatusSignatureRef.current !== statusSignature) {
+      previousStatusSignatureRef.current = statusSignature;
+      model.setGitStatus(gitStatusEntries(changes));
+    }
+  }, [model, pathSignature, statusSignature]);
 
   return (
     <div className="relative h-full min-h-0">
@@ -1511,7 +1572,11 @@ function GitStageCheckboxOverlay({
   onToggleStage(paths: string[]): void;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const changesRef = useRef(changes);
+  const scheduleUpdateRef = useRef<() => void>(() => {});
   const [items, setItems] = useState<StageCheckboxOverlayItem[]>([]);
+
+  changesRef.current = changes;
 
   useEffect(() => {
     let frameId = 0;
@@ -1534,7 +1599,7 @@ function GitStageCheckboxOverlay({
 
       setItems(
         rows
-          .map((row) => checkboxOverlayItem(row, overlayRect, changes))
+          .map((row) => checkboxOverlayItem(row, overlayRect, changesRef.current))
           .filter((item): item is StageCheckboxOverlayItem => Boolean(item)),
       );
     };
@@ -1546,6 +1611,7 @@ function GitStageCheckboxOverlay({
 
       frameId = requestAnimationFrame(updateItems);
     };
+    scheduleUpdateRef.current = scheduleUpdate;
 
     const attach = () => {
       frameId = 0;
@@ -1576,10 +1642,13 @@ function GitStageCheckboxOverlay({
     frameId = requestAnimationFrame(attach);
 
     return () => {
+      scheduleUpdateRef.current = () => {};
       cancelAnimationFrame(frameId);
       cleanup?.();
     };
-  }, [model, changes]);
+  }, [model]);
+
+  useEffect(() => scheduleUpdateRef.current(), [changes]);
 
   return (
     <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-10">

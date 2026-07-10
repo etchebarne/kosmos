@@ -2,7 +2,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import type { KosmosIpcDomain, KosmosIpcParams, KosmosServerResponse } from "../../shared/ipc";
+import type {
+  KosmosIpcDomain,
+  KosmosIpcParams,
+  KosmosServerMessage,
+  WorkspaceId,
+} from "../../shared/ipc";
 
 type PendingRequest = {
   resolve(value: unknown): void;
@@ -30,6 +35,7 @@ export class KosmosServerClient {
   private socket: net.Socket | undefined;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly idleWaiters = new Set<() => void>();
+  private readonly workspaceChangedListeners = new Set<(workspaceIds: WorkspaceId[]) => void>();
 
   constructor(readonly socketPath = defaultSocketPath()) {}
 
@@ -56,6 +62,11 @@ export class KosmosServerClient {
     this.shuttingDown = true;
     await this.waitForIdle();
     await this.sendRequest("workspace", "flush", {});
+  }
+
+  onWorkspaceChanged(listener: (workspaceIds: WorkspaceId[]) => void): () => void {
+    this.workspaceChangedListeners.add(listener);
+    return () => this.workspaceChangedListeners.delete(listener);
   }
 
   private async sendRequest<T = unknown>(
@@ -162,21 +173,29 @@ export class KosmosServerClient {
   }
 
   private handleFrame(frame: string): void {
-    const response = parseResponse(frame);
-    const pending = this.pending.get(response.id);
+    const message = parseServerMessage(frame);
+
+    if (message.type === "notification") {
+      for (const listener of this.workspaceChangedListeners) {
+        listener(message.workspaceIds);
+      }
+      return;
+    }
+
+    const pending = this.pending.get(message.id);
 
     if (!pending) {
       return;
     }
 
-    this.pending.delete(response.id);
+    this.pending.delete(message.id);
 
-    if (!response.ok) {
-      pending.reject(new KosmosIpcRequestError(response.error.code, response.error.message));
+    if (!message.ok) {
+      pending.reject(new KosmosIpcRequestError(message.error.code, message.error.message));
       return;
     }
 
-    pending.resolve(response.result);
+    pending.resolve(message.result);
   }
 
   private handleClose(): void {
@@ -229,41 +248,63 @@ export function defaultSocketPath(): string {
   return path.join(runtimeDir, "kosmos", "server.sock");
 }
 
-function parseResponse(frame: string): KosmosServerResponse {
-  const response: unknown = JSON.parse(frame);
+function parseServerMessage(frame: string): KosmosServerMessage {
+  const message: unknown = JSON.parse(frame);
 
   if (
-    !response ||
-    typeof response !== "object" ||
-    !("type" in response) ||
-    response.type !== "response" ||
-    !("id" in response) ||
-    typeof response.id !== "number" ||
-    !Number.isSafeInteger(response.id) ||
-    response.id < 0 ||
-    !("ok" in response) ||
-    typeof response.ok !== "boolean"
+    !message ||
+    typeof message !== "object" ||
+    !("type" in message) ||
+    (message.type !== "response" && message.type !== "notification")
+  ) {
+    throw new Error("Invalid IPC message from server");
+  }
+
+  if (message.type === "notification") {
+    if (
+      !("event" in message) ||
+      message.event !== "workspaceChanged" ||
+      !("workspaceIds" in message) ||
+      !Array.isArray(message.workspaceIds) ||
+      !message.workspaceIds.every(
+        (workspaceId) =>
+          typeof workspaceId === "number" && Number.isSafeInteger(workspaceId) && workspaceId >= 0,
+      )
+    ) {
+      throw new Error("Invalid IPC notification from server");
+    }
+
+    return message as KosmosServerMessage;
+  }
+
+  if (
+    !("id" in message) ||
+    typeof message.id !== "number" ||
+    !Number.isSafeInteger(message.id) ||
+    message.id < 0 ||
+    !("ok" in message) ||
+    typeof message.ok !== "boolean"
   ) {
     throw new Error("Invalid IPC response from server");
   }
 
-  if (response.ok) {
-    if (!("result" in response)) {
+  if (message.ok) {
+    if (!("result" in message)) {
       throw new Error("Invalid successful IPC response from server");
     }
   } else if (
-    !("error" in response) ||
-    !response.error ||
-    typeof response.error !== "object" ||
-    !("code" in response.error) ||
-    typeof response.error.code !== "string" ||
-    !("message" in response.error) ||
-    typeof response.error.message !== "string"
+    !("error" in message) ||
+    !message.error ||
+    typeof message.error !== "object" ||
+    !("code" in message.error) ||
+    typeof message.error.code !== "string" ||
+    !("message" in message.error) ||
+    typeof message.error.message !== "string"
   ) {
     throw new Error("Invalid failed IPC response from server");
   }
 
-  return response as KosmosServerResponse;
+  return message as KosmosServerMessage;
 }
 
 function asError(error: unknown): Error {

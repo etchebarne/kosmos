@@ -1,3 +1,5 @@
+import type { WorkspaceId } from "./ids";
+
 export type KosmosIpcDomain =
   | "workspace"
   | "pane"
@@ -24,6 +26,14 @@ export type KosmosServerResponse =
   | { type: "response"; id: number; ok: true; result: unknown }
   | { type: "response"; id: number; ok: false; error: KosmosIpcError };
 
+export type KosmosServerNotification = {
+  type: "notification";
+  event: "workspaceChanged";
+  workspaceIds: WorkspaceId[];
+};
+
+export type KosmosServerMessage = KosmosServerResponse | KosmosServerNotification;
+
 export type KosmosIpcRequestResult<T = unknown> =
   | { ok: true; result: T }
   | { ok: false; error: KosmosIpcError };
@@ -36,4 +46,5 @@ export type KosmosApi = {
   closeWindow(): Promise<void>;
   revealPath(path: string): Promise<void>;
   onFlushState(callback: () => Promise<void>): () => void;
+  onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
 };
