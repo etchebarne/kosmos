@@ -21,6 +21,16 @@ export type ResizeTerminalParams = TerminalTabParams & {
   rows: number;
 };
 
+export type RestartTerminalParams = ResizeTerminalParams & {
+  shell: string;
+};
+
+export type TerminalShell = {
+  name: string;
+  path: string;
+  isDefault: boolean;
+};
+
 export type TerminalOutput = {
   output: string;
   truncated: boolean;

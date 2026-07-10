@@ -265,9 +265,10 @@ mod tests {
         );
         assert_modes(
             Domain::Terminal,
-            &["open", "read", "write", "resize"],
+            &["open", "read", "write", "resize", "restart"],
             ExecutionMode::Live,
         );
+        assert_modes(Domain::Terminal, &["shells"], ExecutionMode::Snapshot);
         assert_modes(Domain::Settings, &["get"], ExecutionMode::Snapshot);
         assert_modes(
             Domain::Settings,

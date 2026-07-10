@@ -2,16 +2,27 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { RefreshCw, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/renderer/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/renderer/components/ui/dropdown-menu";
+import {
+  listTerminalShells,
   openTerminal,
   readTerminalOutput,
   resizeTerminal,
+  restartTerminal,
   writeTerminalInput,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
-import type { TabId, TerminalOutput, WorkspaceId } from "@/shared/ipc";
+import type { TabId, TerminalOutput, TerminalShell, WorkspaceId } from "@/shared/ipc";
 
 type TerminalTabProps = {
   workspaceId: WorkspaceId;
@@ -46,8 +57,37 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
   const containerRef = useRef<HTMLDivElement>(null);
   const applySizeRef = useRef<(() => void) | null>(null);
   const isActiveRef = useRef(isActive);
+  const restartRef = useRef<((shell: string) => Promise<boolean>) | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
+  const [shells, setShells] = useState<TerminalShell[]>([]);
+  const [shellPath, setShellPath] = useState<string | null>(null);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [status, setStatus] = useState<TerminalStatus>({ kind: "starting" });
+
+  useEffect(() => {
+    let disposed = false;
+
+    void listTerminalShells()
+      .then((availableShells) => {
+        if (disposed) {
+          return;
+        }
+
+        setShells(availableShells);
+        setShellPath(
+          availableShells.find((shell) => shell.isDefault)?.path ?? availableShells[0]?.path ?? null,
+        );
+      })
+      .catch(() => {
+        if (!disposed) {
+          setShells([]);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -77,6 +117,7 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
     let inputFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let ptyResizeTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingInput = "";
+    let restartInFlight = false;
     let terminalExited = false;
     let size = DEFAULT_TERMINAL_SIZE;
     const terminal = new XTerm({
@@ -275,12 +316,81 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
         }
       }
     };
+    const restartSession = async (shell: string): Promise<boolean> => {
+      if (disposed || !sessionOpen || restartInFlight) {
+        return false;
+      }
+
+      const wasExited = terminalExited;
+      restartInFlight = true;
+      stopPolling();
+      pendingInput = "";
+      terminal.options.disableStdin = true;
+      setIsRestarting(true);
+
+      if (inputFlushTimer !== null) {
+        clearTimeout(inputFlushTimer);
+        inputFlushTimer = null;
+      }
+
+      if (ptyResizeTimer !== null) {
+        clearTimeout(ptyResizeTimer);
+        ptyResizeTimer = null;
+      }
+
+      try {
+        const output = await restartTerminal({
+          workspaceId,
+          tabId,
+          columns: size.columns,
+          rows: size.rows,
+          shell,
+        });
+
+        if (disposed) {
+          return false;
+        }
+
+        terminal.reset();
+        terminal.options.disableStdin = false;
+        terminalExited = false;
+        setStatus({ kind: "running" });
+
+        if (!handleOutput(output)) {
+          startPolling();
+        }
+
+        terminal.focus();
+        return true;
+      } catch (caughtError: unknown) {
+        if (!disposed) {
+          terminal.writeln(`\r\n${errorMessage(caughtError)}`);
+          terminal.options.disableStdin = wasExited;
+
+          if (wasExited) {
+            setStatus({ kind: "error", message: errorMessage(caughtError) });
+          } else {
+            setStatus({ kind: "running" });
+            startPolling();
+          }
+        }
+
+        return false;
+      } finally {
+        restartInFlight = false;
+
+        if (!disposed) {
+          setIsRestarting(false);
+        }
+      }
+    };
 
     terminal.loadAddon(canvasAddon);
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     terminalRef.current = terminal;
     applySizeRef.current = applySize;
+    restartRef.current = restartSession;
 
     if (isActiveRef.current) {
       terminal.focus();
@@ -308,16 +418,81 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       terminal.dispose();
       terminalRef.current = null;
       applySizeRef.current = null;
+      restartRef.current = null;
     };
   }, [workspaceId, tabId]);
 
+  const restartSession = async () => {
+    if (!shellPath) {
+      return;
+    }
+
+    await restartRef.current?.(shellPath);
+  };
+
+  const changeShell = async (nextShell: string | null) => {
+    if (!nextShell || nextShell === shellPath) {
+      return;
+    }
+
+    const previousShell = shellPath;
+    setShellPath(nextShell);
+
+    if (!(await restartRef.current?.(nextShell))) {
+      setShellPath(previousShell);
+    }
+  };
+
   return (
     <div
-      className="terminal-scrollbar-none relative h-full min-h-0 overflow-hidden bg-[#101010] text-white"
+      className="terminal-scrollbar-none relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101010] text-white"
       onPointerDown={onActivatePane}
     >
-      <div ref={containerRef} className="h-full min-h-0 overflow-hidden" />
-      {status.kind !== "running" ? <TerminalStatusBadge status={status} /> : null}
+      <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />
+      {!isRestarting && status.kind !== "running" ? <TerminalStatusBadge status={status} /> : null}
+      <div className="flex h-8 shrink-0 items-center justify-end gap-1 border-t border-white/10 bg-[#151515] px-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Change terminal shell"
+                title="Change terminal shell"
+                disabled={shells.length === 0 || status.kind === "starting" || isRestarting}
+                className="text-white/65 hover:bg-white/10 hover:text-white"
+              />
+            }
+          >
+            <SquareTerminal />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="end" className="w-32">
+            <DropdownMenuRadioGroup
+              value={shellPath}
+              onValueChange={(value) => void changeShell(value)}
+            >
+              {shells.map((shell) => (
+                <DropdownMenuRadioItem key={shell.path} value={shell.path}>
+                  {shell.name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Restart terminal"
+          title="Restart terminal"
+          disabled={!shellPath || status.kind === "starting" || isRestarting}
+          className="text-white/65 hover:bg-white/10 hover:text-white"
+          onClick={() => void restartSession()}
+        >
+          <RefreshCw className={isRestarting ? "animate-spin" : undefined} />
+        </Button>
+      </div>
     </div>
   );
 }

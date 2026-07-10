@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::env;
 use std::error::Error as StdError;
 use std::fmt;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
@@ -17,6 +19,86 @@ const MAX_BUFFERED_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_INPUT_BYTES: usize = 256 * 1024;
 const MAX_PENDING_INPUTS: usize = 64;
 const EXIT_OUTPUT_GRACE_PERIOD: Duration = Duration::from_millis(100);
+const SHELLS_FILE: &str = "/etc/shells";
+const FALLBACK_SHELLS: &[&str] = &["/bin/bash", "/bin/zsh", "/bin/fish"];
+const INTERACTIVE_SHELLS: &[&str] = &[
+    "bash", "zsh", "fish", "nu", "ksh", "mksh", "tcsh", "csh", "xonsh", "elvish", "pwsh",
+];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalShell {
+    name: String,
+    path: String,
+    is_default: bool,
+}
+
+impl TerminalShell {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.is_default
+    }
+}
+
+pub fn available_shells() -> Vec<TerminalShell> {
+    let configured_shells = fs::read_to_string(SHELLS_FILE).ok();
+    let default_shell = env::var("SHELL").ok();
+
+    discover_shells(
+        configured_shells.as_deref(),
+        default_shell.as_deref(),
+        |path| Path::new(path).is_file(),
+    )
+}
+
+fn discover_shells(
+    configured_shells: Option<&str>,
+    default_shell: Option<&str>,
+    is_available: impl Fn(&str) -> bool,
+) -> Vec<TerminalShell> {
+    let configured_paths = configured_shells
+        .into_iter()
+        .flat_map(str::lines)
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let fallback_paths = configured_shells
+        .is_none()
+        .then_some(FALLBACK_SHELLS.iter().copied())
+        .into_iter()
+        .flatten();
+    let mut seen = HashSet::new();
+    let shells = default_shell
+        .into_iter()
+        .chain(fallback_paths)
+        .chain(configured_paths)
+        .filter(|path| Path::new(path).is_absolute())
+        .filter(|path| is_available(path))
+        .filter_map(|path| shell_name(path).map(|name| (name.to_owned(), path.to_owned())))
+        .filter(|(name, _)| seen.insert(name.clone()))
+        .collect::<Vec<_>>();
+
+    shells
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, path))| TerminalShell {
+            name,
+            path,
+            is_default: index == 0,
+        })
+        .collect()
+}
+
+fn shell_name(path: &str) -> Option<&str> {
+    let name = Path::new(path).file_name()?.to_str()?;
+
+    INTERACTIVE_SHELLS.contains(&name).then_some(name)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalSize {
@@ -121,7 +203,7 @@ impl TerminalSessions {
             return session.read_output();
         }
 
-        let session = TerminalSession::spawn(cwd, size)?;
+        let session = TerminalSession::spawn(cwd, size, None)?;
         self.sessions.insert(key, session);
         self.sessions
             .get_mut(&key)
@@ -153,6 +235,28 @@ impl TerminalSessions {
         size: TerminalSize,
     ) -> Result<()> {
         self.session_mut(workspace_id, tab_id)?.resize(size)
+    }
+
+    pub fn restart(
+        &mut self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        cwd: &Path,
+        size: TerminalSize,
+        shell: &TerminalShell,
+    ) -> Result<TerminalOutput> {
+        let key = TerminalSessionKey::new(workspace_id, tab_id);
+
+        if !self.sessions.contains_key(&key) {
+            return Err(TerminalError::SessionNotFound);
+        }
+
+        let replacement = TerminalSession::spawn(cwd, size, Some(Path::new(shell.path())))?;
+        self.sessions.insert(key, replacement);
+        self.sessions
+            .get_mut(&key)
+            .expect("terminal session was just replaced")
+            .read_output()
     }
 
     pub fn close(&mut self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
@@ -221,13 +325,16 @@ struct TerminalSession {
 }
 
 impl TerminalSession {
-    fn spawn(cwd: &Path, size: TerminalSize) -> Result<Self> {
+    fn spawn(cwd: &Path, size: TerminalSize, shell: Option<&Path>) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(size.pty_size())
             .map_err(TerminalError::pty)?;
         let portable_pty::PtyPair { master, slave } = pair;
-        let mut command = CommandBuilder::new_default_prog();
+        let mut command = match shell {
+            Some(shell) => CommandBuilder::new(shell.as_os_str()),
+            None => CommandBuilder::new_default_prog(),
+        };
 
         command.cwd(cwd.as_os_str());
         command.env("TERM", "xterm-256color");
@@ -344,6 +451,7 @@ pub enum TerminalError {
     Pty(String),
     ReadBufferUnavailable,
     SessionNotFound,
+    ShellNotAvailable(String),
     TabNotFound,
     WorkspaceNotFound,
     WriterUnavailable,
@@ -375,6 +483,9 @@ impl fmt::Display for TerminalError {
                 formatter.write_str("terminal output buffer is unavailable")
             }
             Self::SessionNotFound => formatter.write_str("terminal session does not exist"),
+            Self::ShellNotAvailable(shell) => {
+                write!(formatter, "terminal shell is not available: {shell}")
+            }
             Self::TabNotFound => formatter.write_str("terminal tab does not exist"),
             Self::WorkspaceNotFound => formatter.write_str("workspace does not exist"),
             Self::WriterUnavailable => formatter.write_str("terminal input writer is unavailable"),
@@ -392,6 +503,7 @@ impl StdError for TerminalError {
             | Self::Pty(_)
             | Self::ReadBufferUnavailable
             | Self::SessionNotFound
+            | Self::ShellNotAvailable(_)
             | Self::TabNotFound
             | Self::WorkspaceNotFound
             | Self::WriterUnavailable => None,
@@ -550,6 +662,45 @@ mod tests {
             }
         ));
         assert!(TerminalSize::new(80, 24).is_ok());
+    }
+
+    #[test]
+    fn shell_discovery_ignores_comments_duplicates_and_missing_paths() {
+        let shells = discover_shells(
+            Some("# system shells\n/bin/bash\n/bin/zsh\n/bin/bash\n/missing"),
+            Some("/bin/zsh"),
+            |path| path != "/missing",
+        );
+
+        assert_eq!(shells.len(), 2);
+        assert_eq!(shells[0].name(), "zsh");
+        assert_eq!(shells[0].path(), "/bin/zsh");
+        assert!(shells[0].is_default());
+        assert_eq!(shells[1].name(), "bash");
+        assert_eq!(shells[1].path(), "/bin/bash");
+    }
+
+    #[test]
+    fn shell_discovery_includes_an_available_environment_shell() {
+        let shells = discover_shells(Some("/bin/sh"), Some("/custom/fish"), |_| true);
+
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].path(), "/custom/fish");
+        assert!(shells[0].is_default());
+    }
+
+    #[test]
+    fn shell_discovery_keeps_only_unique_interactive_shells() {
+        let shells = discover_shells(
+            Some("/bin/sh\n/usr/bin/git-shell\n/bin/bash\n/usr/bin/bash\n/usr/bin/fish"),
+            Some("/usr/bin/fish"),
+            |_| true,
+        );
+
+        assert_eq!(
+            shells.iter().map(|shell| shell.name()).collect::<Vec<_>>(),
+            ["fish", "bash"]
+        );
     }
 
     #[test]

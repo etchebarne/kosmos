@@ -1,4 +1,4 @@
-use core::tabs::terminal::TerminalOutput;
+use core::tabs::terminal::{TerminalOutput, TerminalShell};
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
@@ -34,6 +34,34 @@ pub(crate) struct ResizeTerminalParams {
     pub(crate) tab_id: TabIdParam,
     pub(crate) columns: u16,
     pub(crate) rows: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RestartTerminalParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) columns: u16,
+    pub(crate) rows: u16,
+    pub(crate) shell: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TerminalShellSnapshot {
+    name: String,
+    path: String,
+    is_default: bool,
+}
+
+impl TerminalShellSnapshot {
+    pub(crate) fn from_shell(shell: &TerminalShell) -> Self {
+        Self {
+            name: shell.name().to_owned(),
+            path: shell.path().to_owned(),
+            is_default: shell.is_default(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
