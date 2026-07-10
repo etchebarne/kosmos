@@ -1,0 +1,238 @@
+import { useEffect, useRef, useState } from "react";
+
+import { getEditorDocument, saveEditorDocument } from "@/renderer/ipc";
+import { getOrCreateEditorBuffer } from "@/renderer/lib/editor-buffers";
+import { errorMessage } from "@/renderer/lib/errors";
+import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
+import { useWorkspaceStore } from "@/renderer/stores";
+import type { EditorDocument, TabId, WorkspaceId } from "@/shared/ipc";
+
+type EditorTabProps = {
+  workspaceId: WorkspaceId;
+  tabId: TabId;
+  isActive: boolean;
+  onActivatePane(): void;
+};
+
+type EditorLoadState =
+  | { status: "loading"; workspaceId: WorkspaceId; tabId: TabId }
+  | {
+      status: "loaded";
+      workspaceId: WorkspaceId;
+      tabId: TabId;
+      document: EditorDocument;
+    }
+  | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
+
+type SaveState =
+  | { status: "clean" }
+  | { status: "dirty" }
+  | { status: "saving" }
+  | { status: "error"; message: string };
+
+export function EditorTab({ workspaceId, tabId, isActive, onActivatePane }: EditorTabProps) {
+  const [loadState, setLoadState] = useState<EditorLoadState>({
+    status: "loading",
+    workspaceId,
+    tabId,
+  });
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setLoadState({ status: "loading", workspaceId, tabId });
+
+    void getEditorDocument({ workspaceId, tabId })
+      .then((document) => {
+        if (requestIdRef.current === requestId) {
+          setLoadState({ status: "loaded", workspaceId, tabId, document });
+        }
+      })
+      .catch((caughtError: unknown) => {
+        if (requestIdRef.current === requestId) {
+          setLoadState({
+            status: "error",
+            workspaceId,
+            tabId,
+            message: errorMessage(caughtError),
+          });
+        }
+      });
+  }, [workspaceId, tabId]);
+
+  const currentLoadState: EditorLoadState =
+    loadState.workspaceId === workspaceId && loadState.tabId === tabId
+      ? loadState
+      : { status: "loading", workspaceId, tabId };
+
+  return (
+    <div
+      className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+      onPointerDown={onActivatePane}
+    >
+      {currentLoadState.status === "loading" ? <EditorMessage message="Loading file..." /> : null}
+      {currentLoadState.status === "error" ? (
+        <EditorMessage message={currentLoadState.message} />
+      ) : null}
+      {currentLoadState.status === "loaded" ? (
+        <LoadedEditor
+          workspaceId={workspaceId}
+          tabId={tabId}
+          document={currentLoadState.document}
+          isActive={isActive}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function LoadedEditor({
+  workspaceId,
+  tabId,
+  document,
+  isActive,
+}: {
+  workspaceId: WorkspaceId;
+  tabId: TabId;
+  document: EditorDocument;
+  isActive: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const saveRequestIdRef = useRef(0);
+  const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
+  const setEditorDirty = useWorkspaceStore((state) => state.setEditorDirty);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return undefined;
+    }
+
+    applyMonacoTheme();
+    const uri = monaco.Uri.from({
+      scheme: "kosmos",
+      authority: `workspace-${workspaceId}`,
+      path: `/${document.path}`,
+    });
+    const buffer = getOrCreateEditorBuffer(
+      workspaceId,
+      tabId,
+      document.path,
+      document.content,
+      () => monaco.editor.createModel(document.content, undefined, uri),
+    );
+    const { model } = buffer;
+    const editor = monaco.editor.create(container, {
+      model,
+      automaticLayout: true,
+      bracketPairColorization: { enabled: true },
+      fontSize: 13,
+      minimap: { enabled: false },
+      padding: { top: 8 },
+      scrollBeyondLastLine: false,
+      smoothScrolling: true,
+      theme: "kosmos",
+    });
+    editorRef.current = editor;
+    const updateDirtyState = () => {
+      const isDirty = model.getValue() !== buffer.savedContent;
+
+      setEditorDirty(workspaceId, tabId, isDirty);
+      setSaveState(isDirty ? { status: "dirty" } : { status: "clean" });
+    };
+
+    updateDirtyState();
+
+    const contentSubscription = model.onDidChangeContent(() => {
+      updateDirtyState();
+    });
+    const saveAction = editor.addAction({
+      id: "kosmos.save",
+      label: "Save",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: () => {
+        const content = model.getValue();
+        const requestId = saveRequestIdRef.current + 1;
+        saveRequestIdRef.current = requestId;
+        setSaveState({ status: "saving" });
+
+        void saveEditorDocument({ workspaceId, tabId, content })
+          .then(() => {
+            if (saveRequestIdRef.current !== requestId) {
+              return;
+            }
+
+            buffer.savedContent = content;
+            updateDirtyState();
+          })
+          .catch((caughtError: unknown) => {
+            if (saveRequestIdRef.current === requestId) {
+              setEditorDirty(workspaceId, tabId, true);
+              setSaveState({ status: "error", message: errorMessage(caughtError) });
+            }
+          });
+      },
+    });
+
+    return () => {
+      saveRequestIdRef.current += 1;
+      contentSubscription.dispose();
+      saveAction.dispose();
+      editor.dispose();
+      editorRef.current = null;
+    };
+  }, [workspaceId, tabId, document, setEditorDirty]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !isActive) {
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      editor.layout();
+      editor.focus();
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [isActive]);
+
+  return (
+    <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
+      <div ref={containerRef} className="h-full min-h-0 min-w-0" />
+      <SaveStatus state={saveState} />
+    </div>
+  );
+}
+
+function SaveStatus({ state }: { state: SaveState }) {
+  if (state.status === "clean") {
+    return null;
+  }
+
+  const message =
+    state.status === "dirty"
+      ? "Unsaved"
+      : state.status === "saving"
+        ? "Saving..."
+        : state.message;
+
+  return (
+    <div
+      role={state.status === "error" ? "alert" : "status"}
+      className="pointer-events-none absolute right-3 bottom-3 max-w-80 truncate rounded border border-border/70 bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm"
+    >
+      {message}
+    </div>
+  );
+}
+
+function EditorMessage({ message }: { message: string }) {
+  return (
+    <div className="grid h-full min-h-0 place-items-center overflow-hidden p-5 text-center">
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}

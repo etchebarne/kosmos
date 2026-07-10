@@ -1,3 +1,4 @@
+mod editor;
 mod file_tree;
 mod git;
 mod pane;
@@ -18,6 +19,7 @@ pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerM
         Domain::Pane => pane::resolve(&request.action),
         Domain::Tab => tab::resolve(&request.action),
         Domain::FileTree => file_tree::resolve(&request.action),
+        Domain::Editor => editor::resolve(&request.action),
         Domain::Git => git::resolve(&request.action),
         Domain::Terminal => terminal::resolve(&request.action),
     }
@@ -201,6 +203,16 @@ mod tests {
             Domain::FileTree,
             &["setExpandedPaths"],
             ExecutionMode::Persistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::Editor,
+            &["openTab"],
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::Editor,
+            &["document", "save"],
+            ExecutionMode::External,
         );
         assert_modes(
             Domain::Git,

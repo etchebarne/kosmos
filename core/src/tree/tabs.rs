@@ -81,8 +81,8 @@ impl TabKind {
 
     pub fn lifecycle(&self) -> TabLifecycle {
         match self {
-            Self::Terminal => TabLifecycle::KeepAlive,
-            Self::Blank | Self::Diff | Self::FileTree | Self::Editor | Self::Git | Self::Search => {
+            Self::Editor | Self::Terminal => TabLifecycle::KeepAlive,
+            Self::Blank | Self::Diff | Self::FileTree | Self::Git | Self::Search => {
                 TabLifecycle::Ephemeral
             }
         }
@@ -94,8 +94,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_tabs_are_keep_alive_tabs() {
+    fn stateful_tabs_are_keep_alive_tabs() {
         assert_eq!(TabKind::Terminal.lifecycle(), TabLifecycle::KeepAlive);
-        assert_eq!(TabKind::Editor.lifecycle(), TabLifecycle::Ephemeral);
+        assert_eq!(TabKind::Editor.lifecycle(), TabLifecycle::KeepAlive);
     }
 }

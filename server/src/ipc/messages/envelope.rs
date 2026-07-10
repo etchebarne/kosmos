@@ -68,6 +68,7 @@ pub(crate) enum Domain {
     Pane,
     Tab,
     FileTree,
+    Editor,
     Git,
     Terminal,
 }

@@ -1,4 +1,5 @@
 export type * from "./envelope";
+export type * from "./editor";
 export type * from "./file-tree";
 export type * from "./git";
 export type * from "./ids";

@@ -19,6 +19,34 @@ type DiffLoadState =
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
 
 const DIFF_REFRESH_INTERVAL_MS = 1500;
+const DIFF_THEME_OVERRIDES = `
+:host {
+  color: var(--foreground);
+  background-color: var(--background);
+  --diffs-bg: var(--background);
+  --diffs-fg: var(--foreground);
+  --diffs-fg-number: var(--muted-foreground);
+  --diffs-bg-buffer: var(--background);
+  --diffs-bg-context: var(--background);
+  --diffs-bg-context-gutter: var(--background);
+  --diffs-bg-separator: var(--muted);
+  --diffs-bg-hover: var(--accent);
+  --diffs-addition-base: var(--diff-added);
+  --diffs-addition-color: var(--diff-added);
+  --diffs-deletion-base: var(--destructive);
+  --diffs-deletion-color: var(--destructive);
+  --diffs-modified-base: var(--diff-modified);
+  --diffs-modified-color: var(--diff-modified);
+  --diffs-bg-addition: color-mix(in oklch, var(--background) 88%, var(--diff-added));
+  --diffs-bg-addition-number: color-mix(in oklch, var(--background) 76%, var(--diff-added));
+  --diffs-bg-addition-hover: color-mix(in oklch, var(--background) 78%, var(--diff-added));
+  --diffs-bg-addition-emphasis: color-mix(in oklch, var(--background) 65%, var(--diff-added));
+  --diffs-bg-deletion: color-mix(in oklch, var(--background) 88%, var(--destructive));
+  --diffs-bg-deletion-number: color-mix(in oklch, var(--background) 76%, var(--destructive));
+  --diffs-bg-deletion-hover: color-mix(in oklch, var(--background) 78%, var(--destructive));
+  --diffs-bg-deletion-emphasis: color-mix(in oklch, var(--background) 65%, var(--destructive));
+}
+`;
 const DIFF_RENDER_OPTIONS: PatchDiffProps<undefined>["options"] = {
   diffIndicators: "bars",
   diffStyle: "unified",
@@ -28,6 +56,7 @@ const DIFF_RENDER_OPTIONS: PatchDiffProps<undefined>["options"] = {
   stickyHeader: true,
   theme: { dark: "pierre-dark", light: "pierre-light" },
   themeType: "dark",
+  unsafeCSS: DIFF_THEME_OVERRIDES,
 };
 
 export function DiffTab({ workspaceId, tabId, isActive, onActivatePane }: DiffTabProps) {

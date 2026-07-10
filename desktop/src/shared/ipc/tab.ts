@@ -2,7 +2,7 @@ import type { PaneId, TabId, WorkspaceId } from "./ids";
 import type { SplitAxis } from "./pane";
 
 export type TabKind = "blank" | "diff" | "fileTree" | "editor" | "git" | "search" | "terminal";
-export type OpenableTabKind = Exclude<TabKind, "diff">;
+export type OpenableTabKind = Exclude<TabKind, "diff" | "editor">;
 
 export type TabLifecycle = "ephemeral" | "keepAlive";
 

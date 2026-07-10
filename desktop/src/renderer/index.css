@@ -81,10 +81,26 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --diff-added: oklch(0.527 0.154 147);
+  --diff-modified: oklch(0.588 0.17 250);
+  --editor-syntax-comment: oklch(0.551 0.019 251);
+  --editor-syntax-keyword: oklch(0.524 0.211 328.8);
+  --editor-syntax-string: oklch(0.638 0.142 143.5);
+  --editor-syntax-number: oklch(0.554 0.116 76.9);
+  --editor-syntax-type: oklch(0.602 0.193 263.2);
+  --editor-syntax-function: oklch(0.602 0.193 263.2);
+  --editor-syntax-variable: oklch(0.35 0.014 274.5);
+  --editor-syntax-tag: oklch(0.524 0.211 328.8);
+  --editor-syntax-attribute: oklch(0.554 0.116 76.9);
+  --editor-syntax-operator: oklch(0.581 0.127 237.2);
+  --editor-syntax-regexp: oklch(0.658 0.138 76.2);
+  --editor-syntax-bracket-1: oklch(0.554 0.116 76.9);
+  --editor-syntax-bracket-2: oklch(0.524 0.211 328.8);
+  --editor-syntax-bracket-3: oklch(0.602 0.193 263.2);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  --background: oklch(0.205 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -115,6 +131,22 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --diff-added: oklch(0.72 0.15 147);
+  --diff-modified: oklch(0.75 0.14 250);
+  --editor-syntax-comment: oklch(0.662 0.018 250.9);
+  --editor-syntax-keyword: oklch(0.702 0.109 329.4);
+  --editor-syntax-string: oklch(0.71 0.083 43.2);
+  --editor-syntax-number: oklch(0.823 0.059 134.9);
+  --editor-syntax-type: oklch(0.76 0.115 177.2);
+  --editor-syntax-function: oklch(0.882 0.066 107.7);
+  --editor-syntax-variable: oklch(0.863 0.08 232.1);
+  --editor-syntax-tag: oklch(0.671 0.112 245.5);
+  --editor-syntax-attribute: oklch(0.863 0.08 232.1);
+  --editor-syntax-operator: oklch(0.87 0 89.9);
+  --editor-syntax-regexp: oklch(0.643 0.132 21.4);
+  --editor-syntax-bracket-1: oklch(0.882 0.066 107.7);
+  --editor-syntax-bracket-2: oklch(0.702 0.109 329.4);
+  --editor-syntax-bracket-3: oklch(0.76 0.115 177.2);
 }
 
 @layer base {

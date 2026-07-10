@@ -1,3 +1,4 @@
+export * from "./editor";
 export * from "./file-tree";
 export * from "./git";
 export * from "./pane";

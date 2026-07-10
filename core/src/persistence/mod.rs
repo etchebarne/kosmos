@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::State;
+use crate::tabs::editor::EditorViewState;
 use crate::tabs::file_tree::FileTreeViewState;
 use crate::tabs::git::GitDiffViewState;
 use crate::tree::{
@@ -178,6 +179,15 @@ fn migrate(connection: &Connection) -> Result<()> {
             FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS editor_tabs (
+            workspace_id INTEGER NOT NULL,
+            tab_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, tab_id),
+            UNIQUE (workspace_id, path),
+            FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
+        );
+
         UPDATE tabs
         SET kind = 'blank'
         WHERE kind NOT IN ('blank', 'diff', 'file_tree', 'editor', 'git', 'search', 'terminal');
@@ -191,6 +201,16 @@ fn migrate(connection: &Connection) -> Result<()> {
               WHERE git_diff_tabs.workspace_id = tabs.workspace_id
                 AND git_diff_tabs.tab_id = tabs.id
           );
+
+        UPDATE tabs
+        SET kind = 'blank', title = 'Blank'
+        WHERE kind = 'editor'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM editor_tabs
+              WHERE editor_tabs.workspace_id = tabs.workspace_id
+                AND editor_tabs.tab_id = tabs.id
+          );
         ",
     )?;
 
@@ -201,6 +221,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM metadata", [])?;
     transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
     transaction.execute("DELETE FROM git_diff_tabs", [])?;
+    transaction.execute("DELETE FROM editor_tabs", [])?;
     transaction.execute("DELETE FROM tabs", [])?;
     transaction.execute("DELETE FROM panes", [])?;
     transaction.execute("DELETE FROM pane_nodes", [])?;
@@ -235,6 +256,7 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
 
     save_file_tree_view_states(transaction, state)?;
     save_git_diff_view_states(transaction, state)?;
+    save_editor_view_states(transaction, state)?;
 
     Ok(())
 }
@@ -385,6 +407,24 @@ fn save_git_diff_view_states(transaction: &Transaction<'_>, state: &State) -> Re
     Ok(())
 }
 
+fn save_editor_view_states(transaction: &Transaction<'_>, state: &State) -> Result<()> {
+    for view_state in state.editor_view_states() {
+        transaction.execute(
+            "
+            INSERT INTO editor_tabs (workspace_id, tab_id, path)
+            VALUES (?1, ?2, ?3)
+            ",
+            params![
+                to_i64(view_state.workspace_id().value(), "workspace id")?,
+                to_i64(view_state.tab_id().value(), "tab id")?,
+                view_state.path(),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn load_state(connection: &Connection) -> Result<State> {
     let active_workspace_id = load_active_workspace_id(connection)?;
     let workspace_rows = load_workspace_rows(connection)?;
@@ -406,12 +446,14 @@ fn load_state(connection: &Connection) -> Result<State> {
 
     let file_tree_view_states = load_file_tree_view_states(connection)?;
     let git_diff_view_states = load_git_diff_view_states(connection)?;
+    let editor_view_states = load_editor_view_states(connection)?;
 
-    State::from_workspaces_with_view_states(
+    State::from_workspaces_with_all_view_states(
         workspaces,
         active_workspace_id,
         file_tree_view_states,
         git_diff_view_states,
+        editor_view_states,
     )
     .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
 }
@@ -693,6 +735,36 @@ fn load_git_diff_view_states(connection: &Connection) -> Result<Vec<GitDiffViewS
     Ok(view_states)
 }
 
+fn load_editor_view_states(connection: &Connection) -> Result<Vec<EditorViewState>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT workspace_id, tab_id, path
+        FROM editor_tabs
+        ORDER BY workspace_id, tab_id
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut view_states = Vec::new();
+
+    for row in rows {
+        let (workspace_id, tab_id, path) = row?;
+
+        view_states.push(EditorViewState::new(
+            WorkspaceId::new(to_u64(workspace_id, "workspace id")?),
+            TabId::new(to_u64(tab_id, "tab id")?),
+            path,
+        ));
+    }
+
+    Ok(view_states)
+}
+
 fn push_file_tree_view_state(
     view_states: &mut Vec<FileTreeViewState>,
     key: Option<(WorkspaceId, TabId)>,
@@ -867,6 +939,46 @@ mod tests {
     }
 
     #[test]
+    fn migrates_editor_tabs_without_view_state_to_blank() {
+        let path = test_db_path("orphan-editor-tab");
+        let store = StateStore::open(&path).expect("store should open");
+        let connection = store.connection().expect("connection should open");
+        connection
+            .execute(
+                "INSERT INTO workspaces (id, position, name, directory, active_pane_id) VALUES (1, 0, 'main', '/workspaces/main', 1)",
+                [],
+            )
+            .expect("workspace should be inserted");
+        connection
+            .execute(
+                "INSERT INTO panes (workspace_id, id, active_tab_id) VALUES (1, 1, 1)",
+                [],
+            )
+            .expect("pane should be inserted");
+        connection
+            .execute(
+                "INSERT INTO tabs (workspace_id, pane_id, position, id, title, kind) VALUES (1, 1, 0, 1, 'main.rs', 'editor')",
+                [],
+            )
+            .expect("orphan editor tab should be inserted");
+        drop(connection);
+
+        let reopened = StateStore::open(&path).expect("store should reopen");
+        let connection = reopened.connection().expect("connection should open");
+        let (title, kind) = connection
+            .query_row(
+                "SELECT title, kind FROM tabs WHERE workspace_id = 1 AND id = 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("tab should load");
+
+        assert_eq!((title.as_str(), kind.as_str()), ("Blank", "blank"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn saves_and_loads_workspace_tree() {
         let path = test_db_path("round-trip");
         let store = StateStore::open(&path).expect("store should open");
@@ -985,6 +1097,47 @@ mod tests {
         assert_eq!(view_state.path(), "src/main.rs");
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_editor_view_state() {
+        let path = test_db_path("editor-view-state");
+        let workspace_path = test_workspace_path("editor-view-state-workspace");
+        fs::create_dir_all(workspace_path.join("src"))
+            .expect("workspace directories should be created");
+        fs::write(workspace_path.join("src/main.rs"), "fn main() {}")
+            .expect("editor file should be created");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&workspace_path);
+
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .expect("editor tab should open");
+
+        store.save(&state).expect("state should save");
+
+        let loaded = store.load().expect("state should load");
+        let view_state = loaded
+            .editor_view_states()
+            .first()
+            .expect("editor view state should load");
+        let document = loaded
+            .editor_document(Some(workspace_id), view_state.tab_id())
+            .expect("editor document should load");
+
+        assert_eq!(view_state.workspace_id(), workspace_id);
+        assert_eq!(view_state.path(), "src/main.rs");
+        assert_eq!(document.content(), "fn main() {}");
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(workspace_path);
     }
 
     fn test_db_path(name: &str) -> PathBuf {

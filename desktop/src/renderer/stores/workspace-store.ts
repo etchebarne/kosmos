@@ -2,6 +2,10 @@ import { create } from "zustand";
 
 import { errorMessage } from "@/renderer/lib/errors";
 import {
+  disposeEditorBuffer,
+  disposeWorkspaceEditorBuffers,
+} from "@/renderer/lib/editor-buffers";
+import {
   activeWorkspaceFrom,
   closeWorkspaceLocally,
   mergeLocalSplitRatios,
@@ -15,6 +19,7 @@ import {
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
   moveTab as moveTabIpc,
+  openEditorTab as openEditorTabIpc,
   openGitDiffTab as openGitDiffTabIpc,
   openTab as openTabIpc,
   openWorkspace,
@@ -41,6 +46,7 @@ type WorkspaceRequest = () => Promise<WorkspaceListSnapshot>;
 type FileTreeExpansionFlusher = () => Promise<void> | void;
 
 type WorkspaceStore = {
+  dirtyEditorTabs: Record<WorkspaceId, Record<TabId, true>>;
   error: string | null;
   isAddingWorkspace: boolean;
   isLoadingWorkspaces: boolean;
@@ -55,11 +61,13 @@ type WorkspaceStore = {
   flushPendingState(): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
+  openEditorTab(tabId: TabId, path: string): void;
   openGitDiffTab(tabId: TabId, path: string): void;
   openTab(paneId: PaneId): void;
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
   saveFileTreeExpandedPaths(params: SetFileTreeExpandedPathsParams): Promise<void>;
+  setEditorDirty(workspaceId: WorkspaceId, tabId: TabId, isDirty: boolean): void;
   setTabKind(paneId: PaneId, tabId: TabId, kind: OpenableTabKind): void;
   splitTab(
     paneId: PaneId,
@@ -126,6 +134,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   }
 
   return {
+    dirtyEditorTabs: {},
     error: null,
     isAddingWorkspace: false,
     isLoadingWorkspaces: true,
@@ -171,7 +180,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         return;
       }
 
-      updateFromServer(() => closeTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId }));
+      updateFromServer(() =>
+        closeTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId }).then((snapshot) => {
+          window.setTimeout(() => disposeEditorBuffer(activeWorkspace.id, tabId), 0);
+          get().setEditorDirty(activeWorkspace.id, tabId, false);
+          return snapshot;
+        }),
+      );
     },
     async closeWorkspace(workspaceId) {
       const { snapshot, switchRequestId } = get();
@@ -186,6 +201,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       try {
         const nextSnapshot = await closeWorkspaceIpc(workspaceId);
+        disposeWorkspaceEditorBuffers(workspaceId);
+        set((state) => {
+          if (!state.dirtyEditorTabs[workspaceId]) {
+            return {};
+          }
+
+          const dirtyEditorTabs = { ...state.dirtyEditorTabs };
+          delete dirtyEditorTabs[workspaceId];
+
+          return { dirtyEditorTabs };
+        });
 
         if (get().switchRequestId === requestId) {
           set({ snapshot: nextSnapshot });
@@ -228,6 +254,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       updateFromServer(() =>
         moveTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId, targetPaneId, targetIndex }),
+      );
+    },
+    openEditorTab(tabId, path) {
+      const activeWorkspace = activeWorkspaceFrom(get().snapshot);
+      if (!activeWorkspace) {
+        return;
+      }
+
+      updateFromServer(() =>
+        openEditorTabIpc({ workspaceId: activeWorkspace.id, tabId, path }),
       );
     },
     openGitDiffTab(tabId, path) {
@@ -329,6 +365,32 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         });
 
       return trackFileTreeExpansionSave(save);
+    },
+    setEditorDirty(workspaceId, tabId, isDirty) {
+      set((state) => {
+        const workspaceTabs = state.dirtyEditorTabs[workspaceId] ?? {};
+        const wasDirty = workspaceTabs[tabId] === true;
+
+        if (wasDirty === isDirty) {
+          return {};
+        }
+
+        const dirtyEditorTabs = { ...state.dirtyEditorTabs };
+
+        if (isDirty) {
+          dirtyEditorTabs[workspaceId] = { ...workspaceTabs, [tabId]: true };
+        } else {
+          const { [tabId]: _removed, ...remainingTabs } = workspaceTabs;
+
+          if (Object.keys(remainingTabs).length === 0) {
+            delete dirtyEditorTabs[workspaceId];
+          } else {
+            dirtyEditorTabs[workspaceId] = remainingTabs;
+          }
+        }
+
+        return { dirtyEditorTabs };
+      });
     },
     setTabKind(paneId, tabId, kind) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);

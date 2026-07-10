@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import {
   File,
   FileDiff,
@@ -35,10 +35,13 @@ type TabDefinition = {
   render(props: TabContentProps): ReactNode;
 };
 
+const EditorTab = lazy(() =>
+  import("./editor").then((module) => ({ default: module.EditorTab })),
+);
+
 const TAB_KIND_ORDER: OpenableTabKind[] = [
   "blank",
   "fileTree",
-  "editor",
   "git",
   "search",
   "terminal",
@@ -78,7 +81,21 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
       <FileTreeTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
     ),
   },
-  editor: placeholderTabDefinition("Editor", FileText, false),
+  editor: {
+    icon: FileText,
+    label: "Editor",
+    showInBlankPicker: false,
+    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+      <Suspense fallback={<EditorLoading onActivatePane={onActivatePane} />}>
+        <EditorTab
+          workspaceId={workspaceId}
+          tabId={tab.id}
+          isActive={isActive}
+          onActivatePane={onActivatePane}
+        />
+      </Suspense>
+    ),
+  },
   git: {
     icon: GitBranch,
     label: "Git",
@@ -117,6 +134,17 @@ export function renderTabContent(props: TabContentProps): ReactNode {
 
 export function tabKindIcon(kind: TabKind): LucideIcon {
   return TAB_DEFINITIONS[kind].icon;
+}
+
+function EditorLoading({ onActivatePane }: { onActivatePane(): void }) {
+  return (
+    <div
+      className="grid h-full min-h-0 place-items-center overflow-hidden bg-background p-5 text-center"
+      onPointerDown={onActivatePane}
+    >
+      <p className="text-sm text-muted-foreground">Loading editor...</p>
+    </div>
+  );
 }
 
 function placeholderTabDefinition(

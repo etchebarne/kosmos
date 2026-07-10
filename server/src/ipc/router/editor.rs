@@ -1,0 +1,80 @@
+use core::tabs::editor::EditorError;
+
+use super::super::messages::editor::{
+    EditorDocumentParams, EditorDocumentPayload, OpenEditorTabParams, SaveEditorDocumentParams,
+};
+use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
+use super::{RouteDefinition, parse_params, workspace_list_response};
+
+pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
+    match action {
+        "openTab" => Some(RouteDefinition::full(open_tab)),
+        "document" => Some(RouteDefinition::external(document)),
+        "save" => Some(RouteDefinition::external(save)),
+        _ => None,
+    }
+}
+
+fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<OpenEditorTabParams>(request) {
+        Ok(params) => match state.open_editor_tab(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            &params.path,
+        ) {
+            Ok(()) => workspace_list_response(request.id, state),
+            Err(error) => editor_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn document(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<EditorDocumentParams>(request) {
+        Ok(params) => {
+            match state.editor_document(params.workspace_id.map(Into::into), params.tab_id.into()) {
+                Ok(document) => {
+                    ServerMessage::ok(request.id, EditorDocumentPayload::from_document(&document))
+                }
+                Err(error) => editor_error(request.id, error),
+            }
+        }
+        Err(response) => response,
+    }
+}
+
+fn save(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SaveEditorDocumentParams>(request) {
+        Ok(params) => match state.save_editor_document(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            &params.content,
+        ) {
+            Ok(()) => ServerMessage::ok(request.id, true),
+            Err(error) => editor_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn editor_error(id: u64, error: EditorError) -> ServerMessage {
+    ServerMessage::error(id, editor_error_code(&error), error.to_string())
+}
+
+fn editor_error_code(error: &EditorError) -> &'static str {
+    match error {
+        EditorError::WorkspaceNotFound => "editor.workspace_not_found",
+        EditorError::FileTreeTabNotFound => "editor.file_tree_tab_not_found",
+        EditorError::TabNotFound => "editor.tab_not_found",
+        EditorError::WorkspaceNotDirectory(_) => "editor.workspace_not_directory",
+        EditorError::InvalidPath(_) => "editor.invalid_path",
+        EditorError::FileNotFound(_) => "editor.file_not_found",
+        EditorError::SymlinkNotAllowed(_) => "editor.symlink_not_allowed",
+        EditorError::NotRegularFile(_) => "editor.not_regular_file",
+        EditorError::PathOutsideWorkspace(_) => "editor.path_outside_workspace",
+        EditorError::FileTooLarge { .. } => "editor.file_too_large",
+        EditorError::ContentTooLarge { .. } => "editor.content_too_large",
+        EditorError::InvalidUtf8(_) => "editor.invalid_utf8",
+        EditorError::Io { .. } => "editor.access_failed",
+    }
+}

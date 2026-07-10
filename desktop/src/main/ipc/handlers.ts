@@ -9,6 +9,7 @@ const validDomains = new Set<KosmosIpcDomain>([
   "pane",
   "tab",
   "fileTree",
+  "editor",
   "git",
   "terminal",
 ]);

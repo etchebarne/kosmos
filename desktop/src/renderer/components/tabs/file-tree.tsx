@@ -153,6 +153,7 @@ function LoadedFileTree({
   snapshot: FileTreeSnapshot;
   onReload(): Promise<void>;
 }) {
+  const openEditorTab = useWorkspaceStore((state) => state.openEditorTab);
   const [clipboard, setClipboard] = useState<FileTreeClipboard | null>(null);
   const [rootContextMenuPosition, setRootContextMenuPosition] =
     useState<RootContextMenuPosition | null>(null);
@@ -345,12 +346,27 @@ function LoadedFileTree({
     closeRowContextMenuRef.current?.({ restoreFocus: false });
     setRootContextMenuPosition({ x: event.clientX, y: event.clientY });
   };
+  const openClickedFile = (event: MouseEvent<HTMLElement>) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+
+    const path = treeItemPathFromEvent(event);
+    const item = path ? model.getItem(path) : null;
+
+    if (!path || !item || item.isDirectory() || isPendingCreatePath(path)) {
+      return;
+    }
+
+    openEditorTab(tabId, path);
+  };
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden" onContextMenu={openRootContextMenu}>
       <PierreFileTree
         model={model}
-        className="h-full min-h-0 w-full overflow-hidden bg-card text-card-foreground [--trees-accent-override:var(--accent)] [--trees-bg-muted-override:var(--accent)] [--trees-bg-override:var(--card)] [--trees-border-color-override:var(--border)] [--trees-fg-muted-override:var(--muted-foreground)] [--trees-fg-override:var(--card-foreground)] [--trees-focus-ring-color-override:var(--ring)] [--trees-input-bg-override:var(--input)] [--trees-item-row-gap-override:6px] [--trees-padding-inline-override:0px] [--trees-scrollbar-gutter-override:0px] [--trees-search-bg-override:var(--input)] [--trees-search-fg-override:var(--foreground)] [--trees-selected-bg-override:var(--accent)] [--trees-selected-fg-override:var(--accent-foreground)] [--trees-selected-focused-border-color-override:var(--ring)]"
+        onClick={openClickedFile}
+        className="h-full min-h-0 w-full overflow-hidden bg-background text-foreground [--trees-accent-override:var(--accent)] [--trees-bg-muted-override:var(--accent)] [--trees-bg-override:var(--background)] [--trees-border-color-override:var(--border)] [--trees-fg-muted-override:var(--muted-foreground)] [--trees-fg-override:var(--foreground)] [--trees-focus-ring-color-override:var(--ring)] [--trees-input-bg-override:var(--input)] [--trees-item-row-gap-override:6px] [--trees-padding-inline-override:0px] [--trees-scrollbar-gutter-override:0px] [--trees-search-bg-override:var(--input)] [--trees-search-fg-override:var(--foreground)] [--trees-selected-bg-override:var(--accent)] [--trees-selected-fg-override:var(--accent-foreground)] [--trees-selected-focused-border-color-override:var(--ring)]"
         style={{ height: "100%" }}
         renderContextMenu={(item, context) => (
           <FileTreeContextMenu
@@ -847,6 +863,16 @@ function contextMenuStartedOnTreeItem(event: MouseEvent<HTMLDivElement>): boolea
   }
 
   return false;
+}
+
+function treeItemPathFromEvent(event: MouseEvent<HTMLElement>): string | null {
+  for (const entry of event.nativeEvent.composedPath()) {
+    if (entry instanceof HTMLElement && entry.dataset.itemPath) {
+      return entry.dataset.itemPath;
+    }
+  }
+
+  return null;
 }
 
 function nextUntitledPath(
