@@ -2,10 +2,20 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::formatters::{
+    DocumentFormattingRequest, FormatterError, FormatterManager, FormatterStatus, FormattingError,
+};
+use crate::language_servers::{
+    LanguageServerChange, LanguageServerColorInformation, LanguageServerColorPresentation,
+    LanguageServerColorPresentationRequest, LanguageServerCompletionItem,
+    LanguageServerCompletionList, LanguageServerCompletionRequest, LanguageServerDiagnostic,
+    LanguageServerDocumentOpen, LanguageServerError, LanguageServerHover, LanguageServerManager,
+    LanguageServerPosition, LanguageServerStatus, LanguageServerTextEdit,
+};
 use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
-    EditorDocument, EditorError, EditorViewState, normalize_path as normalize_editor_path,
-    save_document,
+    EditorDocument, EditorError, EditorLocation, EditorViewState,
+    normalize_path as normalize_editor_path, save_document,
 };
 use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
@@ -33,6 +43,8 @@ pub struct State {
     git_diff_view_states: Vec<GitDiffViewState>,
     editor_view_states: Vec<EditorViewState>,
     terminal_sessions: TerminalSessions,
+    language_server_manager: Option<LanguageServerManager>,
+    formatter_manager: Option<FormatterManager>,
     next_workspace_id: u64,
     next_pane_id: u64,
     next_split_id: u64,
@@ -49,6 +61,26 @@ pub struct PersistentStateCandidate {
 }
 
 static NEXT_STATE_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn full_document_edit(text: &str, formatted: String) -> Vec<LanguageServerTextEdit> {
+    if formatted == text {
+        return Vec::new();
+    }
+    let line =
+        u32::try_from(text.bytes().filter(|byte| *byte == b'\n').count()).unwrap_or(u32::MAX);
+    let last_line = text.rsplit('\n').next().unwrap_or_default();
+    let character = u32::try_from(last_line.encode_utf16().count()).unwrap_or(u32::MAX);
+    vec![LanguageServerTextEdit {
+        range: crate::language_servers::LanguageServerRange {
+            start: LanguageServerPosition {
+                line: 0,
+                character: 0,
+            },
+            end: LanguageServerPosition { line, character },
+        },
+        new_text: formatted,
+    }]
+}
 
 impl PersistentStateCandidate {
     pub fn state(&self) -> &State {
@@ -146,6 +178,329 @@ impl State {
         self.window_state
     }
 
+    pub fn attach_language_server_manager(&mut self, manager: LanguageServerManager) {
+        let workspace_ids = self
+            .workspaces
+            .workspaces()
+            .iter()
+            .map(Workspace::id)
+            .collect::<HashSet<_>>();
+        manager.retain_workspaces(&workspace_ids);
+        self.language_server_manager = Some(manager);
+    }
+
+    pub fn attach_formatter_manager(&mut self, manager: FormatterManager) {
+        self.formatter_manager = Some(manager);
+    }
+
+    pub fn formatters(&self) -> Result<Vec<FormatterStatus>, FormatterError> {
+        self.formatter_manager
+            .as_ref()
+            .map(FormatterManager::list)
+            .ok_or(FormatterError::ManagerUnavailable)
+    }
+
+    pub fn formatter_status(&self, formatter_id: &str) -> Result<FormatterStatus, FormatterError> {
+        self.formatter_manager
+            .as_ref()
+            .ok_or(FormatterError::ManagerUnavailable)?
+            .status(formatter_id)
+    }
+
+    pub fn install_formatter(&self, formatter_id: &str) -> Result<FormatterStatus, FormatterError> {
+        self.formatter_manager
+            .as_ref()
+            .ok_or(FormatterError::ManagerUnavailable)?
+            .install(formatter_id)
+    }
+
+    pub fn uninstall_formatter(
+        &self,
+        formatter_id: &str,
+    ) -> Result<FormatterStatus, FormatterError> {
+        self.formatter_manager
+            .as_ref()
+            .ok_or(FormatterError::ManagerUnavailable)?
+            .uninstall(formatter_id)
+    }
+
+    pub fn language_servers(&self) -> Result<Vec<LanguageServerStatus>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .map(LanguageServerManager::list)
+            .ok_or(LanguageServerError::ManagerUnavailable)
+    }
+
+    pub fn language_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<LanguageServerStatus, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .status(server_id)
+    }
+
+    pub fn install_language_server(
+        &self,
+        server_id: &str,
+    ) -> Result<LanguageServerStatus, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .install(server_id)
+    }
+
+    pub fn uninstall_language_server(
+        &self,
+        server_id: &str,
+    ) -> Result<LanguageServerStatus, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .uninstall(server_id)
+    }
+
+    pub fn restart_language_server(
+        &self,
+        server_id: &str,
+    ) -> Result<LanguageServerStatus, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .restart(server_id)
+    }
+
+    pub fn open_language_server_document(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        language_id: &str,
+        generation: u64,
+        version: i64,
+        text: &str,
+    ) -> Result<bool, LanguageServerError> {
+        let location = self
+            .editor_location(workspace_id, tab_id)
+            .map_err(|error| LanguageServerError::InvalidDocument(error.to_string()))?;
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .open_document(LanguageServerDocumentOpen {
+                workspace_id,
+                workspace_root: location.workspace_root(),
+                absolute_path: location.absolute_path(),
+                relative_path: location.relative_path(),
+                language_id,
+                generation,
+                version,
+                text,
+            })
+    }
+
+    pub fn change_language_server_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        changes: &[LanguageServerChange],
+        text: &str,
+    ) -> Result<(), LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .change_document(workspace_id, path, generation, version, changes, text)
+    }
+
+    pub fn close_language_server_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+    ) -> Result<(), LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .close_document(workspace_id, path, generation)
+    }
+
+    pub fn save_language_server_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        text: &str,
+    ) -> Result<(), LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .save_document(workspace_id, path, generation, version, text)
+    }
+
+    pub fn language_server_hover(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+    ) -> Result<Option<LanguageServerHover>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .hover(workspace_id, path, generation, version, position)
+    }
+
+    pub fn language_server_diagnostics(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+    ) -> Result<Option<Vec<LanguageServerDiagnostic>>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .diagnostics(workspace_id, path, generation, version)
+    }
+
+    pub fn language_server_completion(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: &LanguageServerCompletionRequest,
+    ) -> Result<LanguageServerCompletionList, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .completion(workspace_id, path, generation, version, request)
+    }
+
+    pub fn resolve_language_server_completion(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        server_id: &str,
+        raw: serde_json::Value,
+    ) -> Result<LanguageServerCompletionItem, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .resolve_completion(workspace_id, path, generation, version, server_id, raw)
+    }
+
+    pub fn language_server_document_colors(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+    ) -> Result<Vec<LanguageServerColorInformation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .document_colors(workspace_id, path, generation, version)
+    }
+
+    pub fn language_server_color_presentations(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: &LanguageServerColorPresentationRequest,
+    ) -> Result<Vec<LanguageServerColorPresentation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .color_presentations(workspace_id, path, generation, version, request)
+    }
+
+    pub fn format_document(
+        &self,
+        request: DocumentFormattingRequest<'_>,
+    ) -> Result<Vec<LanguageServerTextEdit>, FormattingError> {
+        if request.text.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
+            return Err(FormatterError::InvalidDocument(
+                "document exceeds the editor size limit".to_owned(),
+            )
+            .into());
+        }
+        let workspace = self
+            .workspaces
+            .workspace(request.workspace_id)
+            .ok_or_else(|| {
+                FormatterError::InvalidDocument("workspace does not exist".to_owned())
+            })?;
+        let relative_path = normalize_editor_path(request.path)
+            .map_err(|error| FormatterError::InvalidDocument(error.to_string()))?;
+        let workspace_root =
+            std::fs::canonicalize(workspace.directory()).map_err(FormatterError::io)?;
+        let unresolved_path = workspace_root.join(&relative_path);
+        if std::fs::symlink_metadata(&unresolved_path)
+            .map_err(FormatterError::io)?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(FormatterError::InvalidDocument(
+                "formatter path must not be a symlink".to_owned(),
+            )
+            .into());
+        }
+        let absolute_path = std::fs::canonicalize(unresolved_path).map_err(FormatterError::io)?;
+        if !absolute_path.starts_with(&workspace_root) {
+            return Err(FormatterError::InvalidDocument(
+                "formatter path is outside the workspace".to_owned(),
+            )
+            .into());
+        }
+        if let Some(manager) = &self.formatter_manager
+            && let Some(formatted) = manager.format(
+                request.language_id,
+                &workspace_root,
+                &absolute_path,
+                request.text,
+            )?
+        {
+            if formatted.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
+                return Err(FormatterError::OutputTooLarge.into());
+            }
+            return Ok(full_document_edit(request.text, formatted));
+        }
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .formatting(
+                request.workspace_id,
+                request.path,
+                request.generation,
+                request.version,
+                request.options,
+            )
+            .map_err(FormattingError::from)
+    }
+
+    pub fn trust_language_server_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), LanguageServerError> {
+        let workspace = self.workspaces.workspace(workspace_id).ok_or_else(|| {
+            LanguageServerError::InvalidDocument("workspace does not exist".to_owned())
+        })?;
+        let workspace_root = std::fs::canonicalize(workspace.directory())
+            .map_err(|error| LanguageServerError::InvalidDocument(error.to_string()))?;
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .trust_workspace(&workspace_root)
+    }
+
     pub fn update_window_state(&mut self, window_state: WindowState) {
         if self.window_state != Some(window_state) {
             self.window_state = Some(window_state);
@@ -204,6 +559,8 @@ impl State {
                 git_diff_view_states: self.git_diff_view_states.clone(),
                 editor_view_states: self.editor_view_states.clone(),
                 terminal_sessions: TerminalSessions::default(),
+                language_server_manager: self.language_server_manager.clone(),
+                formatter_manager: self.formatter_manager.clone(),
                 next_workspace_id: self.next_workspace_id,
                 next_pane_id: self.next_pane_id,
                 next_split_id: self.next_split_id,
@@ -239,6 +596,16 @@ impl State {
         self.next_split_id = candidate.next_split_id;
         self.next_tab_id = candidate.next_tab_id;
         self.persistent_revision = next_revision;
+
+        if let Some(manager) = &self.language_server_manager {
+            let workspace_ids = self
+                .workspaces
+                .workspaces()
+                .iter()
+                .map(Workspace::id)
+                .collect::<HashSet<_>>();
+            manager.retain_workspaces(&workspace_ids);
+        }
 
         true
     }
@@ -482,6 +849,25 @@ impl State {
             .ok_or(EditorError::TabNotFound)?;
 
         EditorDocument::read(workspace.directory(), view_state.path())
+    }
+
+    pub fn editor_location(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Result<EditorLocation, EditorError> {
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(EditorError::WorkspaceNotFound)?;
+        if !self.is_editor_tab(workspace_id, tab_id) {
+            return Err(EditorError::TabNotFound);
+        }
+        let view_state = self
+            .editor_view_state(workspace_id, tab_id)
+            .ok_or(EditorError::TabNotFound)?;
+
+        EditorLocation::resolve(workspace.directory(), view_state.path())
     }
 
     pub fn save_editor_document(
@@ -1617,6 +2003,8 @@ impl State {
             git_diff_view_states,
             editor_view_states,
             terminal_sessions: TerminalSessions::default(),
+            language_server_manager: None,
+            formatter_manager: None,
             next_workspace_id: next_ids.workspace_id,
             next_pane_id: next_ids.pane_id,
             next_split_id: next_ids.split_id,
@@ -1823,6 +2211,8 @@ impl Default for State {
             git_diff_view_states: Vec::new(),
             editor_view_states: Vec::new(),
             terminal_sessions: TerminalSessions::default(),
+            language_server_manager: None,
+            formatter_manager: None,
             next_workspace_id: 1,
             next_pane_id: 1,
             next_split_id: 1,

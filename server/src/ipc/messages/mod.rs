@@ -1,8 +1,10 @@
 pub(crate) mod editor;
 pub(crate) mod envelope;
 pub(crate) mod file_tree;
+pub(crate) mod formatters;
 pub(crate) mod git;
 mod ids;
+pub(crate) mod language_servers;
 pub(crate) mod pane;
 pub(crate) mod search;
 pub(crate) mod settings;

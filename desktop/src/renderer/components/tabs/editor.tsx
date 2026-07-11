@@ -7,6 +7,10 @@ import {
   type EditorBuffer,
 } from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
+import {
+  formatLanguageDocument,
+  notifyLanguageDocumentSaved,
+} from "@/renderer/lib/language-client";
 import { editorGitDecorations } from "@/renderer/lib/editor-git-decorations";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
@@ -259,32 +263,73 @@ function LoadedEditor({
     const contentSubscription = model.onDidChangeContent(() => {
       updateDirtyState();
     });
+    const save = async () => {
+      const requestId = saveRequestIdRef.current + 1;
+      saveRequestIdRef.current = requestId;
+      setSaveState({ status: "saving" });
+      const initialContent = model.getValue();
+      const initialSave = saveEditorDocument({
+        workspaceId,
+        tabId,
+        content: initialContent,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      let formatted = false;
+      if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
+        try {
+          formatted = await formatLanguageDocument(editor);
+        } catch {
+          // Formatting must never prevent an explicit save.
+        }
+      }
+      let content = initialContent;
+
+      try {
+        const initialSaveError = await initialSave;
+        if (initialSaveError !== null) {
+          throw initialSaveError;
+        }
+        if (formatted) {
+          const formattedContent = model.getValue();
+          if (formattedContent !== initialContent) {
+            await saveEditorDocument({ workspaceId, tabId, content: formattedContent });
+          }
+          content = formattedContent;
+        }
+        void notifyLanguageDocumentSaved(model, content).catch(() => {});
+        if (saveRequestIdRef.current !== requestId) {
+          return;
+        }
+        buffer.savedContent = content;
+        updateDirtyState();
+        bumpGitRevision(workspaceId);
+      } catch (caughtError: unknown) {
+        if (saveRequestIdRef.current === requestId) {
+          setTabDirty(workspaceId, tabId, true);
+          setSaveState({ status: "error", message: errorMessage(caughtError) });
+        }
+      }
+    };
     const saveAction = editor.addAction({
       id: "kosmos.save",
       label: "Save",
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
       run: () => {
-        const content = model.getValue();
-        const requestId = saveRequestIdRef.current + 1;
-        saveRequestIdRef.current = requestId;
-        setSaveState({ status: "saving" });
-
-        void saveEditorDocument({ workspaceId, tabId, content })
-          .then(() => {
-            if (saveRequestIdRef.current !== requestId) {
-              return;
-            }
-
-            buffer.savedContent = content;
-            updateDirtyState();
-            bumpGitRevision(workspaceId);
-          })
-          .catch((caughtError: unknown) => {
-            if (saveRequestIdRef.current === requestId) {
-              setTabDirty(workspaceId, tabId, true);
-              setSaveState({ status: "error", message: errorMessage(caughtError) });
-            }
-          });
+        void save();
+      },
+    });
+    const formatAction = editor.addAction({
+      id: "kosmos.formatDocument",
+      label: "Format Document",
+      keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
+      run: async () => {
+        try {
+          await formatLanguageDocument(editor);
+        } catch {
+          // Unsupported or unavailable formatters leave the document unchanged.
+        }
       },
     });
 
@@ -292,6 +337,7 @@ function LoadedEditor({
       saveRequestIdRef.current += 1;
       contentSubscription.dispose();
       saveAction.dispose();
+      formatAction.dispose();
       decorationsRef.current?.clear();
       decorationsRef.current = null;
       editor.dispose();

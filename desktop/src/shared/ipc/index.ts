@@ -1,8 +1,10 @@
 export type * from "./envelope";
 export type * from "./editor";
 export type * from "./file-tree";
+export type * from "./formatters";
 export type * from "./git";
 export type * from "./ids";
+export type * from "./language-servers";
 export type * from "./pane";
 export type * from "./search";
 export * from "./settings";

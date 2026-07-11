@@ -26,6 +26,13 @@ pub struct EditorDocument {
     content: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditorLocation {
+    workspace_root: PathBuf,
+    relative_path: String,
+    absolute_path: PathBuf,
+}
+
 impl EditorViewState {
     pub fn new(workspace_id: WorkspaceId, tab_id: TabId, path: impl Into<String>) -> Self {
         Self {
@@ -78,6 +85,35 @@ impl EditorDocument {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+}
+
+impl EditorLocation {
+    pub fn resolve(workspace_directory: impl AsRef<Path>, path: &str) -> Result<Self> {
+        let relative_path = normalize_path(path)?;
+        let file_path = resolve_regular_file(workspace_directory.as_ref(), &relative_path)?;
+        let workspace_root = fs::canonicalize(workspace_directory.as_ref())
+            .map_err(|error| io_error(workspace_directory.as_ref().to_path_buf(), error))?;
+        let absolute_path =
+            fs::canonicalize(&file_path).map_err(|error| io_error(file_path, error))?;
+
+        Ok(Self {
+            workspace_root,
+            relative_path,
+            absolute_path,
+        })
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    pub fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    pub fn absolute_path(&self) -> &Path {
+        &self.absolute_path
     }
 }
 

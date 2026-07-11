@@ -1,6 +1,8 @@
 mod state;
 mod workspace_changes;
 
+pub mod formatters;
+pub mod language_servers;
 pub mod persistence;
 pub mod settings;
 pub use state::{PersistentStateCandidate, State};

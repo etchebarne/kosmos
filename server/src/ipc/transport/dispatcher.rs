@@ -11,11 +11,14 @@ use super::notifications::{NotificationHub, NotificationSubscription};
 use super::response::ResponseSender;
 
 const MAX_QUEUED_REQUESTS: usize = 64;
+const LANGUAGE_SERVER_FEATURE_WORKERS: usize = 4;
 
 #[derive(Clone)]
 pub(crate) struct Dispatcher {
     state: Arc<Mutex<core::State>>,
     external_requests: mpsc::SyncSender<ExternalRequest>,
+    language_server_requests: mpsc::SyncSender<ExternalRequest>,
+    language_server_feature_requests: mpsc::SyncSender<ExternalRequest>,
     persistent_requests: mpsc::SyncSender<PersistentRequest>,
     notifications: NotificationHub,
 }
@@ -44,9 +47,15 @@ impl Dispatcher {
         };
         let state = Arc::new(Mutex::new(state));
         let (external_requests, external_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
+        let (language_server_requests, language_server_receiver) =
+            mpsc::sync_channel(MAX_QUEUED_REQUESTS);
+        let (language_server_feature_requests, language_server_feature_receiver) =
+            mpsc::sync_channel(MAX_QUEUED_REQUESTS);
         let (persistent_requests, persistent_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
 
         spawn_external_worker(external_receiver)?;
+        spawn_language_server_worker(language_server_receiver)?;
+        spawn_language_server_feature_workers(language_server_feature_receiver)?;
         spawn_persistence_worker(
             Arc::clone(&state),
             store,
@@ -69,6 +78,8 @@ impl Dispatcher {
         Ok(Self {
             state,
             external_requests,
+            language_server_requests,
+            language_server_feature_requests,
             persistent_requests,
             notifications,
         })
@@ -118,6 +129,50 @@ impl Dispatcher {
 
                 queue_external_request(
                     &self.external_requests,
+                    ExternalRequest {
+                        route,
+                        responses,
+                        candidate,
+                        completion,
+                        cancelled,
+                    },
+                );
+                Some(completed)
+            }
+            ExecutionMode::LanguageServer => {
+                let (completion, completed) = mpsc::channel();
+                let candidate = match persistent_candidate(&self.state, route.request_id()) {
+                    Ok(candidate) => candidate,
+                    Err(response) => {
+                        responses.send(response);
+                        return None;
+                    }
+                };
+
+                queue_external_request(
+                    &self.language_server_requests,
+                    ExternalRequest {
+                        route,
+                        responses,
+                        candidate,
+                        completion,
+                        cancelled,
+                    },
+                );
+                Some(completed)
+            }
+            ExecutionMode::LanguageServerFeature => {
+                let (completion, completed) = mpsc::channel();
+                let candidate = match persistent_candidate(&self.state, route.request_id()) {
+                    Ok(candidate) => candidate,
+                    Err(response) => {
+                        responses.send(response);
+                        return None;
+                    }
+                };
+
+                queue_external_request(
+                    &self.language_server_feature_requests,
                     ExternalRequest {
                         route,
                         responses,
@@ -257,6 +312,55 @@ fn spawn_external_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Resul
             }
         })
         .map(|_| ())
+}
+
+fn spawn_language_server_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Result<()> {
+    thread::Builder::new()
+        .name("kosmos-language-server-operations".to_owned())
+        .spawn(move || {
+            while let Ok(mut request) = requests.recv() {
+                if request.cancelled.load(Ordering::Acquire) {
+                    let _ = request.completion.send(());
+                    continue;
+                }
+
+                let response = execute_handler(&request.route, request.candidate.state_mut());
+                request.responses.send(response);
+                let _ = request.completion.send(());
+            }
+        })
+        .map(|_| ())
+}
+
+fn spawn_language_server_feature_workers(
+    requests: mpsc::Receiver<ExternalRequest>,
+) -> io::Result<()> {
+    let requests = Arc::new(Mutex::new(requests));
+    for index in 0..LANGUAGE_SERVER_FEATURE_WORKERS {
+        let requests = Arc::clone(&requests);
+        thread::Builder::new()
+            .name(format!("kosmos-language-server-features-{index}"))
+            .spawn(move || {
+                loop {
+                    let received = requests
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .recv();
+                    let Ok(mut request) = received else {
+                        break;
+                    };
+                    if request.cancelled.load(Ordering::Acquire) {
+                        let _ = request.completion.send(());
+                        continue;
+                    }
+
+                    let response = execute_handler(&request.route, request.candidate.state_mut());
+                    request.responses.send(response);
+                    let _ = request.completion.send(());
+                }
+            })?;
+    }
+    Ok(())
 }
 
 fn spawn_persistence_worker(
@@ -519,6 +623,7 @@ mod tests {
     }
 
     static EXTERNAL_GATE: OnceLock<(Mutex<ExternalGate>, Condvar)> = OnceLock::new();
+    static LANGUAGE_SERVER_FEATURE_GATE: OnceLock<(Mutex<ExternalGate>, Condvar)> = OnceLock::new();
 
     #[test]
     fn persistence_failures_do_not_mutate_live_state() {
@@ -754,6 +859,54 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn slow_language_server_feature_does_not_block_other_feature_responses() {
+        let (store, path) = test_store("language-server-feature-concurrency");
+        let dispatcher =
+            Dispatcher::new(core::State::new(), store).expect("dispatcher should open");
+        let (responses, receiver) = test_response_channel();
+        reset_language_server_feature_gate();
+
+        let _slow_completion = dispatcher
+            .dispatch(
+                router::PreparedRoute::for_test(
+                    1,
+                    ExecutionMode::LanguageServerFeature,
+                    blocking_language_server_feature_route,
+                ),
+                responses.clone(),
+            )
+            .expect("language server feature should have a completion signal");
+        wait_for_language_server_feature_route();
+
+        let _fast_completion = dispatcher
+            .dispatch(
+                router::PreparedRoute::for_test(
+                    2,
+                    ExecutionMode::LanguageServerFeature,
+                    successful_route,
+                ),
+                responses,
+            )
+            .expect("language server feature should have a completion signal");
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_millis(250))
+                .expect("independent feature request should bypass slow server work")
+                .is_ok()
+        );
+
+        release_language_server_feature_route();
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("slow feature request should finish")
+                .is_ok()
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
     fn workspace_open_route(request_id: u64, path: &str) -> router::PreparedRoute {
         router::prepare(RequestEnvelope {
             id: request_id,
@@ -788,6 +941,22 @@ mod tests {
         panic!("test handler panic")
     }
 
+    fn blocking_language_server_feature_route(
+        _state: &mut core::State,
+        request: &RequestEnvelope,
+    ) -> ServerMessage {
+        let (gate, condition) = language_server_feature_gate();
+        let mut gate = gate.lock().expect("gate should lock");
+        gate.started = true;
+        condition.notify_all();
+
+        while !gate.release {
+            gate = condition.wait(gate).expect("gate should wait");
+        }
+
+        ServerMessage::ok(request.id, true)
+    }
+
     fn external_gate() -> &'static (Mutex<ExternalGate>, Condvar) {
         EXTERNAL_GATE.get_or_init(|| (Mutex::new(ExternalGate::default()), Condvar::new()))
     }
@@ -809,6 +978,39 @@ mod tests {
 
     fn release_external_route() {
         let (gate, condition) = external_gate();
+        let mut gate = gate.lock().expect("gate should lock");
+        gate.release = true;
+        condition.notify_all();
+    }
+
+    fn language_server_feature_gate() -> &'static (Mutex<ExternalGate>, Condvar) {
+        LANGUAGE_SERVER_FEATURE_GATE
+            .get_or_init(|| (Mutex::new(ExternalGate::default()), Condvar::new()))
+    }
+
+    fn reset_language_server_feature_gate() {
+        *language_server_feature_gate()
+            .0
+            .lock()
+            .expect("gate should lock") = ExternalGate::default();
+    }
+
+    fn wait_for_language_server_feature_route() {
+        let (gate, condition) = language_server_feature_gate();
+        let gate = gate.lock().expect("gate should lock");
+        let (gate, timeout) = condition
+            .wait_timeout_while(gate, Duration::from_secs(2), |gate| !gate.started)
+            .expect("gate should wait");
+
+        assert!(gate.started, "language server feature route did not start");
+        assert!(
+            !timeout.timed_out(),
+            "language server feature route start timed out"
+        );
+    }
+
+    fn release_language_server_feature_route() {
+        let (gate, condition) = language_server_feature_gate();
         let mut gate = gate.lock().expect("gate should lock");
         gate.release = true;
         condition.notify_all();

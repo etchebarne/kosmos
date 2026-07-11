@@ -76,6 +76,10 @@ fn dispatch_requests(
                     external_completions.push(completed);
                 }
             }
+            ExecutionMode::LanguageServer | ExecutionMode::LanguageServerFeature => {
+                let _ =
+                    dispatcher.dispatch_cancellable(route, responses.clone(), Arc::clone(&closed));
+            }
             ExecutionMode::Persistent(_) => {
                 wait_for_completions(&mut external_completions);
 

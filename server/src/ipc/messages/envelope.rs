@@ -77,11 +77,13 @@ pub(crate) enum Domain {
     Pane,
     Tab,
     FileTree,
+    Formatters,
     Editor,
     Git,
     Search,
     Terminal,
     Settings,
+    LanguageServers,
     Window,
 }
 

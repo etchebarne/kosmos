@@ -1,9 +1,12 @@
 import type { editor } from "monaco-editor";
 
+import { attachLanguageDocument, type LanguageDocumentHandle } from "./language-client";
+
 export type EditorBuffer = {
   model: editor.ITextModel;
   path: string;
   savedContent: string;
+  languageDocument: LanguageDocumentHandle;
 };
 
 const buffers = new Map<string, EditorBuffer>();
@@ -22,12 +25,15 @@ export function getOrCreateEditorBuffer(
     return existing;
   }
 
+  existing?.languageDocument.dispose();
   existing?.model.dispose();
 
+  const model = createModel();
   const buffer = {
-    model: createModel(),
+    model,
     path,
     savedContent: content,
+    languageDocument: attachLanguageDocument(workspaceId, tabId, path, model),
   };
   buffers.set(key, buffer);
 
@@ -49,6 +55,7 @@ export function disposeEditorBuffer(workspaceId: number, tabId: number): void {
   const key = bufferKey(workspaceId, tabId);
   const buffer = buffers.get(key);
 
+  buffer?.languageDocument.dispose();
   buffer?.model.dispose();
   buffers.delete(key);
 }
@@ -61,6 +68,7 @@ export function disposeWorkspaceEditorBuffers(workspaceId: number): void {
       continue;
     }
 
+    buffer.languageDocument.dispose();
     buffer.model.dispose();
     buffers.delete(key);
   }

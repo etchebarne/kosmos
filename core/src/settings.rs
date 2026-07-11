@@ -5,6 +5,7 @@ use std::fmt;
 pub const APPEARANCE_ZOOM_LEVEL: &str = "appearance.zoomLevel";
 pub const EDITOR_SOFT_WRAP: &str = "editor.softWrap";
 pub const EDITOR_MINIMAP: &str = "editor.minimap";
+pub const EDITOR_FORMAT_ON_SAVE: &str = "editor.formatOnSave";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
@@ -100,6 +101,7 @@ impl Settings {
                 items: vec![
                     SettingItem::Setting(self.definition(EDITOR_SOFT_WRAP)),
                     SettingItem::Setting(self.definition(EDITOR_MINIMAP)),
+                    SettingItem::Setting(self.definition(EDITOR_FORMAT_ON_SAVE)),
                 ],
             },
         ]
@@ -287,6 +289,10 @@ fn setting_definition(id: &str) -> Option<SettingDefinition> {
             "Minimap",
             "Show a compact overview of the file along the right edge of the editor.",
         ),
+        EDITOR_FORMAT_ON_SAVE => (
+            "Format on save",
+            "Format the active document before saving when a formatter is available.",
+        ),
         _ => return None,
     };
 
@@ -294,6 +300,7 @@ fn setting_definition(id: &str) -> Option<SettingDefinition> {
         id: match id {
             EDITOR_SOFT_WRAP => EDITOR_SOFT_WRAP,
             EDITOR_MINIMAP => EDITOR_MINIMAP,
+            EDITOR_FORMAT_ON_SAVE => EDITOR_FORMAT_ON_SAVE,
             _ => unreachable!(),
         },
         label,
@@ -348,13 +355,14 @@ mod tests {
         assert_eq!(categories[0].id(), "appearance");
         assert_eq!(categories[0].items().len(), 1);
         assert_eq!(categories[1].id(), "editor");
-        assert_eq!(categories[1].items().len(), 2);
+        assert_eq!(categories[1].items().len(), 3);
         assert_eq!(
             settings.value(APPEARANCE_ZOOM_LEVEL),
             Some(SettingValue::Number(100.0))
         );
         assert_eq!(settings.boolean(EDITOR_SOFT_WRAP), Some(false));
         assert_eq!(settings.boolean(EDITOR_MINIMAP), Some(false));
+        assert_eq!(settings.boolean(EDITOR_FORMAT_ON_SAVE), Some(false));
     }
 
     #[test]

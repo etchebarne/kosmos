@@ -22,6 +22,8 @@ import {
 import { Switch } from "@/renderer/components/ui/switch";
 import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores";
+import { LanguageServerSettings } from "./language-server-settings";
+import { FormatterSettings } from "./formatter-settings";
 import type {
   SettingCategory,
   SettingDefinition,
@@ -35,15 +37,18 @@ type SettingsDialogProps = {
 };
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const error = useSettingsStore((state) => state.error);
   const isLoading = useSettingsStore((state) => state.isLoading);
   const pendingSettingIds = useSettingsStore((state) => state.pendingSettingIds);
   const snapshot = useSettingsStore((state) => state.snapshot);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const categories = snapshot?.categories ?? [];
+  const resolvedSectionId = selectedSectionId ?? categories[0]?.id ?? "languageServers";
   const selectedCategory =
-    categories.find((category) => category.id === selectedCategoryId) ?? categories[0];
+    categories.find((category) => category.id === resolvedSectionId) ?? categories[0];
+  const languageServersSelected = resolvedSectionId === "languageServers";
+  const formattersSelected = resolvedSectionId === "formatters";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,10 +62,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <div className="grid min-h-0 flex-1 place-items-center text-sm text-muted-foreground">
             Loading settings...
           </div>
-        ) : categories.length === 0 ? (
-          <div className="grid min-h-0 flex-1 place-items-center text-sm text-muted-foreground">
-            No settings are available.
-          </div>
         ) : (
           <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] sm:grid-cols-[12rem_1fr] sm:grid-rows-1">
             <nav
@@ -71,16 +72,36 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <Button
                   key={category.id}
                   type="button"
-                  variant={category.id === selectedCategory?.id ? "secondary" : "ghost"}
+                  variant={!languageServersSelected && !formattersSelected && category.id === selectedCategory?.id ? "secondary" : "ghost"}
                   className="shrink-0 justify-start"
-                  onClick={() => setSelectedCategoryId(category.id)}
+                  onClick={() => setSelectedSectionId(category.id)}
                 >
                   {category.label}
                 </Button>
               ))}
+              <Button
+                type="button"
+                variant={formattersSelected ? "secondary" : "ghost"}
+                className="shrink-0 justify-start"
+                onClick={() => setSelectedSectionId("formatters")}
+              >
+                Formatters
+              </Button>
+              <Button
+                type="button"
+                variant={languageServersSelected ? "secondary" : "ghost"}
+                className="shrink-0 justify-start"
+                onClick={() => setSelectedSectionId("languageServers")}
+              >
+                Language Servers
+              </Button>
             </nav>
 
-            {selectedCategory ? (
+            {formattersSelected ? (
+              <FormatterSettings />
+            ) : languageServersSelected ? (
+              <LanguageServerSettings />
+            ) : selectedCategory ? (
               <CategoryContent
                 category={selectedCategory}
                 pendingSettingIds={pendingSettingIds}

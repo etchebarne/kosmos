@@ -5,11 +5,13 @@ export type KosmosIpcDomain =
   | "pane"
   | "tab"
   | "fileTree"
+  | "formatters"
   | "editor"
   | "git"
   | "search"
   | "terminal"
   | "settings"
+  | "languageServers"
   | "window";
 
 export type KosmosIpcParams = Record<string, unknown>;

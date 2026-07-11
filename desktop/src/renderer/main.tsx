@@ -2,9 +2,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { initializeLanguageClient } from "./lib/language-client";
 import "./index.css";
 
 document.documentElement.classList.add("dark");
+initializeLanguageClient();
 
 const root = document.getElementById("root");
 

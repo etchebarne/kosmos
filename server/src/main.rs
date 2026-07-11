@@ -5,7 +5,21 @@ use std::path::PathBuf;
 
 fn main() -> io::Result<()> {
     let store = core::persistence::StateStore::open(database_path()?).map_err(io::Error::other)?;
-    let state = store.load().map_err(io::Error::other)?;
+    let mut state = store.load().map_err(io::Error::other)?;
+    let language_server_manager = language_server_paths().and_then(|paths| {
+        core::language_servers::LanguageServerManager::open(paths, store.clone())
+            .map_err(io::Error::other)
+    });
+    match language_server_manager {
+        Ok(manager) => state.attach_language_server_manager(manager),
+        Err(error) => eprintln!("language server manager unavailable: {error}"),
+    }
+    match formatter_paths()
+        .and_then(|paths| core::formatters::FormatterManager::open(paths).map_err(io::Error::other))
+    {
+        Ok(manager) => state.attach_formatter_manager(manager),
+        Err(error) => eprintln!("formatter manager unavailable: {error}"),
+    }
 
     ipc::run(socket_path(), state, store)
 }
@@ -43,4 +57,42 @@ fn config_dir() -> io::Result<PathBuf> {
     })?;
 
     Ok(PathBuf::from(home).join(".config").join("kosmos"))
+}
+
+fn data_dir() -> io::Result<PathBuf> {
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        return Ok(PathBuf::from(data_home).join("kosmos"));
+    }
+
+    Ok(home_dir()?.join(".local").join("share").join("kosmos"))
+}
+
+fn cache_dir() -> io::Result<PathBuf> {
+    if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
+        return Ok(PathBuf::from(cache_home).join("kosmos"));
+    }
+
+    Ok(home_dir()?.join(".cache").join("kosmos"))
+}
+
+fn language_server_paths() -> io::Result<core::language_servers::LanguageServerPaths> {
+    Ok(core::language_servers::LanguageServerPaths::new(
+        data_dir()?.join("language-servers"),
+        cache_dir()?.join("language-server-downloads"),
+    ))
+}
+
+fn formatter_paths() -> io::Result<core::formatters::FormatterPaths> {
+    Ok(core::formatters::FormatterPaths::new(
+        data_dir()?.join("formatters"),
+    ))
+}
+
+fn home_dir() -> io::Result<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "HOME must be set when an XDG directory is not set",
+        )
+    })
 }

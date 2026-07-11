@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
@@ -88,6 +89,66 @@ impl StateStore {
         Ok(())
     }
 
+    pub fn language_server_selections(&self) -> Result<BTreeMap<String, String>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT server_id, selected_version FROM language_server_configurations ORDER BY server_id",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut selections = BTreeMap::new();
+
+        for row in rows {
+            let (server_id, selected_version) = row?;
+            selections.insert(server_id, selected_version);
+        }
+
+        Ok(selections)
+    }
+
+    pub fn select_language_server_version(&self, server_id: &str, version: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "
+            INSERT INTO language_server_configurations (server_id, selected_version)
+            VALUES (?1, ?2)
+            ON CONFLICT(server_id) DO UPDATE SET selected_version = excluded.selected_version
+            ",
+            params![server_id, version],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_language_server_selection(&self, server_id: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM language_server_configurations WHERE server_id = ?1",
+            params![server_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn trusted_language_server_workspaces(&self) -> Result<Vec<PathBuf>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT directory FROM language_server_trusted_workspaces ORDER BY directory",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut workspaces = Vec::new();
+        for row in rows {
+            workspaces.push(PathBuf::from(row?));
+        }
+        Ok(workspaces)
+    }
+
+    pub fn trust_language_server_workspace(&self, directory: &Path) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT OR IGNORE INTO language_server_trusted_workspaces (directory) VALUES (?1)",
+            params![directory.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection> {
         let connection = Connection::open(&self.path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -147,6 +208,15 @@ fn migrate(connection: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY NOT NULL,
             value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number')),
             value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS language_server_configurations (
+            server_id TEXT PRIMARY KEY NOT NULL,
+            selected_version TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS language_server_trusted_workspaces (
+            directory TEXT PRIMARY KEY NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS window_state (
@@ -1266,6 +1336,61 @@ mod tests {
         assert_eq!(
             loaded.settings().boolean(crate::settings::EDITOR_MINIMAP),
             Some(true)
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn language_server_selections_survive_full_state_saves() {
+        let path = test_db_path("language-server-selection");
+        let store = StateStore::open(&path).expect("store should open");
+        store
+            .select_language_server_version("rust-analyzer", "2026-07-06")
+            .expect("selection should save");
+
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        store.save(&state).expect("state should save");
+
+        assert_eq!(
+            store
+                .language_server_selections()
+                .expect("selections should load")
+                .get("rust-analyzer")
+                .map(String::as_str),
+            Some("2026-07-06")
+        );
+
+        store
+            .clear_language_server_selection("rust-analyzer")
+            .expect("selection should clear");
+        assert!(
+            store
+                .language_server_selections()
+                .expect("selections should load")
+                .is_empty()
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn trusted_language_server_workspaces_survive_full_state_saves() {
+        let path = test_db_path("language-server-trust");
+        let store = StateStore::open(&path).expect("store should open");
+        let workspace = Path::new("/workspaces/trusted");
+        store
+            .trust_language_server_workspace(workspace)
+            .expect("workspace trust should save");
+
+        store.save(&State::new()).expect("state should save");
+
+        assert_eq!(
+            store
+                .trusted_language_server_workspaces()
+                .expect("workspace trust should load"),
+            vec![workspace.to_path_buf()]
         );
 
         let _ = fs::remove_file(path);

@@ -1,6 +1,8 @@
 mod editor;
 mod file_tree;
+mod formatters;
 mod git;
+mod language_servers;
 mod pane;
 mod search;
 mod settings;
@@ -22,11 +24,13 @@ pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerM
         Domain::Pane => pane::resolve(&request.action),
         Domain::Tab => tab::resolve(&request.action),
         Domain::FileTree => file_tree::resolve(&request.action),
+        Domain::Formatters => formatters::resolve(&request.action),
         Domain::Editor => editor::resolve(&request.action),
         Domain::Git => git::resolve(&request.action),
         Domain::Search => search::resolve(&request.action),
         Domain::Terminal => terminal::resolve(&request.action),
         Domain::Settings => settings::resolve(&request.action),
+        Domain::LanguageServers => language_servers::resolve(&request.action),
         Domain::Window => window::resolve(&request.action),
     }
     .ok_or_else(|| unsupported_action(&request))?;
@@ -87,6 +91,14 @@ impl RouteDefinition {
         Self::new(handler, ExecutionMode::Live)
     }
 
+    pub(super) const fn language_server(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::LanguageServer)
+    }
+
+    pub(super) const fn language_server_feature(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::LanguageServerFeature)
+    }
+
     pub(super) const fn active_workspace(handler: RouteHandler) -> Self {
         Self::new(
             handler,
@@ -123,6 +135,8 @@ pub(crate) enum ExecutionMode {
     Snapshot,
     External,
     Live,
+    LanguageServer,
+    LanguageServerFeature,
     Persistent(PersistenceMode),
 }
 
@@ -285,6 +299,51 @@ mod tests {
         );
         assert_modes(Domain::Terminal, &["shells"], ExecutionMode::Snapshot);
         assert_modes(Domain::Settings, &["get"], ExecutionMode::Snapshot);
+        assert_modes(
+            Domain::LanguageServers,
+            &["list", "status"],
+            ExecutionMode::Snapshot,
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &[
+                "openDocument",
+                "changeDocument",
+                "closeDocument",
+                "saveDocument",
+                "trustWorkspace",
+                "restart",
+            ],
+            ExecutionMode::LanguageServer,
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &[
+                "hover",
+                "diagnostics",
+                "completion",
+                "resolveCompletion",
+                "documentColors",
+                "colorPresentations",
+                "formatting",
+            ],
+            ExecutionMode::LanguageServerFeature,
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &["install", "uninstall"],
+            ExecutionMode::Live,
+        );
+        assert_modes(
+            Domain::Formatters,
+            &["list", "status"],
+            ExecutionMode::Snapshot,
+        );
+        assert_modes(
+            Domain::Formatters,
+            &["install", "uninstall"],
+            ExecutionMode::Live,
+        );
         assert_modes(
             Domain::Settings,
             &["update"],
