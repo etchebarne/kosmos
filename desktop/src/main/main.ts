@@ -51,11 +51,11 @@ async function startApp(): Promise<void> {
       }
     }
   });
-  createMainWindow();
+  await createMainWindow(serverClient);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      void createMainWindow(serverClient);
     }
   });
 }

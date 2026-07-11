@@ -15,7 +15,6 @@ import type { OpenableTabKind, PaneId, TabKind, TabSnapshot, WorkspaceId } from 
 import { BlankTab, type BlankTabOption } from "./blank";
 import { FileTreeTab } from "./file-tree";
 import { GitTab } from "./git";
-import { PlaceholderTab } from "./placeholder";
 import { TerminalTab } from "./terminal";
 
 type TabContentProps = {
@@ -38,6 +37,9 @@ const EditorTab = lazy(() =>
   import("./editor").then((module) => ({ default: module.EditorTab })),
 );
 const DiffTab = lazy(() => import("./diff").then((module) => ({ default: module.DiffTab })));
+const SearchTab = lazy(() =>
+  import("./search").then((module) => ({ default: module.SearchTab })),
+);
 
 const TAB_KIND_ORDER: OpenableTabKind[] = [
   "blank",
@@ -106,7 +108,21 @@ const TAB_DEFINITIONS: Record<TabKind, TabDefinition> = {
       <GitTab workspaceId={workspaceId} tabId={tab.id} onActivatePane={onActivatePane} />
     ),
   },
-  search: placeholderTabDefinition("Search", Search, true),
+  search: {
+    icon: Search,
+    label: "Search",
+    showInBlankPicker: true,
+    render: ({ tab, workspaceId, isActive, onActivatePane }) => (
+      <Suspense fallback={<TabLoading message="Loading search..." onActivatePane={onActivatePane} />}>
+        <SearchTab
+          workspaceId={workspaceId}
+          tabId={tab.id}
+          isActive={isActive}
+          onActivatePane={onActivatePane}
+        />
+      </Suspense>
+    ),
+  },
   terminal: {
     icon: TerminalIcon,
     label: "Terminal",
@@ -147,19 +163,4 @@ function TabLoading({ message, onActivatePane }: { message: string; onActivatePa
       <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
-}
-
-function placeholderTabDefinition(
-  label: string,
-  icon: LucideIcon,
-  showInBlankPicker: boolean,
-): TabDefinition {
-  return {
-    icon,
-    label,
-    showInBlankPicker,
-    render: ({ tab, onActivatePane }) => (
-      <PlaceholderTab title={tab.title} onActivatePane={onActivatePane} />
-    ),
-  };
 }

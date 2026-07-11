@@ -2,9 +2,11 @@ mod editor;
 mod file_tree;
 mod git;
 mod pane;
+mod search;
 mod settings;
 mod tab;
 mod terminal;
+mod window;
 mod workspace;
 
 use serde::de::DeserializeOwned;
@@ -22,8 +24,10 @@ pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerM
         Domain::FileTree => file_tree::resolve(&request.action),
         Domain::Editor => editor::resolve(&request.action),
         Domain::Git => git::resolve(&request.action),
+        Domain::Search => search::resolve(&request.action),
         Domain::Terminal => terminal::resolve(&request.action),
         Domain::Settings => settings::resolve(&request.action),
+        Domain::Window => window::resolve(&request.action),
     }
     .ok_or_else(|| unsupported_action(&request))?;
 
@@ -101,6 +105,10 @@ impl RouteDefinition {
         )
     }
 
+    pub(super) const fn window(handler: RouteHandler) -> Self {
+        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Window))
+    }
+
     pub(super) const fn persistence_barrier(handler: RouteHandler) -> Self {
         Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Barrier))
     }
@@ -124,6 +132,7 @@ pub(crate) enum PersistenceMode {
     Barrier,
     Full,
     Settings,
+    Window,
 }
 
 pub(super) fn parse_params<T>(request: &RequestEnvelope) -> Result<T, ServerMessage>
@@ -260,6 +269,11 @@ mod tests {
             ExecutionMode::External,
         );
         assert_modes(
+            Domain::Search,
+            &["query", "document"],
+            ExecutionMode::External,
+        );
+        assert_modes(
             Domain::Git,
             &["openDiffTab"],
             ExecutionMode::Persistent(PersistenceMode::Full),
@@ -275,6 +289,12 @@ mod tests {
             Domain::Settings,
             &["update"],
             ExecutionMode::Persistent(PersistenceMode::Settings),
+        );
+        assert_modes(Domain::Window, &["get"], ExecutionMode::Snapshot);
+        assert_modes(
+            Domain::Window,
+            &["update"],
+            ExecutionMode::Persistent(PersistenceMode::Window),
         );
     }
 

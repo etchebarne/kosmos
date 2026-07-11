@@ -14,6 +14,7 @@ use crate::tabs::git::{
     GitDiff, GitDiffViewState, GitError, GitLineHunk, GitRemote, GitRepository,
     GitRepositorySnapshot, GitStash, GitTag,
 };
+use crate::tabs::search::{SearchError, SearchMode, WorkspaceSearch, WorkspaceSearchResults};
 use crate::tabs::terminal::{
     TerminalError, TerminalOutput, TerminalSessions, TerminalSize, available_shells,
 };
@@ -21,10 +22,12 @@ use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
     WorkspaceList,
 };
+use crate::window::WindowState;
 
 #[derive(Debug)]
 pub struct State {
     settings: Settings,
+    window_state: Option<WindowState>,
     workspaces: WorkspaceList,
     file_tree_view_states: Vec<FileTreeViewState>,
     git_diff_view_states: Vec<GitDiffViewState>,
@@ -139,6 +142,17 @@ impl State {
         &self.settings
     }
 
+    pub fn window_state(&self) -> Option<WindowState> {
+        self.window_state
+    }
+
+    pub fn update_window_state(&mut self, window_state: WindowState) {
+        if self.window_state != Some(window_state) {
+            self.window_state = Some(window_state);
+            self.mark_persistent_change();
+        }
+    }
+
     pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<(), SettingsError> {
         if self.settings.update(id, value)? {
             self.mark_persistent_change();
@@ -154,6 +168,7 @@ impl State {
         git_diff_view_states: Vec<GitDiffViewState>,
         editor_view_states: Vec<EditorViewState>,
         settings: Settings,
+        window_state: Option<WindowState>,
     ) -> Option<Self> {
         let mut state = Self::from_workspaces_with_all_view_states(
             workspaces,
@@ -163,6 +178,7 @@ impl State {
             editor_view_states,
         )?;
         state.settings = settings;
+        state.window_state = window_state;
         Some(state)
     }
 
@@ -182,6 +198,7 @@ impl State {
         PersistentStateCandidate {
             state: Self {
                 settings: self.settings.clone(),
+                window_state: self.window_state,
                 workspaces: self.workspaces.clone(),
                 file_tree_view_states: self.file_tree_view_states.clone(),
                 git_diff_view_states: self.git_diff_view_states.clone(),
@@ -212,6 +229,7 @@ impl State {
         self.terminal_sessions
             .retain(|workspace_id, tab_id| candidate.is_terminal_tab(workspace_id, tab_id));
         self.settings = candidate.settings;
+        self.window_state = candidate.window_state;
         self.workspaces = candidate.workspaces;
         self.file_tree_view_states = candidate.file_tree_view_states;
         self.git_diff_view_states = candidate.git_diff_view_states;
@@ -368,7 +386,7 @@ impl State {
     pub fn open_editor_tab(
         &mut self,
         workspace_id: Option<WorkspaceId>,
-        file_tree_tab_id: TabId,
+        source_tab_id: TabId,
         path: &str,
     ) -> Result<(), EditorError> {
         self.mark_persistent_change();
@@ -381,8 +399,8 @@ impl State {
             .workspace(workspace_id)
             .ok_or(EditorError::WorkspaceNotFound)?;
 
-        if !self.is_file_tree_tab(workspace_id, file_tree_tab_id) {
-            return Err(EditorError::FileTreeTabNotFound);
+        if !self.is_editor_source_tab(workspace_id, source_tab_id) {
+            return Err(EditorError::SourceTabNotFound);
         }
 
         let document = EditorDocument::read(workspace.directory(), path)?;
@@ -417,6 +435,29 @@ impl State {
         self.editor_view_states.push(view_state);
 
         Ok(())
+    }
+
+    pub fn search_workspace(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        query: &str,
+        mode: SearchMode,
+    ) -> Result<WorkspaceSearchResults, SearchError> {
+        let directory = self.search_workspace_directory(workspace_id, tab_id)?;
+
+        WorkspaceSearch::query(directory, query, mode)
+    }
+
+    pub fn search_document(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: &str,
+    ) -> Result<EditorDocument, SearchError> {
+        let directory = self.search_workspace_directory(workspace_id, tab_id)?;
+
+        WorkspaceSearch::document(directory, path)
     }
 
     pub fn editor_document(
@@ -1424,6 +1465,14 @@ impl State {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
     }
 
+    fn is_search_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Search)
+    }
+
+    fn is_editor_source_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
+        self.is_file_tree_tab(workspace_id, tab_id) || self.is_search_tab(workspace_id, tab_id)
+    }
+
     fn is_terminal_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::Terminal)
     }
@@ -1511,6 +1560,26 @@ impl State {
         Ok(workspace.directory())
     }
 
+    fn search_workspace_directory(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<&Path, SearchError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(SearchError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(SearchError::WorkspaceNotFound)?;
+
+        if !self.is_search_tab(workspace_id, tab_id) {
+            return Err(SearchError::TabNotFound);
+        }
+
+        Ok(workspace.directory())
+    }
+
     fn tab_kind(&self, workspace_id: WorkspaceId, tab_id: TabId) -> Option<&TabKind> {
         let workspace = self.workspaces.workspace(workspace_id)?;
 
@@ -1542,6 +1611,7 @@ impl State {
 
         Some(Self {
             settings: Settings::default(),
+            window_state: None,
             workspaces,
             file_tree_view_states,
             git_diff_view_states,
@@ -1747,6 +1817,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
+            window_state: None,
             workspaces: WorkspaceList::new(),
             file_tree_view_states: Vec::new(),
             git_diff_view_states: Vec::new(),
@@ -2156,14 +2227,14 @@ mod tests {
     }
 
     #[test]
-    fn opening_editor_tabs_requires_a_file_tree_source_and_existing_file() {
+    fn opening_editor_tabs_requires_a_supported_source_and_existing_file() {
         let root = test_directory("editor-open-validation");
         let mut state = State::new();
         let workspace_id = state.open_workspace(&root);
 
         assert!(matches!(
             state.open_editor_tab(Some(workspace_id), TabId::new(1), "missing.txt"),
-            Err(EditorError::FileTreeTabNotFound)
+            Err(EditorError::SourceTabNotFound)
         ));
         assert!(state.set_tab_kind(
             Some(workspace_id),
@@ -2179,6 +2250,56 @@ mod tests {
 
         let workspace = state.workspaces().workspace(workspace_id).unwrap();
         assert_eq!(workspace.active_pane().unwrap().tabs().len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_tabs_query_preview_and_open_editor_results() {
+        let root = test_directory("search-tab");
+        std::fs::write(root.join("notes.txt"), "first\nSearch target\n").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+
+        assert!(matches!(
+            state.search_workspace(
+                Some(workspace_id),
+                TabId::new(1),
+                "target",
+                SearchMode::Content,
+            ),
+            Err(SearchError::TabNotFound)
+        ));
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::Search,
+        ));
+
+        let results = state
+            .search_workspace(
+                Some(workspace_id),
+                TabId::new(1),
+                "target",
+                SearchMode::Content,
+            )
+            .unwrap();
+        assert_eq!(results.matches().len(), 1);
+        assert_eq!(results.matches()[0].line_number(), Some(2));
+        let document = state
+            .search_document(Some(workspace_id), TabId::new(1), "notes.txt")
+            .unwrap();
+        assert_eq!(document.content(), "first\nSearch target\n");
+
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "notes.txt")
+            .unwrap();
+        let workspace = state.workspaces().workspace(workspace_id).unwrap();
+        assert_eq!(
+            workspace.active_pane().unwrap().active_tab().kind(),
+            &TabKind::Editor
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

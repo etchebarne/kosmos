@@ -13,6 +13,7 @@ use crate::tabs::git::GitDiffViewState;
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
 };
+use crate::window::WindowState;
 
 pub type Result<T> = std::result::Result<T, PersistenceError>;
 
@@ -77,6 +78,16 @@ impl StateStore {
         Ok(())
     }
 
+    pub fn save_window_state(&self, state: &State) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+
+        replace_window_state(&transaction, state.window_state())?;
+        transaction.commit()?;
+
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection> {
         let connection = Connection::open(&self.path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -136,6 +147,16 @@ fn migrate(connection: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY NOT NULL,
             value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number')),
             value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS window_state (
+            id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+            x INTEGER NOT NULL,
+            y INTEGER NOT NULL,
+            width INTEGER NOT NULL CHECK (width > 0),
+            height INTEGER NOT NULL CHECK (height > 0),
+            maximized INTEGER NOT NULL CHECK (maximized IN (0, 1)),
+            fullscreen INTEGER NOT NULL CHECK (fullscreen IN (0, 1))
         );
 
         CREATE TABLE IF NOT EXISTS workspaces (
@@ -237,6 +258,7 @@ fn migrate(connection: &Connection) -> Result<()> {
 fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM metadata", [])?;
     transaction.execute("DELETE FROM settings", [])?;
+    transaction.execute("DELETE FROM window_state", [])?;
     transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
     transaction.execute("DELETE FROM git_diff_tabs", [])?;
     transaction.execute("DELETE FROM editor_tabs", [])?;
@@ -251,6 +273,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
 fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
     insert_active_workspace_metadata(transaction, state.workspaces().active_workspace_id())?;
     insert_settings(transaction, state.settings())?;
+    insert_window_state(transaction, state.window_state())?;
 
     for (position, workspace) in state.workspaces().workspaces().iter().enumerate() {
         let workspace_id = to_i64(workspace.id().value(), "workspace id")?;
@@ -325,6 +348,40 @@ fn encode_setting_value(value: &SettingValue) -> (&'static str, String) {
         SettingValue::String(value) => ("string", value.clone()),
         SettingValue::Number(value) => ("number", value.to_string()),
     }
+}
+
+fn replace_window_state(
+    transaction: &Transaction<'_>,
+    window_state: Option<WindowState>,
+) -> Result<()> {
+    transaction.execute("DELETE FROM window_state", [])?;
+    insert_window_state(transaction, window_state)
+}
+
+fn insert_window_state(
+    transaction: &Transaction<'_>,
+    window_state: Option<WindowState>,
+) -> Result<()> {
+    let Some(window_state) = window_state else {
+        return Ok(());
+    };
+
+    transaction.execute(
+        "
+        INSERT INTO window_state (id, x, y, width, height, maximized, fullscreen)
+        VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+        ",
+        params![
+            window_state.x(),
+            window_state.y(),
+            window_state.width(),
+            window_state.height(),
+            window_state.is_maximized(),
+            window_state.is_fullscreen(),
+        ],
+    )?;
+
+    Ok(())
 }
 
 fn save_node(
@@ -492,6 +549,7 @@ fn load_state(connection: &Connection) -> Result<State> {
     let git_diff_view_states = load_git_diff_view_states(connection)?;
     let editor_view_states = load_editor_view_states(connection)?;
     let settings = load_settings(connection)?;
+    let window_state = load_window_state(connection)?;
 
     State::from_persisted(
         workspaces,
@@ -500,8 +558,34 @@ fn load_state(connection: &Connection) -> Result<State> {
         git_diff_view_states,
         editor_view_states,
         settings,
+        window_state,
     )
     .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
+}
+
+fn load_window_state(connection: &Connection) -> Result<Option<WindowState>> {
+    let row = connection
+        .query_row(
+            "SELECT x, y, width, height, maximized, fullscreen FROM window_state WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, bool>(4)?,
+                    row.get::<_, bool>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    row.map(|(x, y, width, height, maximized, fullscreen)| {
+        WindowState::new(x, y, width, height, maximized, fullscreen)
+            .ok_or_else(|| invalid_state("window state has invalid dimensions"))
+    })
+    .transpose()
 }
 
 fn load_settings(connection: &Connection) -> Result<Settings> {
@@ -1183,6 +1267,29 @@ mod tests {
             loaded.settings().boolean(crate::settings::EDITOR_MINIMAP),
             Some(true)
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_window_state_without_replacing_other_state() {
+        let path = test_db_path("window-state");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        state.open_workspace("/workspaces/main");
+        store.save(&state).expect("state should save");
+
+        let window_state = WindowState::new(-120, 80, 1440, 900, true, false)
+            .expect("window state should be valid");
+        state.update_window_state(window_state);
+        store
+            .save_window_state(&state)
+            .expect("window state should save");
+
+        let loaded = store.load().expect("state should load");
+
+        assert_eq!(loaded.window_state(), Some(window_state));
+        assert_eq!(loaded.workspaces(), state.workspaces());
 
         let _ = fs::remove_file(path);
     }

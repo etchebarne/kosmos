@@ -374,6 +374,7 @@ fn execute_persistent(
         PersistenceMode::Barrier => unreachable!("barriers return before persistence"),
         PersistenceMode::Full => store.save(candidate.state()),
         PersistenceMode::Settings => store.save_settings(candidate.state()),
+        PersistenceMode::Window => store.save_window_state(candidate.state()),
     };
 
     if let Err(error) = save_result {

@@ -88,7 +88,7 @@ fn editor_error(id: u64, error: EditorError) -> ServerMessage {
 fn editor_error_code(error: &EditorError) -> &'static str {
     match error {
         EditorError::WorkspaceNotFound => "editor.workspace_not_found",
-        EditorError::FileTreeTabNotFound => "editor.file_tree_tab_not_found",
+        EditorError::SourceTabNotFound => "editor.source_tab_not_found",
         EditorError::TabNotFound => "editor.tab_not_found",
         EditorError::WorkspaceNotDirectory(_) => "editor.workspace_not_directory",
         EditorError::InvalidPath(_) => "editor.invalid_path",

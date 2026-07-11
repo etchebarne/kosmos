@@ -79,8 +79,10 @@ pub(crate) enum Domain {
     FileTree,
     Editor,
     Git,
+    Search,
     Terminal,
     Settings,
+    Window,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -217,7 +217,7 @@ fn io_error(path: PathBuf, source: io::Error) -> EditorError {
 #[derive(Debug)]
 pub enum EditorError {
     WorkspaceNotFound,
-    FileTreeTabNotFound,
+    SourceTabNotFound,
     TabNotFound,
     WorkspaceNotDirectory(PathBuf),
     InvalidPath(String),
@@ -235,7 +235,7 @@ impl fmt::Display for EditorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::WorkspaceNotFound => formatter.write_str("workspace does not exist"),
-            Self::FileTreeTabNotFound => formatter.write_str("file tree tab does not exist"),
+            Self::SourceTabNotFound => formatter.write_str("editor source tab does not exist"),
             Self::TabNotFound => formatter.write_str("editor tab does not exist"),
             Self::WorkspaceNotDirectory(path) => {
                 write!(
