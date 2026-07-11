@@ -738,8 +738,8 @@ function LoadedGitTab({
 
 function GitLatestCommitFooter({ latestCommit }: { latestCommit?: string | null }) {
   return (
-    <div className="-mx-2 -mb-2 border-t px-2 py-1.5 text-xs text-muted-foreground">
-      <p className="truncate">{latestCommit ?? "No commits yet"}</p>
+    <div className="-mx-2 -mb-2 flex h-8 shrink-0 items-center border-t px-2 text-xs text-muted-foreground">
+      <p className="min-w-0 truncate">{latestCommit ?? "No commits yet"}</p>
     </div>
   );
 }
