@@ -160,7 +160,13 @@ impl GitRepository {
         let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
         let status = parse_status(&git(
             &repository_root,
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignored=matching",
+            ],
         )?)?;
 
         Ok(status
@@ -1815,6 +1821,30 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path(), "inside.txt");
         assert_eq!(changes[0].unstaged(), Some(GitChangeKind::Untracked));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_changes_include_ignored_files_and_matching_directories() {
+        let root = test_directory("ignored-workspace-status");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(root.join(".gitignore"), "ignored.txt\ncache/\n")
+            .expect("ignore rules should be written");
+        fs::write(root.join("ignored.txt"), "ignored\n").expect("ignored file should be written");
+        fs::create_dir(root.join("cache")).expect("ignored directory should be created");
+        fs::write(root.join("cache/output.bin"), "output\n")
+            .expect("ignored directory file should be written");
+
+        let changes =
+            GitRepository::workspace_changes(&root).expect("workspace changes should load");
+        let ignored_paths = changes
+            .iter()
+            .filter(|change| change.unstaged() == Some(GitChangeKind::Ignored))
+            .map(GitChange::path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ignored_paths, ["cache/", "ignored.txt"]);
 
         let _ = fs::remove_dir_all(root);
     }

@@ -76,6 +76,7 @@ type RootContextMenuPosition = {
 };
 
 type FileTreeContextMenuCloseOptions = {
+  afterClose?: () => void;
   restoreFocus?: boolean;
 };
 
@@ -750,8 +751,10 @@ function FileTreeContextMenu({
             <ContextMenuItem
               disabled={selectedCount !== 1 || itemIsRoot}
               onClick={() => {
-                close({ restoreFocus: false });
-                model.startRenaming(item.path);
+                close({
+                  afterClose: () => model.startRenaming(item.path),
+                  restoreFocus: false,
+                });
               }}
             >
               Rename
@@ -866,7 +869,9 @@ function FileTreeContextMenuSurface({
   const closeRef = useRef<FileTreeContextMenuClose>(() => undefined);
   const didCloseRef = useRef(false);
   const close: FileTreeContextMenuClose = (options) => {
-    closeOptionsRef.current = options;
+    if (options) {
+      closeOptionsRef.current = options;
+    }
     setOpen(false);
   };
 
@@ -886,7 +891,9 @@ function FileTreeContextMenuSurface({
     }
 
     didCloseRef.current = true;
-    onCloseComplete(closeOptionsRef.current);
+    const options = closeOptionsRef.current;
+    onCloseComplete(options ? { restoreFocus: options.restoreFocus } : undefined);
+    options?.afterClose?.();
   };
 
   return (
