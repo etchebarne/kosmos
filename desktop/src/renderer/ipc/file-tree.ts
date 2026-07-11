@@ -2,9 +2,11 @@ import type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
   FileTreeChildrenSnapshot,
+  FileTreeGitStatusSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,
   GetFileTreeChildrenParams,
+  GetFileTreeGitStatusParams,
   GetFileTreeParams,
   RenameFileTreeEntryParams,
   ResolveFileTreePathParams,
@@ -24,6 +26,12 @@ export function getFileTreeChildren(
   params: GetFileTreeChildrenParams,
 ): Promise<FileTreeChildrenSnapshot> {
   return requestServer(DOMAIN, "getChildren", params);
+}
+
+export function getFileTreeGitStatus(
+  params: GetFileTreeGitStatusParams,
+): Promise<FileTreeGitStatusSnapshot> {
+  return requestServer(DOMAIN, "gitStatus", params);
 }
 
 export function setFileTreeExpandedPaths(
@@ -67,9 +75,11 @@ export type {
   CreateFileTreeEntryParams,
   DeleteFileTreeEntriesParams,
   FileTreeChildrenSnapshot,
+  FileTreeGitStatusSnapshot,
   FileTreeResolvedPath,
   FileTreeSnapshot,
   GetFileTreeChildrenParams,
+  GetFileTreeGitStatusParams,
   GetFileTreeParams,
   RenameFileTreeEntryParams,
   ResolveFileTreePathParams,

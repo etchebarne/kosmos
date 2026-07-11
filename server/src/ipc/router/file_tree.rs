@@ -1,17 +1,20 @@
 use core::tabs::file_tree::FileTreeError;
+use core::tabs::git::{GitError, GitRepository};
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::file_tree::{
     CreateFileTreeEntryParams, DeleteFileTreeEntriesParams, FileTreeChildrenSnapshot,
-    FileTreePathMapper, FileTreeResolvedPath, FileTreeSnapshot, GetFileTreeChildrenParams,
-    GetFileTreeParams, RenameFileTreeEntryParams, ResolveFileTreePathParams,
-    SetFileTreeExpandedPathsParams, TransferFileTreeEntriesParams,
+    FileTreeGitStatusSnapshot, FileTreePathMapper, FileTreeResolvedPath, FileTreeSnapshot,
+    GetFileTreeChildrenParams, GetFileTreeGitStatusParams, GetFileTreeParams,
+    RenameFileTreeEntryParams, ResolveFileTreePathParams, SetFileTreeExpandedPathsParams,
+    TransferFileTreeEntriesParams,
 };
 use super::{RouteDefinition, parse_params};
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
     match action {
         "get" => Some(RouteDefinition::external(get_file_tree)),
+        "gitStatus" => Some(RouteDefinition::external(get_git_status)),
         "getChildren" => Some(RouteDefinition::external(get_file_tree_children)),
         "setExpandedPaths" => Some(RouteDefinition::full(set_expanded_paths)),
         "createEntry" => Some(RouteDefinition::external(create_entry)),
@@ -21,6 +24,36 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         "deleteEntries" => Some(RouteDefinition::external(delete_entries)),
         "resolvePath" => Some(RouteDefinition::external(resolve_path)),
         _ => None,
+    }
+}
+
+fn get_git_status(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<GetFileTreeGitStatusParams>(request) {
+        Ok(params) => {
+            let workspace_id = params.workspace_id.map(Into::into);
+            let tab_id = params.tab_id.into();
+            let root = match state.file_tree_root(workspace_id, tab_id) {
+                Ok(root) => root,
+                Err(error) => return file_tree_error(request.id, error),
+            };
+            let mapper = FileTreePathMapper::new(root);
+
+            match GitRepository::workspace_changes(root) {
+                Ok(changes) => ServerMessage::ok(
+                    request.id,
+                    FileTreeGitStatusSnapshot::from_changes(&changes, &mapper),
+                ),
+                Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => {
+                    ServerMessage::ok(request.id, FileTreeGitStatusSnapshot::empty())
+                }
+                Err(error) => ServerMessage::error(
+                    request.id,
+                    "file_tree.git_status_failed",
+                    error.to_string(),
+                ),
+            }
+        }
+        Err(response) => response,
     }
 }
 

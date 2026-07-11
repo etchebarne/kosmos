@@ -207,7 +207,7 @@ struct GitChangePayload {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum GitChangeKindPayload {
+pub(crate) enum GitChangeKindPayload {
     Added,
     Conflicted,
     Deleted,

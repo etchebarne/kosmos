@@ -86,6 +86,14 @@ pub struct GitDiffSection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GitLineHunk {
+    old_start: u32,
+    old_lines: u32,
+    new_start: u32,
+    new_lines: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GitDiffSectionKind {
     Staged,
     Unstaged,
@@ -146,6 +154,70 @@ impl GitRepository {
             branches,
             changes: status.changes,
         })
+    }
+
+    pub fn workspace_changes(directory: impl AsRef<Path>) -> Result<Vec<GitChange>> {
+        let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
+        let status = parse_status(&git(
+            &repository_root,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?)?;
+
+        Ok(status
+            .changes
+            .into_iter()
+            .filter_map(|change| change.without_prefix(&workspace_prefix))
+            .collect())
+    }
+
+    pub fn file_line_hunks(
+        directory: impl AsRef<Path>,
+        workspace_relative_path: &str,
+    ) -> Result<Vec<GitLineHunk>> {
+        let workspace_relative_path = normalize_path(workspace_relative_path)?;
+        let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
+        let repository_path = prefixed_git_path(&workspace_prefix, &workspace_relative_path);
+        let status = parse_status(&git(
+            &repository_root,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?)?;
+        let Some(change) = status
+            .changes
+            .iter()
+            .find(|change| change.path() == repository_path)
+        else {
+            return Ok(Vec::new());
+        };
+        let current_line_count = working_tree_content(&repository_root, &repository_path)?
+            .0
+            .as_deref()
+            .map(|content| line_count(content.as_bytes()))
+            .unwrap_or(0);
+
+        if change.staged() == Some(GitChangeKind::Added)
+            || change.unstaged() == Some(GitChangeKind::Untracked)
+            || !has_head(&repository_root)?
+        {
+            return Ok((current_line_count > 0)
+                .then(|| GitLineHunk::new(0, 0, 1, current_line_count))
+                .into_iter()
+                .collect());
+        }
+
+        if change.staged() == Some(GitChangeKind::Conflicted)
+            || change.unstaged() == Some(GitChangeKind::Conflicted)
+        {
+            return Ok((current_line_count > 0)
+                .then(|| GitLineHunk::new(1, current_line_count, 1, current_line_count))
+                .into_iter()
+                .collect());
+        }
+
+        parse_line_hunks(&git_with_paths(
+            &repository_root,
+            ["diff", "--no-ext-diff", "--unified=0", "HEAD", "--"],
+            &[repository_path],
+        )?)
     }
 
     pub fn diff(directory: impl AsRef<Path>, focused_path: &str) -> Result<GitDiff> {
@@ -481,6 +553,17 @@ impl GitBranch {
 }
 
 impl GitChange {
+    fn without_prefix(mut self, prefix: &str) -> Option<Self> {
+        self.path = strip_git_path_prefix(&self.path, prefix)?.to_owned();
+        self.original_path = self
+            .original_path
+            .as_deref()
+            .and_then(|path| strip_git_path_prefix(path, prefix))
+            .map(ToOwned::to_owned);
+
+        Some(self)
+    }
+
     pub fn path(&self) -> &str {
         &self.path
     }
@@ -625,6 +708,33 @@ impl GitDiffSection {
 
     pub fn editable(&self) -> bool {
         self.editable
+    }
+}
+
+impl GitLineHunk {
+    fn new(old_start: u32, old_lines: u32, new_start: u32, new_lines: u32) -> Self {
+        Self {
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+        }
+    }
+
+    pub fn old_start(&self) -> u32 {
+        self.old_start
+    }
+
+    pub fn old_lines(&self) -> u32 {
+        self.old_lines
+    }
+
+    pub fn new_start(&self) -> u32 {
+        self.new_start
+    }
+
+    pub fn new_lines(&self) -> u32 {
+        self.new_lines
     }
 }
 
@@ -1548,6 +1658,82 @@ fn normalize_paths(paths: &[String]) -> Result<Vec<String>> {
     Ok(normalized_paths)
 }
 
+fn workspace_repository(directory: &Path) -> Result<(PathBuf, String)> {
+    let directory = fs::canonicalize(directory)?;
+    let repository_root = fs::canonicalize(repository_root(&directory)?)?;
+    let workspace_prefix =
+        directory
+            .strip_prefix(&repository_root)
+            .map_err(|_| GitError::Discover {
+                directory: directory.clone(),
+                message: "workspace is outside the repository worktree".to_owned(),
+            })?;
+
+    Ok((repository_root, git_path(workspace_prefix)?))
+}
+
+fn prefixed_git_path(prefix: &str, path: &str) -> String {
+    if prefix.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{prefix}/{path}")
+    }
+}
+
+fn git_path(path: &Path) -> Result<String> {
+    path.components()
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| GitError::Utf8("git path is not valid UTF-8".to_owned()))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|components| components.join("/"))
+}
+
+fn strip_git_path_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    if prefix.is_empty() {
+        return Some(path);
+    }
+
+    path.strip_prefix(prefix)?
+        .strip_prefix('/')
+        .filter(|path| !path.is_empty())
+}
+
+fn parse_line_hunks(bytes: &[u8]) -> Result<Vec<GitLineHunk>> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| line.starts_with(b"@@ "))
+        .map(parse_line_hunk)
+        .collect()
+}
+
+fn parse_line_hunk(line: &[u8]) -> Result<GitLineHunk> {
+    let line = std::str::from_utf8(line).map_err(|error| GitError::Utf8(error.to_string()))?;
+    let ranges = line
+        .strip_prefix("@@ -")
+        .and_then(|line| line.split_once(" +"))
+        .and_then(|(old, rest)| rest.split_once(" @@").map(|(new, _)| (old, new)))
+        .ok_or_else(|| GitError::Utf8("git returned an invalid diff hunk".to_owned()))?;
+    let (old_start, old_lines) = parse_line_range(ranges.0)?;
+    let (new_start, new_lines) = parse_line_range(ranges.1)?;
+
+    Ok(GitLineHunk::new(old_start, old_lines, new_start, new_lines))
+}
+
+fn parse_line_range(range: &str) -> Result<(u32, u32)> {
+    let (start, lines) = range.split_once(',').unwrap_or((range, "1"));
+    let invalid_hunk = || GitError::Utf8("git returned an invalid diff hunk".to_owned());
+
+    Ok((
+        start.parse().map_err(|_| invalid_hunk())?,
+        lines.parse().map_err(|_| invalid_hunk())?,
+    ))
+}
+
 fn normalize_path(path: &str) -> Result<String> {
     let path = path.trim();
 
@@ -1612,6 +1798,72 @@ mod tests {
         assert_eq!(status.changes[2].staged(), Some(GitChangeKind::Added));
         assert_eq!(status.changes[3].path(), "src/main.rs");
         assert_eq!(status.changes[3].unstaged(), Some(GitChangeKind::Modified));
+    }
+
+    #[test]
+    fn scopes_workspace_changes_to_a_nested_workspace() {
+        let root = test_directory("nested-workspace-status");
+        let workspace = root.join("packages/app");
+        fs::create_dir_all(&workspace).expect("workspace should be created");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(root.join("outside.txt"), "outside\n").expect("outside file should be written");
+        fs::write(workspace.join("inside.txt"), "inside\n").expect("inside file should be written");
+
+        let changes =
+            GitRepository::workspace_changes(&workspace).expect("workspace changes should load");
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path(), "inside.txt");
+        assert_eq!(changes[0].unstaged(), Some(GitChangeKind::Untracked));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parses_zero_context_diff_hunks() {
+        let hunks = parse_line_hunks(
+            b"diff --git a/file b/file\n@@ -2 +2,2 @@ context\n@@ -7,3 +8,0 @@ context\n",
+        )
+        .expect("diff hunks should parse");
+
+        assert_eq!(
+            hunks,
+            vec![GitLineHunk::new(2, 1, 2, 2), GitLineHunk::new(7, 3, 8, 0)]
+        );
+    }
+
+    #[test]
+    fn loads_all_lines_for_an_untracked_file() {
+        let root = test_directory("untracked-line-hunks");
+        let workspace = root.join("app");
+        fs::create_dir(&workspace).expect("workspace should be created");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(workspace.join("main.rs"), "first\nsecond\n").expect("file should be written");
+
+        let hunks =
+            GitRepository::file_line_hunks(&workspace, "main.rs").expect("line hunks should load");
+
+        assert_eq!(hunks, vec![GitLineHunk::new(0, 0, 1, 2)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loads_a_deletion_hunk_when_a_tracked_file_becomes_empty() {
+        let root = test_directory("empty-modified-line-hunks");
+        let path = root.join("main.rs");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(&path, "first\nsecond\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["main.rs".to_owned()]).expect("file should be staged");
+        commit(&root, "Initial");
+        fs::write(&path, "").expect("file should be emptied");
+
+        let hunks =
+            GitRepository::file_line_hunks(&root, "main.rs").expect("line hunks should load");
+
+        assert_eq!(hunks, vec![GitLineHunk::new(1, 2, 0, 0)]);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

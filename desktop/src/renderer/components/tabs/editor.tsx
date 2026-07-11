@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 
-import { getEditorDocument, saveEditorDocument } from "@/renderer/ipc";
+import { getEditorDocument, getEditorGitLineHunks, saveEditorDocument } from "@/renderer/ipc";
 import {
   getOrCreateEditorBuffer,
   reconcileEditorBuffer,
   type EditorBuffer,
 } from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
+import { editorGitDecorations } from "@/renderer/lib/editor-git-decorations";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
-import type { EditorDocument, TabId, WorkspaceId } from "@/shared/ipc";
+import type { EditorDocument, EditorGitLineHunk, TabId, WorkspaceId } from "@/shared/ipc";
 
 type EditorTabProps = {
   workspaceId: WorkspaceId;
@@ -26,6 +27,7 @@ type EditorLoadState =
       workspaceId: WorkspaceId;
       tabId: TabId;
       document: EditorDocument;
+      gitLineHunks: EditorGitLineHunk[];
     }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
 
@@ -68,18 +70,37 @@ export function EditorTab({ workspaceId, tabId, isActive, onActivatePane }: Edit
     }
 
     try {
-      const document = await getEditorDocument({
+      const params = {
         workspaceId: targetWorkspaceId,
         tabId: targetTabId,
-      });
+      };
+      const gitLineHunksRequest = getEditorGitLineHunks(params).catch(() => ({ hunks: [] }));
+      const document = await getEditorDocument(params);
 
       if (requestIdRef.current === requestId) {
-        setLoadState({
+        setLoadState((current) => ({
           status: "loaded",
           workspaceId: targetWorkspaceId,
           tabId: targetTabId,
           document,
-        });
+          gitLineHunks:
+            current.status === "loaded" &&
+            current.workspaceId === targetWorkspaceId &&
+            current.tabId === targetTabId
+              ? current.gitLineHunks
+              : [],
+        }));
+      }
+
+      const gitLineHunks = await gitLineHunksRequest;
+      if (requestIdRef.current === requestId) {
+        setLoadState((current) =>
+          current.status === "loaded" &&
+          current.workspaceId === targetWorkspaceId &&
+          current.tabId === targetTabId
+            ? { ...current, gitLineHunks: gitLineHunks.hunks }
+            : current,
+        );
       }
     } catch (caughtError: unknown) {
       if (requestIdRef.current === requestId) {
@@ -156,6 +177,7 @@ export function EditorTab({ workspaceId, tabId, isActive, onActivatePane }: Edit
           workspaceId={workspaceId}
           tabId={tabId}
           document={currentLoadState.document}
+          gitLineHunks={currentLoadState.gitLineHunks}
           isActive={isActive}
         />
       ) : null}
@@ -167,19 +189,23 @@ function LoadedEditor({
   workspaceId,
   tabId,
   document,
+  gitLineHunks,
   isActive,
 }: {
   workspaceId: WorkspaceId;
   tabId: TabId;
   document: EditorDocument;
+  gitLineHunks: EditorGitLineHunk[];
   isActive: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const bufferRef = useRef<EditorBuffer | null>(null);
   const saveRequestIdRef = useRef(0);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
+  const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
   const minimap = useSettingsStore((state) => editorSettings(state.snapshot).minimap);
   const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
 
@@ -218,6 +244,9 @@ function LoadedEditor({
       wordWrap: initialSettings.softWrap ? "on" : "off",
     });
     editorRef.current = editor;
+    decorationsRef.current = editor.createDecorationsCollection(
+      editorGitDecorations(gitLineHunks, model.getLineCount()),
+    );
     const updateDirtyState = () => {
       const isDirty = model.getValue() !== buffer.savedContent;
 
@@ -248,6 +277,7 @@ function LoadedEditor({
 
             buffer.savedContent = content;
             updateDirtyState();
+            bumpGitRevision(workspaceId);
           })
           .catch((caughtError: unknown) => {
             if (saveRequestIdRef.current === requestId) {
@@ -262,13 +292,15 @@ function LoadedEditor({
       saveRequestIdRef.current += 1;
       contentSubscription.dispose();
       saveAction.dispose();
+      decorationsRef.current?.clear();
+      decorationsRef.current = null;
       editor.dispose();
       editorRef.current = null;
       if (bufferRef.current === buffer) {
         bufferRef.current = null;
       }
     };
-  }, [workspaceId, tabId, document.path, setTabDirty]);
+  }, [workspaceId, tabId, document.path, bumpGitRevision, setTabDirty]);
 
   useEffect(() => {
     const buffer = bufferRef.current;
@@ -285,6 +317,15 @@ function LoadedEditor({
       return isDirty ? { status: "dirty" } : { status: "clean" };
     });
   }, [workspaceId, tabId, document.path, document.content, setTabDirty]);
+
+  useEffect(() => {
+    const buffer = bufferRef.current;
+    if (!buffer) {
+      return;
+    }
+
+    decorationsRef.current?.set(editorGitDecorations(gitLineHunks, buffer.model.getLineCount()));
+  }, [document.content, gitLineHunks]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({

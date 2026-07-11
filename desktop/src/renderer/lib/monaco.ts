@@ -104,6 +104,15 @@ export function applyMonacoTheme(): void {
   monaco.editor.setTheme(MONACO_THEME_NAME);
 }
 
+export function resolvedThemeColor(name: string): string {
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) {
+    throw new Error("Could not create a canvas context for the Monaco theme.");
+  }
+
+  return themeColor(context, getComputedStyle(document.documentElement), name);
+}
+
 function themeColor(
   context: CanvasRenderingContext2D,
   style: CSSStyleDeclaration,

@@ -1,5 +1,6 @@
 import type {
   EditorDocument,
+  EditorGitLineHunks,
   EditorTabParams,
   OpenEditorTabParams,
   SaveEditorDocumentParams,
@@ -16,6 +17,10 @@ export function openEditorTab(params: OpenEditorTabParams): Promise<WorkspaceLis
 
 export function getEditorDocument(params: EditorTabParams): Promise<EditorDocument> {
   return requestServer(DOMAIN, "document", params);
+}
+
+export function getEditorGitLineHunks(params: EditorTabParams): Promise<EditorGitLineHunks> {
+  return requestServer(DOMAIN, "gitLineHunks", params);
 }
 
 export function saveEditorDocument(params: SaveEditorDocumentParams): Promise<boolean> {

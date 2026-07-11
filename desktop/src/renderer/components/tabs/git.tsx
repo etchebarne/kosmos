@@ -90,6 +90,7 @@ import {
   TooltipTrigger,
 } from "@/renderer/components/ui/tooltip";
 import { errorMessage } from "@/renderer/lib/errors";
+import { pierreGitStatus } from "@/renderer/lib/git-status";
 import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   GitChange,
@@ -2205,25 +2206,7 @@ function gitStatusEntries(changes: GitChange[]): GitStatusEntry[] {
 }
 
 function gitStatus(change: GitChange): GitStatus {
-  return gitStatusFromKind(change.unstaged ?? change.staged ?? "modified");
-}
-
-function gitStatusFromKind(kind: GitChangeKind): GitStatus {
-  switch (kind) {
-    case "added":
-      return "added";
-    case "deleted":
-      return "deleted";
-    case "ignored":
-      return "ignored";
-    case "renamed":
-      return "renamed";
-    case "untracked":
-      return "untracked";
-    case "conflicted":
-    case "modified":
-      return "modified";
-  }
+  return pierreGitStatus(change.unstaged ?? change.staged ?? "modified");
 }
 
 function gitTreeCheckboxCss(): string {

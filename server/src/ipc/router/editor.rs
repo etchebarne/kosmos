@@ -1,7 +1,9 @@
 use core::tabs::editor::EditorError;
+use core::tabs::git::GitError;
 
 use super::super::messages::editor::{
-    EditorDocumentParams, EditorDocumentPayload, OpenEditorTabParams, SaveEditorDocumentParams,
+    EditorDocumentParams, EditorDocumentPayload, EditorGitLineHunksPayload, OpenEditorTabParams,
+    SaveEditorDocumentParams,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::{RouteDefinition, parse_params, workspace_list_response};
@@ -10,8 +12,30 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
     match action {
         "openTab" => Some(RouteDefinition::full(open_tab)),
         "document" => Some(RouteDefinition::external(document)),
+        "gitLineHunks" => Some(RouteDefinition::external(git_line_hunks)),
         "save" => Some(RouteDefinition::external(save)),
         _ => None,
+    }
+}
+
+fn git_line_hunks(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<EditorDocumentParams>(request) {
+        Ok(params) => match state
+            .editor_git_line_hunks(params.workspace_id.map(Into::into), params.tab_id.into())
+        {
+            Ok(hunks) => {
+                ServerMessage::ok(request.id, EditorGitLineHunksPayload::from_hunks(&hunks))
+            }
+            Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => {
+                ServerMessage::ok(request.id, EditorGitLineHunksPayload::empty())
+            }
+            Err(error) => ServerMessage::error(
+                request.id,
+                "editor.git_line_hunks_failed",
+                error.to_string(),
+            ),
+        },
+        Err(response) => response,
     }
 }
 

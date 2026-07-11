@@ -199,6 +199,7 @@ mod tests {
             Domain::FileTree,
             &[
                 "get",
+                "gitStatus",
                 "getChildren",
                 "createEntry",
                 "renameEntry",
@@ -221,7 +222,7 @@ mod tests {
         );
         assert_modes(
             Domain::Editor,
-            &["document", "save"],
+            &["document", "gitLineHunks", "save"],
             ExecutionMode::External,
         );
         assert_modes(

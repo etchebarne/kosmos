@@ -1,8 +1,10 @@
 use std::path::Path;
 
 use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError};
+use core::tabs::git::GitChange;
 use serde::{Deserialize, Serialize};
 
+use super::git::GitChangeKindPayload;
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +20,13 @@ pub(crate) struct GetFileTreeChildrenParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
     pub(crate) path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetFileTreeGitStatusParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +116,19 @@ pub(crate) struct FileTreeChildrenSnapshot {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct FileTreeGitStatusSnapshot {
+    entries: Vec<FileTreeGitStatusEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileTreeGitStatusEntry {
+    path: String,
+    status: GitChangeKindPayload,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeResolvedPath {
     path: String,
 }
@@ -158,6 +180,31 @@ impl FileTreeChildrenSnapshot {
                 .iter()
                 .map(|path| mapper.tree_path(path))
                 .collect(),
+        }
+    }
+}
+
+impl FileTreeGitStatusSnapshot {
+    pub(crate) fn from_changes(changes: &[GitChange], mapper: &FileTreePathMapper) -> Self {
+        Self {
+            entries: changes
+                .iter()
+                .filter_map(|change| {
+                    change
+                        .unstaged()
+                        .or(change.staged())
+                        .map(|status| FileTreeGitStatusEntry {
+                            path: mapper.tree_path(change.path()),
+                            status: status.into(),
+                        })
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
         }
     }
 }

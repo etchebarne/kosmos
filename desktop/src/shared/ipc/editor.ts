@@ -17,3 +17,14 @@ export type EditorDocument = {
   path: string;
   content: string;
 };
+
+export type EditorGitLineHunks = {
+  hunks: EditorGitLineHunk[];
+};
+
+export type EditorGitLineHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+};

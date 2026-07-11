@@ -7,6 +7,7 @@ import type {
   FileTreeDropResult,
   FileTreeItemHandle,
   FileTreeRenameEvent,
+  GitStatusEntry,
 } from "@pierre/trees";
 import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
 import { FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
@@ -32,11 +33,13 @@ import {
   deleteFileTreeEntries,
   getFileTree,
   getFileTreeChildren,
+  getFileTreeGitStatus,
   moveFileTreeEntries,
   renameFileTreeEntry,
   revealFileTreePath,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
+import { pierreGitStatus } from "@/renderer/lib/git-status";
 import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type { FileTreeEntryKind, FileTreeSnapshot, TabId, WorkspaceId } from "@/shared/ipc";
 
@@ -53,6 +56,7 @@ type FileTreeLoadState =
       workspaceId: WorkspaceId;
       tabId: TabId;
       snapshot: FileTreeSnapshot;
+      gitStatus: GitStatusEntry[];
       revision: number;
     }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
@@ -111,10 +115,19 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
     }
 
     try {
-      const snapshot = await getFileTree({ workspaceId: targetWorkspaceId, tabId: targetTabId });
+      const [snapshot, gitStatusSnapshot] = await Promise.all([
+        getFileTree({ workspaceId: targetWorkspaceId, tabId: targetTabId }),
+        getFileTreeGitStatus({ workspaceId: targetWorkspaceId, tabId: targetTabId }).catch(() => ({
+          entries: [],
+        })),
+      ]);
+      const gitStatus = gitStatusSnapshot.entries.map((entry) => ({
+        path: entry.path,
+        status: pierreGitStatus(entry.status),
+      }));
 
       if (requestIdRef.current === requestId) {
-        const signature = JSON.stringify(snapshot);
+        const signature = JSON.stringify({ snapshot, gitStatus });
         if (!forceUpdate && snapshotSignatureRef.current === signature) {
           return;
         }
@@ -126,6 +139,7 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
           workspaceId: targetWorkspaceId,
           tabId: targetTabId,
           snapshot,
+          gitStatus,
           revision: revisionRef.current,
         });
       }
@@ -192,6 +206,7 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
           workspaceId={workspaceId}
           tabId={tabId}
           snapshot={currentLoadState.snapshot}
+          gitStatus={currentLoadState.gitStatus}
           onReload={() => loadFileTree(workspaceId, tabId, false, true)}
         />
       ) : null}
@@ -203,11 +218,13 @@ function LoadedFileTree({
   workspaceId,
   tabId,
   snapshot,
+  gitStatus,
   onReload,
 }: {
   workspaceId: WorkspaceId;
   tabId: TabId;
   snapshot: FileTreeSnapshot;
+  gitStatus: GitStatusEntry[];
   onReload(): Promise<void>;
 }) {
   const openEditorTab = useWorkspaceStore((state) => state.openEditorTab);
@@ -271,6 +288,7 @@ function LoadedFileTree({
     },
     density: "compact",
     flattenEmptyDirectories: false,
+    gitStatus,
     initialExpandedPaths: snapshot.expandedPaths,
     initialExpansion: "closed",
     paths: snapshot.paths,

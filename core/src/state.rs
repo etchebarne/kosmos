@@ -11,8 +11,8 @@ use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
 use crate::tabs::git::{
-    GitDiff, GitDiffViewState, GitError, GitRemote, GitRepository, GitRepositorySnapshot, GitStash,
-    GitTag,
+    GitDiff, GitDiffViewState, GitError, GitLineHunk, GitRemote, GitRepository,
+    GitRepositorySnapshot, GitStash, GitTag,
 };
 use crate::tabs::terminal::{
     TerminalError, TerminalOutput, TerminalSessions, TerminalSize, available_shells,
@@ -466,6 +466,30 @@ impl State {
             .ok_or(EditorError::TabNotFound)?;
 
         save_document(workspace.directory(), view_state.path(), content)
+    }
+
+    pub fn editor_git_line_hunks(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Vec<GitLineHunk>, GitError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(GitError::WorkspaceNotFound)?;
+
+        if !self.is_editor_tab(workspace_id, tab_id) {
+            return Err(GitError::TabNotFound);
+        }
+
+        let view_state = self
+            .editor_view_state(workspace_id, tab_id)
+            .ok_or(GitError::TabNotFound)?;
+
+        GitRepository::file_line_hunks(workspace.directory(), view_state.path())
     }
 
     pub fn git_status(
@@ -2187,6 +2211,38 @@ mod tests {
             std::fs::read_to_string(root.join("notes.txt")).unwrap(),
             "after"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn editor_git_line_hunks_use_the_editor_view_path() {
+        let root = test_directory("editor-git-line-hunks");
+        std::fs::write(root.join("notes.txt"), "first\nsecond\n").unwrap();
+        GitRepository::init(&root).expect("repository should initialize");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "notes.txt")
+            .unwrap();
+
+        let hunks = state
+            .editor_git_line_hunks(Some(workspace_id), TabId::new(2))
+            .expect("editor line hunks should load");
+
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].new_start(), 1);
+        assert_eq!(hunks[0].new_lines(), 2);
+        assert!(matches!(
+            state.editor_git_line_hunks(Some(workspace_id), TabId::new(1)),
+            Err(GitError::TabNotFound)
+        ));
 
         let _ = std::fs::remove_dir_all(root);
     }

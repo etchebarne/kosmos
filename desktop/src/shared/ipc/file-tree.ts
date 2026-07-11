@@ -1,4 +1,5 @@
 import type { TabId, WorkspaceId } from "./ids";
+import type { GitChangeKind } from "./git";
 
 export type GetFileTreeParams = {
   workspaceId?: WorkspaceId | null;
@@ -9,6 +10,11 @@ export type GetFileTreeChildrenParams = {
   workspaceId?: WorkspaceId | null;
   tabId: TabId;
   path: string;
+};
+
+export type GetFileTreeGitStatusParams = {
+  workspaceId?: WorkspaceId | null;
+  tabId: TabId;
 };
 
 export type SetFileTreeExpandedPathsParams = {
@@ -68,4 +74,13 @@ export type FileTreeSnapshot = {
 export type FileTreeChildrenSnapshot = {
   paths: string[];
   deferredPaths: string[];
+};
+
+export type FileTreeGitStatusSnapshot = {
+  entries: FileTreeGitStatusEntry[];
+};
+
+export type FileTreeGitStatusEntry = {
+  path: string;
+  status: GitChangeKind;
 };
