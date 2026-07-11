@@ -3,6 +3,7 @@ import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { KosmosIpcDomain, KosmosIpcError, KosmosIpcRequest, KosmosIpcRequestResult } from "../../shared/ipc";
 import { errorMessage } from "../error-message";
 import { KosmosIpcRequestError, type KosmosServerClient } from "../server/client";
+import { setWindowZoomLevel } from "../window/shortcuts";
 
 const validDomains = new Set<KosmosIpcDomain>([
   "workspace",
@@ -58,6 +59,17 @@ export function registerIpcHandlers(serverClient: KosmosServerClient): void {
 
   ipcMain.handle("kosmos:window:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("kosmos:window:setZoomLevel", (event, zoomLevel: unknown) => {
+    if (typeof zoomLevel !== "number" || !Number.isFinite(zoomLevel)) {
+      throw new Error("Zoom level must be a finite number");
+    }
+
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) {
+      setWindowZoomLevel(window, zoomLevel);
+    }
   });
 
   ipcMain.handle("kosmos:revealPath", (_event, targetPath: unknown) => {

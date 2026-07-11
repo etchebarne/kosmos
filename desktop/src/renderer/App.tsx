@@ -2,11 +2,16 @@ import { useEffect } from "react";
 
 import { Header } from "@/renderer/components/internal/header";
 import { WorkspaceView } from "@/renderer/components/internal/workspace-view";
-import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
+import { findSetting, useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
+import { APPEARANCE_ZOOM_LEVEL } from "@/shared/ipc";
 
 export function App() {
   const initializeWorkspaces = useWorkspaceStore((state) => state.initializeWorkspaces);
   const initializeSettings = useSettingsStore((state) => state.initializeSettings);
+  const zoomLevel = useSettingsStore((state) => {
+    const value = findSetting(state.snapshot, APPEARANCE_ZOOM_LEVEL)?.value;
+    return typeof value === "number" ? value : null;
+  });
 
   useEffect(() => {
     void initializeWorkspaces();
@@ -15,6 +20,20 @@ export function App() {
   useEffect(() => {
     void initializeSettings();
   }, [initializeSettings]);
+
+  useEffect(() => {
+    if (zoomLevel !== null) {
+      void window.kosmos.setZoomLevel(zoomLevel);
+    }
+  }, [zoomLevel]);
+
+  useEffect(
+    () =>
+      window.kosmos.onZoomLevelChanged((nextZoomLevel) => {
+        useSettingsStore.getState().updateSetting(APPEARANCE_ZOOM_LEVEL, nextZoomLevel);
+      }),
+    [],
+  );
 
   useEffect(
     () =>

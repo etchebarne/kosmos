@@ -183,14 +183,14 @@ mod tests {
         ))
         .expect("settings should serialize");
 
-        assert_eq!(snapshot["categories"][0]["id"], "editor");
+        assert_eq!(snapshot["categories"][0]["id"], "appearance");
         assert_eq!(snapshot["categories"][0]["items"][0]["type"], "setting");
         assert_eq!(
             snapshot["categories"][0]["items"][0]["control"]["type"],
-            "switch"
+            "input"
         );
-        assert_eq!(snapshot["categories"][0]["items"][0]["value"], false);
-        assert_eq!(snapshot["categories"][0]["items"][0]["defaultValue"], false);
+        assert_eq!(snapshot["categories"][0]["items"][0]["value"], 100.0);
+        assert_eq!(snapshot["categories"][0]["items"][0]["defaultValue"], 100.0);
         assert!(snapshot["categories"][0]["items"][0]["default_value"].is_null());
     }
 

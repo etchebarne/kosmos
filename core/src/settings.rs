@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt;
 
+pub const APPEARANCE_ZOOM_LEVEL: &str = "appearance.zoomLevel";
 pub const EDITOR_SOFT_WRAP: &str = "editor.softWrap";
 pub const EDITOR_MINIMAP: &str = "editor.minimap";
 
@@ -85,15 +86,23 @@ pub enum SettingsError {
 
 impl Settings {
     pub fn categories(&self) -> Vec<SettingCategory> {
-        vec![SettingCategory {
-            id: "editor",
-            label: "Editor",
-            description: Some("Control how files are displayed in the editor."),
-            items: vec![
-                SettingItem::Setting(self.definition(EDITOR_SOFT_WRAP)),
-                SettingItem::Setting(self.definition(EDITOR_MINIMAP)),
-            ],
-        }]
+        vec![
+            SettingCategory {
+                id: "appearance",
+                label: "Appearance",
+                description: Some("Control how Kosmos looks on your screen."),
+                items: vec![SettingItem::Setting(self.definition(APPEARANCE_ZOOM_LEVEL))],
+            },
+            SettingCategory {
+                id: "editor",
+                label: "Editor",
+                description: Some("Control how files are displayed in the editor."),
+                items: vec![
+                    SettingItem::Setting(self.definition(EDITOR_SOFT_WRAP)),
+                    SettingItem::Setting(self.definition(EDITOR_MINIMAP)),
+                ],
+            },
+        ]
     }
 
     pub fn value(&self, id: &str) -> Option<SettingValue> {
@@ -252,6 +261,23 @@ impl fmt::Display for SettingsError {
 impl StdError for SettingsError {}
 
 fn setting_definition(id: &str) -> Option<SettingDefinition> {
+    if id == APPEARANCE_ZOOM_LEVEL {
+        return Some(SettingDefinition {
+            id: APPEARANCE_ZOOM_LEVEL,
+            label: "Zoom level (%)",
+            description: Some("Scale the entire interface. You can also use Ctrl/Cmd + and -."),
+            control: SettingControl::Input(SettingInput {
+                kind: SettingInputKind::Number,
+                placeholder: None,
+                min: Some(80.0),
+                max: Some(140.0),
+                step: Some(10.0),
+            }),
+            value: SettingValue::Number(100.0),
+            default_value: SettingValue::Number(100.0),
+        });
+    }
+
     let (label, description) = match id {
         EDITOR_SOFT_WRAP => (
             "Soft wrap",
@@ -314,13 +340,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_contains_editor_defaults_in_stable_order() {
+    fn catalog_contains_defaults_in_stable_order() {
         let settings = Settings::default();
         let categories = settings.categories();
 
-        assert_eq!(categories.len(), 1);
-        assert_eq!(categories[0].id(), "editor");
-        assert_eq!(categories[0].items().len(), 2);
+        assert_eq!(categories.len(), 2);
+        assert_eq!(categories[0].id(), "appearance");
+        assert_eq!(categories[0].items().len(), 1);
+        assert_eq!(categories[1].id(), "editor");
+        assert_eq!(categories[1].items().len(), 2);
+        assert_eq!(
+            settings.value(APPEARANCE_ZOOM_LEVEL),
+            Some(SettingValue::Number(100.0))
+        );
         assert_eq!(settings.boolean(EDITOR_SOFT_WRAP), Some(false));
         assert_eq!(settings.boolean(EDITOR_MINIMAP), Some(false));
     }

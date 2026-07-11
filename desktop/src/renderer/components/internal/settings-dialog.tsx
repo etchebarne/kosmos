@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { Minus, Plus } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
+import { ButtonGroup } from "@/renderer/components/ui/button-group";
 import {
   Dialog,
   DialogClose,
@@ -236,11 +238,71 @@ function SettingControl({
     );
   }
 
+  if (control.inputType === "number") {
+    const value = typeof setting.value === "number" ? setting.value : 0;
+    const step = control.step ?? 1;
+
+    return (
+      <ButtonGroup className="w-32 shrink-0" aria-label={setting.label}>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label={`Decrease ${setting.label}`}
+          disabled={control.min !== null && control.min !== undefined && value <= control.min}
+          onClick={() => onUpdate(clampNumber(value - step, control.min, control.max))}
+        >
+          <Minus />
+        </Button>
+        <input
+          key={`${setting.id}:${setting.value}`}
+          id={setting.id}
+          type="number"
+          defaultValue={value}
+          min={control.min ?? undefined}
+          max={control.max ?? undefined}
+          step={step}
+          data-slot="input"
+          className="h-8 min-w-0 flex-1 border border-input bg-transparent px-1 text-center text-sm font-medium tabular-nums outline-none [appearance:textfield] focus-visible:relative focus-visible:z-10 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+          onBlur={(event) => {
+            const enteredValue = event.currentTarget.valueAsNumber;
+            if (!Number.isFinite(enteredValue)) {
+              event.currentTarget.value = String(value);
+              return;
+            }
+
+            const nextValue = clampNumber(enteredValue, control.min, control.max);
+            if (nextValue !== value) {
+              onUpdate(nextValue);
+            } else {
+              event.currentTarget.value = String(value);
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label={`Increase ${setting.label}`}
+          disabled={control.max !== null && control.max !== undefined && value >= control.max}
+          onClick={() => onUpdate(clampNumber(value + step, control.min, control.max))}
+        >
+          <Plus />
+        </Button>
+      </ButtonGroup>
+    );
+  }
+
   return (
     <input
       key={`${setting.id}:${setting.value}`}
       id={setting.id}
-      type={control.inputType}
+      type="text"
       defaultValue={String(setting.value)}
       placeholder={control.placeholder ?? undefined}
       min={control.min ?? undefined}
@@ -248,15 +310,15 @@ function SettingControl({
       step={control.step ?? undefined}
       className="h-8 w-44 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
       onBlur={(event) => {
-        const value =
-          control.inputType === "number" ? event.currentTarget.valueAsNumber : event.currentTarget.value;
-        if (typeof value === "number" && !Number.isFinite(value)) {
-          return;
-        }
+        const value = event.currentTarget.value;
         if (value !== setting.value) {
           onUpdate(value);
         }
       }}
     />
   );
+}
+
+function clampNumber(value: number, min?: number | null, max?: number | null): number {
+  return Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, value));
 }

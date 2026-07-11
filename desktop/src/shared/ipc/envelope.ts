@@ -47,7 +47,9 @@ export type KosmosApi = {
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
+  setZoomLevel(zoomLevel: number): Promise<void>;
   revealPath(path: string): Promise<void>;
   onFlushState(callback: () => Promise<void>): () => void;
+  onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void;
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
 };

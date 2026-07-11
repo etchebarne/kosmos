@@ -82,7 +82,7 @@ mod tests {
                 .expect("response should contain ok")
         );
         assert_eq!(
-            response["result"]["categories"][0]["items"][0]["value"],
+            response["result"]["categories"][1]["items"][0]["value"],
             true
         );
         assert_eq!(

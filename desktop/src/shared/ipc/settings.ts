@@ -1,3 +1,5 @@
+export const APPEARANCE_ZOOM_LEVEL = "appearance.zoomLevel";
+
 export type SettingValue = boolean | string | number;
 
 export type SettingControl =

@@ -5,7 +5,7 @@ export type * from "./git";
 export type * from "./ids";
 export type * from "./pane";
 export type * from "./search";
-export type * from "./settings";
+export * from "./settings";
 export type * from "./tab";
 export type * from "./terminal";
 export type * from "./workspace";

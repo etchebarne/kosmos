@@ -15,7 +15,8 @@ export function registerWindowShortcuts(window: BrowserWindow): void {
 
     if (zoomAction) {
       event.preventDefault();
-      handleWindowZoom(window, zoomAction);
+      const zoomLevel = handleWindowZoom(window, zoomAction);
+      window.webContents.send("kosmos:window:zoomLevelChanged", zoomLevel);
       return;
     }
 
@@ -50,20 +51,25 @@ function uiZoomShortcutAction(input: Input): "in" | "out" | "reset" | undefined 
   return undefined;
 }
 
-function handleWindowZoom(window: BrowserWindow, action: "in" | "out" | "reset"): void {
-  if (action === "reset") {
-    window.webContents.setZoomFactor(DEFAULT_UI_ZOOM_FACTOR);
-    return;
-  }
-
-  adjustWindowZoom(window, action === "in" ? UI_ZOOM_STEP : -UI_ZOOM_STEP);
+export function setWindowZoomLevel(window: BrowserWindow, zoomLevel: number): void {
+  window.webContents.setZoomFactor(clampUiZoomFactor(zoomLevel / 100));
 }
 
-function adjustWindowZoom(window: BrowserWindow, delta: number): void {
+function handleWindowZoom(window: BrowserWindow, action: "in" | "out" | "reset"): number {
+  if (action === "reset") {
+    window.webContents.setZoomFactor(DEFAULT_UI_ZOOM_FACTOR);
+    return DEFAULT_UI_ZOOM_FACTOR * 100;
+  }
+
+  return adjustWindowZoom(window, action === "in" ? UI_ZOOM_STEP : -UI_ZOOM_STEP) * 100;
+}
+
+function adjustWindowZoom(window: BrowserWindow, delta: number): number {
   const currentZoomFactor = window.webContents.getZoomFactor();
   const nextZoomFactor = clampUiZoomFactor(currentZoomFactor + delta);
 
   window.webContents.setZoomFactor(nextZoomFactor);
+  return nextZoomFactor;
 }
 
 function clampUiZoomFactor(zoomFactor: number): number {

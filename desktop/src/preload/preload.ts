@@ -39,6 +39,9 @@ const kosmos: KosmosApi = {
   closeWindow(): Promise<void> {
     return ipcRenderer.invoke("kosmos:window:close") as Promise<void>;
   },
+  setZoomLevel(zoomLevel: number): Promise<void> {
+    return ipcRenderer.invoke("kosmos:window:setZoomLevel", zoomLevel) as Promise<void>;
+  },
   revealPath(path: string): Promise<void> {
     return ipcRenderer.invoke("kosmos:revealPath", path) as Promise<void>;
   },
@@ -49,6 +52,14 @@ const kosmos: KosmosApi = {
 
     ipcRenderer.on("kosmos:flushState", listener);
     return () => ipcRenderer.off("kosmos:flushState", listener);
+  },
+  onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void {
+    const listener = (_event: IpcRendererEvent, zoomLevel: number) => {
+      callback(zoomLevel);
+    };
+
+    ipcRenderer.on("kosmos:window:zoomLevelChanged", listener);
+    return () => ipcRenderer.off("kosmos:window:zoomLevelChanged", listener);
   },
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void {
     const listener = (_event: IpcRendererEvent, workspaceIds: WorkspaceId[]) => {
