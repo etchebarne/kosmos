@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::events::ToolingCapabilities;
 use crate::persistence::StateStore;
 
 use super::catalog::{
@@ -29,8 +30,8 @@ use super::{
     LanguageServerPosition, LanguageServerPrepareRename, LanguageServerRequestCancellation,
     LanguageServerRuntimeState, LanguageServerSignatureHelp, LanguageServerStatus,
     LanguageServerTextEdit, LanguageServerWorkspaceSymbol,
-    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, WorkspaceEditError,
-    WorkspaceEditOpenDocument, WorkspaceEditRoot,
+    LanguageServerWorkspaceSymbolResolveRequest, ResolvedToolingDocument, ResolvedToolingFeature,
+    StagedWorkspaceEdit, WorkspaceEditError, WorkspaceEditOpenDocument, WorkspaceEditRoot,
 };
 use crate::tree::WorkspaceId;
 
@@ -49,6 +50,7 @@ struct ManagerInner {
     runtime: Arc<LanguageServerRuntime>,
     workspace_edits: Arc<WorkspaceEditTransactions>,
     trusted_workspaces: Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    tooling: Arc<Mutex<ToolingCapabilities>>,
 }
 
 struct WorkerContext {
@@ -124,7 +126,9 @@ impl LanguageServerManager {
             WorkspaceEditTransactions::open(manager_store.clone())
                 .map_err(|error| LanguageServerError::Persistence(error.to_string()))?,
         );
-        let runtime = LanguageServerRuntime::new(Arc::clone(&workspace_edits));
+        let tooling = Arc::new(Mutex::new(ToolingCapabilities::default()));
+        let runtime =
+            LanguageServerRuntime::new(Arc::clone(&workspace_edits), Arc::clone(&tooling));
         let worker = WorkerContext {
             paths: paths.clone(),
             store,
@@ -140,6 +144,7 @@ impl LanguageServerManager {
                 runtime,
                 workspace_edits,
                 trusted_workspaces: Mutex::new(trusted_workspaces),
+                tooling,
             }),
         };
         thread::Builder::new()
@@ -159,6 +164,87 @@ impl LanguageServerManager {
 
     pub fn set_event_sink(&self, sink: Arc<dyn crate::events::CoreEventSink>) {
         self.inner.runtime.set_event_sink(sink);
+    }
+
+    pub(crate) fn set_tooling_capabilities(&self, tooling: ToolingCapabilities) {
+        *self
+            .inner
+            .tooling
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = tooling;
+    }
+
+    pub(crate) fn resolved_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        language_id: &str,
+    ) -> ResolvedToolingDocument {
+        let supported = self.supports_document(language_id);
+        let external_available = self
+            .inner
+            .runtime
+            .document_has_live_session(workspace_id, path);
+        let mut features = Vec::new();
+        for definition in language_servers_for_language(language_id) {
+            if !self
+                .inner
+                .runtime
+                .document_has_live_session_for(workspace_id, path, definition.id)
+            {
+                continue;
+            }
+            for feature in definition.features_for_language(language_id) {
+                if !self.inner.runtime.document_supports_feature(
+                    workspace_id,
+                    path,
+                    definition.id,
+                    *feature,
+                ) {
+                    continue;
+                }
+                if let Some(resolved) = features
+                    .iter_mut()
+                    .find(|resolved: &&mut ResolvedToolingFeature| resolved.feature == *feature)
+                {
+                    resolved.owners.push(definition.id.to_owned());
+                } else {
+                    features.push(ResolvedToolingFeature {
+                        feature: *feature,
+                        owners: vec![definition.id.to_owned()],
+                    });
+                }
+            }
+        }
+        ResolvedToolingDocument {
+            workspace_id,
+            path: path.to_owned(),
+            language_id: language_id.to_owned(),
+            supported,
+            external_available,
+            features,
+            formatter_id: None,
+        }
+    }
+
+    fn supports_document(&self, language_id: &str) -> bool {
+        let entries = self
+            .inner
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        language_servers_for_language(language_id).any(|definition| {
+            entries.get(definition.id).is_some_and(|entry| {
+                entry.selected_version.is_some()
+                    && entry.selected_version == entry.installed_version
+                    && installed_executable(
+                        &self.inner.paths,
+                        definition,
+                        entry.selected_version.as_deref(),
+                    )
+                    .is_some()
+            })
+        })
     }
 
     pub fn status(&self, server_id: &str) -> Result<LanguageServerStatus, LanguageServerError> {
@@ -1219,6 +1305,7 @@ mod tests {
                 runtime: Arc::clone(&fixture.worker.runtime),
                 workspace_edits: Arc::new(WorkspaceEditTransactions::new()),
                 trusted_workspaces: Mutex::new(std::collections::HashSet::new()),
+                tooling: Arc::new(Mutex::new(ToolingCapabilities::default())),
             }),
         };
         let recovered = manager.restart(fixture.definition.id).unwrap();
@@ -1303,6 +1390,31 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn resolved_tooling_keeps_a_valid_previous_selection_attachable_without_claiming_live_features()
+    {
+        let fixture = TestFixture::new("resolved-tooling-previous-selection");
+        let manager = fixture.manager();
+
+        let resolved = manager.resolved_document(WorkspaceId::new(1), "src/main.ts", "typescript");
+
+        assert!(resolved.supported);
+        assert!(!resolved.external_available);
+        assert!(resolved.features.is_empty());
+    }
+
+    #[test]
+    fn resolved_tooling_rejects_unsupported_documents() {
+        let fixture = TestFixture::new("resolved-tooling-unsupported-document");
+        let manager = fixture.manager();
+
+        let resolved = manager.resolved_document(WorkspaceId::new(1), "notes.txt", "plaintext");
+
+        assert!(!resolved.supported);
+        assert!(!resolved.external_available);
+        assert!(resolved.features.is_empty());
+    }
+
     struct TestFixture {
         root: PathBuf,
         paths: LanguageServerPaths,
@@ -1336,7 +1448,10 @@ mod tests {
                 paths: paths.clone(),
                 store: store.clone(),
                 entries,
-                runtime: LanguageServerRuntime::new(Arc::new(WorkspaceEditTransactions::new())),
+                runtime: LanguageServerRuntime::new(
+                    Arc::new(WorkspaceEditTransactions::new()),
+                    Arc::new(Mutex::new(ToolingCapabilities::default())),
+                ),
             };
             Self {
                 root,
@@ -1344,6 +1459,22 @@ mod tests {
                 store,
                 definition,
                 worker,
+            }
+        }
+
+        fn manager(&self) -> LanguageServerManager {
+            let (sender, _receiver) = mpsc::sync_channel(1);
+            LanguageServerManager {
+                inner: Arc::new(ManagerInner {
+                    paths: self.paths.clone(),
+                    store: self.store.clone(),
+                    entries: Arc::clone(&self.worker.entries),
+                    sender,
+                    runtime: Arc::clone(&self.worker.runtime),
+                    workspace_edits: Arc::new(WorkspaceEditTransactions::new()),
+                    trusted_workspaces: Mutex::new(std::collections::HashSet::new()),
+                    tooling: Arc::new(Mutex::new(ToolingCapabilities::default())),
+                }),
             }
         }
     }

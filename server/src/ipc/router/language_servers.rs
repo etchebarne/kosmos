@@ -17,6 +17,7 @@ use super::super::messages::language_servers::{
     LanguageServerWorkspaceSymbolsParams, OpenLanguageServerDocumentParams,
     ResolveLanguageServerCodeActionParams, ResolveLanguageServerCompletionParams,
     ResolveLanguageServerWorkspaceSymbolParams, ResolveWorkspaceEditRecoveryParams,
+    ResolvedToolingCapabilitiesParams, ResolvedToolingSnapshotPayload,
     SaveLanguageServerDocumentParams, StageLanguageServerCodeActionParams,
     StagedWorkspaceEditPayload, TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
     WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
@@ -29,6 +30,10 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<LanguageServerParams, LanguageServerSnapshot>(
         "status",
         RouteDefinition::snapshot(status),
+    ),
+    Route::new::<ResolvedToolingCapabilitiesParams, ResolvedToolingSnapshotPayload>(
+        "toolingCapabilities",
+        RouteDefinition::snapshot(tooling_capabilities),
     ),
     Route::new::<LanguageServerParams, LanguageServerSnapshot>(
         "install",
@@ -1011,6 +1016,20 @@ fn list(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     }
 }
 
+fn tooling_capabilities(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<ResolvedToolingCapabilitiesParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.resolved_tooling_capabilities(&params.into_core()) {
+        Ok(snapshot) => ServerMessage::ok(
+            request.id,
+            ResolvedToolingSnapshotPayload::from_core(snapshot),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
 fn status(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     let params = match parse_params::<LanguageServerParams>(request) {
         Ok(params) => params,
@@ -1080,6 +1099,24 @@ mod tests {
 
         assert_eq!(response["id"], 7);
         assert_eq!(response["error"]["code"], "language_servers.unavailable");
+    }
+
+    #[test]
+    fn tooling_capabilities_serializes_an_empty_snapshot_without_managers() {
+        let mut state = core::State::new();
+        let response = tooling_capabilities(
+            &mut state,
+            &RequestEnvelope {
+                id: 11,
+                domain: Domain::LanguageServers,
+                action: "toolingCapabilities".to_owned(),
+                params: serde_json::json!({ "documents": [] }),
+            },
+        );
+        let response = serde_json::to_value(response).expect("response should serialize");
+
+        assert_eq!(response["result"]["revision"], 0);
+        assert_eq!(response["result"]["documents"], serde_json::json!([]));
     }
 
     #[test]

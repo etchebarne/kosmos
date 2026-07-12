@@ -8581,6 +8581,157 @@
           "type": "object"
         }
       },
+      "toolingCapabilities": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "ResolvedToolingDocumentParams": {
+              "properties": {
+                "languageId": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "workspaceId": {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                }
+              },
+              "required": [
+                "languageId",
+                "path",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "documents": {
+              "items": {
+                "$ref": "#/definitions/ResolvedToolingDocumentParams"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "documents"
+          ],
+          "title": "ResolvedToolingCapabilitiesParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "LanguageToolFeaturePayload": {
+              "enum": [
+                "completion",
+                "hover",
+                "signatureHelp",
+                "navigation",
+                "references",
+                "symbols",
+                "diagnostics",
+                "colors",
+                "formatting",
+                "rename",
+                "codeActions"
+              ],
+              "type": "string"
+            },
+            "ResolvedToolingDocumentPayload": {
+              "properties": {
+                "externalAvailable": {
+                  "type": "boolean"
+                },
+                "features": {
+                  "items": {
+                    "$ref": "#/definitions/ResolvedToolingFeaturePayload"
+                  },
+                  "type": "array"
+                },
+                "formatterId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "languageId": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "supported": {
+                  "type": "boolean"
+                },
+                "workspaceId": {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                }
+              },
+              "required": [
+                "externalAvailable",
+                "features",
+                "languageId",
+                "path",
+                "supported",
+                "workspaceId",
+                "formatterId"
+              ],
+              "type": "object"
+            },
+            "ResolvedToolingFeaturePayload": {
+              "properties": {
+                "feature": {
+                  "$ref": "#/definitions/LanguageToolFeaturePayload"
+                },
+                "owners": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "feature",
+                "owners"
+              ],
+              "type": "object"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "documents": {
+              "items": {
+                "$ref": "#/definitions/ResolvedToolingDocumentPayload"
+              },
+              "type": "array"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "documents",
+            "revision"
+          ],
+          "title": "ResolvedToolingSnapshotPayload",
+          "type": "object"
+        }
+      },
       "trustWorkspace": {
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -15557,6 +15708,30 @@
         "event"
       ],
       "title": "LanguageServerStatusChangedNotification",
+      "type": "object"
+    },
+    "toolingCapabilitiesChanged": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "event": {
+          "const": "toolingCapabilitiesChanged"
+        },
+        "revision": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "notification"
+        }
+      },
+      "required": [
+        "revision",
+        "type",
+        "event"
+      ],
+      "title": "ToolingCapabilitiesChangedNotification",
       "type": "object"
     },
     "workspaceChanged": {

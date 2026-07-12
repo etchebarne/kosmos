@@ -11,7 +11,69 @@ pub struct LanguageServerDefinition {
     pub(crate) npm_packages: &'static [NpmPackage],
     pub(crate) executable: &'static str,
     pub(crate) launch_args: &'static [&'static str],
+    pub(crate) features: &'static [LanguageToolFeatureDefinition],
 }
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LanguageToolFeature {
+    Completion,
+    Hover,
+    SignatureHelp,
+    Navigation,
+    References,
+    Symbols,
+    Diagnostics,
+    Colors,
+    Formatting,
+    Rename,
+    CodeActions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LanguageToolFeatureDefinition {
+    language_id: &'static str,
+    features: &'static [LanguageToolFeature],
+}
+
+const TYPESCRIPT_FEATURES: &[LanguageToolFeature] = &[
+    LanguageToolFeature::Completion,
+    LanguageToolFeature::Hover,
+    LanguageToolFeature::SignatureHelp,
+    LanguageToolFeature::Navigation,
+    LanguageToolFeature::References,
+    LanguageToolFeature::Symbols,
+    LanguageToolFeature::Diagnostics,
+    LanguageToolFeature::Rename,
+    LanguageToolFeature::CodeActions,
+];
+const JSON_FEATURES: &[LanguageToolFeature] = &[
+    LanguageToolFeature::Completion,
+    LanguageToolFeature::Hover,
+    LanguageToolFeature::Symbols,
+    LanguageToolFeature::Diagnostics,
+    LanguageToolFeature::Colors,
+    LanguageToolFeature::Formatting,
+];
+const CSS_FEATURES: &[LanguageToolFeature] = &[
+    LanguageToolFeature::Completion,
+    LanguageToolFeature::Hover,
+    LanguageToolFeature::Navigation,
+    LanguageToolFeature::References,
+    LanguageToolFeature::Symbols,
+    LanguageToolFeature::Diagnostics,
+    LanguageToolFeature::Colors,
+    LanguageToolFeature::Formatting,
+    LanguageToolFeature::Rename,
+];
+const HTML_FEATURES: &[LanguageToolFeature] = &[
+    LanguageToolFeature::Completion,
+    LanguageToolFeature::Hover,
+    LanguageToolFeature::Symbols,
+    LanguageToolFeature::Diagnostics,
+    LanguageToolFeature::Colors,
+    LanguageToolFeature::Formatting,
+    LanguageToolFeature::Rename,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LanguageServerArtifact {
@@ -63,6 +125,7 @@ const CATALOG: &[LanguageServerDefinition] = &[
         npm_packages: &[],
         executable: "rust-analyzer",
         launch_args: &[],
+        features: &[],
     },
     LanguageServerDefinition {
         id: "typescript-language-server",
@@ -92,6 +155,16 @@ const CATALOG: &[LanguageServerDefinition] = &[
         ],
         executable: "node_modules/.bin/typescript-language-server",
         launch_args: &["--stdio"],
+        features: &[
+            LanguageToolFeatureDefinition {
+                language_id: "typescript",
+                features: TYPESCRIPT_FEATURES,
+            },
+            LanguageToolFeatureDefinition {
+                language_id: "javascript",
+                features: TYPESCRIPT_FEATURES,
+            },
+        ],
     },
     LanguageServerDefinition {
         id: "pyright",
@@ -114,6 +187,7 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/pyright-langserver",
         launch_args: &["--stdio"],
+        features: &[],
     },
     LanguageServerDefinition {
         id: "html-language-server",
@@ -130,6 +204,10 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/vscode-html-language-server",
         launch_args: &["--stdio"],
+        features: &[LanguageToolFeatureDefinition {
+            language_id: "html",
+            features: HTML_FEATURES,
+        }],
     },
     LanguageServerDefinition {
         id: "css-language-server",
@@ -146,6 +224,20 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/vscode-css-language-server",
         launch_args: &["--stdio"],
+        features: &[
+            LanguageToolFeatureDefinition {
+                language_id: "css",
+                features: CSS_FEATURES,
+            },
+            LanguageToolFeatureDefinition {
+                language_id: "scss",
+                features: CSS_FEATURES,
+            },
+            LanguageToolFeatureDefinition {
+                language_id: "less",
+                features: CSS_FEATURES,
+            },
+        ],
     },
     LanguageServerDefinition {
         id: "json-language-server",
@@ -162,6 +254,10 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/vscode-json-language-server",
         launch_args: &["--stdio"],
+        features: &[LanguageToolFeatureDefinition {
+            language_id: "json",
+            features: JSON_FEATURES,
+        }],
     },
     LanguageServerDefinition {
         id: "yaml-language-server",
@@ -178,6 +274,7 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/yaml-language-server",
         launch_args: &["--stdio"],
+        features: &[],
     },
     LanguageServerDefinition {
         id: "bash-language-server",
@@ -194,6 +291,7 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/bash-language-server",
         launch_args: &["start"],
+        features: &[],
     },
     LanguageServerDefinition {
         id: "tailwindcss-language-server",
@@ -227,6 +325,7 @@ const CATALOG: &[LanguageServerDefinition] = &[
         }],
         executable: "node_modules/.bin/tailwindcss-language-server",
         launch_args: &["--stdio"],
+        features: &[],
     },
 ];
 
@@ -258,6 +357,15 @@ pub(crate) fn current_artifact(
 }
 
 impl LanguageServerDefinition {
+    pub(crate) fn features_for_language(
+        &self,
+        language_id: &str,
+    ) -> &'static [LanguageToolFeature] {
+        self.features
+            .iter()
+            .find(|definition| definition.language_id == language_id)
+            .map_or(&[], |definition| definition.features)
+    }
     pub(crate) fn protocol_language_id<'a>(
         &self,
         language_id: &'a str,
@@ -362,5 +470,30 @@ mod tests {
             ids,
             vec!["typescript-language-server", "tailwindcss-language-server"]
         );
+    }
+
+    #[test]
+    fn resolved_tooling_catalog_features_preserve_every_existing_editor_mapping() {
+        let features = |server, language| {
+            language_server_definition(server)
+                .unwrap()
+                .features_for_language(language)
+                .to_vec()
+        };
+
+        assert_eq!(
+            features("typescript-language-server", "typescript"),
+            TYPESCRIPT_FEATURES
+        );
+        assert_eq!(
+            features("typescript-language-server", "javascript"),
+            TYPESCRIPT_FEATURES
+        );
+        assert_eq!(features("json-language-server", "json"), JSON_FEATURES);
+        assert_eq!(features("css-language-server", "css"), CSS_FEATURES);
+        assert_eq!(features("css-language-server", "scss"), CSS_FEATURES);
+        assert_eq!(features("css-language-server", "less"), CSS_FEATURES);
+        assert_eq!(features("html-language-server", "html"), HTML_FEATURES);
+        assert!(features("tailwindcss-language-server", "typescript").is_empty());
     }
 }

@@ -225,6 +225,13 @@ impl ResponseQueue {
                 } = &mut *state;
                 insert_server_signal(language_server_logs, language_server_log_order, server_id);
             }
+            core::events::CoreEvent::ToolingCapabilitiesChanged { revision } => {
+                state.tooling_capability_revision = Some(
+                    state
+                        .tooling_capability_revision
+                        .map_or(revision, |current| current.max(revision)),
+                );
+            }
         }
         drop(state);
         self.available.notify_one();
@@ -252,6 +259,7 @@ struct ResponseQueueState {
     language_server_status_order: VecDeque<String>,
     language_server_logs: HashSet<String>,
     language_server_log_order: VecDeque<String>,
+    tooling_capability_revision: Option<u64>,
 }
 
 impl Default for ResponseQueueState {
@@ -268,6 +276,7 @@ impl Default for ResponseQueueState {
             language_server_status_order: VecDeque::new(),
             language_server_logs: HashSet::new(),
             language_server_log_order: VecDeque::new(),
+            tooling_capability_revision: None,
         }
     }
 }
@@ -295,6 +304,9 @@ fn next_message(state: &mut ResponseQueueState) -> Option<ServerMessage> {
         if state.language_server_logs.remove(&server_id) {
             return Some(ServerMessage::language_server_log_available(server_id));
         }
+    }
+    if let Some(revision) = state.tooling_capability_revision.take() {
+        return Some(ServerMessage::tooling_capabilities_changed(revision));
     }
     if state.workspace_changes.is_empty() {
         return None;

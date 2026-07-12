@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::language_servers::{LanguageServerDiagnostic, StagedWorkspaceEdit};
@@ -18,6 +19,7 @@ pub enum CoreEvent {
     LanguageServerDiagnosticsChanged(LanguageServerDiagnosticsChanged),
     LanguageServerStatusChanged { server_id: String },
     LanguageServerLogAvailable { server_id: String },
+    ToolingCapabilitiesChanged { revision: u64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,5 +82,35 @@ impl CoreEventDispatcher {
             },
             |sink| sink.apply_workspace_edit(edit),
         )
+    }
+}
+
+/// Shares one monotonic revision across every source that can change document tooling.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ToolingCapabilities {
+    revision: Arc<AtomicU64>,
+    events: CoreEventDispatcher,
+}
+
+impl ToolingCapabilities {
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn changed(&self) -> u64 {
+        let revision = self
+            .revision
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_add(1)
+            })
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        self.events
+            .emit(CoreEvent::ToolingCapabilitiesChanged { revision });
+        revision
+    }
+
+    pub(crate) fn set_event_sink(&self, sink: Arc<dyn CoreEventSink>) {
+        self.events.set_sink(sink);
     }
 }

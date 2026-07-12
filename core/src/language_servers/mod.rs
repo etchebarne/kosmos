@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::tree::WorkspaceId;
 
-pub use catalog::{LanguageServerDefinition, language_server_catalog};
+pub use catalog::{LanguageServerDefinition, LanguageToolFeature, language_server_catalog};
 pub use edits::{
     StagedWorkspaceEdit, StagedWorkspaceEditDocument, StagedWorkspaceEditOperation,
     WorkspaceEditError, WorkspaceEditModelDirective, WorkspaceEditOpenDocument,
@@ -152,6 +152,38 @@ pub struct LanguageServerStatus {
     pub runtime_error: Option<LanguageServerFailure>,
     pub logs: Vec<LanguageServerLog>,
     pub supported: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedToolingDocumentRequest {
+    pub workspace_id: WorkspaceId,
+    pub path: String,
+    pub language_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedToolingSnapshot {
+    pub revision: u64,
+    pub documents: Vec<ResolvedToolingDocument>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedToolingDocument {
+    pub workspace_id: WorkspaceId,
+    pub path: String,
+    pub language_id: String,
+    /// A configured tool can attach this document, even before its LSP session is live.
+    pub supported: bool,
+    /// A live LSP session is bound to this exact document.
+    pub external_available: bool,
+    pub features: Vec<ResolvedToolingFeature>,
+    pub formatter_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedToolingFeature {
+    pub feature: LanguageToolFeature,
+    pub owners: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

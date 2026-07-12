@@ -8,7 +8,6 @@ import {
   uninstallLanguageServer as uninstallLanguageServerIpc,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
-import { applyLanguageServerStatus } from "@/renderer/lib/language-client";
 import {
   languageServerOperationInProgress,
   pendingServersAfterStatus,
@@ -89,7 +88,6 @@ export const useLanguageServerStore = create<LanguageServerStore>((set, get) => 
           servers: replaceServer(state.servers, status),
           pendingServerIds: pendingServersAfterStatus(state.pendingServerIds, status),
         }));
-        applyLanguageServerStatus(status);
         if (languageServerOperationInProgress(status)) {
           scheduleStatusRefresh(serverId);
         }
@@ -119,7 +117,6 @@ export const useLanguageServerStore = create<LanguageServerStore>((set, get) => 
       set({ servers: snapshot.servers });
       snapshot.servers.forEach((server) => {
         clearStatusRetry(server.id);
-        applyLanguageServerStatus(server);
       });
       set({
         pendingServerIds: Object.fromEntries(
@@ -155,7 +152,6 @@ export const useLanguageServerStore = create<LanguageServerStore>((set, get) => 
     void action({ serverId })
       .then((status) => {
         set((state) => ({ servers: replaceServer(state.servers, status) }));
-        applyLanguageServerStatus(status);
         set((state) => ({
           pendingServerIds: pendingServersAfterStatus(state.pendingServerIds, status),
         }));

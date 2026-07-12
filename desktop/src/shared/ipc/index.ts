@@ -124,6 +124,7 @@ export type KosmosServerNotification =
   | Generated.LanguageServerDiagnosticsResyncNotification
   | Generated.LanguageServerStatusChangedNotification
   | Generated.LanguageServerLogAvailableNotification
+  | Generated.ToolingCapabilitiesChangedNotification
   | (Generated.LanguageServerApplyEditNotification & { edit: StagedWorkspaceEdit })
   | Generated.LanguageServerApplyEditCancelledNotification;
 export type KosmosServerMessage = KosmosServerResponse | KosmosServerNotification;

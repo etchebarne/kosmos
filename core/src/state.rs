@@ -17,8 +17,9 @@ use crate::language_servers::{
     LanguageServerManager, LanguageServerPosition, LanguageServerPrepareRename,
     LanguageServerRequestCancellation, LanguageServerSignatureHelp, LanguageServerStatus,
     LanguageServerTextEdit, LanguageServerWorkspaceSymbol,
-    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, StagedWorkspaceEditOperation,
-    WorkspaceEditError, WorkspaceEditRoot,
+    LanguageServerWorkspaceSymbolResolveRequest, LanguageToolFeature, ResolvedToolingDocument,
+    ResolvedToolingDocumentRequest, ResolvedToolingFeature, ResolvedToolingSnapshot,
+    StagedWorkspaceEdit, StagedWorkspaceEditOperation, WorkspaceEditError, WorkspaceEditRoot,
 };
 use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
@@ -61,6 +62,7 @@ pub struct State {
     instance_id: u64,
     persistent_revision: u64,
     persistence_scope: PersistenceScope,
+    tooling_capabilities: crate::events::ToolingCapabilities,
 }
 
 #[derive(Clone, Debug)]
@@ -266,16 +268,19 @@ impl State {
             .map(Workspace::id)
             .collect::<HashSet<_>>();
         manager.retain_workspaces(&workspace_ids);
+        manager.set_tooling_capabilities(self.tooling_capabilities.clone());
         self.language_server_manager = Some(manager);
     }
 
     pub fn set_event_sink(&self, sink: Arc<dyn crate::events::CoreEventSink>) {
+        self.tooling_capabilities.set_event_sink(Arc::clone(&sink));
         if let Some(manager) = &self.language_server_manager {
             manager.set_event_sink(sink);
         }
     }
 
     pub fn attach_formatter_manager(&mut self, manager: FormatterManager) {
+        manager.set_tooling_capabilities(self.tooling_capabilities.clone());
         self.formatter_manager = Some(manager);
     }
 
@@ -325,6 +330,66 @@ impl State {
             .as_ref()
             .map(LanguageServerManager::list)
             .ok_or(LanguageServerError::ManagerUnavailable)
+    }
+
+    pub fn resolved_tooling_capabilities(
+        &self,
+        documents: &[ResolvedToolingDocumentRequest],
+    ) -> Result<ResolvedToolingSnapshot, LanguageServerError> {
+        const MAX_DOCUMENTS: usize = 256;
+        if documents.len() > MAX_DOCUMENTS {
+            return Err(LanguageServerError::InvalidDocument(format!(
+                "tooling capability snapshots support at most {MAX_DOCUMENTS} documents"
+            )));
+        }
+        let documents = documents
+            .iter()
+            .map(|document| self.resolved_tooling_document(document))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ResolvedToolingSnapshot {
+            revision: self.tooling_capabilities.revision(),
+            documents,
+        })
+    }
+
+    fn resolved_tooling_document(
+        &self,
+        request: &ResolvedToolingDocumentRequest,
+    ) -> Result<ResolvedToolingDocument, LanguageServerError> {
+        if self.workspaces.workspace(request.workspace_id).is_none() {
+            return Err(LanguageServerError::InvalidDocument(
+                "workspace does not exist".to_owned(),
+            ));
+        }
+        let path = normalize_editor_path(&request.path)
+            .map_err(|error| LanguageServerError::InvalidDocument(error.to_string()))?;
+        let mut document = self.language_server_manager.as_ref().map_or_else(
+            || ResolvedToolingDocument {
+                workspace_id: request.workspace_id,
+                path: path.clone(),
+                language_id: request.language_id.clone(),
+                supported: false,
+                external_available: false,
+                features: Vec::new(),
+                formatter_id: None,
+            },
+            |manager| manager.resolved_document(request.workspace_id, &path, &request.language_id),
+        );
+        let formatter_id = self.formatter_manager.as_ref().and_then(|manager| {
+            manager.applicable_formatter(&request.language_id, Path::new(&path))
+        });
+        if let Some(formatter_id) = formatter_id {
+            document.supported = true;
+            document
+                .features
+                .retain(|feature| feature.feature != LanguageToolFeature::Formatting);
+            document.features.push(ResolvedToolingFeature {
+                feature: LanguageToolFeature::Formatting,
+                owners: vec![formatter_id.clone()],
+            });
+            document.formatter_id = Some(formatter_id);
+        }
+        Ok(document)
     }
 
     pub fn language_server_status(
@@ -1446,6 +1511,7 @@ impl State {
                 instance_id: self.instance_id,
                 persistent_revision: self.persistent_revision,
                 persistence_scope: self.persistence_scope,
+                tooling_capabilities: self.tooling_capabilities.clone(),
             },
             source_instance_id: self.instance_id,
             source_revision: self.persistent_revision,
@@ -2928,6 +2994,7 @@ impl State {
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
             persistence_scope: PersistenceScope::Clean,
+            tooling_capabilities: crate::events::ToolingCapabilities::default(),
         })
     }
 }
@@ -3150,6 +3217,7 @@ impl Default for State {
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
             persistence_scope: PersistenceScope::Clean,
+            tooling_capabilities: crate::events::ToolingCapabilities::default(),
         }
     }
 }

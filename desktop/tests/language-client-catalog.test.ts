@@ -1,122 +1,63 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  activePrimaryFeatures,
-  activeSelectedInstallation,
-  activeExternalLanguages,
+  acceptsToolingRevision,
   documentAttachmentAction,
-  documentIsSupported,
   discoverProviderLanguages,
-  formatterApplies,
+  monacoFeatures,
 } from "@/renderer/lib/language-client-catalog";
-import type { LanguageServerSnapshot } from "@/shared/ipc";
+import type { ResolvedToolingDocumentPayload } from "@/shared/ipc";
 
-function server(
-  id: string,
-  languageIds: string[],
-  selectedVersion: string | null = "1",
-  installedVersion: string | null = selectedVersion,
-): LanguageServerSnapshot {
+function document(
+  languageId: string,
+  features: ResolvedToolingDocumentPayload["features"] = [],
+  supported = true,
+): ResolvedToolingDocumentPayload {
   return {
-    id,
-    name: id,
-    description: "",
-    languages: languageIds,
-    languageIds,
-    catalogVersion: "2",
-    selectedVersion,
-    installedVersion,
-    installationState: "failed",
-    lastError: null,
-    runtimeState: "running",
-    sessionCount: 0,
-    workspaceCount: 0,
-    runtimeError: null,
-    logs: [],
-    supported: true,
+    workspaceId: 1,
+    path: `src/example.${languageId}`,
+    languageId,
+    supported,
+    externalAvailable: true,
+    features,
+    formatterId: null,
   };
 }
 
-describe("language client catalog", () => {
-  test("discovers provider languages once across refreshes", () => {
+describe("language client capability adapters", () => {
+  test("discovers provider languages once from supplied projections", () => {
     const registered = new Set<string>();
     expect(
       discoverProviderLanguages(registered, [
-        server("one", ["typescript", "javascript"]),
-        server("two", ["typescript"]),
+        document("typescript"),
+        document("javascript"),
+        document("typescript"),
       ]),
     ).toEqual(["typescript", "javascript"]);
-    expect(discoverProviderLanguages(registered, [server("three", ["javascript", "json"])]))
+    expect(discoverProviderLanguages(registered, [document("javascript"), document("json")]))
       .toEqual(["json"]);
   });
 
-  test("keeps failed old selections active and excludes additive Tailwind overlap", () => {
-    const typescript = server("typescript-language-server", ["typescript", "javascript"]);
-    const tailwind = server("tailwindcss-language-server", ["typescript", "html"]);
-    const features = activePrimaryFeatures([typescript, tailwind]);
-
-    expect(activeSelectedInstallation(typescript)).toBe("1");
-    expect(features.get("typescript")).toEqual(
-      new Set([
-        "completionItems",
-        "hovers",
-        "signatureHelp",
-        "definitions",
-        "references",
-        "documentSymbols",
-        "diagnostics",
-        "rename",
-        "codeActions",
-      ]),
-    );
-    expect(features.has("html")).toBe(false);
-  });
-
-  test("requires the selected installation to be valid before suppressing Monaco", () => {
-    const updatingInitialInstall = server(
-      "json-language-server",
-      ["json"],
-      null,
-      null,
-    );
-    const mismatched = server("css-language-server", ["css"], "2", "1");
-
-    expect(activeSelectedInstallation(updatingInitialInstall)).toBeNull();
-    expect(activePrimaryFeatures([updatingInitialInstall, mismatched]).size).toBe(0);
-  });
-
-  test("restores built-ins and disables external providers when the runtime is unavailable", () => {
-    const running = server("typescript-language-server", ["typescript"]);
-    const restarting = { ...running, runtimeState: "restarting" as const };
-    const crashed = { ...running, runtimeState: "crashed" as const };
-    const inactive = { ...running, runtimeState: "inactive" as const };
-    const degraded = { ...running, runtimeState: "degraded" as const, sessionCount: 2 };
-
-    expect(activePrimaryFeatures([running]).get("typescript")?.has("rename")).toBe(true);
-    expect(activePrimaryFeatures([running]).get("typescript")?.has("codeActions")).toBe(true);
-    expect(activePrimaryFeatures([restarting]).has("typescript")).toBe(true);
-    expect(activePrimaryFeatures([degraded]).has("typescript")).toBe(true);
-    expect(activeExternalLanguages([degraded]).has("typescript")).toBe(true);
-    expect(activePrimaryFeatures([crashed, inactive]).size).toBe(0);
-    expect(activeExternalLanguages([crashed, inactive]).size).toBe(0);
-  });
-
-  test("only installed formatters attach applicable language or path documents", () => {
-    const formatter = {
-      installedVersion: "1",
-      installationState: "installed" as const,
-      languageIds: ["typescript"],
-      extensions: [".astro"],
-      filenames: ["Makefile"],
-    };
-    expect(formatterApplies(formatter, "typescript", "src/main.ts")).toBe(true);
-    expect(formatterApplies(formatter, "plaintext", "src/page.astro")).toBe(true);
-    expect(formatterApplies(formatter, "plaintext", "Makefile")).toBe(true);
-    expect(formatterApplies({ ...formatter, installedVersion: null }, "typescript", "x.ts")).toBe(false);
+  test("adapts transport-neutral capabilities to Monaco features", () => {
     expect(
-      formatterApplies({ ...formatter, installationState: "uninstalling" }, "typescript", "x.ts"),
-    ).toBe(false);
-    expect(documentIsSupported(new Set(), [formatter as never], "plaintext", "page.astro")).toBe(true);
+      monacoFeatures(document("typescript", [
+        { feature: "completion", owners: ["server"] },
+        { feature: "navigation", owners: ["server"] },
+        { feature: "formatting", owners: ["formatter"] },
+      ])),
+    ).toEqual(new Set(["completionItems", "definitions", "documentFormattingEdits"]));
+  });
+
+  test("does not register providers for unsupported documents", () => {
+    const registered = new Set<string>();
+    expect(discoverProviderLanguages(registered, [document("plaintext", [], false)])).toEqual([]);
+  });
+
+  test("applies only newer capability revisions for an existing document", () => {
+    expect(acceptsToolingRevision(undefined, 1)).toBe(true);
+    expect(acceptsToolingRevision(4, 5)).toBe(true);
+    expect(acceptsToolingRevision(4, 4)).toBe(false);
+    expect(acceptsToolingRevision(4, 3)).toBe(false);
   });
 
   test("attachment reconciliation is bidirectional", () => {

@@ -37,6 +37,8 @@ import type {
   WorkspaceEditTransactionParams,
   WorkspaceEditTransactionStatus,
   WorkspaceEditRecovery,
+  ResolvedToolingCapabilitiesParams,
+  ResolvedToolingSnapshotPayload,
 } from "@/shared/ipc";
 
 import { requestServer, type RequestCancellation } from "./transport";
@@ -69,6 +71,12 @@ export function restartLanguageServer(
   params: LanguageServerParams,
 ): Promise<LanguageServerSnapshot> {
   return requestServer(DOMAIN, "restart", params);
+}
+
+export function getResolvedToolingCapabilities(
+  params: ResolvedToolingCapabilitiesParams,
+): Promise<ResolvedToolingSnapshotPayload> {
+  return requestServer(DOMAIN, "toolingCapabilities", params);
 }
 
 export function openLanguageServerDocument(

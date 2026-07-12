@@ -16,10 +16,8 @@ import {
   getLanguageServerImplementations,
   getLanguageServerReferences,
   getLanguageServerDocumentSymbols,
-  getLanguageServerStatus,
   isRequestCancelledError,
-  listFormatters,
-  listLanguageServers,
+  getResolvedToolingCapabilities,
   listWorkspaceEditRecoveries,
   openLanguageServerDocument,
   resolveLanguageServerCompletion,
@@ -34,11 +32,11 @@ import {
   trustLanguageServerWorkspace,
 } from "@/renderer/ipc";
 import type {
-  FormatterSnapshot,
   LanguageServerCompletionItem,
   LanguageServerDiagnosticsChanged,
   LanguageServerRange,
-  LanguageServerSnapshot,
+  ResolvedToolingDocumentPayload,
+  ResolvedToolingSnapshotPayload,
   TabId,
   WorkspaceId,
   LanguageServerDocumentSymbol,
@@ -58,12 +56,10 @@ import {
 } from "monaco-editor/esm/vs/editor/editor.main.js";
 
 import {
-  activePrimaryFeatures,
-  activeSelectedInstallation,
-  activeExternalLanguages,
+  acceptsToolingRevision,
   documentAttachmentAction,
-  documentIsSupported,
   discoverProviderLanguages,
+  monacoFeatures,
   type MonacoLanguageFeature,
 } from "./language-client-catalog";
 import { isCurrentDiagnostics } from "./language-diagnostics";
@@ -183,20 +179,10 @@ const originalCssMode = { ...monacoCss.cssDefaults.modeConfiguration };
 const originalScssMode = { ...monacoCss.scssDefaults.modeConfiguration };
 const originalLessMode = { ...monacoCss.lessDefaults.modeConfiguration };
 const originalHtmlMode = { ...monacoHtml.htmlDefaults.modeConfiguration };
-const languageServerStatuses = new Map<string, LanguageServerSnapshot>();
-const activeServerInstallations = new Map<string, string | null>();
 const registeredProviderLanguages = new Set<string>();
 let suppressedLanguageFeatures = new Map<string, ReadonlySet<MonacoLanguageFeature>>();
-let availableExternalLanguages = new Set<string>();
-type DocumentSupport = {
-  languages: Set<string>;
-  formatters: FormatterSnapshot[];
-};
-
-let documentSupport: DocumentSupport = {
-  languages: new Set(),
-  formatters: [],
-};
+const toolingDocuments = new Map<string, { revision: number; document: ResolvedToolingDocumentPayload }>();
+const diagnosticOwners = new Set<string>();
 let catalogRetryTimer: number | null = null;
 let nextGeneration = randomGenerationSeed();
 let initialized = false;
@@ -225,10 +211,8 @@ export function initializeLanguageClient(): void {
       applyLanguageServerDiagnosticsChanged(notification);
     } else if (notification.event === "languageServerDiagnosticsResync") {
       void refreshDiagnosticsAfterReconnect();
-    } else if (notification.event === "languageServerStatusChanged") {
-      void getLanguageServerStatus({ serverId: notification.serverId })
-        .then(applyLanguageServerStatus)
-        .catch(() => scheduleCatalogRefresh());
+    } else if (notification.event === "toolingCapabilitiesChanged") {
+      void refreshLanguageClientCatalog();
     } else if (notification.event === "languageServerApplyEdit") {
       handleServerWorkspaceEdit(notification);
     } else if (notification.event === "languageServerApplyEditCancelled") {
@@ -344,22 +328,22 @@ async function undoCancelledWorkspaceEdit(token: string, id: number): Promise<vo
 }
 
 const requestCatalogRefresh = createQueuedRefresh(async () => {
-  await Promise.all([listLanguageServers(), listFormatters()])
-    .then(([snapshot, formatterSnapshot]) => {
+  await getResolvedToolingCapabilities({
+    documents: [...documentCandidates.values()]
+      .filter((candidate) => !candidate.disposed)
+      .map((candidate) => ({
+        workspaceId: candidate.workspaceId,
+        path: candidate.path,
+        languageId: candidate.model.getLanguageId(),
+      })),
+  })
+    .then((snapshot) => {
       if (catalogRetryTimer !== null) {
         window.clearTimeout(catalogRetryTimer);
         catalogRetryTimer = null;
       }
-      const languages = new Set(
-        snapshot.servers
-          .filter((server) => activeSelectedInstallation(server) !== null)
-          .flatMap((server) => server.languageIds),
-      );
-      const installedFormatters = formatterSnapshot.formatters.filter(
-        (formatter) =>
-          formatter.installedVersion !== null && formatter.installationState !== "uninstalling",
-      );
-      for (const language of discoverProviderLanguages(registeredProviderLanguages, snapshot.servers)) {
+      applyResolvedToolingSnapshot(snapshot);
+      for (const language of discoverProviderLanguages(registeredProviderLanguages, snapshot.documents)) {
         monaco.languages.registerHoverProvider(
           { language, scheme: "kosmos" },
           {
@@ -595,11 +579,8 @@ const requestCatalogRefresh = createQueuedRefresh(async () => {
         );
         registerReadOnlyLanguageProviders(language);
       }
-      for (const server of snapshot.servers) {
-        applyLanguageServerStatus(server);
-      }
-      documentSupport = { languages, formatters: installedFormatters };
       reconcileDocumentAttachments();
+      synchronizeMonacoLanguageFeatures();
     })
     .catch(() => {
       scheduleCatalogRefresh();
@@ -608,6 +589,29 @@ const requestCatalogRefresh = createQueuedRefresh(async () => {
 
 export function refreshLanguageClientCatalog(): Promise<void> {
   return requestCatalogRefresh();
+}
+
+function applyResolvedToolingSnapshot(snapshot: ResolvedToolingSnapshotPayload): void {
+  for (const document of snapshot.documents) {
+    const key = toolingDocumentKey(document.workspaceId, document.path, document.languageId);
+    const current = toolingDocuments.get(key);
+    if (!acceptsToolingRevision(current?.revision, snapshot.revision)) {
+      continue;
+    }
+    toolingDocuments.set(key, { revision: snapshot.revision, document });
+  }
+}
+
+function toolingDocumentFor(
+  document: Pick<LanguageDocumentCandidate, "workspaceId" | "path" | "model">,
+): ResolvedToolingDocumentPayload | null {
+  return toolingDocuments.get(
+    toolingDocumentKey(document.workspaceId, document.path, document.model.getLanguageId()),
+  )?.document ?? null;
+}
+
+function toolingDocumentKey(workspaceId: WorkspaceId, path: string, languageId: string): string {
+  return `${workspaceId}\u0000${path}\u0000${languageId}`;
 }
 
 function registerReadOnlyLanguageProviders(language: string): void {
@@ -1243,7 +1247,7 @@ async function requestCurrentDocumentFeature<T>(
     !document ||
     document.disposed ||
     token.isCancellationRequested ||
-    !availableExternalLanguages.has(model.getLanguageId())
+    !externalLanguageAvailable(document)
   ) {
     return null;
   }
@@ -1357,50 +1361,6 @@ function scheduleCatalogRefresh(): void {
     catalogRetryTimer = null;
     void refreshLanguageClientCatalog();
   }, BINDING_RETRY_DELAY_MS);
-}
-
-export function applyLanguageServerStatus(server: LanguageServerSnapshot): void {
-  languageServerStatuses.set(server.id, server);
-  const activeInstallation = activeSelectedInstallation(server);
-  const previousInstallation = activeServerInstallations.get(server.id) ?? null;
-  activeServerInstallations.set(server.id, activeInstallation);
-  availableExternalLanguages = activeExternalLanguages(languageServerStatuses.values());
-  synchronizeMonacoLanguageFeatures();
-  if (
-    activeInstallation === null ||
-    server.runtimeState === "crashed" ||
-    server.runtimeState === "restarting"
-  ) {
-    for (const document of documents.values()) {
-      if (server.languageIds.includes(document.model.getLanguageId())) {
-        monaco.editor.setModelMarkers(document.model, diagnosticOwner(server.id), []);
-      }
-    }
-  }
-  if (server.languageIds.some((language) => !registeredProviderLanguages.has(language))) {
-    void refreshLanguageClientCatalog();
-  }
-  if (activeInstallation === previousInstallation) {
-    return;
-  }
-  for (const document of documents.values()) {
-    if (!server.languageIds.includes(document.model.getLanguageId())) {
-      continue;
-    }
-    document.connectionEpoch += 1;
-    if (document.bindingRetryTimer !== null) {
-      window.clearTimeout(document.bindingRetryTimer);
-      document.bindingRetryTimer = null;
-    }
-    if (activeInstallation !== null) {
-      document.opened = false;
-      enqueue(document, () => ensureOpen(document));
-    } else {
-      document.opened = false;
-      clearLanguageServerMarkers(document.model);
-      enqueue(document, () => ensureOpen(document));
-    }
-  }
 }
 
 export async function formatLanguageDocument(
@@ -1518,6 +1478,10 @@ export function attachLanguageDocument(
     dispose() {
       candidate.disposed = true;
       candidate.activeHandle?.dispose();
+      toolingDocuments.delete(
+        toolingDocumentKey(workspaceId, path, model.getLanguageId()),
+      );
+      synchronizeMonacoLanguageFeatures();
       if (documentCandidates.get(key) === candidate) {
         documentCandidates.delete(key);
       }
@@ -1535,12 +1499,11 @@ function attachCandidate(candidate: LanguageDocumentCandidate): void {
   if (candidate.disposed) {
     return;
   }
-  const supported = documentIsSupported(
-    documentSupport.languages,
-    documentSupport.formatters,
-    candidate.model.getLanguageId(),
-    candidate.path,
-  );
+  const projection = toolingDocumentFor(candidate);
+  const supported = projection?.supported === true;
+  if (!projection) {
+    void refreshLanguageClientCatalog();
+  }
   const action = documentAttachmentAction(Boolean(candidate.activeHandle), supported);
   if (action === "detach") {
     candidate.activeHandle?.dispose();
@@ -1662,6 +1625,7 @@ async function ensureOpen(document: LanguageDocument): Promise<void> {
     scheduleBindingRetry(document, connectionEpoch);
   }
   activateExternalLanguageFeatures(document.model);
+  void refreshLanguageClientCatalog();
   void refreshDocumentDiagnostics(document);
 }
 
@@ -1775,6 +1739,7 @@ export function applyLanguageServerDiagnosticsChanged(
   if (!document || !isCurrentDiagnostics(event, document)) {
     return false;
   }
+  diagnosticOwners.add(event.serverId);
   monaco.editor.setModelMarkers(
     document.model,
     diagnosticOwner(event.serverId),
@@ -1841,7 +1806,7 @@ function diagnosticOwner(serverId: string): string {
 }
 
 function clearLanguageServerMarkers(model: monaco.editor.ITextModel): void {
-  for (const serverId of languageServerStatuses.keys()) {
+  for (const serverId of diagnosticOwners) {
     monaco.editor.setModelMarkers(model, diagnosticOwner(serverId), []);
   }
 }
@@ -1864,17 +1829,18 @@ function markerSeverity(
 
 function activateExternalLanguageFeatures(model: monaco.editor.ITextModel): void {
   const language = model.getLanguageId();
-  if (suppressedLanguageFeatures.get(language)?.has("diagnostics")) {
+  const document = documents.get(model.uri.toString());
+  if (document && monacoFeatures(toolingDocumentFor(document) ?? { features: [] }).has("diagnostics")) {
     monaco.editor.setModelMarkers(model, language, []);
   }
 }
 
 function externalLanguageAvailable(document: LanguageDocument): boolean {
-  return availableExternalLanguages.has(document.model.getLanguageId());
+  return toolingDocumentFor(document)?.externalAvailable === true;
 }
 
 function synchronizeMonacoLanguageFeatures(): void {
-  const nextFeatures = activePrimaryFeatures(languageServerStatuses.values());
+  const nextFeatures = resolvedMonacoLanguageFeatures();
   if (languageFeatureMapsEqual(suppressedLanguageFeatures, nextFeatures)) {
     return;
   }
@@ -1912,6 +1878,32 @@ function synchronizeMonacoLanguageFeatures(): void {
   for (const document of documents.values()) {
     activateExternalLanguageFeatures(document.model);
   }
+}
+
+function resolvedMonacoLanguageFeatures(): Map<string, ReadonlySet<MonacoLanguageFeature>> {
+  const byLanguage = new Map<string, Array<ReadonlySet<MonacoLanguageFeature>>>();
+  for (const candidate of documentCandidates.values()) {
+    if (candidate.disposed) {
+      continue;
+    }
+    const projection = toolingDocumentFor(candidate);
+    const language = candidate.model.getLanguageId();
+    const features = byLanguage.get(language) ?? [];
+    // Monaco mode defaults are language-wide; an unconfirmed document must keep built-ins enabled.
+    features.push(projection ? monacoFeatures(projection) : new Set());
+    byLanguage.set(language, features);
+  }
+  return new Map(
+    [...byLanguage]
+      .map(([language, documents]) => [
+        language,
+        documents.reduce<ReadonlySet<MonacoLanguageFeature>>(
+          (active, features) => new Set([...active].filter((feature) => features.has(feature))),
+          documents[0] ?? new Set(),
+        ),
+      ] as const)
+      .filter(([, features]) => features.size > 0),
+  );
 }
 
 function configureMode<T extends object>(

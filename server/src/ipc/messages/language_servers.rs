@@ -12,6 +12,20 @@ pub(crate) struct LanguageServerParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedToolingCapabilitiesParams {
+    pub(crate) documents: Vec<ResolvedToolingDocumentParams>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedToolingDocumentParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) language_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct OpenLanguageServerDocumentParams {
     pub(crate) workspace_id: WorkspaceIdParam,
     pub(crate) tab_id: TabIdParam,
@@ -291,6 +305,48 @@ pub(crate) struct LanguageServerRangePayload {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerListSnapshot {
     servers: Vec<LanguageServerSnapshot>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedToolingSnapshotPayload {
+    revision: u64,
+    documents: Vec<ResolvedToolingDocumentPayload>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedToolingDocumentPayload {
+    workspace_id: WorkspaceIdParam,
+    path: String,
+    language_id: String,
+    supported: bool,
+    external_available: bool,
+    features: Vec<ResolvedToolingFeaturePayload>,
+    formatter_id: Option<String>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedToolingFeaturePayload {
+    feature: LanguageToolFeaturePayload,
+    owners: Vec<String>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum LanguageToolFeaturePayload {
+    Completion,
+    Hover,
+    SignatureHelp,
+    Navigation,
+    References,
+    Symbols,
+    Diagnostics,
+    Colors,
+    Formatting,
+    Rename,
+    CodeActions,
 }
 
 #[derive(Debug, JsonSchema, Serialize)]
@@ -647,6 +703,95 @@ impl LanguageServerListSnapshot {
                 .into_iter()
                 .map(LanguageServerSnapshot::from_status)
                 .collect(),
+        }
+    }
+}
+
+impl ResolvedToolingCapabilitiesParams {
+    pub(crate) fn into_core(self) -> Vec<core::language_servers::ResolvedToolingDocumentRequest> {
+        self.documents
+            .into_iter()
+            .map(
+                |document| core::language_servers::ResolvedToolingDocumentRequest {
+                    workspace_id: document.workspace_id.into(),
+                    path: document.path,
+                    language_id: document.language_id,
+                },
+            )
+            .collect()
+    }
+}
+
+impl ResolvedToolingSnapshotPayload {
+    pub(crate) fn from_core(snapshot: core::language_servers::ResolvedToolingSnapshot) -> Self {
+        Self {
+            revision: snapshot.revision,
+            documents: snapshot
+                .documents
+                .into_iter()
+                .map(ResolvedToolingDocumentPayload::from_core)
+                .collect(),
+        }
+    }
+}
+
+impl ResolvedToolingDocumentPayload {
+    fn from_core(document: core::language_servers::ResolvedToolingDocument) -> Self {
+        Self {
+            workspace_id: document.workspace_id.into(),
+            path: document.path,
+            language_id: document.language_id,
+            supported: document.supported,
+            external_available: document.external_available,
+            features: document
+                .features
+                .into_iter()
+                .map(ResolvedToolingFeaturePayload::from_core)
+                .collect(),
+            formatter_id: document.formatter_id,
+        }
+    }
+}
+
+impl ResolvedToolingFeaturePayload {
+    fn from_core(feature: core::language_servers::ResolvedToolingFeature) -> Self {
+        Self {
+            feature: match feature.feature {
+                core::language_servers::LanguageToolFeature::Completion => {
+                    LanguageToolFeaturePayload::Completion
+                }
+                core::language_servers::LanguageToolFeature::Hover => {
+                    LanguageToolFeaturePayload::Hover
+                }
+                core::language_servers::LanguageToolFeature::SignatureHelp => {
+                    LanguageToolFeaturePayload::SignatureHelp
+                }
+                core::language_servers::LanguageToolFeature::Navigation => {
+                    LanguageToolFeaturePayload::Navigation
+                }
+                core::language_servers::LanguageToolFeature::References => {
+                    LanguageToolFeaturePayload::References
+                }
+                core::language_servers::LanguageToolFeature::Symbols => {
+                    LanguageToolFeaturePayload::Symbols
+                }
+                core::language_servers::LanguageToolFeature::Diagnostics => {
+                    LanguageToolFeaturePayload::Diagnostics
+                }
+                core::language_servers::LanguageToolFeature::Colors => {
+                    LanguageToolFeaturePayload::Colors
+                }
+                core::language_servers::LanguageToolFeature::Formatting => {
+                    LanguageToolFeaturePayload::Formatting
+                }
+                core::language_servers::LanguageToolFeature::Rename => {
+                    LanguageToolFeaturePayload::Rename
+                }
+                core::language_servers::LanguageToolFeature::CodeActions => {
+                    LanguageToolFeaturePayload::CodeActions
+                }
+            },
+            owners: feature.owners,
         }
     }
 }

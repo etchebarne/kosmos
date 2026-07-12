@@ -220,6 +220,22 @@ export type LanguageServerParameterLabelPayload = string | [number, number];
 export type Nullable_StagedWorkspaceEditPayload = StagedWorkspaceEditPayload | null;
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "LanguageToolFeaturePayload".
+ */
+export type LanguageToolFeaturePayload =
+  | "completion"
+  | "hover"
+  | "signatureHelp"
+  | "navigation"
+  | "references"
+  | "symbols"
+  | "diagnostics"
+  | "colors"
+  | "formatting"
+  | "rename"
+  | "codeActions";
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "Array_of_LanguageServerWorkspaceSymbolPayload".
  */
 export type ArrayOf_LanguageServerWorkspaceSymbolPayload = LanguageServerWorkspaceSymbolPayload[];
@@ -423,6 +439,8 @@ export interface KosmosIpcTypes {
   Nullable_LanguageServerSignatureHelpPayload?: Nullable_LanguageServerSignatureHelpPayload;
   StageLanguageServerCodeActionParams?: StageLanguageServerCodeActionParams;
   Nullable_StagedWorkspaceEditPayload?: Nullable_StagedWorkspaceEditPayload;
+  ResolvedToolingCapabilitiesParams?: ResolvedToolingCapabilitiesParams;
+  ResolvedToolingSnapshotPayload?: ResolvedToolingSnapshotPayload;
   TrustLanguageServerWorkspaceParams?: TrustLanguageServerWorkspaceParams;
   LanguageServerWorkspaceSymbolsParams?: LanguageServerWorkspaceSymbolsParams;
   Array_of_LanguageServerWorkspaceSymbolPayload?: ArrayOf_LanguageServerWorkspaceSymbolPayload;
@@ -462,6 +480,7 @@ export interface KosmosIpcTypes {
   LanguageServerDiagnosticsResyncNotification?: LanguageServerDiagnosticsResyncNotification;
   LanguageServerLogAvailableNotification?: LanguageServerLogAvailableNotification;
   LanguageServerStatusChangedNotification?: LanguageServerStatusChangedNotification;
+  ToolingCapabilitiesChangedNotification?: ToolingCapabilitiesChangedNotification;
   WorkspaceChangedNotification?: WorkspaceChangedNotification;
   KosmosIpcError?: KosmosIpcError;
 }
@@ -1506,6 +1525,51 @@ export interface StageLanguageServerCodeActionParams {
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedToolingCapabilitiesParams".
+ */
+export interface ResolvedToolingCapabilitiesParams {
+  documents: ResolvedToolingDocumentParams[];
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedToolingDocumentParams".
+ */
+export interface ResolvedToolingDocumentParams {
+  languageId: string;
+  path: string;
+  workspaceId: WorkspaceIdParam;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedToolingSnapshotPayload".
+ */
+export interface ResolvedToolingSnapshotPayload {
+  documents: ResolvedToolingDocumentPayload[];
+  revision: number;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedToolingDocumentPayload".
+ */
+export interface ResolvedToolingDocumentPayload {
+  externalAvailable: boolean;
+  features: ResolvedToolingFeaturePayload[];
+  formatterId: string | null;
+  languageId: string;
+  path: string;
+  supported: boolean;
+  workspaceId: WorkspaceIdParam;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedToolingFeaturePayload".
+ */
+export interface ResolvedToolingFeaturePayload {
+  feature: LanguageToolFeaturePayload;
+  owners: string[];
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "TrustLanguageServerWorkspaceParams".
  */
 export interface TrustLanguageServerWorkspaceParams {
@@ -1886,6 +1950,15 @@ export interface LanguageServerLogAvailableNotification {
 export interface LanguageServerStatusChangedNotification {
   event: "languageServerStatusChanged";
   serverId: string;
+  type: "notification";
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ToolingCapabilitiesChangedNotification".
+ */
+export interface ToolingCapabilitiesChangedNotification {
+  event: "toolingCapabilitiesChanged";
+  revision: number;
   type: "notification";
 }
 /**

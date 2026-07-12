@@ -16,6 +16,7 @@ use super::installation::{
 };
 use super::process::{ProcessError, ProcessLimits, run_process, stderr_message};
 use super::{FormatterError, FormatterFailure, FormatterInstallationState, FormatterStatus};
+use crate::events::ToolingCapabilities;
 
 const COMMAND_QUEUE_CAPACITY: usize = 4;
 const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,11 +34,13 @@ struct ManagerInner {
     entries: Arc<Mutex<BTreeMap<String, ManagerEntry>>>,
     priorities: Arc<Mutex<Vec<&'static str>>>,
     sender: SyncSender<ManagerCommand>,
+    tooling: Arc<Mutex<ToolingCapabilities>>,
 }
 
 struct WorkerContext {
     paths: FormatterPaths,
     entries: Arc<Mutex<BTreeMap<String, ManagerEntry>>>,
+    tooling: Arc<Mutex<ToolingCapabilities>>,
 }
 
 struct ManagerEntry {
@@ -90,10 +93,12 @@ impl FormatterManager {
             })
             .collect();
         let entries = Arc::new(Mutex::new(entries));
+        let tooling = Arc::new(Mutex::new(ToolingCapabilities::default()));
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let worker = WorkerContext {
             paths: paths.clone(),
             entries: Arc::clone(&entries),
+            tooling: Arc::clone(&tooling),
         };
         thread::Builder::new()
             .name("kosmos-formatter-installer".to_owned())
@@ -106,6 +111,7 @@ impl FormatterManager {
                 entries,
                 priorities: Arc::new(Mutex::new(priorities)),
                 sender,
+                tooling,
             }),
         })
     }
@@ -138,6 +144,7 @@ impl FormatterManager {
             .priorities
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = priorities;
+        self.tooling_changed();
         Ok(self.list())
     }
 
@@ -231,6 +238,7 @@ impl FormatterManager {
             }
             entry.operation = ManagerOperation::Installing;
         }
+        self.tooling_changed();
         if let Err(error) = self.try_send(ManagerCommand::Install(definition.id)) {
             fail_entry(&self.inner.entries, definition.id, &error);
             return Err(error);
@@ -263,6 +271,7 @@ impl FormatterManager {
             }
             entry.operation = ManagerOperation::Uninstalling;
         }
+        self.tooling_changed();
         if let Err(error) = self.try_send(ManagerCommand::Uninstall(definition.id)) {
             fail_entry(&self.inner.entries, definition.id, &error);
             return Err(error);
@@ -301,6 +310,36 @@ impl FormatterManager {
         Ok(None)
     }
 
+    pub(crate) fn applicable_formatter(
+        &self,
+        language_id: &str,
+        relative_path: &Path,
+    ) -> Option<String> {
+        let entries = self
+            .inner
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        applicable_formatters(&self.priority_ids(), language_id, relative_path)
+            .into_iter()
+            .find(|definition| {
+                entries.get(definition.id).is_some_and(|entry| {
+                    !matches!(entry.operation, ManagerOperation::Uninstalling)
+                        && entry.installed_version.is_some()
+                        && installed_executable(&self.inner.paths, definition).is_some()
+                })
+            })
+            .map(|definition| definition.id.to_owned())
+    }
+
+    pub(crate) fn set_tooling_capabilities(&self, tooling: ToolingCapabilities) {
+        *self
+            .inner
+            .tooling
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = tooling;
+    }
+
     fn priority_ids(&self) -> Vec<&'static str> {
         self.inner
             .priorities
@@ -319,6 +358,14 @@ impl FormatterManager {
                     FormatterError::WorkerUnavailable("formatter installer stopped".to_owned())
                 }
             })
+    }
+
+    fn tooling_changed(&self) {
+        self.inner
+            .tooling
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .changed();
     }
 }
 
@@ -355,6 +402,10 @@ impl WorkerContext {
                     });
                 }
             }
+            self.tooling
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .changed();
         }
     }
 }

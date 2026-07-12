@@ -16,7 +16,9 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, percent_encode};
 use serde_json::{Value, json};
 
-use crate::events::{CoreEvent, CoreEventDispatcher, LanguageServerDiagnosticsChanged};
+use crate::events::{
+    CoreEvent, CoreEventDispatcher, LanguageServerDiagnosticsChanged, ToolingCapabilities,
+};
 use crate::tree::WorkspaceId;
 
 use super::catalog::{LanguageServerDefinition, language_server_catalog};
@@ -37,7 +39,7 @@ use super::{
     LanguageServerRequestCancellation, LanguageServerRuntimeState, LanguageServerRuntimeStatus,
     LanguageServerSignatureHelp, LanguageServerSignatureInformation, LanguageServerTextEdit,
     LanguageServerWorkspaceSymbol, LanguageServerWorkspaceSymbolResolveRequest,
-    WorkspaceEditOpenDocument, WorkspaceEditRoot,
+    LanguageToolFeature, WorkspaceEditOpenDocument, WorkspaceEditRoot,
 };
 
 const MAX_LSP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -129,6 +131,7 @@ pub(crate) struct LanguageServerRuntime {
     workspace_edits: Arc<WorkspaceEditTransactions>,
     next_code_action_id: AtomicU64,
     validated_code_actions: Mutex<HashMap<u64, ValidatedCodeAction>>,
+    tooling: Arc<Mutex<ToolingCapabilities>>,
 }
 
 #[derive(Clone, Debug)]
@@ -354,6 +357,7 @@ struct ServerRequestContext<'a> {
     documents: &'a Arc<Mutex<HashMap<DocumentKey, DocumentBinding>>>,
     workspace_edits: &'a Arc<WorkspaceEditTransactions>,
     events: &'a CoreEventDispatcher,
+    tooling: &'a Arc<Mutex<ToolingCapabilities>>,
 }
 
 #[derive(Debug)]
@@ -435,7 +439,10 @@ enum PrepareRenameResult {
 }
 
 impl LanguageServerRuntime {
-    pub(crate) fn new(workspace_edits: Arc<WorkspaceEditTransactions>) -> Arc<Self> {
+    pub(crate) fn new(
+        workspace_edits: Arc<WorkspaceEditTransactions>,
+        tooling: Arc<Mutex<ToolingCapabilities>>,
+    ) -> Arc<Self> {
         let (supervisor, commands) = mpsc::sync_channel(64);
         let pending_diagnostics = Arc::new(Mutex::new(HashMap::new()));
         let events = CoreEventDispatcher::default();
@@ -454,6 +461,7 @@ impl LanguageServerRuntime {
             workspace_edits,
             next_code_action_id: AtomicU64::new(1),
             validated_code_actions: Mutex::new(HashMap::new()),
+            tooling,
         });
         spawn_supervisor(Arc::downgrade(&runtime), commands);
         runtime
@@ -461,6 +469,55 @@ impl LanguageServerRuntime {
 
     pub(crate) fn set_event_sink(&self, sink: Arc<dyn crate::events::CoreEventSink>) {
         self.events.set_sink(sink);
+    }
+
+    pub(crate) fn document_has_live_session(&self, workspace_id: WorkspaceId, path: &str) -> bool {
+        self.documents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .any(|(key, document)| {
+                key.workspace_id == workspace_id && key.path == path && document.session.is_alive()
+            })
+    }
+
+    pub(crate) fn document_has_live_session_for(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        server_id: &'static str,
+    ) -> bool {
+        self.documents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&DocumentKey {
+                workspace_id,
+                path: path.to_owned(),
+                server_id,
+            })
+            .is_some_and(|document| document.session.is_alive())
+    }
+
+    pub(crate) fn document_supports_feature(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        server_id: &'static str,
+        feature: LanguageToolFeature,
+    ) -> bool {
+        let documents = self
+            .documents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some((_, document)) = documents.iter().find(|(key, document)| {
+            key.workspace_id == workspace_id
+                && key.path == path
+                && key.server_id == server_id
+                && document.session.is_alive()
+        }) else {
+            return false;
+        };
+        feature_is_supported(&document.session, feature)
     }
 
     pub(crate) fn open_document(
@@ -599,6 +656,7 @@ impl LanguageServerRuntime {
                 },
             );
         drop(open_workspaces);
+        self.emit_tooling_changed();
         Ok(())
     }
 
@@ -699,6 +757,7 @@ impl LanguageServerRuntime {
             }
         }
         self.close_unused_sessions();
+        self.emit_tooling_changed();
         first_error.map_or(Ok(()), Err)
     }
 
@@ -2029,6 +2088,7 @@ impl LanguageServerRuntime {
             Arc::clone(&self.documents),
             Arc::clone(&self.workspace_edits),
             self.events.clone(),
+            Arc::clone(&self.tooling),
             SessionExitTarget {
                 supervisor: self.supervisor.clone(),
                 pending_diagnostics: Arc::clone(&self.pending_diagnostics),
@@ -2042,6 +2102,14 @@ impl LanguageServerRuntime {
         self.events.emit(CoreEvent::LanguageServerStatusChanged {
             server_id: server_id.to_owned(),
         });
+        self.emit_tooling_changed();
+    }
+
+    fn emit_tooling_changed(&self) {
+        self.tooling
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .changed();
     }
 
     fn emit_diagnostics(
@@ -2514,6 +2582,7 @@ impl LanguageServerSession {
         documents: Arc<Mutex<HashMap<DocumentKey, DocumentBinding>>>,
         workspace_edits: Arc<WorkspaceEditTransactions>,
         events: CoreEventDispatcher,
+        tooling: Arc<Mutex<ToolingCapabilities>>,
         exit_target: SessionExitTarget,
     ) -> Result<Self, LanguageServerError> {
         let mut child = Command::new(executable)
@@ -2561,6 +2630,7 @@ impl LanguageServerSession {
             documents,
             workspace_edits,
             events,
+            tooling,
             server_id,
             logs.clone(),
             exit_reporter.clone(),
@@ -3316,6 +3386,30 @@ fn capability_is_supported(
             .any(|registration| registration.method == method)
 }
 
+fn feature_is_supported(session: &LanguageServerSession, feature: LanguageToolFeature) -> bool {
+    match feature {
+        LanguageToolFeature::Completion => session.supports("textDocument/completion"),
+        LanguageToolFeature::Hover => session.supports("textDocument/hover"),
+        LanguageToolFeature::SignatureHelp => session.supports("textDocument/signatureHelp"),
+        LanguageToolFeature::Navigation => [
+            "textDocument/definition",
+            "textDocument/declaration",
+            "textDocument/typeDefinition",
+            "textDocument/implementation",
+        ]
+        .into_iter()
+        .any(|method| session.supports(method)),
+        LanguageToolFeature::References => session.supports("textDocument/references"),
+        LanguageToolFeature::Symbols => session.supports("textDocument/documentSymbol"),
+        // Diagnostics are published rather than advertised as a server capability.
+        LanguageToolFeature::Diagnostics => true,
+        LanguageToolFeature::Colors => session.supports("textDocument/documentColor"),
+        LanguageToolFeature::Formatting => session.supports("textDocument/formatting"),
+        LanguageToolFeature::Rename => session.supports("textDocument/rename"),
+        LanguageToolFeature::CodeActions => session.supports("textDocument/codeAction"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn request_with_transport(
     writer: &MessageWriter,
@@ -3429,6 +3523,7 @@ fn spawn_reader(
     documents: Arc<Mutex<HashMap<DocumentKey, DocumentBinding>>>,
     workspace_edits: Arc<WorkspaceEditTransactions>,
     events: CoreEventDispatcher,
+    tooling: Arc<Mutex<ToolingCapabilities>>,
     server_id: &'static str,
     logs: RuntimeLogs,
     exit_reporter: SessionExitReporter,
@@ -3499,6 +3594,7 @@ fn spawn_reader(
                             documents: &documents,
                             workspace_edits: &workspace_edits,
                             events: &events,
+                            tooling: &tooling,
                         },
                     );
                     let _ = send_json(&writer, &response);
@@ -4039,6 +4135,12 @@ fn register_capabilities(
     for (id, registration) in started {
         capabilities.registrations.insert(id, registration);
     }
+    drop(capabilities);
+    context
+        .tooling
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .changed();
     Ok(Value::Null)
 }
 
@@ -4099,6 +4201,11 @@ fn unregister_capabilities(
             .collect::<Vec<_>>()
     };
     drop(removed);
+    context
+        .tooling
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .changed();
     Ok(Value::Null)
 }
 
@@ -5844,7 +5951,10 @@ mod tests {
 
     #[test]
     fn forged_or_expired_code_actions_are_not_accepted_for_edits() {
-        let runtime = LanguageServerRuntime::new(Arc::new(WorkspaceEditTransactions::new()));
+        let runtime = LanguageServerRuntime::new(
+            Arc::new(WorkspaceEditTransactions::new()),
+            Arc::new(Mutex::new(ToolingCapabilities::default())),
+        );
         let action = LanguageServerCodeAction {
             action_id: 999,
             server_id: "rust-analyzer".to_owned(),
@@ -5920,11 +6030,12 @@ mod tests {
     }
 
     #[test]
-    fn register_and_unregister_update_dynamic_feature_support() {
+    fn resolved_tooling_dynamic_registration_and_unregistration_advance_the_revision() {
         let root = TestDirectory::new("dynamic-capability");
         let (writer, _outbound) = test_writer();
         let capabilities = Arc::new(Mutex::new(DynamicCapabilityState::default()));
         let context = test_request_context(&writer, root.path(), root.path(), &capabilities);
+        let initial_revision = context.tooling.lock().unwrap().revision();
         let registration = json!({
             "id": 1,
             "method": "client/registerCapability",
@@ -5946,6 +6057,8 @@ mod tests {
             &capabilities.lock().unwrap(),
             "textDocument/formatting"
         ));
+        let registered_revision = context.tooling.lock().unwrap().revision();
+        assert!(registered_revision > initial_revision);
 
         let unregistration = json!({
             "id": 2,
@@ -5966,6 +6079,7 @@ mod tests {
             &capabilities.lock().unwrap(),
             "textDocument/formatting"
         ));
+        assert!(context.tooling.lock().unwrap().revision() > registered_revision);
     }
 
     #[test]
@@ -6375,7 +6489,10 @@ mod tests {
 
     #[test]
     fn intentional_shutdown_does_not_advance_the_restart_breaker() {
-        let runtime = LanguageServerRuntime::new(Arc::new(WorkspaceEditTransactions::new()));
+        let runtime = LanguageServerRuntime::new(
+            Arc::new(WorkspaceEditTransactions::new()),
+            Arc::new(Mutex::new(ToolingCapabilities::default())),
+        );
         let definition =
             super::super::catalog::language_server_definition("typescript-language-server")
                 .expect("test server should exist");
@@ -6599,6 +6716,7 @@ mod tests {
             documents: test_request_documents(),
             workspace_edits: test_workspace_edits(),
             events: test_events(),
+            tooling: test_tooling(),
         }
     }
 
@@ -6606,6 +6724,12 @@ mod tests {
         static DOCUMENTS: std::sync::OnceLock<Arc<Mutex<HashMap<DocumentKey, DocumentBinding>>>> =
             std::sync::OnceLock::new();
         DOCUMENTS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+    }
+
+    fn test_tooling() -> &'static Arc<Mutex<ToolingCapabilities>> {
+        static TOOLING: std::sync::OnceLock<Arc<Mutex<ToolingCapabilities>>> =
+            std::sync::OnceLock::new();
+        TOOLING.get_or_init(|| Arc::new(Mutex::new(ToolingCapabilities::default())))
     }
 
     fn test_workspace_edits() -> &'static Arc<WorkspaceEditTransactions> {

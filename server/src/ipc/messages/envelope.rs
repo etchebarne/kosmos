@@ -95,6 +95,10 @@ impl ServerMessage {
         Self::Notification(NotificationEnvelope::LanguageServerLogAvailable { server_id })
     }
 
+    pub(crate) fn tooling_capabilities_changed(revision: u64) -> Self {
+        Self::Notification(NotificationEnvelope::ToolingCapabilitiesChanged { revision })
+    }
+
     pub(crate) fn language_server_apply_edit(
         id: u64,
         token: String,
@@ -211,6 +215,9 @@ pub(crate) enum NotificationEnvelope {
     LanguageServerLogAvailable {
         server_id: String,
     },
+    ToolingCapabilitiesChanged {
+        revision: u64,
+    },
     LanguageServerApplyEdit {
         id: u64,
         token: String,
@@ -257,6 +264,13 @@ pub(crate) struct LanguageServerStatusChangedNotification {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerLogAvailableNotification {
     server_id: String,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ToolingCapabilitiesChangedNotification {
+    revision: u64,
 }
 
 #[allow(dead_code)]

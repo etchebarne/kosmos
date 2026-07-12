@@ -10,7 +10,7 @@ use super::messages::envelope::{
     LanguageServerApplyEditCancelledNotification, LanguageServerApplyEditNotification,
     LanguageServerDiagnosticsChangedNotification, LanguageServerDiagnosticsResyncNotification,
     LanguageServerLogAvailableNotification, LanguageServerStatusChangedNotification,
-    WorkspaceChangedNotification,
+    ToolingCapabilitiesChangedNotification, WorkspaceChangedNotification,
 };
 use super::router;
 
@@ -56,6 +56,9 @@ const NOTIFICATIONS: &[NotificationContract] = &[
     ),
     NotificationContract::of::<LanguageServerLogAvailableNotification>(
         "languageServerLogAvailable",
+    ),
+    NotificationContract::of::<ToolingCapabilitiesChangedNotification>(
+        "toolingCapabilitiesChanged",
     ),
     NotificationContract::of::<LanguageServerApplyEditNotification>("languageServerApplyEdit"),
     NotificationContract::of::<LanguageServerApplyEditCancelledNotification>(
