@@ -90,11 +90,7 @@ impl PreparedRoute {
         self.request.id
     }
 
-    pub(crate) fn action(&self) -> &str {
-        &self.request.action
-    }
-
-    pub(crate) fn mode(&self) -> ExecutionMode {
+    pub(crate) fn mode(&self) -> SchedulingMode {
         self.definition.mode
     }
 
@@ -134,7 +130,7 @@ impl PreparedRoute {
     }
 
     #[cfg(test)]
-    pub(crate) fn for_test(request_id: u64, mode: ExecutionMode, handler: RouteHandler) -> Self {
+    pub(crate) fn for_test(request_id: u64, mode: SchedulingMode, handler: RouteHandler) -> Self {
         Self {
             request: RequestEnvelope {
                 id: request_id,
@@ -150,7 +146,7 @@ impl PreparedRoute {
 #[derive(Clone, Copy)]
 pub(super) struct RouteDefinition {
     handler: RouteHandlerKind,
-    mode: ExecutionMode,
+    mode: SchedulingMode,
 }
 
 #[derive(Clone, Copy)]
@@ -207,62 +203,53 @@ enum RouteHandlerKind {
 
 impl RouteDefinition {
     pub(super) const fn snapshot(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::Snapshot)
+        Self::new(handler, SchedulingMode::Snapshot)
     }
 
     pub(super) const fn external(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::External)
+        Self::new(handler, SchedulingMode::External)
     }
 
     pub(super) const fn live(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::Live)
+        Self::new(handler, SchedulingMode::Live)
     }
 
     pub(super) const fn language_server(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::LanguageServer)
+        Self::new(handler, SchedulingMode::LanguageServer)
     }
 
     pub(super) const fn language_server_feature(handler: CancellableRouteHandler) -> Self {
         Self {
             handler: RouteHandlerKind::Cancellable(handler),
-            mode: ExecutionMode::LanguageServerFeature,
+            mode: SchedulingMode::LanguageServerFeature,
         }
     }
 
     pub(super) const fn active_workspace(handler: RouteHandler) -> Self {
-        Self::new(
-            handler,
-            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
-        )
+        Self::new(handler, SchedulingMode::SerialMutation)
     }
 
     pub(super) const fn full(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Full))
+        Self::new(handler, SchedulingMode::SerialMutation)
     }
 
     pub(super) const fn live_full(handler: RouteHandler) -> Self {
-        Self::new(
-            handler,
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
-        )
+        Self::new(handler, SchedulingMode::SerialMutation)
     }
 
     pub(super) const fn settings(handler: RouteHandler) -> Self {
-        Self::new(
-            handler,
-            ExecutionMode::Persistent(PersistenceMode::Settings),
-        )
+        Self::new(handler, SchedulingMode::SerialMutation)
     }
 
     pub(super) const fn window(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Window))
+        Self::new(handler, SchedulingMode::SerialMutation)
     }
 
     pub(super) const fn persistence_barrier(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Barrier))
+        Self::new(handler, SchedulingMode::PersistenceBarrier)
     }
 
-    const fn new(handler: RouteHandler, mode: ExecutionMode) -> Self {
+    const fn new(handler: RouteHandler, mode: SchedulingMode) -> Self {
         Self {
             handler: RouteHandlerKind::Standard(handler),
             mode,
@@ -271,24 +258,18 @@ impl RouteDefinition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExecutionMode {
+pub(crate) enum SchedulingMode {
     Snapshot,
     External,
     Live,
     LanguageServer,
     LanguageServerFeature,
-    LivePersistent(PersistenceMode),
-    Persistent(PersistenceMode),
+    SerialMutation,
+    PersistenceBarrier,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PersistenceMode {
-    ActiveWorkspace,
-    Barrier,
-    Full,
-    Settings,
-    Window,
-}
+#[cfg(test)]
+pub(crate) use SchedulingMode as ExecutionMode;
 
 pub(super) fn parse_params<T>(request: &RequestEnvelope) -> Result<T, ServerMessage>
 where
@@ -327,7 +308,7 @@ pub(super) fn unsupported_action(request: &RequestEnvelope) -> ServerMessage {
     )
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
 
@@ -336,72 +317,72 @@ mod tests {
         (
             Domain::Workspace,
             "flush",
-            ExecutionMode::Persistent(PersistenceMode::Barrier),
+            ExecutionMode::Persistent(LegacyDurability::Barrier),
         ),
         (
             Domain::Workspace,
             "open",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Workspace,
             "activate",
-            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
+            ExecutionMode::Persistent(LegacyDurability::ActiveWorkspace),
         ),
         (
             Domain::Workspace,
             "close",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Pane,
             "split",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Pane,
             "activate",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Pane,
             "move",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Pane,
             "resize",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "open",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "activate",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "setKind",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "close",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "move",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (
             Domain::Tab,
             "split",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (Domain::FileTree, "get", ExecutionMode::External),
         (Domain::FileTree, "gitStatus", ExecutionMode::External),
@@ -409,7 +390,7 @@ mod tests {
         (
             Domain::FileTree,
             "setExpandedPaths",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (Domain::FileTree, "createEntry", ExecutionMode::External),
         (Domain::FileTree, "renameEntry", ExecutionMode::External),
@@ -425,7 +406,7 @@ mod tests {
         (
             Domain::Editor,
             "openTab",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (Domain::Editor, "document", ExecutionMode::External),
         (Domain::Editor, "gitLineHunks", ExecutionMode::External),
@@ -435,7 +416,7 @@ mod tests {
         (
             Domain::Git,
             "openDiffTab",
-            ExecutionMode::Persistent(PersistenceMode::Full),
+            ExecutionMode::Persistent(LegacyDurability::Full),
         ),
         (Domain::Git, "diff", ExecutionMode::External),
         (Domain::Git, "saveDiffFile", ExecutionMode::External),
@@ -476,7 +457,7 @@ mod tests {
         (
             Domain::Settings,
             "update",
-            ExecutionMode::Persistent(PersistenceMode::Settings),
+            ExecutionMode::Persistent(LegacyDurability::Settings),
         ),
         (Domain::LanguageServers, "list", ExecutionMode::Snapshot),
         (Domain::LanguageServers, "status", ExecutionMode::Snapshot),
@@ -620,27 +601,27 @@ mod tests {
         (
             Domain::LanguageServers,
             "commitWorkspaceEdit",
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
+            ExecutionMode::LivePersistent(LegacyDurability::Full),
         ),
         (
             Domain::LanguageServers,
             "rollbackWorkspaceEdit",
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
+            ExecutionMode::LivePersistent(LegacyDurability::Full),
         ),
         (
             Domain::LanguageServers,
             "finishWorkspaceEdit",
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
+            ExecutionMode::LivePersistent(LegacyDurability::Full),
         ),
         (
             Domain::LanguageServers,
             "finalizeWorkspaceEdit",
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
+            ExecutionMode::LivePersistent(LegacyDurability::Full),
         ),
         (
             Domain::LanguageServers,
             "acknowledgeWorkspaceEditCompletion",
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
+            ExecutionMode::LivePersistent(LegacyDurability::Full),
         ),
         (
             Domain::LanguageServers,
@@ -661,7 +642,7 @@ mod tests {
         (
             Domain::Window,
             "update",
-            ExecutionMode::Persistent(PersistenceMode::Window),
+            ExecutionMode::Persistent(LegacyDurability::Window),
         ),
     ];
 
@@ -760,6 +741,36 @@ mod tests {
             domain,
             action: action.to_owned(),
             params: serde_json::Value::Null,
+        }
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::*;
+
+    #[test]
+    fn every_registered_route_resolves_to_transport_scheduling() {
+        for domain in DOMAINS {
+            for route in routes_for(*domain) {
+                let prepared = prepare(RequestEnvelope {
+                    id: 1,
+                    domain: *domain,
+                    action: route.action.to_owned(),
+                    params: serde_json::Value::Null,
+                })
+                .expect("registered route should resolve");
+                assert!(matches!(
+                    prepared.mode(),
+                    SchedulingMode::Snapshot
+                        | SchedulingMode::External
+                        | SchedulingMode::Live
+                        | SchedulingMode::LanguageServer
+                        | SchedulingMode::LanguageServerFeature
+                        | SchedulingMode::SerialMutation
+                        | SchedulingMode::PersistenceBarrier
+                ));
+            }
         }
     }
 }

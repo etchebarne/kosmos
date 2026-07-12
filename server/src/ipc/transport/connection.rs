@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::ipc::messages::envelope::{ClientMessage, ServerMessage};
-use crate::ipc::router::{self, ExecutionMode, PreparedRoute};
+use crate::ipc::router::{self, PreparedRoute, SchedulingMode};
 
 use super::dispatcher::Dispatcher;
 use super::response::ResponseSender;
@@ -25,6 +25,7 @@ pub(crate) fn handle(stream: UnixStream, dispatcher: Dispatcher) -> io::Result<(
     let (requests, request_receiver) = mpsc::sync_channel(MAX_PENDING_REQUESTS);
     let notification_subscription = dispatcher.subscribe(responses.clone());
     let renderer_id = notification_subscription.id();
+    let workspace_edit_owner = notification_subscription.workspace_edit_owner();
 
     thread::spawn(move || write_responses(stream, response_receiver, shutdown));
     thread::spawn({
@@ -39,7 +40,7 @@ pub(crate) fn handle(stream: UnixStream, dispatcher: Dispatcher) -> io::Result<(
                 responses,
                 closed,
                 active,
-                renderer_id,
+                workspace_edit_owner,
             )
         }
     });
@@ -84,7 +85,7 @@ fn dispatch_requests(
     responses: ResponseSender,
     closed: Arc<AtomicBool>,
     active: ActiveRequests,
-    renderer_id: u64,
+    workspace_edit_owner: Option<core::WorkspaceEditOwnerToken>,
 ) {
     let mut external_completions = Vec::new();
 
@@ -101,12 +102,12 @@ fn dispatch_requests(
         } = pending;
         let request_id = route.request_id();
         match route.mode() {
-            ExecutionMode::External => {
+            SchedulingMode::External => {
                 if let Some(completed) = dispatcher.dispatch_cancellable(
                     route,
                     responses.clone(),
                     cancellation,
-                    renderer_id,
+                    workspace_edit_owner,
                 ) {
                     external_completions.push(PendingCompletion {
                         request_id,
@@ -116,37 +117,37 @@ fn dispatch_requests(
                     active.finish(request_id);
                 }
             }
-            ExecutionMode::LanguageServer | ExecutionMode::LanguageServerFeature => {
+            SchedulingMode::LanguageServer | SchedulingMode::LanguageServerFeature => {
                 if let Some(completed) = dispatcher.dispatch_cancellable(
                     route,
                     responses.clone(),
                     cancellation,
-                    renderer_id,
+                    workspace_edit_owner,
                 ) {
                     track_completion(active.clone(), request_id, completed);
                 } else {
                     active.finish(request_id);
                 }
             }
-            ExecutionMode::LivePersistent(_) | ExecutionMode::Persistent(_) => {
+            SchedulingMode::SerialMutation | SchedulingMode::PersistenceBarrier => {
                 wait_for_completions(&mut external_completions, &active);
 
                 if let Some(completed) = dispatcher.dispatch_cancellable(
                     route,
                     responses.clone(),
                     cancellation,
-                    renderer_id,
+                    workspace_edit_owner,
                 ) {
                     let _ = completed.recv();
                 }
                 active.finish(request_id);
             }
-            ExecutionMode::Live | ExecutionMode::Snapshot => {
+            SchedulingMode::Live | SchedulingMode::Snapshot => {
                 let _ = dispatcher.dispatch_cancellable(
                     route,
                     responses.clone(),
                     cancellation,
-                    renderer_id,
+                    workspace_edit_owner,
                 );
                 active.finish(request_id);
             }
@@ -351,7 +352,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::ipc::messages::envelope::{RequestEnvelope, ServerMessage};
-    use crate::ipc::router::{ExecutionMode, PersistenceMode};
+    use crate::ipc::router::ExecutionMode;
 
     #[derive(Default)]
     struct PersistentGate {
@@ -380,8 +381,8 @@ mod tests {
     #[test]
     fn language_server_install_event_does_not_block_install_or_status_responses() {
         let root = test_directory("language-server-install-event");
-        let store = core::persistence::StateStore::open(root.join("state.sqlite3"))
-            .expect("store should open");
+        let store =
+            core::DurableStore::open(root.join("state.sqlite3")).expect("store should open");
         let paths = core::language_servers::LanguageServerPaths::new(
             root.join("language-servers"),
             root.join("language-server-cache"),
@@ -460,7 +461,7 @@ mod tests {
         std::fs::write(workspace.join("finalize.txt"), "before-finalize").unwrap();
         std::fs::write(workspace.join("retried.txt"), "old-retry-target").unwrap();
         std::fs::write(workspace.join("finalized.txt"), "old-finalize-target").unwrap();
-        let store = core::persistence::StateStore::open(&database).expect("store should open");
+        let store = core::DurableStore::open(&database).expect("store should open");
         let paths = core::language_servers::LanguageServerPaths::new(
             root.join("language-servers"),
             root.join("language-server-cache"),
@@ -513,7 +514,7 @@ mod tests {
         state
             .commit_workspace_edit(finalize.transaction_id, &finalize.authorization)
             .unwrap();
-        core::persistence::StateStore::open(&database)
+        core::DurableStore::open(&database)
             .unwrap()
             .save(&state)
             .unwrap();
@@ -530,8 +531,7 @@ mod tests {
         );
         drop(state);
 
-        let restarted_store =
-            core::persistence::StateStore::open(&database).expect("store should reopen");
+        let restarted_store = core::DurableStore::open(&database).expect("store should reopen");
         let restarted_manager =
             core::language_servers::LanguageServerManager::open(paths, restarted_store.clone())
                 .expect("manager should recover the journal");
@@ -697,7 +697,7 @@ mod tests {
                     responses,
                     Arc::new(AtomicBool::new(false)),
                     ActiveRequests::default(),
-                    0,
+                    None,
                 )
             }
         });
@@ -705,7 +705,7 @@ mod tests {
         requests
             .send(pending_route(router::PreparedRoute::for_test(
                 1,
-                ExecutionMode::Persistent(PersistenceMode::Barrier),
+                ExecutionMode::PersistenceBarrier,
                 blocking_persistent_route,
             )))
             .expect("persistent request should queue");
@@ -752,7 +752,7 @@ mod tests {
                     responses,
                     Arc::new(AtomicBool::new(false)),
                     ActiveRequests::default(),
-                    0,
+                    None,
                 )
             }
         });
@@ -774,7 +774,7 @@ mod tests {
         requests
             .send(pending_route(router::PreparedRoute::for_test(
                 3,
-                ExecutionMode::Persistent(PersistenceMode::Barrier),
+                ExecutionMode::PersistenceBarrier,
                 successful_route,
             )))
             .expect("persistent request should queue");
@@ -925,7 +925,7 @@ mod tests {
         condition.notify_all();
     }
 
-    fn test_store(name: &str) -> (core::persistence::StateStore, PathBuf) {
+    fn test_store(name: &str) -> (core::DurableStore, PathBuf) {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after epoch")
@@ -934,7 +934,7 @@ mod tests {
             "kosmos-server-connection-{}-{name}-{nanos}.sqlite3",
             std::process::id()
         ));
-        let store = core::persistence::StateStore::open(&path).expect("store should open");
+        let store = core::DurableStore::open(&path).expect("store should open");
 
         (store, path)
     }

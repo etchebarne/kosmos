@@ -11,8 +11,7 @@ const APPLY_EDIT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Default)]
 pub(crate) struct NotificationHub {
     subscribers: Arc<Mutex<Subscribers>>,
-    state: Arc<Mutex<Option<Weak<Mutex<core::State>>>>>,
-    store: Arc<Mutex<Option<core::persistence::StateStore>>>,
+    application: Arc<Mutex<Option<Weak<Mutex<core::Application>>>>>,
     workspace_edit_publication: Arc<Mutex<()>>,
 }
 
@@ -21,12 +20,11 @@ impl NotificationHub {
         Arc::clone(&self.workspace_edit_publication)
     }
 
-    pub(crate) fn attach_state(&self, state: Weak<Mutex<core::State>>) {
-        *self.state.lock().unwrap_or_else(|error| error.into_inner()) = Some(state);
-    }
-
-    pub(crate) fn attach_store(&self, store: core::persistence::StateStore) {
-        *self.store.lock().unwrap_or_else(|error| error.into_inner()) = Some(store);
+    pub(crate) fn attach_application(&self, application: Weak<Mutex<core::Application>>) {
+        *self
+            .application
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(application);
     }
 
     pub(crate) fn subscribe(&self, responses: ResponseSender) -> NotificationSubscription {
@@ -37,10 +35,20 @@ impl NotificationHub {
         let id = subscribers.next_id;
 
         subscribers.next_id = subscribers.next_id.wrapping_add(1);
+        let owner = self.application().and_then(|application| {
+            application
+                .lock()
+                .ok()
+                .map(|mut application| application.workspace_edit_owner_token())
+        });
         subscribers.responses.insert(id, responses);
+        if let Some(owner) = owner {
+            subscribers.workspace_edit_owners.insert(id, owner);
+        }
 
         NotificationSubscription {
             id,
+            workspace_edit_owner: owner,
             hub: self.clone(),
         }
     }
@@ -163,13 +171,21 @@ impl NotificationHub {
 
     fn claim_transaction(
         &self,
-        owner: u64,
+        renderer_id: u64,
         edit: &core::language_servers::StagedWorkspaceEdit,
     ) -> Result<(), core::language_servers::WorkspaceEditError> {
-        self.with_state(|state| {
-            state.claim_workspace_edit_owner(edit.transaction_id, &edit.authorization, owner)
-        })
-        .unwrap_or(Ok(()))
+        self.workspace_edit_owner(renderer_id)
+            .zip(self.application())
+            .and_then(|(owner, application)| {
+                application.lock().ok().map(|mut application| {
+                    application.claim_workspace_edit_owner(
+                        edit.transaction_id,
+                        &edit.authorization,
+                        owner,
+                    )
+                })
+            })
+            .unwrap_or(Ok(()))
     }
 
     fn resolve_acknowledgement(
@@ -178,7 +194,7 @@ impl NotificationHub {
         applied: bool,
         failure_reason: Option<String>,
     ) -> core::events::WorkspaceEditApplication {
-        if self.state().is_none() {
+        if self.application().is_none() {
             return core::events::WorkspaceEditApplication {
                 applied: applied && !pending.cancelled,
                 failure_reason: if pending.cancelled {
@@ -214,7 +230,7 @@ impl NotificationHub {
                 apply_edit_failure("workspace edit acknowledgement outcome was unavailable")
             });
         };
-        let result = if self.state().is_none() {
+        let result = if self.application().is_none() {
             apply_edit_failure(
                 "workspace edit acknowledgement timed out and application was cancelled",
             )
@@ -253,22 +269,26 @@ impl NotificationHub {
         pending: &PendingApplyEdit,
         reason: &str,
     ) -> core::events::WorkspaceEditApplication {
-        let Some(state) = self.state() else {
+        let owner = self.workspace_edit_owner(pending.renderer_id);
+        let Some(application) = self.application() else {
             return apply_edit_failure(reason);
         };
-        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
-        let status =
-            match state.workspace_edit_status(pending.transaction_id, &pending.authorization) {
-                Ok(status) => status,
-                Err(error) => {
-                    return apply_edit_recovery_required(&format!(
-                        "{reason}; durable transaction outcome is unavailable: {error}"
-                    ));
-                }
-            };
+        let mut application = application
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let status = match application
+            .workspace_edit_status(pending.transaction_id, &pending.authorization)
+        {
+            Ok(status) => status,
+            Err(error) => {
+                return apply_edit_recovery_required(&format!(
+                    "{reason}; durable transaction outcome is unavailable: {error}"
+                ));
+            }
+        };
         match status.phase {
             core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted => {
-                self.acknowledge_terminal_outcome(&mut state, pending);
+                self.acknowledge_terminal_outcome(&mut application, pending);
                 return workspace_edit_phase_application(
                     status.phase,
                     reason,
@@ -278,7 +298,7 @@ impl NotificationHub {
             }
             core::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
             | core::language_servers::WorkspaceEditTransactionPhase::FinishedUncommitted => {
-                self.acknowledge_terminal_outcome(&mut state, pending);
+                self.acknowledge_terminal_outcome(&mut application, pending);
                 return workspace_edit_phase_application(
                     status.phase,
                     reason,
@@ -300,10 +320,15 @@ impl NotificationHub {
             _ => {}
         }
 
-        let status = match state.cancel_owned_workspace_edit(
+        let Some(owner) = owner else {
+            return apply_edit_recovery_required(&format!(
+                "{reason}; workspace edit owner is unavailable"
+            ));
+        };
+        let status = match application.cancel_owned_workspace_edit(
             pending.transaction_id,
             &pending.authorization,
-            pending.renderer_id,
+            owner,
         ) {
             Ok(status) => status,
             Err(error) => {
@@ -312,32 +337,32 @@ impl NotificationHub {
                 ));
             }
         };
-        if let Err(error) = self.persist_locked_state(&state) {
+        if let Err(error) = self.persist_locked_application(&application) {
             return apply_edit_recovery_required(&format!("{reason}; {error}"));
         }
         match status.phase {
             core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted => {
-                self.acknowledge_terminal_outcome(&mut state, pending);
+                self.acknowledge_terminal_outcome(&mut application, pending);
                 core::events::WorkspaceEditApplication {
                     applied: true,
                     failure_reason: None,
                 }
             }
             core::language_servers::WorkspaceEditTransactionPhase::RolledBack => {
-                if let Err(error) = state
+                if let Err(error) = application
                     .finish_workspace_edit(pending.transaction_id, &pending.authorization)
-                    .and_then(|_| self.persist_locked_state(&state))
+                    .and_then(|_| self.persist_locked_application(&application))
                 {
                     return apply_edit_failure(&format!(
                         "{reason}; rollback completion requires recovery: {error}"
                     ));
                 }
-                self.acknowledge_terminal_outcome(&mut state, pending);
+                self.acknowledge_terminal_outcome(&mut application, pending);
                 apply_edit_failure(reason)
             }
             core::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
             | core::language_servers::WorkspaceEditTransactionPhase::FinishedUncommitted => {
-                self.acknowledge_terminal_outcome(&mut state, pending);
+                self.acknowledge_terminal_outcome(&mut application, pending);
                 apply_edit_failure(reason)
             }
             phase
@@ -369,13 +394,19 @@ impl NotificationHub {
             );
             let _ = pending.result.send(result);
         }
-        if let Some(state) = self.state() {
-            let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        let owners = renderer_ids
+            .iter()
+            .filter_map(|renderer_id| self.workspace_edit_owner(*renderer_id))
+            .collect::<Vec<_>>();
+        if let Some(application) = self.application() {
+            let mut application = application
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut rolled_back = Vec::new();
-            for renderer_id in renderer_ids {
+            for owner in owners {
                 rolled_back.extend(
-                    state
-                        .disconnect_workspace_edit_owner(*renderer_id)
+                    application
+                        .disconnect_workspace_edit_owner(owner)
                         .into_iter()
                         .filter(|status| {
                             status.phase
@@ -384,12 +415,10 @@ impl NotificationHub {
                         .map(|status| status.transaction_id),
                 );
             }
-            if let Some(store) = self.store.lock().ok().and_then(|store| store.clone()) {
-                match store.save(&state) {
-                    Ok(()) => state.finish_disconnected_workspace_edit_rollbacks(&rolled_back),
-                    Err(error) => {
-                        eprintln!("workspace edit disconnect rollback persistence failed: {error}");
-                    }
+            match application.persist_current_state() {
+                Ok(()) => application.finish_disconnected_workspace_edit_rollbacks(&rolled_back),
+                Err(error) => {
+                    eprintln!("workspace edit disconnect rollback persistence failed: {error}");
                 }
             }
         }
@@ -410,21 +439,26 @@ impl NotificationHub {
         }
     }
 
-    fn state(&self) -> Option<Arc<Mutex<core::State>>> {
-        self.state
+    fn application(&self) -> Option<Arc<Mutex<core::Application>>> {
+        self.application
             .lock()
             .ok()
-            .and_then(|state| state.as_ref()?.upgrade())
+            .and_then(|application| application.as_ref()?.upgrade())
     }
 
-    fn with_state<T>(&self, operation: impl FnOnce(&mut core::State) -> T) -> Option<T> {
-        let state = self.state()?;
-        let mut state = state.lock().ok()?;
-        Some(operation(&mut state))
+    fn workspace_edit_owner(&self, renderer_id: u64) -> Option<core::WorkspaceEditOwnerToken> {
+        self.subscribers
+            .lock()
+            .ok()
+            .and_then(|subscribers| subscribers.workspace_edit_owners.get(&renderer_id).copied())
     }
 
-    fn acknowledge_terminal_outcome(&self, state: &mut core::State, pending: &PendingApplyEdit) {
-        if let Err(error) = state
+    fn acknowledge_terminal_outcome(
+        &self,
+        application: &mut core::Application,
+        pending: &PendingApplyEdit,
+    ) {
+        if let Err(error) = application
             .acknowledge_workspace_edit_completion(pending.transaction_id, &pending.authorization)
         {
             eprintln!(
@@ -433,7 +467,7 @@ impl NotificationHub {
             );
             return;
         }
-        if let Err(error) = self.persist_locked_state(state) {
+        if let Err(error) = self.persist_locked_application(application) {
             eprintln!(
                 "workspace edit {} completion state persistence failed: {error}",
                 pending.transaction_id
@@ -441,15 +475,11 @@ impl NotificationHub {
         }
     }
 
-    fn persist_locked_state(
+    fn persist_locked_application(
         &self,
-        state: &core::State,
+        application: &core::Application,
     ) -> Result<(), core::language_servers::WorkspaceEditError> {
-        let store = self.store.lock().ok().and_then(|store| store.clone());
-        let Some(store) = store else {
-            return Ok(());
-        };
-        store.save(state).map_err(|error| {
+        application.persist_current_state().map_err(|error| {
             core::language_servers::WorkspaceEditError::Recovery(format!(
                 "workspace edit rollback persistence failed: {error}"
             ))
@@ -474,6 +504,7 @@ impl core::events::CoreEventSink for NotificationHub {
 struct Subscribers {
     next_id: u64,
     responses: HashMap<u64, ResponseSender>,
+    workspace_edit_owners: HashMap<u64, core::WorkspaceEditOwnerToken>,
     next_apply_edit_id: u64,
     pending_apply_edits: HashMap<u64, PendingApplyEdit>,
 }
@@ -560,12 +591,17 @@ fn committed_cleanup_failure_reason(reason: &str, transaction_id: u64) -> String
 
 pub(crate) struct NotificationSubscription {
     id: u64,
+    workspace_edit_owner: Option<core::WorkspaceEditOwnerToken>,
     hub: NotificationHub,
 }
 
 impl NotificationSubscription {
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    pub(crate) fn workspace_edit_owner(&self) -> Option<core::WorkspaceEditOwnerToken> {
+        self.workspace_edit_owner
     }
 }
 
@@ -783,7 +819,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).expect("test workspace should be created");
         let database = root.join("state.sqlite");
-        let store = core::persistence::StateStore::open(&database).expect("store should open");
+        let store = core::DurableStore::open(&database).expect("store should open");
         let manager = core::language_servers::LanguageServerManager::open(
             core::language_servers::LanguageServerPaths::new(
                 root.join("language-servers"),
@@ -804,10 +840,9 @@ mod tests {
             )
             .expect("workspace edit should stage");
         state.attach_language_server_manager(manager);
-        let state = Arc::new(Mutex::new(state));
+        let application = Arc::new(Mutex::new(core::Application::new(state, store.clone())));
         let hub = NotificationHub::default();
-        hub.attach_state(Arc::downgrade(&state));
-        hub.attach_store(store.clone());
+        hub.attach_application(Arc::downgrade(&application));
         let (responses, receiver) = response_channel();
         let subscription = hub.subscribe(responses);
         let renderer_id = subscription.id();
@@ -826,7 +861,7 @@ mod tests {
             .expect("notification should have a token");
 
         {
-            let mut state = state.lock().expect("state should lock");
+            let mut state = application.lock().expect("state should lock");
             state
                 .commit_workspace_edit(staged.transaction_id, &staged.authorization)
                 .expect("renderer commit should succeed");
@@ -844,11 +879,11 @@ mod tests {
         }
 
         drop(subscription);
-        let application = request.join().expect("apply-edit request should finish");
-        assert!(application.applied);
-        assert_eq!(application.failure_reason, None);
+        let result = request.join().expect("apply-edit request should finish");
+        assert!(result.applied);
+        assert_eq!(result.failure_reason, None);
         hub.acknowledge_apply_edit(renderer_id, id, token, true, None);
-        let mut state = state
+        let mut state = application
             .lock()
             .expect("state should lock after acknowledgement");
         assert!(state.workspace_edit_recoveries().unwrap().is_empty());
@@ -868,10 +903,9 @@ mod tests {
     #[test]
     fn disconnect_before_commit_durably_rolls_back_before_reporting_failure() {
         let (root, store, state, staged) = staged_apply_edit("disconnect-before-commit", false);
-        let state = Arc::new(Mutex::new(state));
+        let state = Arc::new(Mutex::new(core::Application::new(state, store.clone())));
         let hub = NotificationHub::default();
-        hub.attach_state(Arc::downgrade(&state));
-        hub.attach_store(store.clone());
+        hub.attach_application(Arc::downgrade(&state));
         let (responses, receiver) = response_channel();
         let subscription = hub.subscribe(responses);
         let renderer_id = subscription.id();
@@ -912,10 +946,9 @@ mod tests {
     #[test]
     fn disconnect_during_recovery_reports_recovery_and_retains_transaction() {
         let (root, store, state, staged) = staged_apply_edit("disconnect-during-recovery", true);
-        let state = Arc::new(Mutex::new(state));
+        let state = Arc::new(Mutex::new(core::Application::new(state, store)));
         let hub = NotificationHub::default();
-        hub.attach_state(Arc::downgrade(&state));
-        hub.attach_store(store);
+        hub.attach_application(Arc::downgrade(&state));
         let (responses, receiver) = response_channel();
         let subscription = hub.subscribe(responses);
         let request_hub = hub.clone();
@@ -948,7 +981,7 @@ mod tests {
                 .as_deref()
                 .is_some_and(|reason| reason.contains("requires recovery"))
         );
-        let state = state.lock().unwrap();
+        let mut state = state.lock().unwrap();
         assert_eq!(
             state
                 .workspace_edit_status(staged.transaction_id, &staged.authorization)
@@ -956,8 +989,9 @@ mod tests {
                 .phase,
             core::language_servers::WorkspaceEditTransactionPhase::RecoveryRequired
         );
+        let owner = state.workspace_edit_owner_token();
         state
-            .claim_workspace_edit_owner(staged.transaction_id, &staged.authorization, 999)
+            .claim_workspace_edit_owner(staged.transaction_id, &staged.authorization, owner)
             .expect("disconnect should release recovery ownership without retrying rollback");
         drop(state);
         assert_eq!(
@@ -972,7 +1006,7 @@ mod tests {
         overwrite: bool,
     ) -> (
         std::path::PathBuf,
-        core::persistence::StateStore,
+        core::DurableStore,
         core::State,
         core::language_servers::StagedWorkspaceEdit,
     ) {
@@ -986,7 +1020,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("target.txt"), "before").unwrap();
-        let store = core::persistence::StateStore::open(root.join("state.sqlite")).unwrap();
+        let store = core::DurableStore::open(root.join("state.sqlite")).unwrap();
         let manager = core::language_servers::LanguageServerManager::open(
             core::language_servers::LanguageServerPaths::new(
                 root.join("language-servers"),

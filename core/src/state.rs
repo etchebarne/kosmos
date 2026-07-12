@@ -60,6 +60,7 @@ pub struct State {
     next_tab_id: u64,
     instance_id: u64,
     persistent_revision: u64,
+    persistence_scope: PersistenceScope,
 }
 
 #[derive(Clone, Debug)]
@@ -85,10 +86,19 @@ impl WorkspaceEditEditorRecovery {
 }
 
 #[derive(Debug)]
-pub struct PersistentStateCandidate {
+pub(crate) struct PersistentStateCandidate {
     state: State,
     source_instance_id: u64,
     source_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistenceScope {
+    Clean,
+    ActiveWorkspace,
+    Settings,
+    Window,
+    Full,
 }
 
 static NEXT_STATE_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -129,12 +139,36 @@ fn path_is_at_or_below(path: &str, parent: &str) -> bool {
 }
 
 impl PersistentStateCandidate {
-    pub fn state(&self) -> &State {
+    pub(crate) fn state(&self) -> &State {
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut State {
+    pub(crate) fn state_mut(&mut self) -> &mut State {
         &mut self.state
+    }
+
+    pub(crate) fn into_state(self) -> State {
+        self.state
+    }
+
+    pub(crate) fn persistence_scope(&self) -> PersistenceScope {
+        self.state.persistence_scope
+    }
+}
+
+impl PersistenceScope {
+    pub(crate) fn save(
+        self,
+        store: &crate::persistence::StateStore,
+        state: &State,
+    ) -> crate::persistence::Result<()> {
+        match self {
+            Self::Clean => store.save(state),
+            Self::ActiveWorkspace => store.save_active_workspace(state),
+            Self::Settings => store.save_settings(state),
+            Self::Window => store.save_window_state(state),
+            Self::Full => store.save(state),
+        }
     }
 }
 
@@ -1230,7 +1264,7 @@ impl State {
             .workspace_edit_recoveries())
     }
 
-    pub fn claim_workspace_edit_owner(
+    pub(crate) fn claim_workspace_edit_owner(
         &self,
         transaction_id: u64,
         authorization: &str,
@@ -1244,7 +1278,7 @@ impl State {
             .claim_workspace_edit_owner(transaction_id, authorization, owner)
     }
 
-    pub fn cancel_owned_workspace_edit(
+    pub(crate) fn cancel_owned_workspace_edit(
         &mut self,
         transaction_id: u64,
         authorization: &str,
@@ -1265,7 +1299,7 @@ impl State {
         Ok(status)
     }
 
-    pub fn disconnect_workspace_edit_owner(
+    pub(crate) fn disconnect_workspace_edit_owner(
         &mut self,
         owner: u64,
     ) -> Vec<crate::language_servers::WorkspaceEditTransactionStatus> {
@@ -1286,7 +1320,7 @@ impl State {
         outcomes.into_iter().map(|(status, _)| status).collect()
     }
 
-    pub fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
+    pub(crate) fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
         if let Some(manager) = self.language_server_manager.as_ref() {
             manager.finish_disconnected_workspace_edit_rollbacks(transaction_ids);
         }
@@ -1338,13 +1372,13 @@ impl State {
     pub fn update_window_state(&mut self, window_state: WindowState) {
         if self.window_state != Some(window_state) {
             self.window_state = Some(window_state);
-            self.mark_persistent_change();
+            self.mark_persistent_change_with_scope(PersistenceScope::Window);
         }
     }
 
     pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<(), SettingsError> {
         if self.settings.update(id, value)? {
-            self.mark_persistent_change();
+            self.mark_persistent_change_with_scope(PersistenceScope::Settings);
         }
 
         Ok(())
@@ -1413,7 +1447,7 @@ impl State {
             });
     }
 
-    pub fn persistent_candidate(&self) -> PersistentStateCandidate {
+    pub(crate) fn persistent_candidate(&self) -> PersistentStateCandidate {
         PersistentStateCandidate {
             state: Self {
                 settings: self.settings.clone(),
@@ -1432,13 +1466,17 @@ impl State {
                 next_tab_id: self.next_tab_id,
                 instance_id: self.instance_id,
                 persistent_revision: self.persistent_revision,
+                persistence_scope: self.persistence_scope,
             },
             source_instance_id: self.instance_id,
             source_revision: self.persistent_revision,
         }
     }
 
-    pub fn commit_persistent_candidate(&mut self, candidate: PersistentStateCandidate) -> bool {
+    pub(crate) fn commit_persistent_candidate(
+        &mut self,
+        candidate: PersistentStateCandidate,
+    ) -> bool {
         if !self.accepts_persistent_candidate(&candidate) {
             return false;
         }
@@ -1462,6 +1500,7 @@ impl State {
         self.next_split_id = candidate.next_split_id;
         self.next_tab_id = candidate.next_tab_id;
         self.persistent_revision = next_revision;
+        self.persistence_scope = PersistenceScope::Clean;
 
         if let Some(manager) = &self.language_server_manager {
             let workspace_ids = self
@@ -1476,7 +1515,10 @@ impl State {
         true
     }
 
-    pub fn accepts_persistent_candidate(&self, candidate: &PersistentStateCandidate) -> bool {
+    pub(crate) fn accepts_persistent_candidate(
+        &self,
+        candidate: &PersistentStateCandidate,
+    ) -> bool {
         candidate.source_instance_id == self.instance_id
             && candidate.source_revision == self.persistent_revision
             && self.persistent_revision < u64::MAX
@@ -2268,7 +2310,7 @@ impl State {
     }
 
     pub fn activate_workspace(&mut self, workspace_id: WorkspaceId) -> bool {
-        self.mark_persistent_change();
+        self.mark_persistent_change_with_scope(PersistenceScope::ActiveWorkspace);
         self.workspaces.activate_workspace(workspace_id)
     }
 
@@ -2574,7 +2616,16 @@ impl State {
     }
 
     fn mark_persistent_change(&mut self) {
+        self.mark_persistent_change_with_scope(PersistenceScope::Full);
+    }
+
+    fn mark_persistent_change_with_scope(&mut self, scope: PersistenceScope) {
         self.persistent_revision = self.persistent_revision.saturating_add(1);
+        self.persistence_scope = match (self.persistence_scope, scope) {
+            (PersistenceScope::Clean, scope) => scope,
+            (current, scope) if current == scope => current,
+            _ => PersistenceScope::Full,
+        };
     }
 
     fn resolve_workspace_id(&self, workspace_id: Option<WorkspaceId>) -> Option<WorkspaceId> {
@@ -2878,6 +2929,7 @@ impl State {
             next_tab_id: next_ids.tab_id,
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
+            persistence_scope: PersistenceScope::Clean,
         })
     }
 }
@@ -3099,6 +3151,7 @@ impl Default for State {
             next_tab_id: 1,
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
+            persistence_scope: PersistenceScope::Clean,
         }
     }
 }

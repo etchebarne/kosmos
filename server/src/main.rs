@@ -19,7 +19,7 @@ fn main() -> io::Result<()> {
         Err(error) => eprintln!("formatter manager unavailable: {error}"),
     }
 
-    kosmos_server::ipc::run(socket_path(), state, store)
+    kosmos_server::ipc::run(socket_path(), core::Application::new(state, store))
 }
 
 fn socket_path() -> PathBuf {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use crate::ipc::messages::envelope::ServerMessage;
-use crate::ipc::router::{ExecutionMode, PersistenceMode, PreparedRoute};
+use crate::ipc::router::{PreparedRoute, SchedulingMode};
 
 use super::notifications::{NotificationHub, NotificationSubscription};
 use super::response::ResponseSender;
@@ -14,7 +14,9 @@ const LANGUAGE_SERVER_FEATURE_WORKERS: usize = 4;
 
 #[derive(Clone)]
 pub(crate) struct Dispatcher {
-    state: Arc<Mutex<core::State>>,
+    application: Arc<Mutex<core::Application>>,
+    #[cfg(test)]
+    state: Arc<Mutex<core::Application>>,
     external_requests: mpsc::SyncSender<ExternalRequest>,
     language_server_requests: mpsc::SyncSender<ExternalRequest>,
     language_server_feature_requests: mpsc::SyncSender<ExternalRequest>,
@@ -23,14 +25,10 @@ pub(crate) struct Dispatcher {
 }
 
 impl Dispatcher {
-    pub(crate) fn new(
-        state: core::State,
-        store: core::persistence::StateStore,
-    ) -> io::Result<Self> {
-        let initial_workspaces = state.workspaces().clone();
+    pub(crate) fn from_application(application: core::Application) -> io::Result<Self> {
+        let initial_workspaces = application.state().workspaces().clone();
         let notifications = NotificationHub::default();
         let workspace_edit_publication = notifications.workspace_edit_publication_gate();
-        notifications.attach_store(store.clone());
         let (workspace_reconciler, workspace_changes) = match core::WorkspaceChangeWatcher::new() {
             Ok((watcher, changes)) => {
                 match WorkspaceWatcherReconciler::new(watcher, notifications.clone()) {
@@ -46,9 +44,9 @@ impl Dispatcher {
                 (None, None)
             }
         };
-        let state = Arc::new(Mutex::new(state));
-        notifications.attach_state(Arc::downgrade(&state));
-        state
+        let application = Arc::new(Mutex::new(application));
+        notifications.attach_application(Arc::downgrade(&application));
+        application
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .set_event_sink(Arc::new(notifications.clone()));
@@ -63,8 +61,7 @@ impl Dispatcher {
         spawn_language_server_worker(language_server_receiver)?;
         spawn_language_server_feature_workers(language_server_feature_receiver)?;
         spawn_persistence_worker(
-            Arc::clone(&state),
-            store,
+            Arc::clone(&application),
             persistent_receiver,
             workspace_reconciler.clone(),
             workspace_edit_publication,
@@ -83,13 +80,20 @@ impl Dispatcher {
         }
 
         Ok(Self {
-            state,
+            application: Arc::clone(&application),
+            #[cfg(test)]
+            state: application,
             external_requests,
             language_server_requests,
             language_server_feature_requests,
             persistent_requests,
             notifications,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(state: core::State, store: core::DurableStore) -> io::Result<Self> {
+        Self::from_application(core::Application::new(state, store))
     }
 
     pub(crate) fn subscribe(&self, responses: ResponseSender) -> NotificationSubscription {
@@ -118,7 +122,7 @@ impl Dispatcher {
             route,
             responses,
             core::language_servers::LanguageServerRequestCancellation::new(),
-            0,
+            None,
         )
     }
 
@@ -127,23 +131,25 @@ impl Dispatcher {
         route: PreparedRoute,
         responses: ResponseSender,
         cancellation: core::language_servers::LanguageServerRequestCancellation,
-        owner_id: u64,
+        owner: Option<core::WorkspaceEditOwnerToken>,
     ) -> Option<mpsc::Receiver<()>> {
         if cancellation.is_cancelled() {
             responses.send(request_cancelled(route.request_id()));
             return None;
         }
-        if let Some((transaction_id, authorization)) = route.workspace_edit_credentials() {
+        if let Some((transaction_id, authorization)) = route.workspace_edit_credentials()
+            && let Some(owner) = owner
+        {
             let claim = self
-                .state
+                .application
                 .lock()
                 .map_err(|_| {
                     core::language_servers::WorkspaceEditError::Invalid(
                         "workspace edit state is unavailable".to_owned(),
                     )
                 })
-                .and_then(|state| {
-                    state.claim_workspace_edit_owner(transaction_id, &authorization, owner_id)
+                .and_then(|mut application| {
+                    application.claim_workspace_edit_owner(transaction_id, &authorization, owner)
                 });
             if let Err(error) = claim {
                 responses.send(workspace_edit_error(route.request_id(), error));
@@ -152,81 +158,84 @@ impl Dispatcher {
         }
 
         match route.mode() {
-            ExecutionMode::Snapshot => {
-                responses.send(execute_snapshot(&self.state, &route, &cancellation));
+            SchedulingMode::Snapshot => {
+                responses.send(execute_snapshot(&self.application, &route, &cancellation));
                 None
             }
-            ExecutionMode::Live => {
-                responses.send(execute_live(&self.state, &route, &cancellation));
+            SchedulingMode::Live => {
+                responses.send(execute_live(&self.application, &route, &cancellation));
                 None
             }
-            ExecutionMode::External => {
+            SchedulingMode::External => {
                 let (completion, completed) = mpsc::channel();
-                let candidate = match persistent_candidate(&self.state, route.request_id()) {
-                    Ok(candidate) => candidate,
-                    Err(response) => {
-                        responses.send(response);
-                        return None;
-                    }
-                };
+                let operation =
+                    match prepare_external_operation(&self.application, route.request_id()) {
+                        Ok(candidate) => candidate,
+                        Err(response) => {
+                            responses.send(response);
+                            return None;
+                        }
+                    };
 
                 queue_external_request(
                     &self.external_requests,
                     ExternalRequest {
                         route,
                         responses,
-                        candidate,
+                        operation,
                         completion,
                         cancellation,
                     },
                 );
                 Some(completed)
             }
-            ExecutionMode::LanguageServer => {
+            SchedulingMode::LanguageServer => {
                 let (completion, completed) = mpsc::channel();
-                let candidate = match persistent_candidate(&self.state, route.request_id()) {
-                    Ok(candidate) => candidate,
-                    Err(response) => {
-                        responses.send(response);
-                        return None;
-                    }
-                };
+                let operation =
+                    match prepare_external_operation(&self.application, route.request_id()) {
+                        Ok(candidate) => candidate,
+                        Err(response) => {
+                            responses.send(response);
+                            return None;
+                        }
+                    };
 
                 queue_external_request(
                     &self.language_server_requests,
                     ExternalRequest {
                         route,
                         responses,
-                        candidate,
+                        operation,
                         completion,
                         cancellation,
                     },
                 );
                 Some(completed)
             }
-            ExecutionMode::LanguageServerFeature => {
+            SchedulingMode::LanguageServerFeature => {
                 let (completion, completed) = mpsc::channel();
-                let candidate = match persistent_candidate(&self.state, route.request_id()) {
-                    Ok(candidate) => candidate,
-                    Err(response) => {
-                        responses.send(response);
-                        return None;
-                    }
-                };
+                let operation =
+                    match prepare_external_operation(&self.application, route.request_id()) {
+                        Ok(candidate) => candidate,
+                        Err(response) => {
+                            responses.send(response);
+                            return None;
+                        }
+                    };
 
                 queue_external_request(
                     &self.language_server_feature_requests,
                     ExternalRequest {
                         route,
                         responses,
-                        candidate,
+                        operation,
                         completion,
                         cancellation,
                     },
                 );
                 Some(completed)
             }
-            ExecutionMode::LivePersistent(_) | ExecutionMode::Persistent(_) => {
+            SchedulingMode::SerialMutation | SchedulingMode::PersistenceBarrier => {
                 let (completion, completed) = mpsc::channel();
                 queue_persistent_request(
                     &self.persistent_requests,
@@ -246,7 +255,7 @@ impl Dispatcher {
 struct ExternalRequest {
     route: PreparedRoute,
     responses: ResponseSender,
-    candidate: core::PersistentStateCandidate,
+    operation: core::PreparedExternalOperation,
     completion: mpsc::Sender<()>,
     cancellation: core::language_servers::LanguageServerRequestCancellation,
 }
@@ -354,7 +363,7 @@ fn spawn_external_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Resul
 
                 let response = execute_handler(
                     &request.route,
-                    request.candidate.state_mut(),
+                    request.operation.state_mut(),
                     &request.cancellation,
                 );
                 request.responses.send(response);
@@ -379,7 +388,7 @@ fn spawn_language_server_worker(requests: mpsc::Receiver<ExternalRequest>) -> io
 
                 let response = execute_handler(
                     &request.route,
-                    request.candidate.state_mut(),
+                    request.operation.state_mut(),
                     &request.cancellation,
                 );
                 request.responses.send(response);
@@ -416,7 +425,7 @@ fn spawn_language_server_feature_workers(
 
                     let response = execute_handler(
                         &request.route,
-                        request.candidate.state_mut(),
+                        request.operation.state_mut(),
                         &request.cancellation,
                     );
                     request.responses.send(response);
@@ -428,8 +437,7 @@ fn spawn_language_server_feature_workers(
 }
 
 fn spawn_persistence_worker(
-    state: Arc<Mutex<core::State>>,
-    store: core::persistence::StateStore,
+    application: Arc<Mutex<core::Application>>,
     requests: mpsc::Receiver<PersistentRequest>,
     workspace_reconciler: Option<WorkspaceWatcherReconciler>,
     workspace_edit_publication: Arc<Mutex<()>>,
@@ -446,24 +454,9 @@ fn spawn_persistence_worker(
                     continue;
                 }
 
-                let persistence = match request.route.mode() {
-                    ExecutionMode::Persistent(persistence)
-                    | ExecutionMode::LivePersistent(persistence) => persistence,
-                    _ => {
-                        request.responses.send(ServerMessage::error(
-                            request.route.request_id(),
-                            "ipc.invalid_execution_mode",
-                            "non-persistent request reached the persistence worker",
-                        ));
-                        let _ = request.completion.send(());
-                        continue;
-                    }
-                };
                 let response = execute_persistent(
-                    &state,
-                    &store,
+                    &application,
                     &request.route,
-                    persistence,
                     workspace_reconciler.as_ref(),
                     &request.cancellation,
                     &workspace_edit_publication,
@@ -500,90 +493,34 @@ fn spawn_notification_worker(
 }
 
 fn execute_snapshot(
-    state: &Mutex<core::State>,
+    application: &Mutex<core::Application>,
     route: &PreparedRoute,
     cancellation: &core::language_servers::LanguageServerRequestCancellation,
 ) -> ServerMessage {
-    let mut candidate = match persistent_candidate(state, route.request_id()) {
-        Ok(candidate) => candidate,
-        Err(response) => return response,
-    };
-
-    execute_handler(route, candidate.state_mut(), cancellation)
-}
-
-fn execute_live_persistent(
-    state: &Mutex<core::State>,
-    store: &core::persistence::StateStore,
-    route: &PreparedRoute,
-    persistence: PersistenceMode,
-    workspace_reconciler: Option<&WorkspaceWatcherReconciler>,
-    cancellation: &core::language_servers::LanguageServerRequestCancellation,
-) -> ServerMessage {
-    let mut state = match state.lock() {
-        Ok(state) => state,
+    let mut operation = match prepare_external_operation(application, route.request_id()) {
+        Ok(operation) => operation,
         Err(_) => return state_unavailable(route.request_id()),
     };
-    let response = execute_handler(route, &mut state, cancellation);
-    if !response.is_ok() || persistence == PersistenceMode::Barrier {
-        return response;
-    }
-    let save_result = match persistence {
-        PersistenceMode::ActiveWorkspace => store.save_active_workspace(&state),
-        PersistenceMode::Barrier => unreachable!("barriers return before persistence"),
-        PersistenceMode::Full => store.save(&state),
-        PersistenceMode::Settings => store.save_settings(&state),
-        PersistenceMode::Window => store.save_window_state(&state),
-    };
-    if let Err(error) = save_result {
-        if route.action() == "commitWorkspaceEdit"
-            && let Some((transaction_id, authorization)) = route.workspace_edit_credentials()
-        {
-            if let Err(rollback) = state.rollback_workspace_edit(transaction_id, &authorization) {
-                return workspace_edit_error(route.request_id(), rollback);
-            }
-            if let Err(rollback_save) = store.save(&state) {
-                return ServerMessage::error(
-                    route.request_id(),
-                    "persistence.save_failed",
-                    format!("{error}; workspace edit rollback persistence failed: {rollback_save}"),
-                );
-            }
-        }
-        return ServerMessage::error(
-            route.request_id(),
-            "persistence.save_failed",
-            error.to_string(),
-        );
-    }
-    #[cfg(test)]
-    pause_after_workspace_edit_persistence(route.request_id());
-    let workspaces = state.workspaces().clone();
-    drop(state);
-    if let Some(workspace_reconciler) = workspace_reconciler {
-        workspace_reconciler.reconcile(workspaces);
-    }
-    response
+
+    execute_handler(route, operation.state_mut(), cancellation)
 }
 
 fn execute_live(
-    state: &Mutex<core::State>,
+    application: &Mutex<core::Application>,
     route: &PreparedRoute,
     cancellation: &core::language_servers::LanguageServerRequestCancellation,
 ) -> ServerMessage {
-    let mut state = match state.lock() {
-        Ok(state) => state,
+    let mut application = match application.lock() {
+        Ok(application) => application,
         Err(_) => return state_unavailable(route.request_id()),
     };
 
-    execute_handler(route, &mut state, cancellation)
+    execute_handler(route, application.state_mut(), cancellation)
 }
 
 fn execute_persistent(
-    state: &Mutex<core::State>,
-    store: &core::persistence::StateStore,
+    application: &Mutex<core::Application>,
     route: &PreparedRoute,
-    persistence: PersistenceMode,
     workspace_reconciler: Option<&WorkspaceWatcherReconciler>,
     cancellation: &core::language_servers::LanguageServerRequestCancellation,
     workspace_edit_publication: &Mutex<()>,
@@ -593,82 +530,44 @@ fn execute_persistent(
             .lock()
             .unwrap_or_else(|error| error.into_inner())
     });
-    if matches!(route.mode(), ExecutionMode::LivePersistent(_)) {
-        return execute_live_persistent(
-            state,
-            store,
-            route,
-            persistence,
-            workspace_reconciler,
-            cancellation,
-        );
+    if matches!(route.mode(), SchedulingMode::PersistenceBarrier) {
+        return execute_live(application, route, cancellation);
     }
-    let mut candidate = match persistent_candidate(state, route.request_id()) {
-        Ok(candidate) => candidate,
-        Err(response) => return response,
-    };
-    let response = execute_handler(route, candidate.state_mut(), cancellation);
-
-    if !response.is_ok() {
-        return response;
-    }
-
-    if persistence == PersistenceMode::Barrier {
-        return response;
-    }
-
-    let candidate_is_current = match state.lock() {
-        Ok(state) => state.accepts_persistent_candidate(&candidate),
+    let mut operation = match application.lock() {
+        Ok(mut application) => match application.prepare_persistent_operation() {
+            Ok(operation) => operation,
+            Err(core::ApplicationError::DurabilityInFlight) => {
+                return state_conflict(route.request_id());
+            }
+            Err(error) => return persistence_error(route.request_id(), error),
+        },
         Err(_) => return state_unavailable(route.request_id()),
     };
+    let response = execute_handler(route, operation.state_mut(), cancellation);
 
-    if !candidate_is_current {
-        if let Err(error) = rollback_failed_workspace_edit(route, &mut candidate) {
-            return workspace_edit_error(route.request_id(), error);
-        }
-        return state_conflict(route.request_id());
+    if !response.is_ok() {
+        abandon_persistent_operation(application);
+        return response;
     }
 
-    let save_result = match persistence {
-        PersistenceMode::ActiveWorkspace => store.save_active_workspace(candidate.state()),
-        PersistenceMode::Barrier => unreachable!("barriers return before persistence"),
-        PersistenceMode::Full => store.save(candidate.state()),
-        PersistenceMode::Settings => store.save_settings(candidate.state()),
-        PersistenceMode::Window => store.save_window_state(candidate.state()),
-    };
-
-    if let Err(error) = save_result {
-        if let Err(rollback) = rollback_failed_workspace_edit(route, &mut candidate) {
-            return workspace_edit_error(route.request_id(), rollback);
-        }
-        return ServerMessage::error(
-            route.request_id(),
-            "persistence.save_failed",
-            error.to_string(),
-        );
+    if let Err(error) = operation.persist() {
+        abandon_persistent_operation(application);
+        return persistence_error(route.request_id(), error);
     }
 
     #[cfg(test)]
     pause_after_workspace_edit_persistence(route.request_id());
 
-    let mut state = match state.lock() {
-        Ok(state) => state,
+    let mut application = match application.lock() {
+        Ok(application) => application,
         Err(_) => return state_unavailable(route.request_id()),
     };
-    if !state.commit_persistent_candidate(candidate) {
-        let rollback_error = store.save(&state).err();
-        let message = match rollback_error {
-            Some(error) => {
-                format!("persistent state changed before commit; database rollback failed: {error}")
-            }
-            None => "persistent state changed before the saved candidate could commit".to_owned(),
-        };
-
-        return ServerMessage::error(route.request_id(), "persistence.state_conflict", message);
+    if let Err(error) = application.complete_persistent_operation(operation) {
+        return persistence_error(route.request_id(), error);
     }
 
-    let workspaces = state.workspaces().clone();
-    drop(state);
+    let workspaces = application.state().workspaces().clone();
+    drop(application);
 
     if let Some(workspace_reconciler) = workspace_reconciler {
         workspace_reconciler.reconcile(workspaces);
@@ -677,29 +576,20 @@ fn execute_persistent(
     response
 }
 
-fn rollback_failed_workspace_edit(
-    route: &PreparedRoute,
-    candidate: &mut core::PersistentStateCandidate,
-) -> Result<(), core::language_servers::WorkspaceEditError> {
-    if route.action() != "commitWorkspaceEdit" {
-        return Ok(());
-    }
-    if let Some((transaction_id, authorization)) = route.workspace_edit_credentials() {
-        candidate
-            .state_mut()
-            .rollback_workspace_edit(transaction_id, &authorization)?;
-    }
-    Ok(())
+fn prepare_external_operation(
+    application: &Mutex<core::Application>,
+    request_id: u64,
+) -> Result<core::PreparedExternalOperation, ServerMessage> {
+    application
+        .lock()
+        .map(|application| application.prepare_external_operation())
+        .map_err(|_| state_unavailable(request_id))
 }
 
-fn persistent_candidate(
-    state: &Mutex<core::State>,
-    request_id: u64,
-) -> Result<core::PersistentStateCandidate, ServerMessage> {
-    state
-        .lock()
-        .map(|state| state.persistent_candidate())
-        .map_err(|_| state_unavailable(request_id))
+fn abandon_persistent_operation(application: &Mutex<core::Application>) {
+    if let Ok(mut application) = application.lock() {
+        application.abandon_persistent_operation();
+    }
 }
 
 fn queue_external_request(requests: &mpsc::SyncSender<ExternalRequest>, request: ExternalRequest) {
@@ -808,6 +698,15 @@ fn state_conflict(request_id: u64) -> ServerMessage {
     )
 }
 
+fn persistence_error(request_id: u64, error: core::ApplicationError) -> ServerMessage {
+    let code = match error {
+        core::ApplicationError::StalePreparedOperation => "persistence.state_conflict",
+        core::ApplicationError::DurabilityInFlight => "persistence.state_conflict",
+        core::ApplicationError::Persistence(_) => "persistence.save_failed",
+    };
+    ServerMessage::error(request_id, code, error.to_string())
+}
+
 #[cfg(test)]
 fn pause_after_workspace_edit_persistence(request_id: u64) {
     tests::pause_after_workspace_edit_persistence(request_id);
@@ -822,7 +721,7 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use crate::ipc::messages::envelope::{Domain, RequestEnvelope};
-    use crate::ipc::router;
+    use crate::ipc::router::{self, ExecutionMode};
     use crate::ipc::transport::response;
 
     #[derive(Default)]
@@ -973,7 +872,7 @@ mod tests {
             .workspaces()
             .workspaces()
             .len();
-        let persisted_workspace_count = core::persistence::StateStore::open(&path)
+        let persisted_workspace_count = core::DurableStore::open(&path)
             .expect("store should reopen")
             .load()
             .expect("state should load")
@@ -1044,7 +943,7 @@ mod tests {
                 route,
                 responses,
                 core::language_servers::LanguageServerRequestCancellation::new(),
-                subscription.id(),
+                subscription.workspace_edit_owner(),
             )
             .unwrap();
         wait_for_publication_gate();
@@ -1352,7 +1251,7 @@ mod tests {
                     ),
                     responses,
                     cancellation.clone(),
-                    0,
+                    None,
                 )
                 .expect("queued feature should have a completion signal"),
         );
@@ -1541,7 +1440,7 @@ mod tests {
         condition.notify_all();
     }
 
-    fn test_store(name: &str) -> (core::persistence::StateStore, PathBuf) {
+    fn test_store(name: &str) -> (core::DurableStore, PathBuf) {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after epoch")
@@ -1550,7 +1449,7 @@ mod tests {
             "kosmos-server-dispatcher-{}-{name}-{nanos}.sqlite3",
             std::process::id()
         ));
-        let store = core::persistence::StateStore::open(&path).expect("store should open");
+        let store = core::DurableStore::open(&path).expect("store should open");
 
         (store, path)
     }

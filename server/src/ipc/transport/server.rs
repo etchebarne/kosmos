@@ -8,13 +8,9 @@ use std::thread;
 use super::connection;
 use super::dispatcher::Dispatcher;
 
-pub(crate) fn run(
-    socket_path: PathBuf,
-    state: core::State,
-    store: core::persistence::StateStore,
-) -> io::Result<()> {
+pub(crate) fn run(socket_path: PathBuf, application: core::Application) -> io::Result<()> {
     prepare_socket_path(&socket_path)?;
-    let dispatcher = Dispatcher::new(state, store)?;
+    let dispatcher = Dispatcher::from_application(application)?;
 
     let listener = bind_socket(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
