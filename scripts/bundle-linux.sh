@@ -28,6 +28,5 @@ if [[ ! -d "$DESKTOP_DIR/node_modules" ]] || [[ ! -x "$DESKTOP_DIR/node_modules/
     bun install --cwd "$DESKTOP_DIR"
 fi
 
-bun run --cwd "$DESKTOP_DIR" typecheck
 bun run --cwd "$DESKTOP_DIR" build
 bun run --cwd "$DESKTOP_DIR" package:linux

@@ -1,16 +1,24 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::formatters::{
     DocumentFormattingRequest, FormatterError, FormatterManager, FormatterStatus, FormattingError,
 };
 use crate::language_servers::{
-    LanguageServerChange, LanguageServerColorInformation, LanguageServerColorPresentation,
-    LanguageServerColorPresentationRequest, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerCompletionRequest, LanguageServerDiagnostic,
-    LanguageServerDocumentOpen, LanguageServerError, LanguageServerHover, LanguageServerManager,
-    LanguageServerPosition, LanguageServerStatus, LanguageServerTextEdit,
+    LanguageServerChange, LanguageServerCodeAction, LanguageServerCodeActionRequest,
+    LanguageServerCodeActionResolveRequest, LanguageServerColorInformation,
+    LanguageServerColorPresentation, LanguageServerColorPresentationRequest,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerCompletionRequest,
+    LanguageServerCompletionResolveRequest, LanguageServerDiagnosticSnapshot,
+    LanguageServerDocumentOpen, LanguageServerDocumentSymbol, LanguageServerError,
+    LanguageServerExecuteCommandRequest, LanguageServerHover, LanguageServerLocation,
+    LanguageServerManager, LanguageServerPosition, LanguageServerPrepareRename,
+    LanguageServerRequestCancellation, LanguageServerSignatureHelp, LanguageServerStatus,
+    LanguageServerTextEdit, LanguageServerWorkspaceSymbol,
+    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, WorkspaceEditError,
+    WorkspaceEditRoot,
 };
 use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
@@ -189,6 +197,12 @@ impl State {
         self.language_server_manager = Some(manager);
     }
 
+    pub fn set_event_sink(&self, sink: Arc<dyn crate::events::CoreEventSink>) {
+        if let Some(manager) = &self.language_server_manager {
+            manager.set_event_sink(sink);
+        }
+    }
+
     pub fn attach_formatter_manager(&mut self, manager: FormatterManager) {
         self.formatter_manager = Some(manager);
     }
@@ -205,6 +219,16 @@ impl State {
             .as_ref()
             .ok_or(FormatterError::ManagerUnavailable)?
             .status(formatter_id)
+    }
+
+    pub fn set_formatter_priorities(
+        &self,
+        formatter_ids: Vec<String>,
+    ) -> Result<Vec<FormatterStatus>, FormatterError> {
+        self.formatter_manager
+            .as_ref()
+            .ok_or(FormatterError::ManagerUnavailable)?
+            .set_priorities(formatter_ids)
     }
 
     pub fn install_formatter(&self, formatter_id: &str) -> Result<FormatterStatus, FormatterError> {
@@ -346,11 +370,190 @@ impl State {
         generation: u64,
         version: i64,
         position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Option<LanguageServerHover>, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
-            .hover(workspace_id, path, generation, version, position)
+            .hover(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_signature_help(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Option<LanguageServerSignatureHelp>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .signature_help(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_definition(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .definition(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_declaration(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .declaration(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_type_definition(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .type_definition(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_implementation(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .implementation(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn language_server_references(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        include_declaration: bool,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .references(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                include_declaration,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_document_symbols(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerDocumentSymbol>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .document_symbols(workspace_id, path, generation, version, cancellation)
+    }
+
+    pub fn language_server_workspace_symbols(
+        &self,
+        query: &str,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerWorkspaceSymbol>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .workspace_symbols(query, cancellation)
+    }
+
+    pub fn resolve_language_server_workspace_symbol(
+        &self,
+        request: LanguageServerWorkspaceSymbolResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<LanguageServerWorkspaceSymbol, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .resolve_workspace_symbol(request, cancellation)
     }
 
     pub fn language_server_diagnostics(
@@ -359,7 +562,7 @@ impl State {
         path: &str,
         generation: u64,
         version: i64,
-    ) -> Result<Option<Vec<LanguageServerDiagnostic>>, LanguageServerError> {
+    ) -> Result<Option<Vec<LanguageServerDiagnosticSnapshot>>, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
@@ -373,11 +576,19 @@ impl State {
         generation: u64,
         version: i64,
         request: &LanguageServerCompletionRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<LanguageServerCompletionList, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
-            .completion(workspace_id, path, generation, version, request)
+            .completion(
+                workspace_id,
+                path,
+                generation,
+                version,
+                request,
+                cancellation,
+            )
     }
 
     pub fn resolve_language_server_completion(
@@ -386,13 +597,20 @@ impl State {
         path: &str,
         generation: u64,
         version: i64,
-        server_id: &str,
-        raw: serde_json::Value,
+        request: LanguageServerCompletionResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<LanguageServerCompletionItem, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
-            .resolve_completion(workspace_id, path, generation, version, server_id, raw)
+            .resolve_completion(
+                workspace_id,
+                path,
+                generation,
+                version,
+                request,
+                cancellation,
+            )
     }
 
     pub fn language_server_document_colors(
@@ -401,11 +619,12 @@ impl State {
         path: &str,
         generation: u64,
         version: i64,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerColorInformation>, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
-            .document_colors(workspace_id, path, generation, version)
+            .document_colors(workspace_id, path, generation, version, cancellation)
     }
 
     pub fn language_server_color_presentations(
@@ -415,17 +634,29 @@ impl State {
         generation: u64,
         version: i64,
         request: &LanguageServerColorPresentationRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerColorPresentation>, LanguageServerError> {
         self.language_server_manager
             .as_ref()
             .ok_or(LanguageServerError::ManagerUnavailable)?
-            .color_presentations(workspace_id, path, generation, version, request)
+            .color_presentations(
+                workspace_id,
+                path,
+                generation,
+                version,
+                request,
+                cancellation,
+            )
     }
 
     pub fn format_document(
         &self,
         request: DocumentFormattingRequest<'_>,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerTextEdit>, FormattingError> {
+        if cancellation.is_cancelled() {
+            return Err(LanguageServerError::RequestCancelled.into());
+        }
         if request.text.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
             return Err(FormatterError::InvalidDocument(
                 "document exceeds the editor size limit".to_owned(),
@@ -463,11 +694,15 @@ impl State {
         if let Some(manager) = &self.formatter_manager
             && let Some(formatted) = manager.format(
                 request.language_id,
+                Path::new(&relative_path),
                 &workspace_root,
                 &absolute_path,
                 request.text,
             )?
         {
+            if cancellation.is_cancelled() {
+                return Err(LanguageServerError::RequestCancelled.into());
+            }
             if formatted.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
                 return Err(FormatterError::OutputTooLarge.into());
             }
@@ -482,8 +717,261 @@ impl State {
                 request.generation,
                 request.version,
                 request.options,
+                cancellation,
             )
             .map_err(FormattingError::from)
+    }
+
+    pub fn language_server_prepare_rename(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Option<LanguageServerPrepareRename>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .prepare_rename(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                cancellation,
+            )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn language_server_rename(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        new_name: &str,
+        server_id: Option<&str>,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<StagedWorkspaceEdit, LanguageServerError> {
+        let roots = vec![self.workspace_edit_root(workspace_id)?];
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .rename(
+                workspace_id,
+                path,
+                generation,
+                version,
+                position,
+                new_name,
+                server_id,
+                &roots,
+                cancellation,
+            )
+    }
+
+    pub fn language_server_code_actions(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: &LanguageServerCodeActionRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerCodeAction>, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .code_actions(
+                workspace_id,
+                path,
+                generation,
+                version,
+                request,
+                cancellation,
+            )
+    }
+
+    pub fn resolve_language_server_code_action(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: LanguageServerCodeActionResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<LanguageServerCodeAction, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .resolve_code_action(
+                workspace_id,
+                path,
+                generation,
+                version,
+                request,
+                cancellation,
+            )
+    }
+
+    pub fn stage_language_server_code_action(
+        &self,
+        action: &LanguageServerCodeAction,
+    ) -> Result<Option<StagedWorkspaceEdit>, WorkspaceEditError> {
+        let roots = self
+            .workspace_edit_roots()
+            .map_err(|error| WorkspaceEditError::Invalid(error.to_string()))?;
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .stage_code_action_edit(action, &roots)
+    }
+
+    pub fn execute_language_server_command(
+        &self,
+        request: LanguageServerExecuteCommandRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<serde_json::Value, LanguageServerError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .execute_command(request, cancellation)
+    }
+
+    pub fn commit_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<(), WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .commit_workspace_edit(transaction_id, authorization)
+    }
+
+    pub fn rollback_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<(), WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .rollback_workspace_edit(transaction_id, authorization)
+    }
+
+    pub fn finish_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<bool, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .finish_workspace_edit(transaction_id, authorization)
+    }
+
+    pub fn finalize_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .finalize_workspace_edit(transaction_id, authorization)
+    }
+
+    pub fn workspace_edit_status(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .workspace_edit_status(transaction_id, authorization)
+    }
+
+    pub fn claim_workspace_edit_owner(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+        owner: u64,
+    ) -> Result<(), WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .claim_workspace_edit_owner(transaction_id, authorization, owner)
+    }
+
+    pub fn cancel_owned_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+        owner: u64,
+    ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .cancel_owned_workspace_edit(transaction_id, authorization, owner)
+    }
+
+    pub fn disconnect_workspace_edit_owner(
+        &self,
+        owner: u64,
+    ) -> Vec<crate::language_servers::WorkspaceEditTransactionStatus> {
+        self.language_server_manager
+            .as_ref()
+            .map(|manager| manager.disconnect_workspace_edit_owner(owner))
+            .unwrap_or_default()
+    }
+
+    fn workspace_edit_roots(&self) -> Result<Vec<WorkspaceEditRoot>, LanguageServerError> {
+        self.workspaces
+            .workspaces()
+            .iter()
+            .map(|workspace| {
+                Ok(WorkspaceEditRoot {
+                    workspace_id: workspace.id(),
+                    path: std::fs::canonicalize(workspace.directory())
+                        .map_err(|error| LanguageServerError::InvalidDocument(error.to_string()))?,
+                })
+            })
+            .collect()
+    }
+
+    fn workspace_edit_root(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceEditRoot, LanguageServerError> {
+        let workspace = self.workspaces.workspace(workspace_id).ok_or_else(|| {
+            LanguageServerError::InvalidDocument("workspace does not exist".to_owned())
+        })?;
+        Ok(WorkspaceEditRoot {
+            workspace_id,
+            path: std::fs::canonicalize(workspace.directory())
+                .map_err(|error| LanguageServerError::InvalidDocument(error.to_string()))?,
+        })
     }
 
     pub fn trust_language_server_workspace(

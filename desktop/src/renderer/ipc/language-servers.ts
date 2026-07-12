@@ -6,7 +6,7 @@ import type {
   CloseLanguageServerDocumentParams,
   LanguageServerHover,
   LanguageServerHoverParams,
-  LanguageServerDiagnostic,
+  LanguageServerDiagnosticSnapshot,
   LanguageServerDiagnosticsParams,
   LanguageServerCompletionItem,
   LanguageServerCompletionList,
@@ -20,9 +20,25 @@ import type {
   ResolveLanguageServerCompletionParams,
   SaveLanguageServerDocumentParams,
   LanguageServerTextEdit,
+  LanguageServerSignatureHelp,
+  LanguageServerLocation,
+  LanguageServerReferencesParams,
+  LanguageServerDocumentSymbol,
+  LanguageServerWorkspaceSymbol,
+  LanguageServerWorkspaceSymbolsParams,
+  ResolveLanguageServerWorkspaceSymbolParams,
+  ExecuteLanguageServerCommandParams,
+  LanguageServerCodeAction,
+  LanguageServerCodeActionsParams,
+  LanguageServerPrepareRename,
+  LanguageServerRenameParams,
+  ResolveLanguageServerCodeActionParams,
+  StagedWorkspaceEdit,
+  WorkspaceEditTransactionParams,
+  WorkspaceEditTransactionStatus,
 } from "@/shared/ipc";
 
-import { requestServer } from "./transport";
+import { requestServer, type RequestCancellation } from "./transport";
 
 const DOMAIN = "languageServers";
 
@@ -80,44 +96,187 @@ export function saveLanguageServerDocument(
 
 export function getLanguageServerHover(
   params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerHover | null> {
-  return requestServer(DOMAIN, "hover", params);
+  return requestLanguageServerFeature("hover", params, cancellation);
+}
+
+export function getLanguageServerSignatureHelp(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerSignatureHelp | null> {
+  return requestLanguageServerFeature("signatureHelp", params, cancellation);
+}
+
+export function getLanguageServerDefinitions(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerLocation[]> {
+  return requestLanguageServerFeature("definition", params, cancellation);
+}
+
+export function getLanguageServerDeclarations(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerLocation[]> {
+  return requestLanguageServerFeature("declaration", params, cancellation);
+}
+
+export function getLanguageServerTypeDefinitions(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerLocation[]> {
+  return requestLanguageServerFeature("typeDefinition", params, cancellation);
+}
+
+export function getLanguageServerImplementations(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerLocation[]> {
+  return requestLanguageServerFeature("implementation", params, cancellation);
+}
+
+export function getLanguageServerReferences(
+  params: LanguageServerReferencesParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerLocation[]> {
+  return requestLanguageServerFeature("references", params, cancellation);
+}
+
+export function getLanguageServerDocumentSymbols(
+  params: LanguageServerDiagnosticsParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerDocumentSymbol[]> {
+  return requestLanguageServerFeature("documentSymbols", params, cancellation);
+}
+
+export function getLanguageServerWorkspaceSymbols(
+  params: LanguageServerWorkspaceSymbolsParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerWorkspaceSymbol[]> {
+  return requestLanguageServerFeature("workspaceSymbols", params, cancellation);
+}
+
+export function resolveLanguageServerWorkspaceSymbol(
+  params: ResolveLanguageServerWorkspaceSymbolParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerWorkspaceSymbol> {
+  return requestLanguageServerFeature("resolveWorkspaceSymbol", params, cancellation);
 }
 
 export function getLanguageServerDiagnostics(
   params: LanguageServerDiagnosticsParams,
-): Promise<LanguageServerDiagnostic[] | null> {
-  return requestServer(DOMAIN, "diagnostics", params);
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerDiagnosticSnapshot[] | null> {
+  return requestLanguageServerFeature("diagnostics", params, cancellation);
 }
 
 export function getLanguageServerCompletions(
   params: LanguageServerCompletionParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerCompletionList> {
-  return requestServer(DOMAIN, "completion", params);
+  return requestLanguageServerFeature("completion", params, cancellation);
 }
 
 export function resolveLanguageServerCompletion(
   params: ResolveLanguageServerCompletionParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerCompletionItem> {
-  return requestServer(DOMAIN, "resolveCompletion", params);
+  return requestLanguageServerFeature("resolveCompletion", params, cancellation);
 }
 
 export function requestLanguageServerFormatting(
   params: LanguageServerFormattingParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerTextEdit[]> {
-  return requestServer(DOMAIN, "formatting", params);
+  return requestLanguageServerFeature("formatting", params, cancellation);
+}
+
+export function prepareLanguageServerRename(
+  params: LanguageServerHoverParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerPrepareRename | null> {
+  return requestLanguageServerFeature("prepareRename", params, cancellation);
+}
+
+export function requestLanguageServerRename(
+  params: LanguageServerRenameParams,
+  cancellation?: RequestCancellation,
+): Promise<StagedWorkspaceEdit> {
+  return requestLanguageServerFeature("rename", params, cancellation);
+}
+
+export function getLanguageServerCodeActions(
+  params: LanguageServerCodeActionsParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerCodeAction[]> {
+  return requestLanguageServerFeature("codeActions", params, cancellation);
+}
+
+export function resolveLanguageServerCodeAction(
+  params: ResolveLanguageServerCodeActionParams,
+  cancellation?: RequestCancellation,
+): Promise<LanguageServerCodeAction> {
+  return requestLanguageServerFeature("resolveCodeAction", params, cancellation);
+}
+
+export function stageLanguageServerCodeAction(
+  action: LanguageServerCodeAction,
+): Promise<StagedWorkspaceEdit | null> {
+  return requestServer(DOMAIN, "stageCodeAction", { action });
+}
+
+export function executeLanguageServerCommand(
+  params: ExecuteLanguageServerCommandParams,
+  cancellation?: RequestCancellation,
+): Promise<unknown> {
+  return requestLanguageServerFeature("executeCommand", params, cancellation);
+}
+
+export function commitWorkspaceEdit(params: WorkspaceEditTransactionParams): Promise<boolean> {
+  return requestServer(DOMAIN, "commitWorkspaceEdit", params);
+}
+
+export function rollbackWorkspaceEdit(params: WorkspaceEditTransactionParams): Promise<boolean> {
+  return requestServer(DOMAIN, "rollbackWorkspaceEdit", params);
+}
+
+export function finishWorkspaceEdit(params: WorkspaceEditTransactionParams): Promise<boolean> {
+  return requestServer(DOMAIN, "finishWorkspaceEdit", params);
+}
+
+export function finalizeWorkspaceEdit(
+  params: WorkspaceEditTransactionParams,
+): Promise<WorkspaceEditTransactionStatus> {
+  return requestServer(DOMAIN, "finalizeWorkspaceEdit", params);
+}
+
+export function getWorkspaceEditStatus(
+  params: WorkspaceEditTransactionParams,
+): Promise<WorkspaceEditTransactionStatus> {
+  return requestServer(DOMAIN, "workspaceEditStatus", params);
 }
 
 export function getLanguageServerDocumentColors(
   params: LanguageServerDiagnosticsParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerColorInformation[]> {
-  return requestServer(DOMAIN, "documentColors", params);
+  return requestLanguageServerFeature("documentColors", params, cancellation);
 }
 
 export function getLanguageServerColorPresentations(
   params: LanguageServerColorPresentationParams,
+  cancellation?: RequestCancellation,
 ): Promise<LanguageServerColorPresentation[]> {
-  return requestServer(DOMAIN, "colorPresentations", params);
+  return requestLanguageServerFeature("colorPresentations", params, cancellation);
+}
+
+export function requestLanguageServerFeature<T>(
+  action: string,
+  params: Record<string, unknown>,
+  cancellation?: RequestCancellation,
+): Promise<T> {
+  return requestServer(DOMAIN, action, params, cancellation);
 }
 
 

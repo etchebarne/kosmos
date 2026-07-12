@@ -6,12 +6,14 @@ import type {
   KosmosIpcDomain,
   KosmosIpcParams,
   KosmosServerMessage,
+  KosmosServerNotification,
   WorkspaceId,
 } from "../../shared/ipc";
 
 type PendingRequest = {
   resolve(value: unknown): void;
   reject(error: Error): void;
+  cleanup(): void;
 };
 
 const MAX_RESPONSE_FRAME_CHARS = 64 * 1024 * 1024;
@@ -26,16 +28,26 @@ export class KosmosIpcRequestError extends Error {
   }
 }
 
+export class RequestCancelledError extends KosmosIpcRequestError {
+  constructor() {
+    super("language_servers.request_cancelled", "language server request was cancelled");
+    this.name = "RequestCancelledError";
+  }
+}
+
 export class KosmosServerClient {
   private activeRequests = 0;
   private buffer = "";
   private connecting: Promise<void> | undefined;
   private nextRequestId = 1;
   private shuttingDown = false;
+  private hasConnected = false;
   private socket: net.Socket | undefined;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly idleWaiters = new Set<() => void>();
   private readonly workspaceChangedListeners = new Set<(workspaceIds: WorkspaceId[]) => void>();
+  private readonly notificationListeners = new Set<(notification: KosmosServerNotification) => void>();
+  private readonly reconnectedListeners = new Set<() => void>();
 
   constructor(readonly socketPath = defaultSocketPath()) {}
 
@@ -43,6 +55,7 @@ export class KosmosServerClient {
     domain: KosmosIpcDomain,
     action: string,
     params: KosmosIpcParams = {},
+    signal?: AbortSignal,
   ): Promise<T> {
     if (this.shuttingDown) {
       throw new Error("IPC client is shutting down");
@@ -51,7 +64,7 @@ export class KosmosServerClient {
     this.activeRequests += 1;
 
     try {
-      return await this.sendRequest(domain, action, params);
+      return await this.sendRequest(domain, action, params, signal);
     } finally {
       this.activeRequests -= 1;
       this.notifyIdle();
@@ -64,38 +77,99 @@ export class KosmosServerClient {
     await this.sendRequest("workspace", "flush", {});
   }
 
+  async acknowledgeApplyEdit(
+    id: number,
+    token: string,
+    applied: boolean,
+    failureReason?: string,
+  ): Promise<void> {
+    await this.connect();
+    const socket = this.socket;
+    if (!socket || socket.destroyed) {
+      throw new Error(`IPC client is not connected to ${this.socketPath}`);
+    }
+    const payload = JSON.stringify({
+      type: "applyEditAck",
+      id,
+      token,
+      applied,
+      failureReason: failureReason ?? null,
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.write(`${payload}\n`, "utf8", (error) => error ? reject(error) : resolve());
+    });
+  }
+
   onWorkspaceChanged(listener: (workspaceIds: WorkspaceId[]) => void): () => void {
     this.workspaceChangedListeners.add(listener);
     return () => this.workspaceChangedListeners.delete(listener);
+  }
+
+  onNotification(listener: (notification: KosmosServerNotification) => void): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
+  }
+
+  onReconnected(listener: () => void): () => void {
+    this.reconnectedListeners.add(listener);
+    return () => this.reconnectedListeners.delete(listener);
   }
 
   private async sendRequest<T = unknown>(
     domain: KosmosIpcDomain,
     action: string,
     params: KosmosIpcParams,
+    signal?: AbortSignal,
   ): Promise<T> {
+    if (signal?.aborted) {
+      throw new RequestCancelledError();
+    }
     await this.connect();
+    if (signal?.aborted) {
+      throw new RequestCancelledError();
+    }
 
     const socket = this.socket;
     if (!socket || socket.destroyed) {
       throw new Error(`IPC client is not connected to ${this.socketPath}`);
     }
 
-    const id = this.nextRequestId++;
+    const id = this.allocateRequestId();
     const payload = JSON.stringify({ type: "request", id, domain, action, params });
 
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+      const onAbort = () => {
+        const pending = this.pending.get(id);
+        if (!pending) {
+          return;
+        }
+        this.pending.delete(id);
+        pending.cleanup();
+        socket.write(`${JSON.stringify({ type: "cancel", id })}\n`);
+        reject(new RequestCancelledError());
+      };
+      const cleanup = () => signal?.removeEventListener("abort", onAbort);
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        cleanup,
+      });
 
       socket.write(`${payload}\n`, "utf8", (error) => {
         if (!error) {
           return;
         }
 
+        const pending = this.pending.get(id);
         this.pending.delete(id);
+        pending?.cleanup();
         reject(error);
         this.disconnect();
       });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+      }
     });
   }
 
@@ -122,6 +196,8 @@ export class KosmosServerClient {
         socket.off("error", onConnectError);
         this.socket = socket;
         this.buffer = "";
+        const reconnected = this.hasConnected;
+        this.hasConnected = true;
 
         socket.on("data", (chunk) => {
           try {
@@ -132,6 +208,12 @@ export class KosmosServerClient {
         });
         socket.on("error", (error) => this.rejectAll(error));
         socket.on("close", () => this.handleClose());
+
+        if (reconnected) {
+          for (const listener of this.reconnectedListeners) {
+            listener();
+          }
+        }
 
         resolve();
       };
@@ -172,12 +254,28 @@ export class KosmosServerClient {
     }
   }
 
+  private allocateRequestId(): number {
+    for (let attempt = 0; attempt <= this.pending.size; attempt += 1) {
+      const id = this.nextRequestId;
+      this.nextRequestId = id === Number.MAX_SAFE_INTEGER ? 1 : id + 1;
+      if (!this.pending.has(id)) {
+        return id;
+      }
+    }
+    throw new Error("IPC request ID space is exhausted");
+  }
+
   private handleFrame(frame: string): void {
     const message = parseServerMessage(frame);
 
     if (message.type === "notification") {
-      for (const listener of this.workspaceChangedListeners) {
-        listener(message.workspaceIds);
+      for (const listener of this.notificationListeners) {
+        listener(message);
+      }
+      if (message.event === "workspaceChanged") {
+        for (const listener of this.workspaceChangedListeners) {
+          listener(message.workspaceIds);
+        }
       }
       return;
     }
@@ -189,6 +287,7 @@ export class KosmosServerClient {
     }
 
     this.pending.delete(message.id);
+    pending.cleanup();
 
     if (!message.ok) {
       pending.reject(new KosmosIpcRequestError(message.error.code, message.error.message));
@@ -211,6 +310,7 @@ export class KosmosServerClient {
 
   private rejectAll(error: Error): void {
     for (const request of this.pending.values()) {
+      request.cleanup();
       request.reject(error);
     }
 
@@ -261,20 +361,62 @@ function parseServerMessage(frame: string): KosmosServerMessage {
   }
 
   if (message.type === "notification") {
-    if (
-      !("event" in message) ||
-      message.event !== "workspaceChanged" ||
-      !("workspaceIds" in message) ||
-      !Array.isArray(message.workspaceIds) ||
-      !message.workspaceIds.every(
-        (workspaceId) =>
-          typeof workspaceId === "number" && Number.isSafeInteger(workspaceId) && workspaceId >= 0,
-      )
-    ) {
+    if (!("event" in message) || typeof message.event !== "string") {
       throw new Error("Invalid IPC notification from server");
     }
-
-    return message as KosmosServerMessage;
+    if (message.event === "workspaceChanged") {
+      if (
+        !("workspaceIds" in message) ||
+        !Array.isArray(message.workspaceIds) ||
+        !message.workspaceIds.every(isNonNegativeSafeInteger)
+      ) {
+        throw new Error("Invalid workspace notification from server");
+      }
+      return message as KosmosServerMessage;
+    }
+    if (
+      message.event === "languageServerStatusChanged" ||
+      message.event === "languageServerLogAvailable"
+    ) {
+      if (!("serverId" in message) || typeof message.serverId !== "string") {
+        throw new Error("Invalid language server notification from server");
+      }
+      return message as KosmosServerMessage;
+    }
+    if (message.event === "languageServerDiagnosticsChanged") {
+      if (!isDiagnosticsNotification(message)) {
+        throw new Error("Invalid language server diagnostics notification from server");
+      }
+      return message as KosmosServerMessage;
+    }
+    if (message.event === "languageServerDiagnosticsResync") {
+      return message as KosmosServerMessage;
+    }
+    if (message.event === "languageServerApplyEdit") {
+      if (
+        !("id" in message) ||
+        !isNonNegativeSafeInteger(message.id) ||
+        !("token" in message) ||
+        typeof message.token !== "string" ||
+        !("edit" in message) ||
+        !isStagedWorkspaceEdit(message.edit)
+      ) {
+        throw new Error("Invalid language server apply-edit notification from server");
+      }
+      return message as KosmosServerMessage;
+    }
+    if (message.event === "languageServerApplyEditCancelled") {
+      if (
+        !("id" in message) ||
+        !isNonNegativeSafeInteger(message.id) ||
+        !("token" in message) ||
+        typeof message.token !== "string"
+      ) {
+        throw new Error("Invalid language server apply-edit cancellation from server");
+      }
+      return message as KosmosServerMessage;
+    }
+    throw new Error("Unsupported IPC notification from server");
   }
 
   if (
@@ -305,6 +447,62 @@ function parseServerMessage(frame: string): KosmosServerMessage {
   }
 
   return message as KosmosServerMessage;
+}
+
+function isStagedWorkspaceEdit(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "transactionId" in value &&
+      isNonNegativeSafeInteger(value.transactionId) &&
+      "authorization" in value &&
+      typeof value.authorization === "string" &&
+      value.authorization.length === 64 &&
+      "documents" in value &&
+      Array.isArray(value.documents) &&
+      value.documents.length <= 64 &&
+      value.documents.every((document) =>
+        Boolean(
+          document &&
+            typeof document === "object" &&
+            "workspaceId" in document &&
+            isNonNegativeSafeInteger(document.workspaceId) &&
+            "path" in document &&
+            typeof document.path === "string" &&
+            "originalText" in document &&
+            typeof document.originalText === "string" &&
+            "newText" in document &&
+            typeof document.newText === "string" &&
+            "generation" in document &&
+            (document.generation === null || isNonNegativeSafeInteger(document.generation)) &&
+            "version" in document &&
+            (document.version === null ||
+              (typeof document.version === "number" && Number.isSafeInteger(document.version))),
+        ),
+      ),
+  );
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isDiagnosticsNotification(message: object): boolean {
+  return (
+    "workspaceId" in message &&
+    isNonNegativeSafeInteger(message.workspaceId) &&
+    "path" in message &&
+    typeof message.path === "string" &&
+    "serverId" in message &&
+    typeof message.serverId === "string" &&
+    "generation" in message &&
+    isNonNegativeSafeInteger(message.generation) &&
+    "version" in message &&
+    typeof message.version === "number" &&
+    Number.isSafeInteger(message.version) &&
+    "diagnostics" in message &&
+    Array.isArray(message.diagnostics)
+  );
 }
 
 function asError(error: unknown): Error {

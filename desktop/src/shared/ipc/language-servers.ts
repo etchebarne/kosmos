@@ -5,10 +5,20 @@ export type LanguageServerInstallationState =
   | "uninstalling"
   | "failed";
 
-export type LanguageServerRuntimeState = "inactive" | "running" | "degraded" | "crashed";
+export type LanguageServerRuntimeState =
+  | "inactive"
+  | "restarting"
+  | "running"
+  | "degraded"
+  | "crashed";
 
 export type LanguageServerFailure = {
   code: string;
+  message: string;
+};
+
+export type LanguageServerLog = {
+  kind: "stderr" | "runtime";
   message: string;
 };
 
@@ -27,6 +37,7 @@ export type LanguageServerSnapshot = {
   sessionCount: number;
   workspaceCount: number;
   runtimeError: LanguageServerFailure | null;
+  logs: LanguageServerLog[];
   supported: boolean;
 };
 
@@ -96,12 +107,85 @@ export type LanguageServerHover = {
   range: LanguageServerRange | null;
 };
 
+export type LanguageServerSignatureHelp = {
+  signatures: LanguageServerSignatureInformation[];
+  activeSignature: number | null;
+  activeParameter: number | null;
+};
+
+export type LanguageServerSignatureInformation = {
+  label: string;
+  documentation: { kind: "plainText" | "markdown"; value: string } | null;
+  parameters: Array<{
+    label: string | [number, number];
+    documentation: { kind: "plainText" | "markdown"; value: string } | null;
+  }>;
+  activeParameter: number | null;
+};
+
+export type LanguageServerLocation = {
+  workspaceId: WorkspaceId;
+  path: string;
+  range: LanguageServerRange;
+  selectionRange: LanguageServerRange;
+};
+
+export type LanguageServerReferencesParams = LanguageServerHoverParams & {
+  includeDeclaration: boolean;
+};
+
+export type LanguageServerDocumentSymbol = {
+  name: string;
+  detail: string | null;
+  kind: number;
+  deprecated: boolean;
+  range: LanguageServerRange;
+  selectionRange: LanguageServerRange;
+  children: LanguageServerDocumentSymbol[];
+};
+
+export type LanguageServerWorkspaceSymbolsParams = {
+  query: string;
+};
+
+export type LanguageServerWorkspaceSymbol = {
+  serverId: string;
+  workspaceId: WorkspaceId;
+  name: string;
+  kind: number;
+  containerName: string | null;
+  deprecated: boolean;
+  location: LanguageServerLocation | null;
+  raw: unknown;
+  resolveSupported: boolean;
+};
+
+export type ResolveLanguageServerWorkspaceSymbolParams = {
+  serverId: string;
+  workspaceId: WorkspaceId;
+  raw: unknown;
+};
+
 export type LanguageServerDiagnostic = {
   range: LanguageServerRange;
   severity: "error" | "warning" | "information" | "hint" | null;
   message: string;
   source: string | null;
   code: string | null;
+};
+
+export type LanguageServerDiagnosticSnapshot = {
+  serverId: string;
+  diagnostics: LanguageServerDiagnostic[];
+};
+
+export type LanguageServerDiagnosticsChanged = {
+  workspaceId: WorkspaceId;
+  path: string;
+  serverId: string;
+  generation: number;
+  version: number;
+  diagnostics: LanguageServerDiagnostic[];
 };
 
 export type LanguageServerCompletionParams = CloseLanguageServerDocumentParams & {
@@ -160,6 +244,82 @@ export type LanguageServerFormattingParams = CloseLanguageServerDocumentParams &
 export type LanguageServerTextEdit = {
   range: LanguageServerRange;
   newText: string;
+};
+
+export type LanguageServerPrepareRename = {
+  serverId: string;
+  range: LanguageServerRange | null;
+  placeholder: string | null;
+};
+
+export type LanguageServerRenameParams = LanguageServerHoverParams & {
+  newName: string;
+  serverId: string | null;
+};
+
+export type LanguageServerCodeActionsParams = LanguageServerDiagnosticsParams & {
+  range: LanguageServerRange;
+  context: unknown;
+};
+
+export type LanguageServerCodeAction = {
+  actionId: number;
+  serverId: string;
+  title: string;
+  kind: string | null;
+  isPreferred: boolean;
+  disabledReason: string | null;
+  resolveSupported: boolean;
+  commandAuthorization: string | null;
+  raw: unknown;
+};
+
+export type ResolveLanguageServerCodeActionParams =
+  LanguageServerDiagnosticsParams & {
+    serverId: string;
+    actionId: number;
+    raw: unknown;
+  };
+
+export type ExecuteLanguageServerCommandParams = LanguageServerDiagnosticsParams & {
+  serverId: string;
+  authorization: string;
+};
+
+export type StagedWorkspaceEdit = {
+  transactionId: number;
+  authorization: string;
+  documents: StagedWorkspaceEditDocument[];
+};
+
+export type StagedWorkspaceEditDocument = {
+  workspaceId: WorkspaceId;
+  path: string;
+  originalText: string;
+  newText: string;
+  generation: number | null;
+  version: number | null;
+};
+
+export type WorkspaceEditTransactionParams = {
+  transactionId: number;
+  authorization: string;
+};
+
+export type WorkspaceEditTransactionPhase =
+  | "staged"
+  | "committed"
+  | "rolledBack"
+  | "recoveryRequired"
+  | "finishedCommitted"
+  | "finishedRolledBack"
+  | "finishedUncommitted";
+
+export type WorkspaceEditTransactionStatus = {
+  transactionId: number;
+  phase: WorkspaceEditTransactionPhase;
+  retryRollback: boolean;
+  canFinalize: boolean;
 };
 
 export type LanguageServerColor = {

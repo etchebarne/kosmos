@@ -1,12 +1,18 @@
 use core::tree::{PaneId, SplitPaneId, TabId, WorkspaceId};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub(crate) struct WorkspaceIdParam(u64);
 
 impl From<WorkspaceIdParam> for WorkspaceId {
     fn from(value: WorkspaceIdParam) -> Self {
         Self::new(value.0)
+    }
+}
+
+impl From<WorkspaceId> for WorkspaceIdParam {
+    fn from(value: WorkspaceId) -> Self {
+        Self(value.value())
     }
 }
 

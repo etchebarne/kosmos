@@ -10,6 +10,7 @@ use crate::persistence::StateStore;
 use super::catalog::{
     language_server_catalog, language_server_definition, language_servers_for_language,
 };
+use super::edits::WorkspaceEditTransactions;
 use super::installation::{
     LanguageServerPaths, clean_stale_versions, clean_temporary_directories, finish_uninstall,
     install, installation_supported, installed_executable, installed_version, restore_uninstall,
@@ -17,13 +18,19 @@ use super::installation::{
 };
 use super::runtime::LanguageServerRuntime;
 use super::{
-    LanguageServerChange, LanguageServerColorInformation, LanguageServerColorPresentation,
-    LanguageServerColorPresentationRequest, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerCompletionRequest, LanguageServerDiagnostic,
-    LanguageServerDocumentOpen, LanguageServerError, LanguageServerFailure,
-    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInstallationState,
-    LanguageServerPosition, LanguageServerRuntimeState, LanguageServerStatus,
-    LanguageServerTextEdit,
+    LanguageServerChange, LanguageServerCodeAction, LanguageServerCodeActionRequest,
+    LanguageServerCodeActionResolveRequest, LanguageServerColorInformation,
+    LanguageServerColorPresentation, LanguageServerColorPresentationRequest,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerCompletionRequest,
+    LanguageServerCompletionResolveRequest, LanguageServerDiagnosticSnapshot,
+    LanguageServerDocumentOpen, LanguageServerDocumentSymbol, LanguageServerError,
+    LanguageServerExecuteCommandRequest, LanguageServerFailure, LanguageServerFormattingOptions,
+    LanguageServerHover, LanguageServerInstallationState, LanguageServerLocation,
+    LanguageServerPosition, LanguageServerPrepareRename, LanguageServerRequestCancellation,
+    LanguageServerRuntimeState, LanguageServerSignatureHelp, LanguageServerStatus,
+    LanguageServerTextEdit, LanguageServerWorkspaceSymbol,
+    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, WorkspaceEditError,
+    WorkspaceEditOpenDocument, WorkspaceEditRoot,
 };
 use crate::tree::WorkspaceId;
 
@@ -39,7 +46,8 @@ struct ManagerInner {
     store: StateStore,
     entries: Arc<Mutex<BTreeMap<String, ManagerEntry>>>,
     sender: SyncSender<ManagerCommand>,
-    runtime: LanguageServerRuntime,
+    runtime: Arc<LanguageServerRuntime>,
+    workspace_edits: Arc<WorkspaceEditTransactions>,
     trusted_workspaces: Mutex<std::collections::HashSet<std::path::PathBuf>>,
 }
 
@@ -47,6 +55,7 @@ struct WorkerContext {
     paths: LanguageServerPaths,
     store: StateStore,
     entries: Arc<Mutex<BTreeMap<String, ManagerEntry>>>,
+    runtime: Arc<LanguageServerRuntime>,
 }
 
 #[derive(Debug)]
@@ -111,10 +120,13 @@ impl LanguageServerManager {
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let entries = Arc::new(Mutex::new(entries));
         let manager_store = store.clone();
+        let workspace_edits = Arc::new(WorkspaceEditTransactions::new());
+        let runtime = LanguageServerRuntime::new(Arc::clone(&workspace_edits));
         let worker = WorkerContext {
             paths: paths.clone(),
             store,
             entries: Arc::clone(&entries),
+            runtime: Arc::clone(&runtime),
         };
         let manager = Self {
             inner: Arc::new(ManagerInner {
@@ -122,7 +134,8 @@ impl LanguageServerManager {
                 store: manager_store,
                 entries,
                 sender,
-                runtime: LanguageServerRuntime::default(),
+                runtime,
+                workspace_edits,
                 trusted_workspaces: Mutex::new(trusted_workspaces),
             }),
         };
@@ -139,6 +152,10 @@ impl LanguageServerManager {
             .iter()
             .filter_map(|definition| self.status(definition.id).ok())
             .collect()
+    }
+
+    pub fn set_event_sink(&self, sink: Arc<dyn crate::events::CoreEventSink>) {
+        self.inner.runtime.set_event_sink(sink);
     }
 
     pub fn status(&self, server_id: &str) -> Result<LanguageServerStatus, LanguageServerError> {
@@ -195,6 +212,7 @@ impl LanguageServerManager {
                     }
                 })
             }),
+            logs: self.inner.runtime.logs(server_id),
             supported: installation_supported(definition),
         })
     }
@@ -241,12 +259,12 @@ impl LanguageServerManager {
             entry.operation_epoch = entry.operation_epoch.wrapping_add(1);
             entry.runtime_failure = None;
         }
-        self.inner.runtime.close_server(definition.id);
-
         if let Err(error) = self.try_send(ManagerCommand::Install(definition.id)) {
             fail_entry(&self.inner.entries, definition.id, &error);
+            self.inner.runtime.emit_status(definition.id);
             return Err(error);
         }
+        self.inner.runtime.emit_status(definition.id);
         self.status(server_id)
     }
 
@@ -278,12 +296,12 @@ impl LanguageServerManager {
             entry.runtime_failure = None;
             version
         };
-        self.inner.runtime.close_server(definition.id);
-
         if let Err(error) = self.try_send(ManagerCommand::Uninstall(definition.id, version)) {
             fail_entry(&self.inner.entries, definition.id, &error);
+            self.inner.runtime.emit_status(definition.id);
             return Err(error);
         }
+        self.inner.runtime.emit_status(definition.id);
         self.status(server_id)
     }
 
@@ -318,9 +336,6 @@ impl LanguageServerManager {
                     let entry = entries
                         .get(definition.id)
                         .expect("catalog entries are initialized with the manager");
-                    if !matches!(entry.operation, ManagerOperation::Idle) {
-                        return None;
-                    }
                     installed_executable(
                         &self.inner.paths,
                         definition,
@@ -381,8 +396,7 @@ impl LanguageServerManager {
                         .lock()
                         .unwrap_or_else(|error| error.into_inner());
                     let operation_is_current = entries.get(definition.id).is_some_and(|entry| {
-                        matches!(entry.operation, ManagerOperation::Idle)
-                            && entry.operation_epoch == operation_epoch
+                        entry.operation_epoch == operation_epoch
                             && entry.selected_version == selected_version
                     });
                     if operation_is_current {
@@ -453,10 +467,164 @@ impl LanguageServerManager {
         generation: u64,
         version: i64,
         position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Option<LanguageServerHover>, LanguageServerError> {
+        self.inner.runtime.hover(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    pub fn signature_help(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Option<LanguageServerSignatureHelp>, LanguageServerError> {
+        self.inner.runtime.signature_help(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    pub fn definition(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.inner.runtime.definition(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    pub fn declaration(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.inner.runtime.declaration(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    pub fn type_definition(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.inner.runtime.type_definition(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    pub fn implementation(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.inner.runtime.implementation(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn references(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        include_declaration: bool,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerLocation>, LanguageServerError> {
+        self.inner.runtime.references(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            include_declaration,
+            cancellation,
+        )
+    }
+
+    pub fn document_symbols(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerDocumentSymbol>, LanguageServerError> {
         self.inner
             .runtime
-            .hover(workspace_id, path, generation, version, position)
+            .document_symbols(workspace_id, path, generation, version, cancellation)
+    }
+
+    pub fn workspace_symbols(
+        &self,
+        query: &str,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerWorkspaceSymbol>, LanguageServerError> {
+        self.inner.runtime.workspace_symbols(query, cancellation)
+    }
+
+    pub fn resolve_workspace_symbol(
+        &self,
+        request: LanguageServerWorkspaceSymbolResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<LanguageServerWorkspaceSymbol, LanguageServerError> {
+        self.inner
+            .runtime
+            .resolve_workspace_symbol(request, cancellation)
     }
 
     pub fn diagnostics(
@@ -465,7 +633,7 @@ impl LanguageServerManager {
         path: &str,
         generation: u64,
         version: i64,
-    ) -> Result<Option<Vec<LanguageServerDiagnostic>>, LanguageServerError> {
+    ) -> Result<Option<Vec<LanguageServerDiagnosticSnapshot>>, LanguageServerError> {
         self.inner
             .runtime
             .diagnostics(workspace_id, path, generation, version)
@@ -478,10 +646,16 @@ impl LanguageServerManager {
         generation: u64,
         version: i64,
         request: &LanguageServerCompletionRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<LanguageServerCompletionList, LanguageServerError> {
-        self.inner
-            .runtime
-            .completion(workspace_id, path, generation, version, request)
+        self.inner.runtime.completion(
+            workspace_id,
+            path,
+            generation,
+            version,
+            request,
+            cancellation,
+        )
     }
 
     pub fn resolve_completion(
@@ -490,16 +664,16 @@ impl LanguageServerManager {
         path: &str,
         generation: u64,
         version: i64,
-        server_id: &str,
-        raw: serde_json::Value,
+        request: LanguageServerCompletionResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<LanguageServerCompletionItem, LanguageServerError> {
         self.inner.runtime.resolve_completion(
             workspace_id,
             path,
             generation,
             version,
-            server_id,
-            raw,
+            request,
+            cancellation,
         )
     }
 
@@ -509,10 +683,11 @@ impl LanguageServerManager {
         path: &str,
         generation: u64,
         version: i64,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerColorInformation>, LanguageServerError> {
         self.inner
             .runtime
-            .document_colors(workspace_id, path, generation, version)
+            .document_colors(workspace_id, path, generation, version, cancellation)
     }
 
     pub fn color_presentations(
@@ -522,10 +697,16 @@ impl LanguageServerManager {
         generation: u64,
         version: i64,
         request: &LanguageServerColorPresentationRequest,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerColorPresentation>, LanguageServerError> {
-        self.inner
-            .runtime
-            .color_presentations(workspace_id, path, generation, version, request)
+        self.inner.runtime.color_presentations(
+            workspace_id,
+            path,
+            generation,
+            version,
+            request,
+            cancellation,
+        )
     }
 
     pub fn formatting(
@@ -535,10 +716,234 @@ impl LanguageServerManager {
         generation: u64,
         version: i64,
         options: LanguageServerFormattingOptions,
+        cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerTextEdit>, LanguageServerError> {
+        self.inner.runtime.formatting(
+            workspace_id,
+            path,
+            generation,
+            version,
+            options,
+            cancellation,
+        )
+    }
+
+    pub fn prepare_rename(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Option<LanguageServerPrepareRename>, LanguageServerError> {
+        self.inner.runtime.prepare_rename(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            cancellation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn rename(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        position: LanguageServerPosition,
+        new_name: &str,
+        server_id: Option<&str>,
+        roots: &[WorkspaceEditRoot],
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<StagedWorkspaceEdit, LanguageServerError> {
+        let edit = self.inner.runtime.rename(
+            workspace_id,
+            path,
+            generation,
+            version,
+            position,
+            new_name,
+            server_id,
+            cancellation,
+        )?;
+        self.stage_workspace_edit(&edit, roots)
+            .map_err(workspace_edit_language_error)
+    }
+
+    pub fn code_actions(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: &LanguageServerCodeActionRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerCodeAction>, LanguageServerError> {
+        self.inner.runtime.code_actions(
+            workspace_id,
+            path,
+            generation,
+            version,
+            request,
+            cancellation,
+        )
+    }
+
+    pub fn resolve_code_action(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        generation: u64,
+        version: i64,
+        request: LanguageServerCodeActionResolveRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<LanguageServerCodeAction, LanguageServerError> {
+        self.inner.runtime.resolve_code_action(
+            workspace_id,
+            path,
+            generation,
+            version,
+            request,
+            cancellation,
+        )
+    }
+
+    pub fn stage_code_action_edit(
+        &self,
+        action: &LanguageServerCodeAction,
+        roots: &[WorkspaceEditRoot],
+    ) -> Result<Option<StagedWorkspaceEdit>, WorkspaceEditError> {
+        let workspace_id = self
+            .inner
+            .runtime
+            .validate_code_action(action)
+            .map_err(|error| WorkspaceEditError::Invalid(error.to_string()))?;
+        let root = roots
+            .iter()
+            .find(|root| root.workspace_id == workspace_id)
+            .cloned()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid(
+                    "code action workspace root is no longer available".to_owned(),
+                )
+            })?;
+        let staged = action
+            .raw
+            .get("edit")
+            .map(|edit| self.stage_workspace_edit(edit, &[root]))
+            .transpose()?;
         self.inner
             .runtime
-            .formatting(workspace_id, path, generation, version, options)
+            .bind_code_action_command_to_staged_edit(action.action_id, staged.as_ref())
+            .map_err(|error| WorkspaceEditError::Invalid(error.to_string()))?;
+        Ok(staged)
+    }
+
+    pub fn execute_command(
+        &self,
+        request: LanguageServerExecuteCommandRequest,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<serde_json::Value, LanguageServerError> {
+        self.inner.runtime.execute_command(request, cancellation)
+    }
+
+    pub fn stage_workspace_edit(
+        &self,
+        edit: &serde_json::Value,
+        roots: &[WorkspaceEditRoot],
+    ) -> Result<StagedWorkspaceEdit, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .stage(edit, roots, &self.open_documents())
+    }
+
+    pub fn commit_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<(), WorkspaceEditError> {
+        self.inner.workspace_edits.commit_closed(
+            transaction_id,
+            authorization,
+            &self.open_documents(),
+        )
+    }
+
+    pub fn rollback_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<(), WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .rollback(transaction_id, authorization)
+    }
+
+    pub fn finish_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<bool, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .finish(transaction_id, authorization)
+    }
+
+    pub fn finalize_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<super::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .finalize(transaction_id, authorization)
+    }
+
+    pub fn workspace_edit_status(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<super::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .status(transaction_id, authorization)
+    }
+
+    pub fn claim_workspace_edit_owner(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+        owner: u64,
+    ) -> Result<(), WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .claim_owner(transaction_id, authorization, owner)
+    }
+
+    pub fn cancel_owned_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+        owner: u64,
+    ) -> Result<super::WorkspaceEditTransactionStatus, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .cancel_owned(transaction_id, authorization, owner)
+    }
+
+    pub fn disconnect_workspace_edit_owner(
+        &self,
+        owner: u64,
+    ) -> Vec<super::WorkspaceEditTransactionStatus> {
+        self.inner.workspace_edits.disconnect_owner(owner)
+    }
+
+    fn open_documents(&self) -> Vec<WorkspaceEditOpenDocument> {
+        self.inner.runtime.open_documents()
     }
 
     pub fn retain_workspaces(&self, workspace_ids: &std::collections::HashSet<WorkspaceId>) {
@@ -556,14 +961,22 @@ impl LanguageServerManager {
         let entry = entries
             .get_mut(server_id)
             .expect("catalog entries are initialized with the manager");
-        if entry.installed_version.is_none() {
+        let selected_version = entry.selected_version.clone();
+        let installation_is_valid =
+            installed_executable(&self.inner.paths, definition, selected_version.as_deref())
+                .is_some();
+        if !installation_is_valid {
+            entry.installed_version = None;
             return Err(LanguageServerError::ServerNotInstalled(
                 server_id.to_owned(),
             ));
         }
+        entry.installed_version = selected_version;
+        entry.operation = ManagerOperation::Idle;
+        entry.operation_epoch = entry.operation_epoch.wrapping_add(1);
         entry.runtime_failure = None;
         drop(entries);
-        self.inner.runtime.close_server(definition.id);
+        self.inner.runtime.restart_server(definition.id);
         self.status(server_id)
     }
 
@@ -593,6 +1006,10 @@ impl LanguageServerManager {
     }
 }
 
+fn workspace_edit_language_error(error: WorkspaceEditError) -> LanguageServerError {
+    LanguageServerError::InvalidDocument(error.to_string())
+}
+
 impl WorkerContext {
     fn run(&self, receiver: Receiver<ManagerCommand>) {
         while let Ok(command) = receiver.recv() {
@@ -606,10 +1023,21 @@ impl WorkerContext {
                 Ok(()) => finish_entry(&self.entries, server_id),
                 Err(error) => fail_entry(&self.entries, server_id, &error),
             }
+            self.runtime.emit_status(server_id);
         }
     }
 
     fn install_now(&self, server_id: &str) -> Result<(), LanguageServerError> {
+        let definition = language_server_definition(server_id)
+            .ok_or_else(|| LanguageServerError::UnknownServer(server_id.to_owned()))?;
+        self.install_now_with(server_id, || install(&self.paths, definition))
+    }
+
+    fn install_now_with(
+        &self,
+        server_id: &str,
+        installer: impl FnOnce() -> Result<(), LanguageServerError>,
+    ) -> Result<(), LanguageServerError> {
         let definition = language_server_definition(server_id)
             .ok_or_else(|| LanguageServerError::UnknownServer(server_id.to_owned()))?;
         let previous_version = self
@@ -618,10 +1046,18 @@ impl WorkerContext {
             .unwrap_or_else(|error| error.into_inner())
             .get(server_id)
             .and_then(|entry| entry.selected_version.clone());
-        install(&self.paths, definition)?;
-        self.store
+        installer()?;
+        if let Err(error) = self
+            .store
             .select_language_server_version(server_id, definition.version)
-            .map_err(|error| LanguageServerError::Persistence(error.to_string()))?;
+        {
+            if previous_version.as_deref() != Some(definition.version)
+                && let Ok(trash) = uninstall(&self.paths, definition, definition.version)
+            {
+                finish_uninstall(trash);
+            }
+            return Err(LanguageServerError::Persistence(error.to_string()));
+        }
 
         let mut entries = self
             .entries
@@ -632,6 +1068,7 @@ impl WorkerContext {
             .expect("catalog entries are initialized with the manager");
         entry.selected_version = Some(definition.version.to_owned());
         entry.installed_version = Some(definition.version.to_owned());
+        self.runtime.close_server(server_id);
         drop(entries);
 
         if let Some(previous_version) = previous_version
@@ -663,6 +1100,7 @@ impl WorkerContext {
             .expect("catalog entries are initialized with the manager");
         entry.selected_version = None;
         entry.installed_version = None;
+        self.runtime.close_server(server_id);
         drop(entries);
         finish_uninstall(trash);
         Ok(())
@@ -710,5 +1148,200 @@ impl fmt::Debug for LanguageServerManager {
             .debug_struct("LanguageServerManager")
             .field("paths", &self.inner.paths)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn failed_update_keeps_the_previous_installation_selected_and_usable() {
+        let fixture = TestFixture::new("failed-update");
+        let result = fixture.worker.install_now_with(fixture.definition.id, || {
+            Err(LanguageServerError::ChecksumMismatch)
+        });
+        let error = result.expect_err("the update should fail");
+        fail_entry(&fixture.worker.entries, fixture.definition.id, &error);
+
+        let entries = fixture.worker.entries.lock().unwrap();
+        let entry = entries.get(fixture.definition.id).unwrap();
+        assert_eq!(entry.selected_version.as_deref(), Some("previous"));
+        assert_eq!(entry.installed_version.as_deref(), Some("previous"));
+        assert!(matches!(entry.operation, ManagerOperation::Failed(_)));
+        assert!(
+            installed_executable(&fixture.paths, fixture.definition, Some("previous")).is_some()
+        );
+        drop(entries);
+
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let manager = LanguageServerManager {
+            inner: Arc::new(ManagerInner {
+                paths: fixture.paths.clone(),
+                store: fixture.store.clone(),
+                entries: Arc::clone(&fixture.worker.entries),
+                sender,
+                runtime: Arc::clone(&fixture.worker.runtime),
+                workspace_edits: Arc::new(WorkspaceEditTransactions::new()),
+                trusted_workspaces: Mutex::new(std::collections::HashSet::new()),
+            }),
+        };
+        let recovered = manager.restart(fixture.definition.id).unwrap();
+        assert_eq!(
+            recovered.installation_state,
+            LanguageServerInstallationState::Installed
+        );
+        assert_eq!(recovered.selected_version.as_deref(), Some("previous"));
+    }
+
+    #[test]
+    fn persistence_failure_rolls_back_the_candidate_and_keeps_the_previous_selection() {
+        let fixture = TestFixture::new("persistence-rollback");
+        let database_backup = fixture.root.join("state-backup.sqlite");
+        fs::rename(fixture.store.path(), &database_backup).unwrap();
+        fs::create_dir(fixture.store.path()).unwrap();
+
+        let result = fixture.worker.install_now_with(fixture.definition.id, || {
+            write_test_installation(
+                &fixture.paths,
+                fixture.definition,
+                fixture.definition.version,
+            );
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(LanguageServerError::Persistence(_))));
+        assert!(
+            installed_executable(
+                &fixture.paths,
+                fixture.definition,
+                Some(fixture.definition.version)
+            )
+            .is_none()
+        );
+        assert!(
+            installed_executable(&fixture.paths, fixture.definition, Some("previous")).is_some()
+        );
+
+        fs::remove_dir(fixture.store.path()).unwrap();
+        fs::rename(database_backup, fixture.store.path()).unwrap();
+        assert_eq!(
+            fixture
+                .store
+                .language_server_selections()
+                .unwrap()
+                .get(fixture.definition.id)
+                .map(String::as_str),
+            Some("previous")
+        );
+    }
+
+    struct TestFixture {
+        root: PathBuf,
+        paths: LanguageServerPaths,
+        store: StateStore,
+        definition: &'static super::super::catalog::LanguageServerDefinition,
+        worker: WorkerContext,
+    }
+
+    impl TestFixture {
+        fn new(name: &str) -> Self {
+            let root = test_directory(name);
+            let paths = LanguageServerPaths::new(root.join("data"), root.join("cache"));
+            paths.prepare().unwrap();
+            let store = StateStore::open(root.join("state.sqlite")).unwrap();
+            let definition = language_server_definition("typescript-language-server").unwrap();
+            write_test_installation(&paths, definition, "previous");
+            store
+                .select_language_server_version(definition.id, "previous")
+                .unwrap();
+            let entries = Arc::new(Mutex::new(BTreeMap::from([(
+                definition.id.to_owned(),
+                ManagerEntry {
+                    selected_version: Some("previous".to_owned()),
+                    installed_version: Some("previous".to_owned()),
+                    operation: ManagerOperation::Installing,
+                    operation_epoch: 1,
+                    runtime_failure: None,
+                },
+            )])));
+            let worker = WorkerContext {
+                paths: paths.clone(),
+                store: store.clone(),
+                entries,
+                runtime: LanguageServerRuntime::new(Arc::new(WorkspaceEditTransactions::new())),
+            };
+            Self {
+                root,
+                paths,
+                store,
+                definition,
+                worker,
+            }
+        }
+    }
+
+    impl Drop for TestFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn write_test_installation(
+        paths: &LanguageServerPaths,
+        definition: &super::super::catalog::LanguageServerDefinition,
+        version: &str,
+    ) {
+        let directory = paths.data_directory().join(definition.id).join(version);
+        let executable = directory.join(definition.executable);
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+        let source = if version == definition.version {
+            format!(
+                "npm:{}",
+                definition
+                    .npm_packages
+                    .iter()
+                    .map(|package| package.spec)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            "npm:test".to_owned()
+        };
+        fs::write(
+            directory.join("installation.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "serverId": definition.id,
+                "version": version,
+                "operatingSystem": std::env::consts::OS,
+                "architecture": std::env::consts::ARCH,
+                "sourceUrl": source,
+                "sha256": "npm-package-lock",
+                "executable": definition.executable,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn test_directory(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "kosmos-language-server-manager-{name}-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        path
     }
 }

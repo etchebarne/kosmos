@@ -1,6 +1,6 @@
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::formatters::{
-    FormatterListSnapshot, FormatterParams, FormatterSnapshot,
+    FormatterListSnapshot, FormatterParams, FormatterPrioritiesParams, FormatterSnapshot,
 };
 use super::{RouteDefinition, parse_params};
 
@@ -10,6 +10,7 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         "status" => Some(RouteDefinition::snapshot(status)),
         "install" => Some(RouteDefinition::live(install)),
         "uninstall" => Some(RouteDefinition::live(uninstall)),
+        "set-priorities" => Some(RouteDefinition::live(set_priorities)),
         _ => None,
     }
 }
@@ -50,6 +51,17 @@ fn uninstall(state: &mut core::State, request: &RequestEnvelope) -> ServerMessag
     };
     match state.uninstall_formatter(&params.formatter_id) {
         Ok(status) => ServerMessage::ok(request.id, FormatterSnapshot::from_status(status)),
+        Err(error) => formatter_error(request.id, error),
+    }
+}
+
+fn set_priorities(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<FormatterPrioritiesParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.set_formatter_priorities(params.formatter_ids) {
+        Ok(statuses) => ServerMessage::ok(request.id, FormatterListSnapshot::new(statuses)),
         Err(error) => formatter_error(request.id, error),
     }
 }

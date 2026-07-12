@@ -1,6 +1,7 @@
 mod state;
 mod workspace_changes;
 
+pub mod events;
 pub mod formatters;
 pub mod language_servers;
 pub mod persistence;

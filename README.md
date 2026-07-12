@@ -44,6 +44,18 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 The Electron main process launches the Rust server as a sidecar process. They communicate over a Unix socket, while the renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
 
+## Language tooling
+
+Kosmos manages reviewed, version-pinned language servers and formatters from Settings. Installed standalone formatters take precedence over language-server formatting according to the configured formatter priority; language-server formatting remains the fallback.
+
+- `Shift+Alt+F` formats the active document.
+- `Ctrl+T` searches workspace symbols.
+- Language features include diagnostics, completion, hover, signature help, navigation, references, symbols, colors, rename, and code actions.
+- Managed formatters include Prettier, Ruff, and shfmt. Prettier installation requires Node.js 22.6 or newer and npm; Ruff and shfmt use verified native artifacts.
+- Format on save is available under Editor settings and defaults to off.
+
+Language tools run with the permissions of the opened workspace. Managed installations live under the Kosmos XDG data directory.
+
 ## License
 
 MIT - see [LICENSE](LICENSE).

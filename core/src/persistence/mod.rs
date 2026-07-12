@@ -127,6 +127,30 @@ impl StateStore {
         Ok(())
     }
 
+    pub fn formatter_priorities(&self) -> Result<Vec<String>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT formatter_id FROM formatter_preferences ORDER BY priority, formatter_id",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(PersistenceError::from)
+    }
+
+    pub fn set_formatter_priorities(&self, formatter_ids: &[String]) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM formatter_preferences", [])?;
+        for (priority, formatter_id) in formatter_ids.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO formatter_preferences (formatter_id, priority) VALUES (?1, ?2)",
+                params![formatter_id, usize_to_i64(priority, "formatter priority")?],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn trusted_language_server_workspaces(&self) -> Result<Vec<PathBuf>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
@@ -217,6 +241,11 @@ fn migrate(connection: &Connection) -> Result<()> {
 
         CREATE TABLE IF NOT EXISTS language_server_trusted_workspaces (
             directory TEXT PRIMARY KEY NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS formatter_preferences (
+            formatter_id TEXT PRIMARY KEY NOT NULL,
+            priority INTEGER NOT NULL UNIQUE CHECK (priority >= 0)
         );
 
         CREATE TABLE IF NOT EXISTS window_state (
@@ -1372,6 +1401,26 @@ mod tests {
                 .is_empty()
         );
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn formatter_priorities_are_ordered_and_survive_full_state_saves() {
+        let path = test_db_path("formatter-priorities");
+        let store = StateStore::open(&path).expect("store should open");
+        let priorities = vec!["ruff".to_owned(), "prettier".to_owned(), "shfmt".to_owned()];
+        store
+            .set_formatter_priorities(&priorities)
+            .expect("priorities should save");
+
+        store.save(&State::new()).expect("state should save");
+
+        assert_eq!(
+            store
+                .formatter_priorities()
+                .expect("priorities should load"),
+            priorities
+        );
         let _ = fs::remove_file(path);
     }
 

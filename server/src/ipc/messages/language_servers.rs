@@ -58,6 +58,33 @@ pub(crate) struct LanguageServerHoverParams {
     pub(crate) position: LanguageServerPositionPayload,
 }
 
+pub(crate) type LanguageServerPositionParams = LanguageServerHoverParams;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerReferencesParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) generation: u64,
+    pub(crate) version: i64,
+    pub(crate) position: LanguageServerPositionPayload,
+    pub(crate) include_declaration: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerWorkspaceSymbolsParams {
+    pub(crate) query: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolveLanguageServerWorkspaceSymbolParams {
+    pub(crate) server_id: String,
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) raw: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerDiagnosticsParams {
@@ -114,6 +141,86 @@ pub(crate) struct LanguageServerFormattingParams {
     pub(crate) text: String,
     pub(crate) tab_size: u32,
     pub(crate) insert_spaces: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerRenameParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) generation: u64,
+    pub(crate) version: i64,
+    pub(crate) position: LanguageServerPositionPayload,
+    pub(crate) new_name: String,
+    pub(crate) server_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerCodeActionsParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) generation: u64,
+    pub(crate) version: i64,
+    pub(crate) range: LanguageServerRangePayload,
+    pub(crate) context: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolveLanguageServerCodeActionParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) generation: u64,
+    pub(crate) version: i64,
+    pub(crate) action_id: u64,
+    pub(crate) server_id: String,
+    pub(crate) raw: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StageLanguageServerCodeActionParams {
+    pub(crate) action: LanguageServerCodeActionPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExecuteLanguageServerCommandParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) path: String,
+    pub(crate) generation: u64,
+    pub(crate) version: i64,
+    pub(crate) server_id: String,
+    pub(crate) authorization: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkspaceEditTransactionParams {
+    pub(crate) transaction_id: u64,
+    pub(crate) authorization: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkspaceEditTransactionStatusPayload {
+    transaction_id: u64,
+    phase: WorkspaceEditTransactionPhasePayload,
+    retry_rollback: bool,
+    can_finalize: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WorkspaceEditTransactionPhasePayload {
+    Staged,
+    Committed,
+    RolledBack,
+    RecoveryRequired,
+    FinishedCommitted,
+    FinishedRolledBack,
+    FinishedUncommitted,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -175,6 +282,7 @@ pub(crate) struct LanguageServerSnapshot {
     session_count: usize,
     workspace_count: usize,
     runtime_error: Option<LanguageServerFailurePayload>,
+    logs: Vec<LanguageServerLogPayload>,
     supported: bool,
 }
 
@@ -192,6 +300,7 @@ enum InstallationStatePayload {
 #[serde(rename_all = "camelCase")]
 enum RuntimeStatePayload {
     Inactive,
+    Restarting,
     Running,
     Degraded,
     Crashed,
@@ -202,6 +311,20 @@ enum RuntimeStatePayload {
 struct LanguageServerFailurePayload {
     code: String,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguageServerLogPayload {
+    kind: LanguageServerLogKindPayload,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum LanguageServerLogKindPayload {
+    Stderr,
+    Runtime,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,6 +342,13 @@ pub(crate) struct LanguageServerDiagnosticPayload {
     message: String,
     source: Option<String>,
     code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerDiagnosticSnapshotPayload {
+    server_id: String,
+    diagnostics: Vec<LanguageServerDiagnosticPayload>,
 }
 
 #[derive(Debug, Serialize)]
@@ -279,6 +409,106 @@ pub(crate) struct LanguageServerColorPresentationPayload {
 pub(crate) struct LanguageServerTextEditPayload {
     range: LanguageServerRangePayload,
     new_text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerPrepareRenamePayload {
+    server_id: String,
+    range: Option<LanguageServerRangePayload>,
+    placeholder: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerCodeActionPayload {
+    action_id: u64,
+    server_id: String,
+    title: String,
+    kind: Option<String>,
+    is_preferred: bool,
+    disabled_reason: Option<String>,
+    resolve_supported: bool,
+    command_authorization: Option<String>,
+    raw: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StagedWorkspaceEditPayload {
+    transaction_id: u64,
+    authorization: String,
+    documents: Vec<StagedWorkspaceEditDocumentPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StagedWorkspaceEditDocumentPayload {
+    workspace_id: WorkspaceIdParam,
+    path: String,
+    original_text: String,
+    new_text: String,
+    generation: Option<u64>,
+    version: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerSignatureHelpPayload {
+    signatures: Vec<LanguageServerSignatureInformationPayload>,
+    active_signature: Option<u32>,
+    active_parameter: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguageServerSignatureInformationPayload {
+    label: String,
+    documentation: Option<LanguageServerHoverContentPayload>,
+    parameters: Vec<LanguageServerParameterInformationPayload>,
+    active_parameter: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguageServerParameterInformationPayload {
+    label: serde_json::Value,
+    documentation: Option<LanguageServerHoverContentPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerLocationPayload {
+    workspace_id: WorkspaceIdParam,
+    path: String,
+    range: LanguageServerRangePayload,
+    selection_range: LanguageServerRangePayload,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerDocumentSymbolPayload {
+    name: String,
+    detail: Option<String>,
+    kind: u32,
+    deprecated: bool,
+    range: LanguageServerRangePayload,
+    selection_range: LanguageServerRangePayload,
+    children: Vec<LanguageServerDocumentSymbolPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerWorkspaceSymbolPayload {
+    server_id: String,
+    workspace_id: WorkspaceIdParam,
+    name: String,
+    kind: u32,
+    container_name: Option<String>,
+    deprecated: bool,
+    location: Option<LanguageServerLocationPayload>,
+    raw: serde_json::Value,
+    resolve_supported: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -351,6 +581,9 @@ impl LanguageServerSnapshot {
                 core::language_servers::LanguageServerRuntimeState::Inactive => {
                     RuntimeStatePayload::Inactive
                 }
+                core::language_servers::LanguageServerRuntimeState::Restarting => {
+                    RuntimeStatePayload::Restarting
+                }
                 core::language_servers::LanguageServerRuntimeState::Running => {
                     RuntimeStatePayload::Running
                 }
@@ -369,6 +602,21 @@ impl LanguageServerSnapshot {
                     code: error.code,
                     message: error.message,
                 }),
+            logs: status
+                .logs
+                .into_iter()
+                .map(|log| LanguageServerLogPayload {
+                    kind: match log.kind {
+                        core::language_servers::LanguageServerLogKind::Stderr => {
+                            LanguageServerLogKindPayload::Stderr
+                        }
+                        core::language_servers::LanguageServerLogKind::Runtime => {
+                            LanguageServerLogKindPayload::Runtime
+                        }
+                    },
+                    message: log.message,
+                })
+                .collect(),
             supported: status.supported,
         }
     }
@@ -463,6 +711,21 @@ impl LanguageServerDiagnosticPayload {
     }
 }
 
+impl LanguageServerDiagnosticSnapshotPayload {
+    pub(crate) fn from_core(
+        snapshot: core::language_servers::LanguageServerDiagnosticSnapshot,
+    ) -> Self {
+        Self {
+            server_id: snapshot.server_id,
+            diagnostics: snapshot
+                .diagnostics
+                .into_iter()
+                .map(LanguageServerDiagnosticPayload::from_core)
+                .collect(),
+        }
+    }
+}
+
 impl LanguageServerCompletionListPayload {
     pub(crate) fn from_core(
         completion: core::language_servers::LanguageServerCompletionList,
@@ -535,6 +798,182 @@ impl LanguageServerTextEditPayload {
         Self {
             range: LanguageServerRangePayload::from_core(edit.range),
             new_text: edit.new_text,
+        }
+    }
+}
+
+impl LanguageServerPrepareRenamePayload {
+    pub(crate) fn from_core(rename: core::language_servers::LanguageServerPrepareRename) -> Self {
+        Self {
+            server_id: rename.server_id,
+            range: rename.range.map(LanguageServerRangePayload::from_core),
+            placeholder: rename.placeholder,
+        }
+    }
+}
+
+impl LanguageServerCodeActionPayload {
+    pub(crate) fn from_core(action: core::language_servers::LanguageServerCodeAction) -> Self {
+        Self {
+            action_id: action.action_id,
+            server_id: action.server_id,
+            title: action.title,
+            kind: action.kind,
+            is_preferred: action.is_preferred,
+            disabled_reason: action.disabled_reason,
+            resolve_supported: action.resolve_supported,
+            command_authorization: action.command_authorization,
+            raw: action.raw,
+        }
+    }
+
+    pub(crate) fn into_core(self) -> core::language_servers::LanguageServerCodeAction {
+        core::language_servers::LanguageServerCodeAction {
+            action_id: self.action_id,
+            server_id: self.server_id,
+            title: self.title,
+            kind: self.kind,
+            is_preferred: self.is_preferred,
+            disabled_reason: self.disabled_reason,
+            resolve_supported: self.resolve_supported,
+            command_authorization: self.command_authorization,
+            raw: self.raw,
+        }
+    }
+}
+
+impl StagedWorkspaceEditPayload {
+    pub(crate) fn from_core(edit: core::language_servers::StagedWorkspaceEdit) -> Self {
+        Self {
+            transaction_id: edit.transaction_id,
+            authorization: edit.authorization,
+            documents: edit
+                .documents
+                .into_iter()
+                .map(|document| StagedWorkspaceEditDocumentPayload {
+                    workspace_id: document.workspace_id.into(),
+                    path: document.path,
+                    original_text: document.original_text,
+                    new_text: document.new_text,
+                    generation: document.generation,
+                    version: document.version,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl WorkspaceEditTransactionStatusPayload {
+    pub(crate) fn from_core(
+        status: core::language_servers::WorkspaceEditTransactionStatus,
+    ) -> Self {
+        use core::language_servers::WorkspaceEditTransactionPhase as Phase;
+
+        Self {
+            transaction_id: status.transaction_id,
+            phase: match status.phase {
+                Phase::Staged => WorkspaceEditTransactionPhasePayload::Staged,
+                Phase::Committed => WorkspaceEditTransactionPhasePayload::Committed,
+                Phase::RolledBack => WorkspaceEditTransactionPhasePayload::RolledBack,
+                Phase::RecoveryRequired => WorkspaceEditTransactionPhasePayload::RecoveryRequired,
+                Phase::FinishedCommitted => WorkspaceEditTransactionPhasePayload::FinishedCommitted,
+                Phase::FinishedRolledBack => {
+                    WorkspaceEditTransactionPhasePayload::FinishedRolledBack
+                }
+                Phase::FinishedUncommitted => {
+                    WorkspaceEditTransactionPhasePayload::FinishedUncommitted
+                }
+            },
+            retry_rollback: status.retry_rollback,
+            can_finalize: status.can_finalize,
+        }
+    }
+}
+
+impl LanguageServerSignatureHelpPayload {
+    pub(crate) fn from_core(help: core::language_servers::LanguageServerSignatureHelp) -> Self {
+        Self {
+            signatures: help
+                .signatures
+                .into_iter()
+                .map(|signature| LanguageServerSignatureInformationPayload {
+                    label: signature.label,
+                    documentation: signature.documentation.map(LanguageServerHoverContentPayload::from_core),
+                    parameters: signature
+                        .parameters
+                        .into_iter()
+                        .map(|parameter| LanguageServerParameterInformationPayload {
+                            label: match parameter.label {
+                                core::language_servers::LanguageServerParameterLabel::Text(label) => serde_json::Value::String(label),
+                                core::language_servers::LanguageServerParameterLabel::Utf16Offsets(start, end) => serde_json::json!([start, end]),
+                            },
+                            documentation: parameter.documentation.map(LanguageServerHoverContentPayload::from_core),
+                        })
+                        .collect(),
+                    active_parameter: signature.active_parameter,
+                })
+                .collect(),
+            active_signature: help.active_signature,
+            active_parameter: help.active_parameter,
+        }
+    }
+}
+
+impl LanguageServerHoverContentPayload {
+    fn from_core(content: core::language_servers::LanguageServerHoverContent) -> Self {
+        Self {
+            kind: match content.kind {
+                core::language_servers::LanguageServerMarkupKind::PlainText => {
+                    LanguageServerMarkupKindPayload::PlainText
+                }
+                core::language_servers::LanguageServerMarkupKind::Markdown => {
+                    LanguageServerMarkupKindPayload::Markdown
+                }
+            },
+            value: content.value,
+        }
+    }
+}
+
+impl LanguageServerLocationPayload {
+    pub(crate) fn from_core(location: core::language_servers::LanguageServerLocation) -> Self {
+        Self {
+            workspace_id: location.workspace_id.into(),
+            path: location.path,
+            range: LanguageServerRangePayload::from_core(location.range),
+            selection_range: LanguageServerRangePayload::from_core(location.selection_range),
+        }
+    }
+}
+
+impl LanguageServerDocumentSymbolPayload {
+    pub(crate) fn from_core(symbol: core::language_servers::LanguageServerDocumentSymbol) -> Self {
+        Self {
+            name: symbol.name,
+            detail: symbol.detail,
+            kind: symbol.kind,
+            deprecated: symbol.deprecated,
+            range: LanguageServerRangePayload::from_core(symbol.range),
+            selection_range: LanguageServerRangePayload::from_core(symbol.selection_range),
+            children: symbol.children.into_iter().map(Self::from_core).collect(),
+        }
+    }
+}
+
+impl LanguageServerWorkspaceSymbolPayload {
+    pub(crate) fn from_core(symbol: core::language_servers::LanguageServerWorkspaceSymbol) -> Self {
+        Self {
+            server_id: symbol.server_id,
+            workspace_id: symbol.workspace_id.into(),
+            name: symbol.name,
+            kind: symbol.kind,
+            container_name: symbol.container_name,
+            deprecated: symbol.deprecated,
+            location: symbol
+                .location
+                .map(LanguageServerLocationPayload::from_core),
+            raw: symbol.raw,
+            resolve_supported: symbol.resolve_supported,
         }
     }
 }

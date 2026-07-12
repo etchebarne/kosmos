@@ -3,15 +3,23 @@ use core::language_servers::LanguageServerError;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::language_servers::{
     ChangeLanguageServerDocumentParams, CloseLanguageServerDocumentParams,
-    LanguageServerColorInformationPayload, LanguageServerColorPresentationParams,
-    LanguageServerColorPresentationPayload, LanguageServerCompletionItemPayload,
-    LanguageServerCompletionListPayload, LanguageServerCompletionParams,
-    LanguageServerDiagnosticPayload, LanguageServerDiagnosticsParams,
+    ExecuteLanguageServerCommandParams, LanguageServerCodeActionPayload,
+    LanguageServerCodeActionsParams, LanguageServerColorInformationPayload,
+    LanguageServerColorPresentationParams, LanguageServerColorPresentationPayload,
+    LanguageServerCompletionItemPayload, LanguageServerCompletionListPayload,
+    LanguageServerCompletionParams, LanguageServerDiagnosticSnapshotPayload,
+    LanguageServerDiagnosticsParams, LanguageServerDocumentSymbolPayload,
     LanguageServerFormattingParams, LanguageServerHoverParams, LanguageServerHoverPayload,
-    LanguageServerListSnapshot, LanguageServerParams, LanguageServerSnapshot,
-    LanguageServerTextEditPayload, OpenLanguageServerDocumentParams,
-    ResolveLanguageServerCompletionParams, SaveLanguageServerDocumentParams,
-    TrustLanguageServerWorkspaceParams,
+    LanguageServerListSnapshot, LanguageServerLocationPayload, LanguageServerParams,
+    LanguageServerPositionParams, LanguageServerPrepareRenamePayload,
+    LanguageServerReferencesParams, LanguageServerRenameParams, LanguageServerSignatureHelpPayload,
+    LanguageServerSnapshot, LanguageServerTextEditPayload, LanguageServerWorkspaceSymbolPayload,
+    LanguageServerWorkspaceSymbolsParams, OpenLanguageServerDocumentParams,
+    ResolveLanguageServerCodeActionParams, ResolveLanguageServerCompletionParams,
+    ResolveLanguageServerWorkspaceSymbolParams, SaveLanguageServerDocumentParams,
+    StageLanguageServerCodeActionParams, StagedWorkspaceEditPayload,
+    TrustLanguageServerWorkspaceParams, WorkspaceEditTransactionParams,
+    WorkspaceEditTransactionStatusPayload,
 };
 use super::{RouteDefinition, parse_params};
 
@@ -27,6 +35,17 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         "closeDocument" => Some(RouteDefinition::language_server(close_document)),
         "saveDocument" => Some(RouteDefinition::language_server(save_document)),
         "hover" => Some(RouteDefinition::language_server_feature(hover)),
+        "signatureHelp" => Some(RouteDefinition::language_server_feature(signature_help)),
+        "definition" => Some(RouteDefinition::language_server_feature(definition)),
+        "declaration" => Some(RouteDefinition::language_server_feature(declaration)),
+        "typeDefinition" => Some(RouteDefinition::language_server_feature(type_definition)),
+        "implementation" => Some(RouteDefinition::language_server_feature(implementation)),
+        "references" => Some(RouteDefinition::language_server_feature(references)),
+        "documentSymbols" => Some(RouteDefinition::language_server_feature(document_symbols)),
+        "workspaceSymbols" => Some(RouteDefinition::language_server_feature(workspace_symbols)),
+        "resolveWorkspaceSymbol" => Some(RouteDefinition::language_server_feature(
+            resolve_workspace_symbol,
+        )),
         "diagnostics" => Some(RouteDefinition::language_server_feature(diagnostics)),
         "completion" => Some(RouteDefinition::language_server_feature(completion)),
         "resolveCompletion" => Some(RouteDefinition::language_server_feature(resolve_completion)),
@@ -35,8 +54,482 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
             color_presentations,
         )),
         "formatting" => Some(RouteDefinition::language_server_feature(formatting)),
+        "prepareRename" => Some(RouteDefinition::language_server_feature(prepare_rename)),
+        "rename" => Some(RouteDefinition::language_server_feature(rename)),
+        "codeActions" => Some(RouteDefinition::language_server_feature(code_actions)),
+        "resolveCodeAction" => Some(RouteDefinition::language_server_feature(
+            resolve_code_action,
+        )),
+        "stageCodeAction" => Some(RouteDefinition::language_server_feature(stage_code_action)),
+        "executeCommand" => Some(RouteDefinition::language_server_feature(execute_command)),
+        "commitWorkspaceEdit" => Some(RouteDefinition::language_server(commit_workspace_edit)),
+        "rollbackWorkspaceEdit" => Some(RouteDefinition::language_server(rollback_workspace_edit)),
+        "finishWorkspaceEdit" => Some(RouteDefinition::language_server(finish_workspace_edit)),
+        "finalizeWorkspaceEdit" => Some(RouteDefinition::language_server(finalize_workspace_edit)),
+        "workspaceEditStatus" => Some(RouteDefinition::language_server(workspace_edit_status)),
         "trustWorkspace" => Some(RouteDefinition::language_server(trust_workspace)),
         _ => None,
+    }
+}
+
+fn prepare_rename(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerPositionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_prepare_rename(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        params.position.into_core(),
+        cancellation,
+    ) {
+        Ok(rename) => ServerMessage::ok(
+            request.id,
+            rename.map(LanguageServerPrepareRenamePayload::from_core),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn rename(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerRenameParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_rename(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        params.position.into_core(),
+        &params.new_name,
+        params.server_id.as_deref(),
+        cancellation,
+    ) {
+        Ok(edit) => ServerMessage::ok(request.id, StagedWorkspaceEditPayload::from_core(edit)),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn code_actions(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerCodeActionsParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_code_actions(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        &core::language_servers::LanguageServerCodeActionRequest {
+            range: params.range.into_core(),
+            context: params.context,
+        },
+        cancellation,
+    ) {
+        Ok(actions) => ServerMessage::ok(
+            request.id,
+            actions
+                .into_iter()
+                .map(LanguageServerCodeActionPayload::from_core)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn resolve_code_action(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<ResolveLanguageServerCodeActionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.resolve_language_server_code_action(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        core::language_servers::LanguageServerCodeActionResolveRequest {
+            action_id: params.action_id,
+            server_id: params.server_id,
+            raw: params.raw,
+        },
+        cancellation,
+    ) {
+        Ok(action) => ServerMessage::ok(
+            request.id,
+            LanguageServerCodeActionPayload::from_core(action),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn stage_code_action(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    _cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<StageLanguageServerCodeActionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.stage_language_server_code_action(&params.action.into_core()) {
+        Ok(edit) => ServerMessage::ok(request.id, edit.map(StagedWorkspaceEditPayload::from_core)),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn execute_command(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<ExecuteLanguageServerCommandParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.execute_language_server_command(
+        core::language_servers::LanguageServerExecuteCommandRequest {
+            workspace_id: params.workspace_id.into(),
+            path: params.path,
+            generation: params.generation,
+            version: params.version,
+            server_id: params.server_id,
+            authorization: params.authorization,
+        },
+        cancellation,
+    ) {
+        Ok(result) => ServerMessage::ok(request.id, result),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn commit_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.commit_workspace_edit(params.transaction_id, &params.authorization) {
+        Ok(()) => ServerMessage::ok(request.id, true),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn rollback_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.rollback_workspace_edit(params.transaction_id, &params.authorization) {
+        Ok(()) => ServerMessage::ok(request.id, true),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn finish_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.finish_workspace_edit(params.transaction_id, &params.authorization) {
+        Ok(finished) => ServerMessage::ok(request.id, finished),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn finalize_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.finalize_workspace_edit(params.transaction_id, &params.authorization) {
+        Ok(status) => ServerMessage::ok(
+            request.id,
+            WorkspaceEditTransactionStatusPayload::from_core(status),
+        ),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn workspace_edit_status(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.workspace_edit_status(params.transaction_id, &params.authorization) {
+        Ok(status) => ServerMessage::ok(
+            request.id,
+            WorkspaceEditTransactionStatusPayload::from_core(status),
+        ),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn workspace_edit_error(
+    id: u64,
+    error: core::language_servers::WorkspaceEditError,
+) -> ServerMessage {
+    let code = match &error {
+        core::language_servers::WorkspaceEditError::Stale(_) => "workspace_edit.stale",
+        core::language_servers::WorkspaceEditError::Unsupported(_) => "workspace_edit.unsupported",
+        core::language_servers::WorkspaceEditError::Limit(_) => "workspace_edit.limit_exceeded",
+        core::language_servers::WorkspaceEditError::Expired => "workspace_edit.expired",
+        core::language_servers::WorkspaceEditError::Invalid(_) => "workspace_edit.invalid",
+        core::language_servers::WorkspaceEditError::Io(_) => "workspace_edit.io_failed",
+        core::language_servers::WorkspaceEditError::Recovery(_) => {
+            "workspace_edit.recovery_required"
+        }
+    };
+    ServerMessage::error(id, code, error.to_string())
+}
+
+fn signature_help(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerPositionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_signature_help(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        params.position.into_core(),
+        cancellation,
+    ) {
+        Ok(help) => ServerMessage::ok(
+            request.id,
+            help.map(LanguageServerSignatureHelpPayload::from_core),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LocationFeature {
+    Definition,
+    Declaration,
+    TypeDefinition,
+    Implementation,
+}
+
+fn definition(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    location_request(state, request, cancellation, LocationFeature::Definition)
+}
+
+fn declaration(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    location_request(state, request, cancellation, LocationFeature::Declaration)
+}
+
+fn type_definition(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    location_request(
+        state,
+        request,
+        cancellation,
+        LocationFeature::TypeDefinition,
+    )
+}
+
+fn implementation(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    location_request(
+        state,
+        request,
+        cancellation,
+        LocationFeature::Implementation,
+    )
+}
+
+fn location_request(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+    feature: LocationFeature,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerPositionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    let result = match feature {
+        LocationFeature::Definition => state.language_server_definition(
+            params.workspace_id.into(),
+            &params.path,
+            params.generation,
+            params.version,
+            params.position.into_core(),
+            cancellation,
+        ),
+        LocationFeature::Declaration => state.language_server_declaration(
+            params.workspace_id.into(),
+            &params.path,
+            params.generation,
+            params.version,
+            params.position.into_core(),
+            cancellation,
+        ),
+        LocationFeature::TypeDefinition => state.language_server_type_definition(
+            params.workspace_id.into(),
+            &params.path,
+            params.generation,
+            params.version,
+            params.position.into_core(),
+            cancellation,
+        ),
+        LocationFeature::Implementation => state.language_server_implementation(
+            params.workspace_id.into(),
+            &params.path,
+            params.generation,
+            params.version,
+            params.position.into_core(),
+            cancellation,
+        ),
+    };
+    match result {
+        Ok(locations) => ServerMessage::ok(
+            request.id,
+            locations
+                .into_iter()
+                .map(LanguageServerLocationPayload::from_core)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn references(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerReferencesParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_references(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        params.position.into_core(),
+        params.include_declaration,
+        cancellation,
+    ) {
+        Ok(locations) => ServerMessage::ok(
+            request.id,
+            locations
+                .into_iter()
+                .map(LanguageServerLocationPayload::from_core)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn document_symbols(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerDiagnosticsParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_document_symbols(
+        params.workspace_id.into(),
+        &params.path,
+        params.generation,
+        params.version,
+        cancellation,
+    ) {
+        Ok(symbols) => ServerMessage::ok(
+            request.id,
+            symbols
+                .into_iter()
+                .map(LanguageServerDocumentSymbolPayload::from_core)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn workspace_symbols(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<LanguageServerWorkspaceSymbolsParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.language_server_workspace_symbols(&params.query, cancellation) {
+        Ok(symbols) => ServerMessage::ok(
+            request.id,
+            symbols
+                .into_iter()
+                .map(LanguageServerWorkspaceSymbolPayload::from_core)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => language_server_error(request.id, error),
+    }
+}
+
+fn resolve_workspace_symbol(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let params = match parse_params::<ResolveLanguageServerWorkspaceSymbolParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.resolve_language_server_workspace_symbol(
+        core::language_servers::LanguageServerWorkspaceSymbolResolveRequest {
+            server_id: params.server_id,
+            workspace_id: params.workspace_id.into(),
+            raw: params.raw,
+        },
+        cancellation,
+    ) {
+        Ok(symbol) => ServerMessage::ok(
+            request.id,
+            LanguageServerWorkspaceSymbolPayload::from_core(symbol),
+        ),
+        Err(error) => language_server_error(request.id, error),
     }
 }
 
@@ -124,7 +617,11 @@ fn save_document(state: &mut core::State, request: &RequestEnvelope) -> ServerMe
     }
 }
 
-fn hover(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn hover(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerHoverParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -135,6 +632,7 @@ fn hover(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
         params.generation,
         params.version,
         params.position.into_core(),
+        cancellation,
     ) {
         Ok(hover) => {
             ServerMessage::ok(request.id, hover.map(LanguageServerHoverPayload::from_core))
@@ -143,7 +641,11 @@ fn hover(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     }
 }
 
-fn diagnostics(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn diagnostics(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    _cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerDiagnosticsParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -159,7 +661,7 @@ fn diagnostics(state: &mut core::State, request: &RequestEnvelope) -> ServerMess
             diagnostics.map(|diagnostics| {
                 diagnostics
                     .into_iter()
-                    .map(LanguageServerDiagnosticPayload::from_core)
+                    .map(LanguageServerDiagnosticSnapshotPayload::from_core)
                     .collect::<Vec<_>>()
             }),
         ),
@@ -167,7 +669,11 @@ fn diagnostics(state: &mut core::State, request: &RequestEnvelope) -> ServerMess
     }
 }
 
-fn completion(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn completion(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerCompletionParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -183,6 +689,7 @@ fn completion(state: &mut core::State, request: &RequestEnvelope) -> ServerMessa
             trigger_character: params.trigger_character,
             filter: params.filter,
         },
+        cancellation,
     ) {
         Ok(completion) => ServerMessage::ok(
             request.id,
@@ -192,7 +699,11 @@ fn completion(state: &mut core::State, request: &RequestEnvelope) -> ServerMessa
     }
 }
 
-fn resolve_completion(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn resolve_completion(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<ResolveLanguageServerCompletionParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -202,8 +713,11 @@ fn resolve_completion(state: &mut core::State, request: &RequestEnvelope) -> Ser
         &params.path,
         params.generation,
         params.version,
-        &params.server_id,
-        params.raw,
+        core::language_servers::LanguageServerCompletionResolveRequest {
+            server_id: params.server_id,
+            raw: params.raw,
+        },
+        cancellation,
     ) {
         Ok(item) => ServerMessage::ok(
             request.id,
@@ -213,7 +727,11 @@ fn resolve_completion(state: &mut core::State, request: &RequestEnvelope) -> Ser
     }
 }
 
-fn document_colors(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn document_colors(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerDiagnosticsParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -223,6 +741,7 @@ fn document_colors(state: &mut core::State, request: &RequestEnvelope) -> Server
         &params.path,
         params.generation,
         params.version,
+        cancellation,
     ) {
         Ok(colors) => ServerMessage::ok(
             request.id,
@@ -235,7 +754,11 @@ fn document_colors(state: &mut core::State, request: &RequestEnvelope) -> Server
     }
 }
 
-fn color_presentations(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn color_presentations(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerColorPresentationParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -250,6 +773,7 @@ fn color_presentations(state: &mut core::State, request: &RequestEnvelope) -> Se
             range: params.range.into_core(),
             color: params.color.into_core(),
         },
+        cancellation,
     ) {
         Ok(presentations) => ServerMessage::ok(
             request.id,
@@ -262,7 +786,11 @@ fn color_presentations(state: &mut core::State, request: &RequestEnvelope) -> Se
     }
 }
 
-fn formatting(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn formatting(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let params = match parse_params::<LanguageServerFormattingParams>(request) {
         Ok(params) => params,
         Err(response) => return response,
@@ -274,18 +802,21 @@ fn formatting(state: &mut core::State, request: &RequestEnvelope) -> ServerMessa
             "formatting tab size must be greater than zero",
         );
     }
-    match state.format_document(core::formatters::DocumentFormattingRequest {
-        workspace_id: params.workspace_id.into(),
-        path: &params.path,
-        language_id: &params.language_id,
-        generation: params.generation,
-        version: params.version,
-        text: &params.text,
-        options: core::language_servers::LanguageServerFormattingOptions {
-            tab_size: params.tab_size,
-            insert_spaces: params.insert_spaces,
+    match state.format_document(
+        core::formatters::DocumentFormattingRequest {
+            workspace_id: params.workspace_id.into(),
+            path: &params.path,
+            language_id: &params.language_id,
+            generation: params.generation,
+            version: params.version,
+            text: &params.text,
+            options: core::language_servers::LanguageServerFormattingOptions {
+                tab_size: params.tab_size,
+                insert_spaces: params.insert_spaces,
+            },
         },
-    }) {
+        cancellation,
+    ) {
         Ok(edits) => ServerMessage::ok(
             request.id,
             edits

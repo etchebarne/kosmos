@@ -9,6 +9,11 @@ import {
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyLanguageServerStatus } from "@/renderer/lib/language-client";
+import {
+  languageServerOperationInProgress,
+  pendingServersAfterStatus,
+  statusRetryDelay,
+} from "@/renderer/lib/language-server-state";
 import type { LanguageServerSnapshot } from "@/shared/ipc";
 
 type LanguageServerStore = {
@@ -22,56 +27,112 @@ type LanguageServerStore = {
   restartLanguageServer(serverId: string): void;
 };
 
-const POLL_INTERVAL_MS = 500;
-const RUNTIME_POLL_INTERVAL_MS = 2_000;
-
 export const useLanguageServerStore = create<LanguageServerStore>((set, get) => {
   let initialization: Promise<void> | null = null;
-  let runtimePollingStarted = false;
+  let pushHandlingStarted = false;
+  const statusRefreshes = new Map<string, Promise<void>>();
+  const repeatedStatusRefreshes = new Set<string>();
+  const statusRetryAttempts = new Map<string, number>();
+  const statusRetryTimers = new Map<string, number>();
 
-  function startRuntimePolling(): void {
-    if (runtimePollingStarted) {
+  function scheduleStatusRefresh(serverId: string): void {
+    if (statusRetryTimers.has(serverId)) {
       return;
     }
-    runtimePollingStarted = true;
-    window.setInterval(() => {
-      void listLanguageServers()
-        .then((snapshot) => set({ servers: snapshot.servers }))
-        .catch(() => {
-          // Action errors remain user-visible; background status refreshes are best effort.
-        });
-    }, RUNTIME_POLL_INTERVAL_MS);
+    const attempt = statusRetryAttempts.get(serverId) ?? 0;
+    statusRetryAttempts.set(serverId, attempt + 1);
+    const timer = window.setTimeout(() => {
+      statusRetryTimers.delete(serverId);
+      void refreshStatus(serverId);
+    }, statusRetryDelay(attempt));
+    statusRetryTimers.set(serverId, timer);
   }
 
-  function resumePolling(serverId: string): void {
-    if (get().pendingServerIds[serverId]) {
+  function clearStatusRetry(serverId: string): void {
+    const timer = statusRetryTimers.get(serverId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      statusRetryTimers.delete(serverId);
+    }
+    statusRetryAttempts.delete(serverId);
+  }
+
+  function startPushHandling(): void {
+    if (pushHandlingStarted) {
       return;
     }
-    set((state) => ({
-      pendingServerIds: { ...state.pendingServerIds, [serverId]: true },
-    }));
-    void pollUntilSettled(serverId, set)
+    pushHandlingStarted = true;
+    window.kosmos.onServerNotification((notification) => {
+      if (
+        notification.event === "languageServerStatusChanged" ||
+        notification.event === "languageServerLogAvailable"
+      ) {
+        void refreshStatus(notification.serverId);
+      }
+    });
+    window.kosmos.onServerReconnected(() => {
+      void get().initializeLanguageServers();
+    });
+  }
+
+  function refreshStatus(serverId: string): Promise<void> {
+    const active = statusRefreshes.get(serverId);
+    if (active) {
+      repeatedStatusRefreshes.add(serverId);
+      return active;
+    }
+    const refresh = getLanguageServerStatus({ serverId })
+      .then((status) => {
+        clearStatusRetry(serverId);
+        set((state) => ({
+          error: null,
+          servers: replaceServer(state.servers, status),
+          pendingServerIds: pendingServersAfterStatus(state.pendingServerIds, status),
+        }));
+        applyLanguageServerStatus(status);
+        if (languageServerOperationInProgress(status)) {
+          scheduleStatusRefresh(serverId);
+        }
+      })
       .catch((caughtError: unknown) => {
-        set({ error: errorMessage(caughtError) });
+        set((state) => ({
+          error: errorMessage(caughtError),
+          pendingServerIds: withoutKey(state.pendingServerIds, serverId),
+        }));
+        scheduleStatusRefresh(serverId);
       })
       .finally(() => {
-        set((state) => ({ pendingServerIds: withoutKey(state.pendingServerIds, serverId) }));
+        statusRefreshes.delete(serverId);
+        if (repeatedStatusRefreshes.delete(serverId)) {
+          void refreshStatus(serverId);
+        }
       });
+    statusRefreshes.set(serverId, refresh);
+    return refresh;
   }
 
   async function initialize(): Promise<void> {
+    startPushHandling();
     set({ error: null, isLoading: true });
     try {
       const snapshot = await listLanguageServers();
       set({ servers: snapshot.servers });
-      for (const server of snapshot.servers) {
-        if (isInProgress(server)) {
-          resumePolling(server.id);
-        }
-      }
-      startRuntimePolling();
+      snapshot.servers.forEach((server) => {
+        clearStatusRetry(server.id);
+        applyLanguageServerStatus(server);
+      });
+      set({
+        pendingServerIds: Object.fromEntries(
+          snapshot.servers
+            .filter(languageServerOperationInProgress)
+            .map((server) => [server.id, true]),
+        ),
+      });
+      snapshot.servers
+        .filter(languageServerOperationInProgress)
+        .forEach((server) => scheduleStatusRefresh(server.id));
     } catch (caughtError) {
-      set({ error: errorMessage(caughtError) });
+      set({ error: errorMessage(caughtError), pendingServerIds: {} });
     } finally {
       set({ isLoading: false });
       initialization = null;
@@ -94,13 +155,19 @@ export const useLanguageServerStore = create<LanguageServerStore>((set, get) => 
     void action({ serverId })
       .then((status) => {
         set((state) => ({ servers: replaceServer(state.servers, status) }));
-        return pollUntilSettled(serverId, set);
+        applyLanguageServerStatus(status);
+        set((state) => ({
+          pendingServerIds: pendingServersAfterStatus(state.pendingServerIds, status),
+        }));
+        if (languageServerOperationInProgress(status)) {
+          scheduleStatusRefresh(serverId);
+        }
       })
       .catch((caughtError: unknown) => {
-        set({ error: errorMessage(caughtError) });
-      })
-      .finally(() => {
-        set((state) => ({ pendingServerIds: withoutKey(state.pendingServerIds, serverId) }));
+        set((state) => ({
+          error: errorMessage(caughtError),
+          pendingServerIds: withoutKey(state.pendingServerIds, serverId),
+        }));
       });
   }
 
@@ -125,29 +192,6 @@ export const useLanguageServerStore = create<LanguageServerStore>((set, get) => 
   };
 });
 
-async function pollUntilSettled(
-  serverId: string,
-  set: (
-    partial:
-      | Partial<LanguageServerStore>
-      | ((state: LanguageServerStore) => Partial<LanguageServerStore>),
-  ) => void,
-): Promise<void> {
-  while (true) {
-    await delay(POLL_INTERVAL_MS);
-    const status = await getLanguageServerStatus({ serverId });
-    set((state) => ({ servers: replaceServer(state.servers, status) }));
-    if (!isInProgress(status)) {
-      applyLanguageServerStatus(status);
-      return;
-    }
-  }
-}
-
-function isInProgress(server: LanguageServerSnapshot): boolean {
-  return server.installationState === "installing" || server.installationState === "uninstalling";
-}
-
 function replaceServer(
   servers: LanguageServerSnapshot[],
   replacement: LanguageServerSnapshot,
@@ -159,8 +203,4 @@ function withoutKey(values: Record<string, true>, key: string): Record<string, t
   const nextValues = { ...values };
   delete nextValues[key];
   return nextValues;
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

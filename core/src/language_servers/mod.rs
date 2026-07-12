@@ -3,16 +3,86 @@ mod edits;
 mod installation;
 mod manager;
 mod runtime;
+#[cfg(target_os = "linux")]
+mod secure_edit;
 
 use std::error::Error as StdError;
 use std::fmt;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::tree::WorkspaceId;
 
 pub use catalog::{LanguageServerDefinition, language_server_catalog};
+pub use edits::{
+    StagedWorkspaceEdit, StagedWorkspaceEditDocument, WorkspaceEditError,
+    WorkspaceEditOpenDocument, WorkspaceEditRoot, WorkspaceEditTransactionPhase,
+    WorkspaceEditTransactionStatus,
+};
 pub use installation::LanguageServerPaths;
 pub use manager::LanguageServerManager;
+
+#[derive(Clone, Default)]
+pub struct LanguageServerRequestCancellation {
+    inner: Arc<Mutex<RequestCancellationState>>,
+}
+
+#[derive(Default)]
+struct RequestCancellationState {
+    cancelled: bool,
+    callbacks: Vec<Box<dyn FnOnce() + Send>>,
+}
+
+impl LanguageServerRequestCancellation {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        let callbacks = {
+            let mut state = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+            if state.cancelled {
+                return;
+            }
+            state.cancelled = true;
+            std::mem::take(&mut state.callbacks)
+        };
+        for callback in callbacks {
+            callback();
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .cancelled
+    }
+
+    pub(crate) fn on_cancel(&self, callback: impl FnOnce() + Send + 'static) {
+        let callback = {
+            let mut state = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+            if state.cancelled {
+                Some(Box::new(callback) as Box<dyn FnOnce() + Send>)
+            } else {
+                state.callbacks.push(Box::new(callback));
+                None
+            }
+        };
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+}
+
+impl fmt::Debug for LanguageServerRequestCancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LanguageServerRequestCancellation")
+            .field("cancelled", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LanguageServerInstallationState {
@@ -26,6 +96,7 @@ pub enum LanguageServerInstallationState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LanguageServerRuntimeState {
     Inactive,
+    Restarting,
     Running,
     Degraded,
     Crashed,
@@ -41,6 +112,18 @@ pub(crate) struct LanguageServerRuntimeStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LanguageServerFailure {
     pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LanguageServerLogKind {
+    Stderr,
+    Runtime,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerLog {
+    pub kind: LanguageServerLogKind,
     pub message: String,
 }
 
@@ -60,6 +143,7 @@ pub struct LanguageServerStatus {
     pub session_count: usize,
     pub workspace_count: usize,
     pub runtime_error: Option<LanguageServerFailure>,
+    pub logs: Vec<LanguageServerLog>,
     pub supported: bool,
 }
 
@@ -99,6 +183,72 @@ pub struct LanguageServerHover {
     pub range: Option<LanguageServerRange>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerSignatureHelp {
+    pub signatures: Vec<LanguageServerSignatureInformation>,
+    pub active_signature: Option<u32>,
+    pub active_parameter: Option<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerSignatureInformation {
+    pub label: String,
+    pub documentation: Option<LanguageServerHoverContent>,
+    pub parameters: Vec<LanguageServerParameterInformation>,
+    pub active_parameter: Option<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerParameterInformation {
+    pub label: LanguageServerParameterLabel,
+    pub documentation: Option<LanguageServerHoverContent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LanguageServerParameterLabel {
+    Text(String),
+    Utf16Offsets(u32, u32),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerLocation {
+    pub workspace_id: WorkspaceId,
+    pub path: String,
+    pub range: LanguageServerRange,
+    pub selection_range: LanguageServerRange,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerDocumentSymbol {
+    pub name: String,
+    pub detail: Option<String>,
+    pub kind: u32,
+    pub deprecated: bool,
+    pub range: LanguageServerRange,
+    pub selection_range: LanguageServerRange,
+    pub children: Vec<LanguageServerDocumentSymbol>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerWorkspaceSymbol {
+    pub server_id: String,
+    pub workspace_id: WorkspaceId,
+    pub name: String,
+    pub kind: u32,
+    pub container_name: Option<String>,
+    pub deprecated: bool,
+    pub location: Option<LanguageServerLocation>,
+    pub raw: serde_json::Value,
+    pub resolve_supported: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerWorkspaceSymbolResolveRequest {
+    pub server_id: String,
+    pub workspace_id: WorkspaceId,
+    pub raw: serde_json::Value,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LanguageServerDiagnosticSeverity {
     Error,
@@ -114,6 +264,12 @@ pub struct LanguageServerDiagnostic {
     pub message: String,
     pub source: Option<String>,
     pub code: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerDiagnosticSnapshot {
+    pub server_id: String,
+    pub diagnostics: Vec<LanguageServerDiagnostic>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -156,6 +312,49 @@ pub struct LanguageServerTextEdit {
     pub new_text: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageServerPrepareRename {
+    pub server_id: String,
+    pub range: Option<LanguageServerRange>,
+    pub placeholder: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerCodeAction {
+    pub action_id: u64,
+    pub server_id: String,
+    pub title: String,
+    pub kind: Option<String>,
+    pub is_preferred: bool,
+    pub disabled_reason: Option<String>,
+    pub resolve_supported: bool,
+    pub command_authorization: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerCodeActionRequest {
+    pub range: LanguageServerRange,
+    pub context: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerCodeActionResolveRequest {
+    pub action_id: u64,
+    pub server_id: String,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerExecuteCommandRequest {
+    pub workspace_id: WorkspaceId,
+    pub path: String,
+    pub generation: u64,
+    pub version: i64,
+    pub server_id: String,
+    pub authorization: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LanguageServerFormattingOptions {
     pub tab_size: u32,
@@ -168,6 +367,12 @@ pub struct LanguageServerCompletionRequest {
     pub trigger_kind: u32,
     pub trigger_character: Option<String>,
     pub filter: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LanguageServerCompletionResolveRequest {
+    pub server_id: String,
+    pub raw: serde_json::Value,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -232,7 +437,9 @@ pub enum LanguageServerError {
     StaleDocument,
     ServerStart(String),
     ServerExited,
+    RequestCancelled,
     RequestTimeout,
+    RequestFailed(String),
     Protocol(String),
     InvalidDocument(String),
     ContentModified,
@@ -265,7 +472,9 @@ impl LanguageServerError {
             Self::StaleDocument => "language_servers.stale_document",
             Self::ServerStart(_) => "language_servers.server_start_failed",
             Self::ServerExited => "language_servers.server_exited",
+            Self::RequestCancelled => "language_servers.request_cancelled",
             Self::RequestTimeout => "language_servers.request_timeout",
+            Self::RequestFailed(_) => "language_servers.request_failed",
             Self::Protocol(_) => "language_servers.protocol_failed",
             Self::InvalidDocument(_) => "language_servers.invalid_document",
             Self::ContentModified => "language_servers.content_modified",
@@ -335,7 +544,11 @@ impl fmt::Display for LanguageServerError {
                 write!(formatter, "language server could not start: {message}")
             }
             Self::ServerExited => formatter.write_str("language server exited"),
+            Self::RequestCancelled => formatter.write_str("language server request was cancelled"),
             Self::RequestTimeout => formatter.write_str("language server request timed out"),
+            Self::RequestFailed(message) => {
+                write!(formatter, "language server request failed: {message}")
+            }
             Self::Protocol(message) => {
                 write!(formatter, "language server protocol failed: {message}")
             }

@@ -6,6 +6,12 @@ pub(crate) struct FormatterParams {
     pub(crate) formatter_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FormatterPrioritiesParams {
+    pub(crate) formatter_ids: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FormatterListSnapshot {
@@ -20,6 +26,9 @@ pub(crate) struct FormatterSnapshot {
     description: String,
     languages: Vec<String>,
     language_ids: Vec<String>,
+    extensions: Vec<String>,
+    filenames: Vec<String>,
+    priority: usize,
     catalog_version: String,
     installed_version: Option<String>,
     installation_state: InstallationStatePayload,
@@ -63,6 +72,9 @@ impl FormatterSnapshot {
             description: status.description,
             languages: status.languages,
             language_ids: status.language_ids,
+            extensions: status.extensions,
+            filenames: status.filenames,
+            priority: status.priority,
             catalog_version: status.catalog_version,
             installed_version: status.installed_version,
             installation_state: match status.installation_state {

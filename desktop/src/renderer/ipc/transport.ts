@@ -1,11 +1,77 @@
 import type { KosmosIpcDomain, KosmosIpcParams } from "@/shared/ipc";
 
+export type RequestCancellation = {
+  readonly isCancellationRequested: boolean;
+  onCancellationRequested(listener: () => void): { dispose(): void };
+};
+
+export class RequestCancelledError extends Error {
+  readonly code = "language_servers.request_cancelled";
+
+  constructor() {
+    super("language server request was cancelled");
+    this.name = "RequestCancelledError";
+  }
+}
+
 export function requestServer<T = unknown>(
   domain: KosmosIpcDomain,
   action: string,
   params?: KosmosIpcParams,
+  cancellation?: RequestCancellation,
 ): Promise<T> {
-  return kosmosApi().request<T>({ domain, action, params });
+  if (!cancellation) {
+    return kosmosApi().request<T>({ domain, action, params });
+  }
+  return requestServerCancellable(domain, action, params, cancellation);
+}
+
+async function requestServerCancellable<T>(
+  domain: KosmosIpcDomain,
+  action: string,
+  params: KosmosIpcParams | undefined,
+  cancellation: RequestCancellation,
+): Promise<T> {
+  if (cancellation.isCancellationRequested) {
+    throw new RequestCancelledError();
+  }
+  const requestKey = crypto.randomUUID();
+  const api = kosmosApi();
+  let cancelSent = false;
+  const cancel = () => {
+    if (cancelSent) {
+      return;
+    }
+    cancelSent = true;
+    api.cancelRequest(requestKey);
+  };
+  const subscription = cancellation.onCancellationRequested(cancel);
+  try {
+    const request = api.request<T>({ domain, action, params, requestKey });
+    if (cancellation.isCancellationRequested) {
+      cancel();
+    }
+    return await request;
+  } catch (error) {
+    if (isRequestCancelledError(error)) {
+      throw new RequestCancelledError();
+    }
+    throw error;
+  } finally {
+    subscription.dispose();
+  }
+}
+
+export function isRequestCancelledError(error: unknown): boolean {
+  return (
+    error instanceof RequestCancelledError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "language_servers.request_cancelled") ||
+    (error instanceof Error &&
+      error.message.startsWith("language_servers.request_cancelled:"))
+  );
 }
 
 export function selectWorkspaceDirectory(): Promise<string | undefined> {

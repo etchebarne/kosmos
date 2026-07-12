@@ -17,6 +17,11 @@ use super::messages::envelope::{Domain, RequestEnvelope, ServerMessage};
 use super::messages::workspace::WorkspaceListSnapshot;
 
 type RouteHandler = fn(&mut core::State, &RequestEnvelope) -> ServerMessage;
+type CancellableRouteHandler = fn(
+    &mut core::State,
+    &RequestEnvelope,
+    &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage;
 
 pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerMessage> {
     let definition = match request.domain {
@@ -55,8 +60,38 @@ impl PreparedRoute {
         self.definition.mode
     }
 
-    pub(crate) fn execute(&self, state: &mut core::State) -> ServerMessage {
-        (self.definition.handler)(state, &self.request)
+    pub(crate) fn workspace_edit_credentials(&self) -> Option<(u64, String)> {
+        if !matches!(self.request.domain, Domain::LanguageServers)
+            || !matches!(
+                self.request.action.as_str(),
+                "commitWorkspaceEdit"
+                    | "rollbackWorkspaceEdit"
+                    | "finishWorkspaceEdit"
+                    | "finalizeWorkspaceEdit"
+                    | "workspaceEditStatus"
+            )
+        {
+            return None;
+        }
+        let transaction_id = self.request.params.get("transactionId")?.as_u64()?;
+        let authorization = self
+            .request
+            .params
+            .get("authorization")?
+            .as_str()?
+            .to_owned();
+        Some((transaction_id, authorization))
+    }
+
+    pub(crate) fn execute(
+        &self,
+        state: &mut core::State,
+        cancellation: &core::language_servers::LanguageServerRequestCancellation,
+    ) -> ServerMessage {
+        match self.definition.handler {
+            RouteHandlerKind::Standard(handler) => handler(state, &self.request),
+            RouteHandlerKind::Cancellable(handler) => handler(state, &self.request, cancellation),
+        }
     }
 
     #[cfg(test)]
@@ -74,8 +109,14 @@ impl PreparedRoute {
 }
 
 pub(super) struct RouteDefinition {
-    handler: RouteHandler,
+    handler: RouteHandlerKind,
     mode: ExecutionMode,
+}
+
+#[derive(Clone, Copy)]
+enum RouteHandlerKind {
+    Standard(RouteHandler),
+    Cancellable(CancellableRouteHandler),
 }
 
 impl RouteDefinition {
@@ -95,8 +136,11 @@ impl RouteDefinition {
         Self::new(handler, ExecutionMode::LanguageServer)
     }
 
-    pub(super) const fn language_server_feature(handler: RouteHandler) -> Self {
-        Self::new(handler, ExecutionMode::LanguageServerFeature)
+    pub(super) const fn language_server_feature(handler: CancellableRouteHandler) -> Self {
+        Self {
+            handler: RouteHandlerKind::Cancellable(handler),
+            mode: ExecutionMode::LanguageServerFeature,
+        }
     }
 
     pub(super) const fn active_workspace(handler: RouteHandler) -> Self {
@@ -126,7 +170,10 @@ impl RouteDefinition {
     }
 
     const fn new(handler: RouteHandler, mode: ExecutionMode) -> Self {
-        Self { handler, mode }
+        Self {
+            handler: RouteHandlerKind::Standard(handler),
+            mode,
+        }
     }
 }
 

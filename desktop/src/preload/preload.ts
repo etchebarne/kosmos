@@ -4,6 +4,7 @@ import type {
   KosmosApi,
   KosmosIpcRequest,
   KosmosIpcRequestResult,
+  KosmosServerNotification,
   WorkspaceId,
 } from "../shared/ipc";
 
@@ -26,6 +27,22 @@ const kosmos: KosmosApi = {
     }
 
     throw new KosmosPreloadRequestError(response.error.code, response.error.message);
+  },
+  cancelRequest(requestKey: string): void {
+    ipcRenderer.send("kosmos:cancelRequest", requestKey);
+  },
+  acknowledgeServerApplyEdit(
+    id: number,
+    token: string,
+    applied: boolean,
+    failureReason?: string,
+  ): void {
+    ipcRenderer.send("kosmos:serverApplyEditAck", { id, token, applied, failureReason });
+  },
+  pendingServerApplyEdits() {
+    return ipcRenderer.invoke("kosmos:pendingServerApplyEdits") as ReturnType<
+      KosmosApi["pendingServerApplyEdits"]
+    >;
   },
   selectWorkspaceDirectory(): Promise<string | undefined> {
     return ipcRenderer.invoke("kosmos:selectWorkspaceDirectory") as Promise<string | undefined>;
@@ -68,6 +85,18 @@ const kosmos: KosmosApi = {
 
     ipcRenderer.on("kosmos:workspaceChanged", listener);
     return () => ipcRenderer.off("kosmos:workspaceChanged", listener);
+  },
+  onServerNotification(callback: (notification: KosmosServerNotification) => void): () => void {
+    const listener = (_event: IpcRendererEvent, notification: KosmosServerNotification) => {
+      callback(notification);
+    };
+    ipcRenderer.on("kosmos:serverNotification", listener);
+    return () => ipcRenderer.off("kosmos:serverNotification", listener);
+  },
+  onServerReconnected(callback: () => void): () => void {
+    const listener = () => callback();
+    ipcRenderer.on("kosmos:serverReconnected", listener);
+    return () => ipcRenderer.off("kosmos:serverReconnected", listener);
   },
 };
 

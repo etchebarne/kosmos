@@ -1,6 +1,7 @@
 mod catalog;
 mod installation;
 mod manager;
+mod process;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -41,6 +42,9 @@ pub struct FormatterStatus {
     pub description: String,
     pub languages: Vec<String>,
     pub language_ids: Vec<String>,
+    pub extensions: Vec<String>,
+    pub filenames: Vec<String>,
+    pub priority: usize,
     pub catalog_version: String,
     pub installed_version: Option<String>,
     pub installation_state: FormatterInstallationState,
@@ -54,6 +58,7 @@ pub enum FormatterError {
     UnknownFormatter(String),
     UnsupportedPlatform,
     OperationInProgress,
+    InvalidPreferences(String),
     WorkerBusy,
     WorkerUnavailable(String),
     Install(String),
@@ -74,6 +79,7 @@ impl FormatterError {
             Self::UnknownFormatter(_) => "formatters.unknown_formatter",
             Self::UnsupportedPlatform => "formatters.unsupported_platform",
             Self::OperationInProgress => "formatters.operation_in_progress",
+            Self::InvalidPreferences(_) => "formatters.invalid_preferences",
             Self::WorkerBusy => "formatters.worker_busy",
             Self::WorkerUnavailable(_) => "formatters.worker_unavailable",
             Self::Install(_) => "formatters.install_failed",
@@ -99,10 +105,13 @@ impl fmt::Display for FormatterError {
             Self::ManagerUnavailable => formatter.write_str("formatter manager is unavailable"),
             Self::UnknownFormatter(id) => write!(formatter, "unknown formatter `{id}`"),
             Self::UnsupportedPlatform => {
-                formatter.write_str("formatter installation requires Node.js 22.6+ and npm")
+                formatter.write_str("formatter is not available for this platform or runtime")
             }
             Self::OperationInProgress => {
                 formatter.write_str("a formatter operation is already in progress")
+            }
+            Self::InvalidPreferences(message) => {
+                write!(formatter, "formatter preferences are invalid: {message}")
             }
             Self::WorkerBusy => formatter.write_str("formatter installer is busy"),
             Self::WorkerUnavailable(message) => {

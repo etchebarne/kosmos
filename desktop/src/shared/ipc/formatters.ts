@@ -13,6 +13,9 @@ export type FormatterSnapshot = {
   description: string;
   languages: string[];
   languageIds: string[];
+  extensions: string[];
+  filenames: string[];
+  priority: number;
   catalogVersion: string;
   installedVersion: string | null;
   installationState: FormatterInstallationState;
@@ -22,3 +25,4 @@ export type FormatterSnapshot = {
 
 export type FormatterListSnapshot = { formatters: FormatterSnapshot[] };
 export type FormatterParams = { formatterId: string };
+export type FormatterPrioritiesParams = { formatterIds: string[] };

@@ -1,6 +1,5 @@
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
@@ -46,6 +45,11 @@ impl Dispatcher {
             }
         };
         let state = Arc::new(Mutex::new(state));
+        notifications.attach_state(Arc::downgrade(&state));
+        state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .set_event_sink(Arc::new(notifications.clone()));
         let (external_requests, external_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
         let (language_server_requests, language_server_receiver) =
             mpsc::sync_channel(MAX_QUEUED_REQUESTS);
@@ -89,32 +93,68 @@ impl Dispatcher {
         self.notifications.subscribe(responses)
     }
 
+    pub(crate) fn acknowledge_apply_edit(
+        &self,
+        renderer_id: u64,
+        id: u64,
+        token: &str,
+        applied: bool,
+        failure_reason: Option<String>,
+    ) {
+        self.notifications
+            .acknowledge_apply_edit(renderer_id, id, token, applied, failure_reason);
+    }
+
     #[cfg(test)]
     pub(crate) fn dispatch(
         &self,
         route: PreparedRoute,
         responses: ResponseSender,
     ) -> Option<mpsc::Receiver<()>> {
-        self.dispatch_cancellable(route, responses, Arc::new(AtomicBool::new(false)))
+        self.dispatch_cancellable(
+            route,
+            responses,
+            core::language_servers::LanguageServerRequestCancellation::new(),
+            0,
+        )
     }
 
     pub(crate) fn dispatch_cancellable(
         &self,
         route: PreparedRoute,
         responses: ResponseSender,
-        cancelled: Arc<AtomicBool>,
+        cancellation: core::language_servers::LanguageServerRequestCancellation,
+        owner_id: u64,
     ) -> Option<mpsc::Receiver<()>> {
-        if cancelled.load(Ordering::Acquire) {
+        if cancellation.is_cancelled() {
+            responses.send(request_cancelled(route.request_id()));
             return None;
+        }
+        if let Some((transaction_id, authorization)) = route.workspace_edit_credentials() {
+            let claim = self
+                .state
+                .lock()
+                .map_err(|_| {
+                    core::language_servers::WorkspaceEditError::Invalid(
+                        "workspace edit state is unavailable".to_owned(),
+                    )
+                })
+                .and_then(|state| {
+                    state.claim_workspace_edit_owner(transaction_id, &authorization, owner_id)
+                });
+            if let Err(error) = claim {
+                responses.send(workspace_edit_error(route.request_id(), error));
+                return None;
+            }
         }
 
         match route.mode() {
             ExecutionMode::Snapshot => {
-                responses.send(execute_snapshot(&self.state, &route));
+                responses.send(execute_snapshot(&self.state, &route, &cancellation));
                 None
             }
             ExecutionMode::Live => {
-                responses.send(execute_live(&self.state, &route));
+                responses.send(execute_live(&self.state, &route, &cancellation));
                 None
             }
             ExecutionMode::External => {
@@ -134,7 +174,7 @@ impl Dispatcher {
                         responses,
                         candidate,
                         completion,
-                        cancelled,
+                        cancellation,
                     },
                 );
                 Some(completed)
@@ -156,7 +196,7 @@ impl Dispatcher {
                         responses,
                         candidate,
                         completion,
-                        cancelled,
+                        cancellation,
                     },
                 );
                 Some(completed)
@@ -178,7 +218,7 @@ impl Dispatcher {
                         responses,
                         candidate,
                         completion,
-                        cancelled,
+                        cancellation,
                     },
                 );
                 Some(completed)
@@ -191,7 +231,7 @@ impl Dispatcher {
                         route,
                         responses,
                         completion,
-                        cancelled,
+                        cancellation,
                     },
                 );
                 Some(completed)
@@ -205,14 +245,14 @@ struct ExternalRequest {
     responses: ResponseSender,
     candidate: core::PersistentStateCandidate,
     completion: mpsc::Sender<()>,
-    cancelled: Arc<AtomicBool>,
+    cancellation: core::language_servers::LanguageServerRequestCancellation,
 }
 
 struct PersistentRequest {
     route: PreparedRoute,
     responses: ResponseSender,
     completion: mpsc::Sender<()>,
-    cancelled: Arc<AtomicBool>,
+    cancellation: core::language_servers::LanguageServerRequestCancellation,
 }
 
 #[derive(Clone)]
@@ -301,12 +341,19 @@ fn spawn_external_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Resul
         .name("kosmos-external-operations".to_owned())
         .spawn(move || {
             while let Ok(mut request) = requests.recv() {
-                if request.cancelled.load(Ordering::Acquire) {
+                if request.cancellation.is_cancelled() {
+                    request
+                        .responses
+                        .send(request_cancelled(request.route.request_id()));
                     let _ = request.completion.send(());
                     continue;
                 }
 
-                let response = execute_handler(&request.route, request.candidate.state_mut());
+                let response = execute_handler(
+                    &request.route,
+                    request.candidate.state_mut(),
+                    &request.cancellation,
+                );
                 request.responses.send(response);
                 let _ = request.completion.send(());
             }
@@ -319,12 +366,19 @@ fn spawn_language_server_worker(requests: mpsc::Receiver<ExternalRequest>) -> io
         .name("kosmos-language-server-operations".to_owned())
         .spawn(move || {
             while let Ok(mut request) = requests.recv() {
-                if request.cancelled.load(Ordering::Acquire) {
+                if request.cancellation.is_cancelled() {
+                    request
+                        .responses
+                        .send(request_cancelled(request.route.request_id()));
                     let _ = request.completion.send(());
                     continue;
                 }
 
-                let response = execute_handler(&request.route, request.candidate.state_mut());
+                let response = execute_handler(
+                    &request.route,
+                    request.candidate.state_mut(),
+                    &request.cancellation,
+                );
                 request.responses.send(response);
                 let _ = request.completion.send(());
             }
@@ -349,12 +403,19 @@ fn spawn_language_server_feature_workers(
                     let Ok(mut request) = received else {
                         break;
                     };
-                    if request.cancelled.load(Ordering::Acquire) {
+                    if request.cancellation.is_cancelled() {
+                        request
+                            .responses
+                            .send(request_cancelled(request.route.request_id()));
                         let _ = request.completion.send(());
                         continue;
                     }
 
-                    let response = execute_handler(&request.route, request.candidate.state_mut());
+                    let response = execute_handler(
+                        &request.route,
+                        request.candidate.state_mut(),
+                        &request.cancellation,
+                    );
                     request.responses.send(response);
                     let _ = request.completion.send(());
                 }
@@ -373,7 +434,10 @@ fn spawn_persistence_worker(
         .name("kosmos-persistent-operations".to_owned())
         .spawn(move || {
             while let Ok(request) = requests.recv() {
-                if request.cancelled.load(Ordering::Acquire) {
+                if request.cancellation.is_cancelled() {
+                    request
+                        .responses
+                        .send(request_cancelled(request.route.request_id()));
                     let _ = request.completion.send(());
                     continue;
                 }
@@ -393,6 +457,7 @@ fn spawn_persistence_worker(
                     &request.route,
                     persistence,
                     workspace_reconciler.as_ref(),
+                    &request.cancellation,
                 );
 
                 request.responses.send(response);
@@ -425,22 +490,30 @@ fn spawn_notification_worker(
         .map(|_| ())
 }
 
-fn execute_snapshot(state: &Mutex<core::State>, route: &PreparedRoute) -> ServerMessage {
+fn execute_snapshot(
+    state: &Mutex<core::State>,
+    route: &PreparedRoute,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let mut candidate = match persistent_candidate(state, route.request_id()) {
         Ok(candidate) => candidate,
         Err(response) => return response,
     };
 
-    execute_handler(route, candidate.state_mut())
+    execute_handler(route, candidate.state_mut(), cancellation)
 }
 
-fn execute_live(state: &Mutex<core::State>, route: &PreparedRoute) -> ServerMessage {
+fn execute_live(
+    state: &Mutex<core::State>,
+    route: &PreparedRoute,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
     let mut state = match state.lock() {
         Ok(state) => state,
         Err(_) => return state_unavailable(route.request_id()),
     };
 
-    execute_handler(route, &mut state)
+    execute_handler(route, &mut state, cancellation)
 }
 
 fn execute_persistent(
@@ -449,12 +522,13 @@ fn execute_persistent(
     route: &PreparedRoute,
     persistence: PersistenceMode,
     workspace_reconciler: Option<&WorkspaceWatcherReconciler>,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
 ) -> ServerMessage {
     let mut candidate = match persistent_candidate(state, route.request_id()) {
         Ok(candidate) => candidate,
         Err(response) => return response,
     };
-    let response = execute_handler(route, candidate.state_mut());
+    let response = execute_handler(route, candidate.state_mut(), cancellation);
 
     if !response.is_ok() {
         return response;
@@ -576,9 +650,21 @@ fn queue_persistent_request(
     }
 }
 
-fn execute_handler(route: &PreparedRoute, state: &mut core::State) -> ServerMessage {
-    catch_unwind(AssertUnwindSafe(|| route.execute(state)))
+fn execute_handler(
+    route: &PreparedRoute,
+    state: &mut core::State,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    catch_unwind(AssertUnwindSafe(|| route.execute(state, cancellation)))
         .unwrap_or_else(|_| handler_panicked(route.request_id()))
+}
+
+fn request_cancelled(request_id: u64) -> ServerMessage {
+    ServerMessage::error(
+        request_id,
+        core::language_servers::LanguageServerError::RequestCancelled.code(),
+        core::language_servers::LanguageServerError::RequestCancelled.to_string(),
+    )
 }
 
 fn state_unavailable(request_id: u64) -> ServerMessage {
@@ -587,6 +673,20 @@ fn state_unavailable(request_id: u64) -> ServerMessage {
         "ipc.state_unavailable",
         "IPC state mutex was poisoned",
     )
+}
+
+fn workspace_edit_error(
+    request_id: u64,
+    error: core::language_servers::WorkspaceEditError,
+) -> ServerMessage {
+    let code = match &error {
+        core::language_servers::WorkspaceEditError::Recovery(_) => {
+            "workspace_edit.recovery_required"
+        }
+        core::language_servers::WorkspaceEditError::Expired => "workspace_edit.expired",
+        _ => "workspace_edit.invalid",
+    };
+    ServerMessage::error(request_id, code, error.to_string())
 }
 
 fn handler_panicked(request_id: u64) -> ServerMessage {
@@ -609,6 +709,7 @@ fn state_conflict(request_id: u64) -> ServerMessage {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Condvar, OnceLock};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -623,7 +724,15 @@ mod tests {
     }
 
     static EXTERNAL_GATE: OnceLock<(Mutex<ExternalGate>, Condvar)> = OnceLock::new();
-    static LANGUAGE_SERVER_FEATURE_GATE: OnceLock<(Mutex<ExternalGate>, Condvar)> = OnceLock::new();
+    static LANGUAGE_SERVER_FEATURE_GATE: OnceLock<(Mutex<FeatureGate>, Condvar)> = OnceLock::new();
+    static LANGUAGE_SERVER_FEATURE_TEST_LOCK: Mutex<()> = Mutex::new(());
+    static CANCELLED_ROUTE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Default)]
+    struct FeatureGate {
+        release: bool,
+        started: usize,
+    }
 
     #[test]
     fn persistence_failures_do_not_mutate_live_state() {
@@ -861,6 +970,7 @@ mod tests {
 
     #[test]
     fn slow_language_server_feature_does_not_block_other_feature_responses() {
+        let _test_lock = LANGUAGE_SERVER_FEATURE_TEST_LOCK.lock().unwrap();
         let (store, path) = test_store("language-server-feature-concurrency");
         let dispatcher =
             Dispatcher::new(core::State::new(), store).expect("dispatcher should open");
@@ -907,6 +1017,75 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn queued_cancelled_language_server_feature_does_not_execute() {
+        let _test_lock = LANGUAGE_SERVER_FEATURE_TEST_LOCK.lock().unwrap();
+        let (store, path) = test_store("language-server-feature-queued-cancellation");
+        let dispatcher =
+            Dispatcher::new(core::State::new(), store).expect("dispatcher should open");
+        let (responses, receiver) = test_response_channel();
+        reset_language_server_feature_gate();
+        CANCELLED_ROUTE_INVOCATIONS.store(0, Ordering::Relaxed);
+
+        let mut completions = Vec::new();
+        for request_id in 1..=LANGUAGE_SERVER_FEATURE_WORKERS as u64 {
+            completions.push(
+                dispatcher
+                    .dispatch(
+                        router::PreparedRoute::for_test(
+                            request_id,
+                            ExecutionMode::LanguageServerFeature,
+                            blocking_language_server_feature_route,
+                        ),
+                        responses.clone(),
+                    )
+                    .expect("blocking feature should have a completion signal"),
+            );
+        }
+        wait_for_language_server_feature_routes(LANGUAGE_SERVER_FEATURE_WORKERS);
+
+        let cancellation = core::language_servers::LanguageServerRequestCancellation::new();
+        completions.push(
+            dispatcher
+                .dispatch_cancellable(
+                    router::PreparedRoute::for_test(
+                        99,
+                        ExecutionMode::LanguageServerFeature,
+                        cancelled_route,
+                    ),
+                    responses,
+                    cancellation.clone(),
+                    0,
+                )
+                .expect("queued feature should have a completion signal"),
+        );
+        cancellation.cancel();
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+
+        release_language_server_feature_route();
+        for completion in completions {
+            completion
+                .recv_timeout(Duration::from_secs(2))
+                .expect("feature should complete");
+        }
+        let responses = (0..=LANGUAGE_SERVER_FEATURE_WORKERS)
+            .map(|_| {
+                receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("feature should respond")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(CANCELLED_ROUTE_INVOCATIONS.load(Ordering::Relaxed), 0);
+        assert!(responses.iter().any(|response| {
+            serde_json::to_value(response).is_ok_and(|response| {
+                response["id"] == 99
+                    && response["error"]["code"] == "language_servers.request_cancelled"
+            })
+        }));
+
+        let _ = std::fs::remove_file(path);
+    }
+
     fn workspace_open_route(request_id: u64, path: &str) -> router::PreparedRoute {
         router::prepare(RequestEnvelope {
             id: request_id,
@@ -941,13 +1120,18 @@ mod tests {
         panic!("test handler panic")
     }
 
+    fn cancelled_route(_state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+        CANCELLED_ROUTE_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ServerMessage::ok(request.id, true)
+    }
+
     fn blocking_language_server_feature_route(
         _state: &mut core::State,
         request: &RequestEnvelope,
     ) -> ServerMessage {
         let (gate, condition) = language_server_feature_gate();
         let mut gate = gate.lock().expect("gate should lock");
-        gate.started = true;
+        gate.started += 1;
         condition.notify_all();
 
         while !gate.release {
@@ -983,26 +1167,33 @@ mod tests {
         condition.notify_all();
     }
 
-    fn language_server_feature_gate() -> &'static (Mutex<ExternalGate>, Condvar) {
+    fn language_server_feature_gate() -> &'static (Mutex<FeatureGate>, Condvar) {
         LANGUAGE_SERVER_FEATURE_GATE
-            .get_or_init(|| (Mutex::new(ExternalGate::default()), Condvar::new()))
+            .get_or_init(|| (Mutex::new(FeatureGate::default()), Condvar::new()))
     }
 
     fn reset_language_server_feature_gate() {
         *language_server_feature_gate()
             .0
             .lock()
-            .expect("gate should lock") = ExternalGate::default();
+            .expect("gate should lock") = FeatureGate::default();
     }
 
     fn wait_for_language_server_feature_route() {
+        wait_for_language_server_feature_routes(1);
+    }
+
+    fn wait_for_language_server_feature_routes(expected: usize) {
         let (gate, condition) = language_server_feature_gate();
         let gate = gate.lock().expect("gate should lock");
         let (gate, timeout) = condition
-            .wait_timeout_while(gate, Duration::from_secs(2), |gate| !gate.started)
+            .wait_timeout_while(gate, Duration::from_secs(2), |gate| gate.started < expected)
             .expect("gate should wait");
 
-        assert!(gate.started, "language server feature route did not start");
+        assert_eq!(
+            gate.started, expected,
+            "language server feature routes did not start"
+        );
         assert!(
             !timeout.timed_out(),
             "language server feature route start timed out"

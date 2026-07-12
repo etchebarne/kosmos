@@ -2,6 +2,25 @@
 
 This document captures the proposed architecture and decisions for adding Language Server Protocol support to Kosmos.
 
+## Implementation Status
+
+The managed language-tooling architecture is implemented across `core/`, `server/`, and `desktop/`:
+
+- Reviewed, pinned language-server and formatter catalogs with atomic, integrity-verified installation.
+- Multi-server document bindings, negotiated synchronization, save notifications, diagnostics, completion and resolve, hover, signature help, colors, navigation, references, and symbols.
+- Standalone Prettier, Ruff, and shfmt formatting with persisted priority and LSP fallback.
+- Cancellation propagated from Monaco through IPC to LSP `$/cancelRequest`.
+- Supervised server restart with bounded backoff, document replay, bounded logs, and typed push notifications.
+- Dynamic capability registration, workspace configuration/folders, work-done progress, and contained watched-file notifications.
+- Core-validated workspace-edit transactions used by rename, code actions, execute-command, and server-initiated `workspace/applyEdit`.
+- Feature-specific Monaco service suppression while healthy external providers are active.
+
+Current intentional limits:
+
+- Workspace-edit resource operations (`create`, `rename`, and `delete`) are rejected. Text edits target existing UTF-8 regular files only.
+- Managed tools are cataloged for supported Linux architectures; arbitrary remote plugins are not accepted.
+- Formatter and language-server selection is deterministic and user-controlled; installation never happens when opening a file.
+
 ## Decisions
 
 - The initial catalog will support as many practical languages as possible, including a broad language set and web languages.

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
 import { useFormatterStore } from "@/renderer/stores";
@@ -10,9 +10,22 @@ export function FormatterSettings() {
   const isLoading = useFormatterStore((state) => state.isLoading);
   const formatters = useFormatterStore((state) => state.formatters);
   const pending = useFormatterStore((state) => state.pendingFormatterIds);
+  const prioritiesPending = useFormatterStore((state) => state.prioritiesPending);
   const initialize = useFormatterStore((state) => state.initializeFormatters);
   const install = useFormatterStore((state) => state.installFormatter);
   const uninstall = useFormatterStore((state) => state.uninstallFormatter);
+  const setPriorities = useFormatterStore((state) => state.setFormatterPriorities);
+
+  const move = (index: number, offset: -1 | 1) => {
+    const reordered = formatters.map((formatter) => formatter.id);
+    const target = index + offset;
+    const currentId = reordered[index];
+    const targetId = reordered[target];
+    if (currentId === undefined || targetId === undefined) return;
+    reordered[index] = targetId;
+    reordered[target] = currentId;
+    setPriorities(reordered);
+  };
 
   useEffect(() => {
     void initialize();
@@ -23,8 +36,7 @@ export function FormatterSettings() {
       <div className="mb-6">
         <h2 className="font-heading text-lg font-medium">Formatters</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Installed formatters take precedence over language-server formatting for every language
-          they support.
+          Installed formatters are tried from top to bottom before language-server formatting.
         </p>
       </div>
       {error ? (
@@ -41,13 +53,18 @@ export function FormatterSettings() {
         </div>
       ) : (
         <ul className="divide-y rounded-xl border bg-card">
-          {formatters.map((formatter) => (
+          {formatters.map((formatter, index) => (
             <FormatterRow
               key={formatter.id}
               formatter={formatter}
               pending={Boolean(pending[formatter.id])}
               onInstall={() => install(formatter.id)}
               onUninstall={() => uninstall(formatter.id)}
+              priorityPending={prioritiesPending}
+              canMoveUp={index > 0}
+              canMoveDown={index < formatters.length - 1}
+              onMoveUp={() => move(index, -1)}
+              onMoveDown={() => move(index, 1)}
             />
           ))}
         </ul>
@@ -61,16 +78,26 @@ function FormatterRow({
   pending,
   onInstall,
   onUninstall,
+  priorityPending,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
 }: {
   formatter: FormatterSnapshot;
   pending: boolean;
   onInstall(): void;
   onUninstall(): void;
+  priorityPending: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp(): void;
+  onMoveDown(): void;
 }) {
   const installed = formatter.installationState === "installed";
   const updateAvailable =
     formatter.installedVersion !== null && formatter.installedVersion !== formatter.catalogVersion;
-  const working = pending || ["installing", "uninstalling"].includes(formatter.installationState);
+  const working = pending;
   return (
     <li className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between" aria-busy={working}>
       <div className="min-w-0">
@@ -89,7 +116,13 @@ function FormatterRow({
           <p className="mt-2 text-xs text-destructive" role="alert">{formatter.lastError.message}</p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <Button type="button" variant="ghost" size="icon-sm" disabled={priorityPending || !canMoveUp} onClick={onMoveUp} aria-label={`Prioritize ${formatter.name}`}>
+          <ArrowUp />
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" disabled={priorityPending || !canMoveDown} onClick={onMoveDown} aria-label={`Deprioritize ${formatter.name}`}>
+          <ArrowDown />
+        </Button>
         {formatter.installedVersion ? (
           <Button type="button" variant="destructive" size="sm" disabled={working} onClick={onUninstall}>
             <Trash2 /> Remove

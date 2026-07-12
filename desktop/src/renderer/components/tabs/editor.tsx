@@ -12,7 +12,9 @@ import {
   notifyLanguageDocumentSaved,
 } from "@/renderer/lib/language-client";
 import { editorGitDecorations } from "@/renderer/lib/editor-git-decorations";
+import { createDocumentSaveCoordinator } from "@/renderer/lib/document-save-coordinator";
 import { errorMessage } from "@/renderer/lib/errors";
+import { formattingErrorAfterContextChange } from "@/renderer/lib/formatting-error-state";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import type { EditorDocument, EditorGitLineHunk, TabId, WorkspaceId } from "@/shared/ipc";
@@ -206,12 +208,33 @@ function LoadedEditor({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const bufferRef = useRef<EditorBuffer | null>(null);
-  const saveRequestIdRef = useRef(0);
+  const saveCoordinatorRef = useRef(createDocumentSaveCoordinator());
+  const formatErrorDocumentRef = useRef(`${workspaceId}:${tabId}:${document.path}`);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const pendingSelection = useWorkspaceStore((state) => state.pendingEditorSelection);
+  const consumePendingEditorSelection = useWorkspaceStore(
+    (state) => state.consumePendingEditorSelection,
+  );
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
   const minimap = useSettingsStore((state) => editorSettings(state.snapshot).minimap);
   const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
+  const formatOnSave = useSettingsStore(
+    (state) => editorSettings(state.snapshot).formatOnSave,
+  );
+
+  useEffect(() => {
+    const documentKey = `${workspaceId}:${tabId}:${document.path}`;
+    const documentChanged = formatErrorDocumentRef.current !== documentKey;
+    formatErrorDocumentRef.current = documentKey;
+    setFormatError((current) =>
+      formattingErrorAfterContextChange(current, {
+        formattingEnabled: formatOnSave,
+        documentChanged,
+      }),
+    );
+  }, [document.path, formatOnSave, tabId, workspaceId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -264,49 +287,48 @@ function LoadedEditor({
       updateDirtyState();
     });
     const save = async () => {
-      const requestId = saveRequestIdRef.current + 1;
-      saveRequestIdRef.current = requestId;
       setSaveState({ status: "saving" });
       const initialContent = model.getValue();
-      const initialSave = saveEditorDocument({
-        workspaceId,
-        tabId,
-        content: initialContent,
-      }).then(
-        () => null,
-        (error: unknown) => error,
+      const coordinatedSave = saveCoordinatorRef.current.begin(() =>
+        saveEditorDocument({
+          workspaceId,
+          tabId,
+          content: initialContent,
+        }),
       );
-      let formatted = false;
-      if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
-        try {
-          formatted = await formatLanguageDocument(editor);
-        } catch {
-          // Formatting must never prevent an explicit save.
-        }
-      }
-      let content = initialContent;
-
       try {
-        const initialSaveError = await initialSave;
-        if (initialSaveError !== null) {
-          throw initialSaveError;
-        }
-        if (formatted) {
-          const formattedContent = model.getValue();
-          if (formattedContent !== initialContent) {
-            await saveEditorDocument({ workspaceId, tabId, content: formattedContent });
+        await coordinatedSave.run(async (isCurrent) => {
+          let content = initialContent;
+          let formatted = false;
+          if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
+            try {
+              formatted = await formatLanguageDocument(editor);
+              setFormatError(null);
+            } catch (caughtError: unknown) {
+              const message = errorMessage(caughtError);
+              setFormatError((current) => (current === message ? current : message));
+            }
           }
-          content = formattedContent;
-        }
-        void notifyLanguageDocumentSaved(model, content).catch(() => {});
-        if (saveRequestIdRef.current !== requestId) {
-          return;
-        }
-        buffer.savedContent = content;
-        updateDirtyState();
-        bumpGitRevision(workspaceId);
+          if (!isCurrent()) {
+            return;
+          }
+          if (formatted) {
+            const formattedContent = model.getValue();
+            if (formattedContent !== initialContent) {
+              await saveEditorDocument({ workspaceId, tabId, content: formattedContent });
+            }
+            content = formattedContent;
+          }
+          void notifyLanguageDocumentSaved(model, content).catch(() => {});
+          if (!isCurrent()) {
+            return;
+          }
+          buffer.savedContent = content;
+          updateDirtyState();
+          bumpGitRevision(workspaceId);
+        });
       } catch (caughtError: unknown) {
-        if (saveRequestIdRef.current === requestId) {
+        if (coordinatedSave.isCurrent()) {
           setTabDirty(workspaceId, tabId, true);
           setSaveState({ status: "error", message: errorMessage(caughtError) });
         }
@@ -327,14 +349,16 @@ function LoadedEditor({
       run: async () => {
         try {
           await formatLanguageDocument(editor);
-        } catch {
-          // Unsupported or unavailable formatters leave the document unchanged.
+          setFormatError(null);
+        } catch (caughtError: unknown) {
+          const message = errorMessage(caughtError);
+          setFormatError((current) => (current === message ? current : message));
         }
       },
     });
 
     return () => {
-      saveRequestIdRef.current += 1;
+      saveCoordinatorRef.current.invalidate();
       contentSubscription.dispose();
       saveAction.dispose();
       formatAction.dispose();
@@ -347,6 +371,45 @@ function LoadedEditor({
       }
     };
   }, [workspaceId, tabId, document.path, bumpGitRevision, setTabDirty]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (
+      !editor ||
+      !model ||
+      !isActive ||
+      !pendingSelection ||
+      pendingSelection.workspaceId !== workspaceId ||
+      pendingSelection.path !== document.path ||
+      !consumePendingEditorSelection(pendingSelection.generation)
+    ) {
+      return;
+    }
+    const start = model.validatePosition({
+      lineNumber: pendingSelection.lineNumber,
+      column: pendingSelection.column,
+    });
+    const end = model.validatePosition({
+      lineNumber: pendingSelection.endLineNumber,
+      column: pendingSelection.endColumn,
+    });
+    const selection = new monaco.Selection(
+      start.lineNumber,
+      start.column,
+      end.lineNumber,
+      end.column,
+    );
+    editor.setSelection(selection);
+    editor.revealRangeInCenter(selection);
+    editor.focus();
+  }, [
+    consumePendingEditorSelection,
+    document.path,
+    isActive,
+    pendingSelection,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const buffer = bufferRef.current;
@@ -397,29 +460,37 @@ function LoadedEditor({
   return (
     <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
       <div ref={containerRef} className="h-full min-h-0 min-w-0" />
-      <SaveStatus state={saveState} />
+      <SaveStatus state={saveState} formatError={formatError} />
     </div>
   );
 }
 
-function SaveStatus({ state }: { state: SaveState }) {
-  if (state.status === "clean") {
+function SaveStatus({ state, formatError }: { state: SaveState; formatError: string | null }) {
+  if (state.status === "clean" && formatError === null) {
     return null;
   }
 
-  const message =
-    state.status === "dirty"
-      ? "Unsaved"
-      : state.status === "saving"
-        ? "Saving..."
-        : state.message;
+  const saveMessage =
+    state.status === "clean"
+      ? null
+      : state.status === "dirty"
+        ? "Unsaved"
+        : state.status === "saving"
+          ? "Saving..."
+          : state.message;
 
   return (
     <div
-      role={state.status === "error" ? "alert" : "status"}
-      className="pointer-events-none absolute right-3 bottom-3 max-w-80 truncate rounded border border-border/70 bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm"
+      role={state.status === "error" || formatError ? "alert" : "status"}
+      className="pointer-events-auto absolute right-3 bottom-3 max-h-40 max-w-[min(32rem,calc(100%-1.5rem))] overflow-auto rounded border border-border/70 bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm"
     >
-      {message}
+      {saveMessage ? <div>{saveMessage}</div> : null}
+      {formatError ? (
+        <div className="select-text whitespace-pre-wrap break-words" title={formatError}>
+          <span className="font-medium text-destructive">Formatting failed: </span>
+          {formatError}
+        </div>
+      ) : null}
     </div>
   );
 }

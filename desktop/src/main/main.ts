@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, type IpcMainEvent } from "electron";
 
 import { errorMessage } from "./error-message";
-import { registerIpcHandlers } from "./ipc/handlers";
+import { registerIpcHandlers, type ApplyEditOwner } from "./ipc/handlers";
 import { KosmosServerClient } from "./server/client";
 import { KosmosServerProcess } from "./server/process";
 import { createMainWindow } from "./window/main-window";
@@ -12,6 +12,7 @@ const RENDERER_FLUSH_TIMEOUT_MS = 1_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 5_000;
 let shutdownComplete = false;
 let shutdownStarted = false;
+const applyEditOwners = new Map<string, ApplyEditOwner>();
 
 app.commandLine.appendSwitch("use-webgpu-adapter", "opengles");
 
@@ -43,11 +44,74 @@ app.on("browser-window-created", (_event, window) => {
 async function startApp(): Promise<void> {
   Menu.setApplicationMenu(null);
   await serverProcess.start();
-  registerIpcHandlers(serverClient);
+  registerIpcHandlers(serverClient, applyEditOwners);
   serverClient.onWorkspaceChanged((workspaceIds) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) {
         window.webContents.send("kosmos:workspaceChanged", workspaceIds);
+      }
+    }
+  });
+  serverClient.onNotification((notification) => {
+    if (notification.event === "languageServerApplyEdit") {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!window || window.webContents.isDestroyed()) {
+        void serverClient.acknowledgeApplyEdit(
+          notification.id,
+          notification.token,
+          false,
+          "No renderer window is available to apply the workspace edit.",
+        );
+        return;
+      }
+      const id = notification.id;
+      const token = notification.token;
+      const webContents = window.webContents;
+      const onDestroyed = () => {
+        const owner = applyEditOwners.get(token);
+        if (owner?.id !== id) {
+          return;
+        }
+        applyEditOwners.delete(token);
+        void serverClient.acknowledgeApplyEdit(
+          id,
+          token,
+          false,
+          "Owning renderer window disconnected while applying the workspace edit.",
+        );
+      };
+      applyEditOwners.set(notification.token, {
+        id,
+        webContentsId: webContents.id,
+        notification,
+        cleanup: () => webContents.removeListener("destroyed", onDestroyed),
+      });
+      webContents.once("destroyed", onDestroyed);
+      webContents.send("kosmos:serverNotification", notification);
+      return;
+    }
+    if (notification.event === "languageServerApplyEditCancelled") {
+      const owner = applyEditOwners.get(notification.token);
+      const window = owner
+        ? BrowserWindow.getAllWindows().find(
+            (candidate) => candidate.webContents.id === owner.webContentsId,
+          )
+        : undefined;
+      if (window && !window.webContents.isDestroyed()) {
+        window.webContents.send("kosmos:serverNotification", notification);
+      }
+      return;
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send("kosmos:serverNotification", notification);
+      }
+    }
+  });
+  serverClient.onReconnected(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send("kosmos:serverReconnected");
       }
     }
   });

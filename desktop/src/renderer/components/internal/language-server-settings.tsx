@@ -87,12 +87,11 @@ function LanguageServerRow({
   onRestart(): void;
 }) {
   const installed = server.installationState === "installed";
+  const activeInstallation =
+    server.selectedVersion !== null && server.selectedVersion === server.installedVersion;
   const updateAvailable =
     server.installedVersion !== null && server.installedVersion !== server.catalogVersion;
-  const working =
-    pending ||
-    server.installationState === "installing" ||
-    server.installationState === "uninstalling";
+  const working = pending;
 
   return (
     <li className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between" aria-busy={working}>
@@ -102,7 +101,7 @@ function LanguageServerRow({
           <span className="rounded-full bg-muted px-2 py-0.5 text-[0.7rem] font-medium text-muted-foreground">
             {statusLabel(server)}
           </span>
-          {installed ? (
+          {activeInstallation ? (
             <span className="rounded-full bg-muted px-2 py-0.5 text-[0.7rem] font-medium text-muted-foreground">
               {runtimeStatusLabel(server)}
             </span>
@@ -125,6 +124,20 @@ function LanguageServerRow({
           <p className="mt-2 text-xs text-destructive" role="alert">
             {server.runtimeError.message}
           </p>
+        ) : null}
+        {server.logs.length > 0 ? (
+          <details className="mt-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer select-none">
+              Runtime log ({server.logs.length})
+            </summary>
+            <div className="scrollbar-themed mt-2 max-h-40 overflow-auto rounded-md bg-muted/60 p-2 font-mono whitespace-pre-wrap break-words">
+              {server.logs.map((log, index) => (
+                <div key={`${index}-${log.kind}-${log.message}`}>
+                  [{log.kind}] {log.message}
+                </div>
+              ))}
+            </div>
+          </details>
         ) : null}
       </div>
 
@@ -168,6 +181,8 @@ function runtimeStatusLabel(server: LanguageServerSnapshot): string {
   switch (server.runtimeState) {
     case "inactive":
       return "Idle";
+    case "restarting":
+      return "Restarting";
     case "running":
       return "Running";
     case "degraded":
@@ -192,6 +207,8 @@ function statusLabel(server: LanguageServerSnapshot): string {
     case "uninstalling":
       return "Removing";
     case "failed":
-      return "Failed";
+      return server.selectedVersion !== null && server.selectedVersion === server.installedVersion
+        ? "Failed, using installed version"
+        : "Failed";
   }
 }

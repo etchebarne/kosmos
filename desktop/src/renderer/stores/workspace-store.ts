@@ -8,9 +8,11 @@ import {
 import {
   activeWorkspaceFrom,
   closeWorkspaceLocally,
+  editorSourceTabId,
   mergeLocalSplitRatios,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
+import { canConsumeRequest, createRequestGeneration } from "@/renderer/lib/request-generation";
 import {
   activatePane as activatePaneIpc,
   activateTab as activateTabIpc,
@@ -53,6 +55,15 @@ type WorkspaceStore = {
   loadRequestId: number;
   snapshot: WorkspaceListSnapshot | null;
   switchRequestId: number;
+  pendingEditorSelection: {
+    generation: number;
+    workspaceId: WorkspaceId;
+    path: string;
+    lineNumber: number;
+    column: number;
+    endLineNumber: number;
+    endColumn: number;
+  } | null;
   activatePane(paneId: PaneId): void;
   activateTab(paneId: PaneId, tabId: TabId): void;
   addWorkspace(): Promise<void>;
@@ -62,6 +73,15 @@ type WorkspaceStore = {
   initializeWorkspaces(): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
   openEditorTab(tabId: TabId, path: string): void;
+  openEditorLocation(
+    workspaceId: WorkspaceId,
+    path: string,
+    lineNumber: number,
+    column: number,
+    endLineNumber?: number,
+    endColumn?: number,
+  ): Promise<boolean>;
+  consumePendingEditorSelection(generation: number): boolean;
   openGitDiffTab(tabId: TabId, path: string): void;
   openTab(paneId: PaneId): void;
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
@@ -86,6 +106,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let resizeFallbackSnapshot: WorkspaceListSnapshot | null = null;
   let resizeNeedsReconciliation = false;
   let resizeRequestId = 0;
+  const navigationRequests = createRequestGeneration();
+  let navigationQueue = Promise.resolve();
 
   function updateFromServer(request: WorkspaceRequest): void {
     set({ error: null });
@@ -141,6 +163,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     loadRequestId: 0,
     snapshot: null,
     switchRequestId: 0,
+    pendingEditorSelection: null,
     activatePane(paneId) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
       if (!activeWorkspace || paneId === activeWorkspace.activePaneId) {
@@ -265,6 +288,78 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       updateFromServer(() =>
         openEditorTabIpc({ workspaceId: activeWorkspace.id, tabId, path }),
       );
+    },
+    async openEditorLocation(
+      workspaceId,
+      path,
+      lineNumber,
+      column,
+      endLineNumber = lineNumber,
+      endColumn = column,
+    ) {
+      const workspace = get().snapshot?.workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace) {
+        set({ error: "The requested workspace is not open." });
+        return false;
+      }
+      const sourceTabId = editorSourceTabId(workspace.root);
+      if (sourceTabId === null) {
+        set({ error: "Open a File Tree or Search tab before navigating to a language location." });
+        return false;
+      }
+      const generation = navigationRequests.issue();
+      set({
+        error: null,
+        pendingEditorSelection: {
+          generation,
+          workspaceId,
+          path,
+          lineNumber,
+          column,
+          endLineNumber,
+          endColumn,
+        },
+      });
+
+      let succeeded = false;
+      const navigation = navigationQueue.then(async () => {
+        if (!navigationRequests.isCurrent(generation)) {
+          return;
+        }
+        try {
+          const activeSnapshot = await activateWorkspace(workspaceId);
+          if (!navigationRequests.isCurrent(generation)) {
+            return;
+          }
+          set({ snapshot: activeSnapshot });
+          const snapshot = await openEditorTabIpc({ workspaceId, tabId: sourceTabId, path });
+          if (!navigationRequests.isCurrent(generation)) {
+            return;
+          }
+          set({ snapshot });
+          succeeded = true;
+        } catch (caughtError) {
+          if (navigationRequests.isCurrent(generation)) {
+            set((state) => ({
+              error: errorMessage(caughtError),
+              pendingEditorSelection:
+                state.pendingEditorSelection?.generation === generation
+                  ? null
+                  : state.pendingEditorSelection,
+            }));
+          }
+        }
+      });
+      navigationQueue = navigation.catch(() => {});
+      await navigation;
+      return succeeded;
+    },
+    consumePendingEditorSelection(generation) {
+      if (!canConsumeRequest(get().pendingEditorSelection?.generation ?? null, generation)) {
+        return false;
+      }
+      set({ pendingEditorSelection: null });
+      return true;
     },
     openGitDiffTab(tabId, path) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
@@ -425,10 +520,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         return;
       }
 
+      navigationRequests.invalidate();
       const requestId = switchRequestId + 1;
       const previousSnapshot = snapshot;
 
-      set({ error: null, switchRequestId: requestId });
+      set({ error: null, pendingEditorSelection: null, switchRequestId: requestId });
 
       await flushFileTreeExpansionSaves();
 

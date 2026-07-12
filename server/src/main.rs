@@ -14,9 +14,9 @@ fn main() -> io::Result<()> {
         Ok(manager) => state.attach_language_server_manager(manager),
         Err(error) => eprintln!("language server manager unavailable: {error}"),
     }
-    match formatter_paths()
-        .and_then(|paths| core::formatters::FormatterManager::open(paths).map_err(io::Error::other))
-    {
+    match formatter_paths().and_then(|paths| {
+        core::formatters::FormatterManager::open(paths, store.clone()).map_err(io::Error::other)
+    }) {
         Ok(manager) => state.attach_formatter_manager(manager),
         Err(error) => eprintln!("formatter manager unavailable: {error}"),
     }
@@ -85,6 +85,7 @@ fn language_server_paths() -> io::Result<core::language_servers::LanguageServerP
 fn formatter_paths() -> io::Result<core::formatters::FormatterPaths> {
     Ok(core::formatters::FormatterPaths::new(
         data_dir()?.join("formatters"),
+        cache_dir()?.join("formatter-downloads"),
     ))
 }
 

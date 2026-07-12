@@ -1,6 +1,7 @@
 import type {
   FormatterListSnapshot,
   FormatterParams,
+  FormatterPrioritiesParams,
   FormatterSnapshot,
 } from "@/shared/ipc";
 
@@ -22,4 +23,10 @@ export function installFormatter(params: FormatterParams): Promise<FormatterSnap
 
 export function uninstallFormatter(params: FormatterParams): Promise<FormatterSnapshot> {
   return requestServer(DOMAIN, "uninstall", params);
+}
+
+export function setFormatterPriorities(
+  params: FormatterPrioritiesParams,
+): Promise<FormatterListSnapshot> {
+  return requestServer(DOMAIN, "set-priorities", params);
 }
