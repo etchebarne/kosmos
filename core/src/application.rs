@@ -650,19 +650,7 @@ impl Application {
                 .state_mut()
                 .close_workspace(Some(workspace_id))
                 .is_some(),
-            CloseTarget::Application => {
-                let workspace_ids = operation
-                    .state()
-                    .workspaces()
-                    .workspaces()
-                    .iter()
-                    .map(|workspace| workspace.id())
-                    .collect::<Vec<_>>();
-                for workspace_id in workspace_ids {
-                    operation.state_mut().close_workspace(Some(workspace_id));
-                }
-                true
-            }
+            CloseTarget::Application => true,
         };
         if !closed {
             self.abandon_persistent_operation();
@@ -1448,6 +1436,34 @@ mod tests {
 
         assert!(application.state().workspaces().is_empty());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn application_close_preserves_workspace_state_across_restart() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("application-close-restart");
+
+        assert!(matches!(
+            application
+                .begin_close(CloseIntent {
+                    target: CloseTarget::Application,
+                })
+                .unwrap(),
+            CloseIntentResult::Completed
+        ));
+        assert_eq!(application.state().workspaces().workspaces().len(), 1);
+        drop(application);
+
+        let reloaded = StateStore::open(&database).unwrap().load().unwrap();
+        assert_eq!(reloaded.workspaces().workspaces().len(), 1);
+        assert!(
+            reloaded
+                .editor_session_target(Some(workspace_id), tab_id)
+                .is_ok()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
     }
 
     #[test]

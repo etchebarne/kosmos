@@ -124,8 +124,9 @@ async function startApp(): Promise<void> {
 async function createWindowWithSettings(): Promise<BrowserWindow> {
   const settings = await fetchBootstrapSettings();
   const window = await createMainWindow(serverClient, settings, applySettingsSnapshot);
-  settingsSnapshots.set(window.webContents.id, settings);
-  window.once("closed", () => settingsSnapshots.delete(window.webContents.id));
+  const webContentsId = window.webContents.id;
+  settingsSnapshots.set(webContentsId, settings);
+  window.once("closed", () => settingsSnapshots.delete(webContentsId));
   return window;
 }
 
