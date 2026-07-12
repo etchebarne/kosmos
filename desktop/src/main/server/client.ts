@@ -9,8 +9,14 @@ import type {
   KosmosServerNotification,
   WorkspaceId,
 } from "../../shared/ipc";
+import {
+  validateActionResult,
+  validateNotification,
+} from "../../shared/ipc/generated/validators";
 
 type PendingRequest = {
+  action: string;
+  domain: KosmosIpcDomain;
   resolve(value: unknown): void;
   reject(error: Error): void;
   cleanup(): void;
@@ -150,6 +156,8 @@ export class KosmosServerClient {
       };
       const cleanup = () => signal?.removeEventListener("abort", onAbort);
       this.pending.set(id, {
+        action,
+        domain,
         resolve: resolve as (value: unknown) => void,
         reject,
         cleanup,
@@ -286,14 +294,25 @@ export class KosmosServerClient {
       return;
     }
 
-    this.pending.delete(message.id);
-    pending.cleanup();
-
     if (!message.ok) {
+      this.pending.delete(message.id);
+      pending.cleanup();
       pending.reject(new KosmosIpcRequestError(message.error.code, message.error.message));
       return;
     }
 
+    if (!validateActionResult(pending.domain, pending.action, message.result)) {
+      const error = new Error(
+        `Invalid IPC result from server for ${pending.domain}.${pending.action}`,
+      );
+      this.pending.delete(message.id);
+      pending.cleanup();
+      pending.reject(error);
+      throw error;
+    }
+
+    this.pending.delete(message.id);
+    pending.cleanup();
     pending.resolve(message.result);
   }
 
@@ -364,59 +383,10 @@ function parseServerMessage(frame: string): KosmosServerMessage {
     if (!("event" in message) || typeof message.event !== "string") {
       throw new Error("Invalid IPC notification from server");
     }
-    if (message.event === "workspaceChanged") {
-      if (
-        !("workspaceIds" in message) ||
-        !Array.isArray(message.workspaceIds) ||
-        !message.workspaceIds.every(isNonNegativeSafeInteger)
-      ) {
-        throw new Error("Invalid workspace notification from server");
-      }
-      return message as KosmosServerMessage;
+    if (!validateNotification(message.event, message)) {
+      throw new Error(`Invalid IPC notification from server: ${message.event}`);
     }
-    if (
-      message.event === "languageServerStatusChanged" ||
-      message.event === "languageServerLogAvailable"
-    ) {
-      if (!("serverId" in message) || typeof message.serverId !== "string") {
-        throw new Error("Invalid language server notification from server");
-      }
-      return message as KosmosServerMessage;
-    }
-    if (message.event === "languageServerDiagnosticsChanged") {
-      if (!isDiagnosticsNotification(message)) {
-        throw new Error("Invalid language server diagnostics notification from server");
-      }
-      return message as KosmosServerMessage;
-    }
-    if (message.event === "languageServerDiagnosticsResync") {
-      return message as KosmosServerMessage;
-    }
-    if (message.event === "languageServerApplyEdit") {
-      if (
-        !("id" in message) ||
-        !isNonNegativeSafeInteger(message.id) ||
-        !("token" in message) ||
-        typeof message.token !== "string" ||
-        !("edit" in message) ||
-        !isStagedWorkspaceEdit(message.edit)
-      ) {
-        throw new Error("Invalid language server apply-edit notification from server");
-      }
-      return message as KosmosServerMessage;
-    }
-    if (message.event === "languageServerApplyEditCancelled") {
-      if (
-        !("id" in message) ||
-        !isNonNegativeSafeInteger(message.id) ||
-        !("token" in message) ||
-        typeof message.token !== "string"
-      ) {
-        throw new Error("Invalid language server apply-edit cancellation from server");
-      }
-      return message as KosmosServerMessage;
-    }
-    throw new Error("Unsupported IPC notification from server");
+    return message as KosmosServerMessage;
   }
 
   if (
@@ -447,75 +417,6 @@ function parseServerMessage(frame: string): KosmosServerMessage {
   }
 
   return message as KosmosServerMessage;
-}
-
-function isStagedWorkspaceEdit(value: unknown): boolean {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      "transactionId" in value &&
-      isNonNegativeSafeInteger(value.transactionId) &&
-      "authorization" in value &&
-      typeof value.authorization === "string" &&
-      value.authorization.length === 64 &&
-      "documents" in value &&
-      Array.isArray(value.documents) &&
-      value.documents.length <= 64 &&
-      value.documents.every((document) =>
-        Boolean(
-          document &&
-            typeof document === "object" &&
-            "workspaceId" in document &&
-            isNonNegativeSafeInteger(document.workspaceId) &&
-            "path" in document &&
-            typeof document.path === "string" &&
-            "originalPath" in document &&
-            typeof document.originalPath === "string" &&
-            "originalText" in document &&
-            typeof document.originalText === "string" &&
-            "newText" in document &&
-            typeof document.newText === "string" &&
-            "generation" in document &&
-            (document.generation === null || isNonNegativeSafeInteger(document.generation)) &&
-            "version" in document &&
-            (document.version === null ||
-              (typeof document.version === "number" && Number.isSafeInteger(document.version))),
-        ),
-      ) &&
-      "operations" in value &&
-      Array.isArray(value.operations) &&
-      value.operations.length <= 4096 &&
-      value.operations.every((operation) =>
-        Boolean(
-          operation &&
-            typeof operation === "object" &&
-            "kind" in operation &&
-            typeof operation.kind === "string",
-        ),
-      ),
-  );
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function isDiagnosticsNotification(message: object): boolean {
-  return (
-    "workspaceId" in message &&
-    isNonNegativeSafeInteger(message.workspaceId) &&
-    "path" in message &&
-    typeof message.path === "string" &&
-    "serverId" in message &&
-    typeof message.serverId === "string" &&
-    "generation" in message &&
-    isNonNegativeSafeInteger(message.generation) &&
-    "version" in message &&
-    typeof message.version === "number" &&
-    Number.isSafeInteger(message.version) &&
-    "diagnostics" in message &&
-    Array.isArray(message.diagnostics)
-  );
 }
 
 function asError(error: unknown): Error {

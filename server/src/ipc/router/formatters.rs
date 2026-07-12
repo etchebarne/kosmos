@@ -1,3 +1,4 @@
+use super::super::messages::EmptyParams;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::formatters::{
     FormatterListSnapshot, FormatterParams, FormatterPrioritiesParams, FormatterSnapshot,
@@ -5,26 +6,14 @@ use super::super::messages::formatters::{
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "list",
-        definition: RouteDefinition::snapshot(list),
-    },
-    Route {
-        action: "status",
-        definition: RouteDefinition::snapshot(status),
-    },
-    Route {
-        action: "install",
-        definition: RouteDefinition::live(install),
-    },
-    Route {
-        action: "uninstall",
-        definition: RouteDefinition::live(uninstall),
-    },
-    Route {
-        action: "set-priorities",
-        definition: RouteDefinition::live(set_priorities),
-    },
+    Route::new::<EmptyParams, FormatterListSnapshot>("list", RouteDefinition::snapshot(list)),
+    Route::new::<FormatterParams, FormatterSnapshot>("status", RouteDefinition::snapshot(status)),
+    Route::new::<FormatterParams, FormatterSnapshot>("install", RouteDefinition::live(install)),
+    Route::new::<FormatterParams, FormatterSnapshot>("uninstall", RouteDefinition::live(uninstall)),
+    Route::new::<FormatterPrioritiesParams, FormatterListSnapshot>(
+        "set-priorities",
+        RouteDefinition::live(set_priorities),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

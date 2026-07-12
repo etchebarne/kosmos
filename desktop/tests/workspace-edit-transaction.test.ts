@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { StagedWorkspaceEdit } from "../src/shared/ipc/language-servers";
+import type { StagedWorkspaceEdit } from "../src/shared/ipc";
 import {
   applyWorkspaceEditTransaction,
   finalizeWorkspaceEditRecovery,
@@ -224,6 +224,7 @@ describe("workspace edit transaction coordinator", () => {
       phase: "committedCleanupRequired",
       retryRollback: false,
       canFinalize: true,
+      requiresAcknowledgement: false,
     });
     current.reconcileCompletion = async () => {
       events.push("reconcile");
@@ -235,6 +236,7 @@ describe("workspace edit transaction coordinator", () => {
         phase: "finishedCommitted",
         retryRollback: false,
         canFinalize: false,
+        requiresAcknowledgement: false,
       };
     };
 
@@ -331,6 +333,7 @@ describe("workspace edit transaction coordinator", () => {
           phase: "recoveryRequired",
           retryRollback: true,
           canFinalize: true,
+          requiresAcknowledgement: false,
         },
         {
           transactionId: 81,
@@ -338,6 +341,7 @@ describe("workspace edit transaction coordinator", () => {
           phase: "recoveryRequired",
           retryRollback: true,
           canFinalize: true,
+          requiresAcknowledgement: false,
         },
         {
           transactionId: 82,
@@ -376,6 +380,7 @@ describe("workspace edit transaction coordinator", () => {
               phase: "finishedCommitted",
               retryRollback: false,
               canFinalize: false,
+              requiresAcknowledgement: false,
             };
           },
           async status() {
@@ -749,6 +754,7 @@ describe("workspace edit transaction coordinator", () => {
         phase,
         retryRollback: false,
         canFinalize: false,
+        requiresAcknowledgement: false,
       });
       const applying = applyWorkspaceEditTransaction(staged, current);
       await Promise.resolve();
@@ -794,6 +800,7 @@ describe("workspace edit transaction coordinator", () => {
         phase: "finishedRolledBack",
         retryRollback: false,
         canFinalize: false,
+        requiresAcknowledgement: false,
       };
     };
     const staged = edit();
@@ -1309,10 +1316,22 @@ function responseLossAdapter(
     },
     async finalize(transactionId) {
       phase = "finishedRolledBack";
-      return { transactionId, phase, retryRollback: false, canFinalize: false };
+      return {
+        transactionId,
+        phase,
+        retryRollback: false,
+        canFinalize: false,
+        requiresAcknowledgement: false,
+      };
     },
     async status(transactionId) {
-      return { transactionId, phase, retryRollback: false, canFinalize: false };
+      return {
+        transactionId,
+        phase,
+        retryRollback: false,
+        canFinalize: false,
+        requiresAcknowledgement: false,
+      };
     },
   };
 }
@@ -1363,6 +1382,7 @@ function adapter(events: string[]): WorkspaceEditTransactionAdapter {
         phase,
         retryRollback: false,
         canFinalize: false,
+        requiresAcknowledgement: false,
       };
     },
     async status(transactionId) {
@@ -1371,6 +1391,7 @@ function adapter(events: string[]): WorkspaceEditTransactionAdapter {
         phase,
         retryRollback: phase === "recoveryRequired",
         canFinalize: phase === "recoveryRequired",
+        requiresAcknowledgement: false,
       };
     },
   };

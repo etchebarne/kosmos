@@ -21,165 +21,166 @@ use super::super::messages::language_servers::{
     TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
     WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
 };
+use super::super::messages::{AnyJson, EmptyParams};
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "list",
-        definition: RouteDefinition::snapshot(list),
-    },
-    Route {
-        action: "status",
-        definition: RouteDefinition::snapshot(status),
-    },
-    Route {
-        action: "install",
-        definition: RouteDefinition::live(install),
-    },
-    Route {
-        action: "uninstall",
-        definition: RouteDefinition::live(uninstall),
-    },
-    Route {
-        action: "restart",
-        definition: RouteDefinition::language_server(restart),
-    },
-    Route {
-        action: "openDocument",
-        definition: RouteDefinition::language_server(open_document),
-    },
-    Route {
-        action: "changeDocument",
-        definition: RouteDefinition::language_server(change_document),
-    },
-    Route {
-        action: "closeDocument",
-        definition: RouteDefinition::language_server(close_document),
-    },
-    Route {
-        action: "saveDocument",
-        definition: RouteDefinition::language_server(save_document),
-    },
-    Route {
-        action: "hover",
-        definition: RouteDefinition::language_server_feature(hover),
-    },
-    Route {
-        action: "signatureHelp",
-        definition: RouteDefinition::language_server_feature(signature_help),
-    },
-    Route {
-        action: "definition",
-        definition: RouteDefinition::language_server_feature(definition),
-    },
-    Route {
-        action: "declaration",
-        definition: RouteDefinition::language_server_feature(declaration),
-    },
-    Route {
-        action: "typeDefinition",
-        definition: RouteDefinition::language_server_feature(type_definition),
-    },
-    Route {
-        action: "implementation",
-        definition: RouteDefinition::language_server_feature(implementation),
-    },
-    Route {
-        action: "references",
-        definition: RouteDefinition::language_server_feature(references),
-    },
-    Route {
-        action: "documentSymbols",
-        definition: RouteDefinition::language_server_feature(document_symbols),
-    },
-    Route {
-        action: "workspaceSymbols",
-        definition: RouteDefinition::language_server_feature(workspace_symbols),
-    },
-    Route {
-        action: "resolveWorkspaceSymbol",
-        definition: RouteDefinition::language_server_feature(resolve_workspace_symbol),
-    },
-    Route {
-        action: "diagnostics",
-        definition: RouteDefinition::language_server_feature(diagnostics),
-    },
-    Route {
-        action: "completion",
-        definition: RouteDefinition::language_server_feature(completion),
-    },
-    Route {
-        action: "resolveCompletion",
-        definition: RouteDefinition::language_server_feature(resolve_completion),
-    },
-    Route {
-        action: "documentColors",
-        definition: RouteDefinition::language_server_feature(document_colors),
-    },
-    Route {
-        action: "colorPresentations",
-        definition: RouteDefinition::language_server_feature(color_presentations),
-    },
-    Route {
-        action: "formatting",
-        definition: RouteDefinition::language_server_feature(formatting),
-    },
-    Route {
-        action: "prepareRename",
-        definition: RouteDefinition::language_server_feature(prepare_rename),
-    },
-    Route {
-        action: "rename",
-        definition: RouteDefinition::language_server_feature(rename),
-    },
-    Route {
-        action: "codeActions",
-        definition: RouteDefinition::language_server_feature(code_actions),
-    },
-    Route {
-        action: "resolveCodeAction",
-        definition: RouteDefinition::language_server_feature(resolve_code_action),
-    },
-    Route {
-        action: "stageCodeAction",
-        definition: RouteDefinition::language_server_feature(stage_code_action),
-    },
-    Route {
-        action: "executeCommand",
-        definition: RouteDefinition::language_server_feature(execute_command),
-    },
-    Route {
-        action: "commitWorkspaceEdit",
-        definition: RouteDefinition::live_full(commit_workspace_edit),
-    },
-    Route {
-        action: "rollbackWorkspaceEdit",
-        definition: RouteDefinition::live_full(rollback_workspace_edit),
-    },
-    Route {
-        action: "finishWorkspaceEdit",
-        definition: RouteDefinition::live_full(finish_workspace_edit),
-    },
-    Route {
-        action: "finalizeWorkspaceEdit",
-        definition: RouteDefinition::live_full(finalize_workspace_edit),
-    },
-    Route {
-        action: "acknowledgeWorkspaceEditCompletion",
-        definition: RouteDefinition::live_full(acknowledge_workspace_edit_completion),
-    },
-    Route {
-        action: "workspaceEditStatus",
-        definition: RouteDefinition::live(workspace_edit_status),
-    },
-    Route {
-        action: "listWorkspaceEditRecoveries",
-        definition: RouteDefinition::live(list_workspace_edit_recoveries),
-    },
-    Route {
-        action: "trustWorkspace",
-        definition: RouteDefinition::language_server(trust_workspace),
-    },
+    Route::new::<EmptyParams, LanguageServerListSnapshot>("list", RouteDefinition::snapshot(list)),
+    Route::new::<LanguageServerParams, LanguageServerSnapshot>(
+        "status",
+        RouteDefinition::snapshot(status),
+    ),
+    Route::new::<LanguageServerParams, LanguageServerSnapshot>(
+        "install",
+        RouteDefinition::live(install),
+    ),
+    Route::new::<LanguageServerParams, LanguageServerSnapshot>(
+        "uninstall",
+        RouteDefinition::live(uninstall),
+    ),
+    Route::new::<LanguageServerParams, LanguageServerSnapshot>(
+        "restart",
+        RouteDefinition::language_server(restart),
+    ),
+    Route::new::<OpenLanguageServerDocumentParams, bool>(
+        "openDocument",
+        RouteDefinition::language_server(open_document),
+    ),
+    Route::new::<ChangeLanguageServerDocumentParams, bool>(
+        "changeDocument",
+        RouteDefinition::language_server(change_document),
+    ),
+    Route::new::<CloseLanguageServerDocumentParams, bool>(
+        "closeDocument",
+        RouteDefinition::language_server(close_document),
+    ),
+    Route::new::<SaveLanguageServerDocumentParams, bool>(
+        "saveDocument",
+        RouteDefinition::language_server(save_document),
+    ),
+    Route::new::<LanguageServerHoverParams, Option<LanguageServerHoverPayload>>(
+        "hover",
+        RouteDefinition::language_server_feature(hover),
+    ),
+    Route::new::<LanguageServerPositionParams, Option<LanguageServerSignatureHelpPayload>>(
+        "signatureHelp",
+        RouteDefinition::language_server_feature(signature_help),
+    ),
+    Route::new::<LanguageServerPositionParams, Vec<LanguageServerLocationPayload>>(
+        "definition",
+        RouteDefinition::language_server_feature(definition),
+    ),
+    Route::new::<LanguageServerPositionParams, Vec<LanguageServerLocationPayload>>(
+        "declaration",
+        RouteDefinition::language_server_feature(declaration),
+    ),
+    Route::new::<LanguageServerPositionParams, Vec<LanguageServerLocationPayload>>(
+        "typeDefinition",
+        RouteDefinition::language_server_feature(type_definition),
+    ),
+    Route::new::<LanguageServerPositionParams, Vec<LanguageServerLocationPayload>>(
+        "implementation",
+        RouteDefinition::language_server_feature(implementation),
+    ),
+    Route::new::<LanguageServerReferencesParams, Vec<LanguageServerLocationPayload>>(
+        "references",
+        RouteDefinition::language_server_feature(references),
+    ),
+    Route::new::<LanguageServerDiagnosticsParams, Vec<LanguageServerDocumentSymbolPayload>>(
+        "documentSymbols",
+        RouteDefinition::language_server_feature(document_symbols),
+    ),
+    Route::new::<LanguageServerWorkspaceSymbolsParams, Vec<LanguageServerWorkspaceSymbolPayload>>(
+        "workspaceSymbols",
+        RouteDefinition::language_server_feature(workspace_symbols),
+    ),
+    Route::new::<ResolveLanguageServerWorkspaceSymbolParams, LanguageServerWorkspaceSymbolPayload>(
+        "resolveWorkspaceSymbol",
+        RouteDefinition::language_server_feature(resolve_workspace_symbol),
+    ),
+    Route::new::<
+        LanguageServerDiagnosticsParams,
+        Option<Vec<LanguageServerDiagnosticSnapshotPayload>>,
+    >(
+        "diagnostics",
+        RouteDefinition::language_server_feature(diagnostics),
+    ),
+    Route::new::<LanguageServerCompletionParams, LanguageServerCompletionListPayload>(
+        "completion",
+        RouteDefinition::language_server_feature(completion),
+    ),
+    Route::new::<ResolveLanguageServerCompletionParams, LanguageServerCompletionItemPayload>(
+        "resolveCompletion",
+        RouteDefinition::language_server_feature(resolve_completion),
+    ),
+    Route::new::<LanguageServerDiagnosticsParams, Vec<LanguageServerColorInformationPayload>>(
+        "documentColors",
+        RouteDefinition::language_server_feature(document_colors),
+    ),
+    Route::new::<LanguageServerColorPresentationParams, Vec<LanguageServerColorPresentationPayload>>(
+        "colorPresentations",
+        RouteDefinition::language_server_feature(color_presentations),
+    ),
+    Route::new::<LanguageServerFormattingParams, Vec<LanguageServerTextEditPayload>>(
+        "formatting",
+        RouteDefinition::language_server_feature(formatting),
+    ),
+    Route::new::<LanguageServerPositionParams, Option<LanguageServerPrepareRenamePayload>>(
+        "prepareRename",
+        RouteDefinition::language_server_feature(prepare_rename),
+    ),
+    Route::new::<LanguageServerRenameParams, StagedWorkspaceEditPayload>(
+        "rename",
+        RouteDefinition::language_server_feature(rename),
+    ),
+    Route::new::<LanguageServerCodeActionsParams, Vec<LanguageServerCodeActionPayload>>(
+        "codeActions",
+        RouteDefinition::language_server_feature(code_actions),
+    ),
+    Route::new::<ResolveLanguageServerCodeActionParams, LanguageServerCodeActionPayload>(
+        "resolveCodeAction",
+        RouteDefinition::language_server_feature(resolve_code_action),
+    ),
+    Route::new::<StageLanguageServerCodeActionParams, Option<StagedWorkspaceEditPayload>>(
+        "stageCodeAction",
+        RouteDefinition::language_server_feature(stage_code_action),
+    ),
+    Route::new::<ExecuteLanguageServerCommandParams, AnyJson>(
+        "executeCommand",
+        RouteDefinition::language_server_feature(execute_command),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, bool>(
+        "commitWorkspaceEdit",
+        RouteDefinition::live_full(commit_workspace_edit),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, bool>(
+        "rollbackWorkspaceEdit",
+        RouteDefinition::live_full(rollback_workspace_edit),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, bool>(
+        "finishWorkspaceEdit",
+        RouteDefinition::live_full(finish_workspace_edit),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload>(
+        "finalizeWorkspaceEdit",
+        RouteDefinition::live_full(finalize_workspace_edit),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, bool>(
+        "acknowledgeWorkspaceEditCompletion",
+        RouteDefinition::live_full(acknowledge_workspace_edit_completion),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload>(
+        "workspaceEditStatus",
+        RouteDefinition::live(workspace_edit_status),
+    ),
+    Route::new::<EmptyParams, Vec<WorkspaceEditRecoveryPayload>>(
+        "listWorkspaceEditRecoveries",
+        RouteDefinition::live(list_workspace_edit_recoveries),
+    ),
+    Route::new::<TrustLanguageServerWorkspaceParams, bool>(
+        "trustWorkspace",
+        RouteDefinition::language_server(trust_workspace),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
@@ -251,7 +252,7 @@ fn code_actions(
         params.version,
         &core::language_servers::LanguageServerCodeActionRequest {
             range: params.range.into_core(),
-            context: params.context,
+            context: params.context.into_inner(),
         },
         cancellation,
     ) {
@@ -283,7 +284,7 @@ fn resolve_code_action(
         core::language_servers::LanguageServerCodeActionResolveRequest {
             action_id: params.action_id,
             server_id: params.server_id,
-            raw: params.raw,
+            raw: params.raw.into_inner(),
         },
         cancellation,
     ) {
@@ -666,7 +667,7 @@ fn resolve_workspace_symbol(
         core::language_servers::LanguageServerWorkspaceSymbolResolveRequest {
             server_id: params.server_id,
             workspace_id: params.workspace_id.into(),
-            raw: params.raw,
+            raw: params.raw.into_inner(),
         },
         cancellation,
     ) {
@@ -860,7 +861,7 @@ fn resolve_completion(
         params.version,
         core::language_servers::LanguageServerCompletionResolveRequest {
             server_id: params.server_id,
-            raw: params.raw,
+            raw: params.raw.into_inner(),
         },
         cancellation,
     ) {

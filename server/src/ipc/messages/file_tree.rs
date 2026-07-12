@@ -2,19 +2,20 @@ use std::path::Path;
 
 use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError};
 use core::tabs::git::GitChange;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::git::GitChangeKindPayload;
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GetFileTreeParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: Option<TabIdParam>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GetFileTreeChildrenParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -22,14 +23,14 @@ pub(crate) struct GetFileTreeChildrenParams {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GetFileTreeGitStatusParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetFileTreeExpandedPathsParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -37,7 +38,7 @@ pub(crate) struct SetFileTreeExpandedPathsParams {
     pub(crate) expanded_paths: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateFileTreeEntryParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -47,7 +48,7 @@ pub(crate) struct CreateFileTreeEntryParams {
     pub(crate) kind: FileTreeEntryKindParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum FileTreeEntryKindParam {
     Directory,
@@ -63,7 +64,7 @@ impl From<FileTreeEntryKindParam> for FileTreeEntryKind {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenameFileTreeEntryParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -72,7 +73,7 @@ pub(crate) struct RenameFileTreeEntryParams {
     pub(crate) destination_path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TransferFileTreeEntriesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -81,7 +82,7 @@ pub(crate) struct TransferFileTreeEntriesParams {
     pub(crate) target_directory_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteFileTreeEntriesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -89,7 +90,7 @@ pub(crate) struct DeleteFileTreeEntriesParams {
     pub(crate) paths: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolveFileTreePathParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -97,7 +98,7 @@ pub(crate) struct ResolveFileTreePathParams {
     pub(crate) path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeSnapshot {
     root: String,
@@ -107,27 +108,27 @@ pub(crate) struct FileTreeSnapshot {
     deferred_paths: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeChildrenSnapshot {
     paths: Vec<String>,
     deferred_paths: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeGitStatusSnapshot {
     entries: Vec<FileTreeGitStatusEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FileTreeGitStatusEntry {
+pub(crate) struct FileTreeGitStatusEntry {
     path: String,
     status: GitChangeKindPayload,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeResolvedPath {
     path: String,

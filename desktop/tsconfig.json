@@ -5,6 +5,7 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "types": ["node", "vite/client", "bun"],
     "jsx": "react-jsx",
     "paths": {

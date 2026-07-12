@@ -1,16 +1,14 @@
+use super::super::messages::EmptyParams;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::window::{UpdateWindowStateParams, WindowStateSnapshot};
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "get",
-        definition: RouteDefinition::snapshot(get),
-    },
-    Route {
-        action: "update",
-        definition: RouteDefinition::window(update),
-    },
+    Route::new::<EmptyParams, Option<WindowStateSnapshot>>("get", RouteDefinition::snapshot(get)),
+    Route::new::<UpdateWindowStateParams, WindowStateSnapshot>(
+        "update",
+        RouteDefinition::window(update),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

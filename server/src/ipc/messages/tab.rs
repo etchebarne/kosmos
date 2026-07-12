@@ -1,10 +1,11 @@
 use core::tree::{Tab, TabKind, TabLifecycle};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{PaneIdParam, TabIdParam, WorkspaceIdParam};
 use super::pane::SplitAxisPayload;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -13,7 +14,7 @@ pub(crate) struct OpenTabParams {
     pub(crate) kind: Option<TabKindPayload>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActivateTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -21,7 +22,7 @@ pub(crate) struct ActivateTabParams {
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetTabKindParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -30,7 +31,7 @@ pub(crate) struct SetTabKindParams {
     pub(crate) kind: TabKindPayload,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CloseTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -38,7 +39,7 @@ pub(crate) struct CloseTabParams {
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -48,7 +49,7 @@ pub(crate) struct MoveTabParams {
     pub(crate) target_index: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SplitTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -59,7 +60,7 @@ pub(crate) struct SplitTabParams {
     pub(crate) new_pane_first: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TabKindPayload {
     #[default]
@@ -100,7 +101,7 @@ impl From<&TabKind> for TabKindPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TabLifecyclePayload {
     Ephemeral,
@@ -116,7 +117,7 @@ impl From<TabLifecycle> for TabLifecyclePayload {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TabSnapshot {
     id: u64,

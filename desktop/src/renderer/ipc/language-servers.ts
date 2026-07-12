@@ -284,7 +284,7 @@ export function getLanguageServerColorPresentations(
 
 export function requestLanguageServerFeature<T>(
   action: string,
-  params: Record<string, unknown>,
+  params: object,
   cancellation?: RequestCancellation,
 ): Promise<T> {
   return requestServer(DOMAIN, action, params, cancellation);

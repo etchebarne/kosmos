@@ -8,129 +8,64 @@ use super::super::messages::git::{
     OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SaveGitDiffFileParams,
     SwitchGitBranchParams,
 };
+use super::super::messages::workspace::WorkspaceListSnapshot;
 use super::{Route, RouteDefinition, find_route, parse_params, workspace_list_response};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "init",
-        definition: RouteDefinition::external(init),
-    },
-    Route {
-        action: "status",
-        definition: RouteDefinition::external(status),
-    },
-    Route {
-        action: "openDiffTab",
-        definition: RouteDefinition::full(open_diff_tab),
-    },
-    Route {
-        action: "diff",
-        definition: RouteDefinition::external(diff),
-    },
-    Route {
-        action: "saveDiffFile",
-        definition: RouteDefinition::external(save_diff_file),
-    },
-    Route {
-        action: "stagePaths",
-        definition: RouteDefinition::external(stage_paths),
-    },
-    Route {
-        action: "unstagePaths",
-        definition: RouteDefinition::external(unstage_paths),
-    },
-    Route {
-        action: "stageAll",
-        definition: RouteDefinition::external(stage_all),
-    },
-    Route {
-        action: "unstageAll",
-        definition: RouteDefinition::external(unstage_all),
-    },
-    Route {
-        action: "commit",
-        definition: RouteDefinition::external(commit),
-    },
-    Route {
-        action: "switchBranch",
-        definition: RouteDefinition::external(switch_branch),
-    },
-    Route {
-        action: "trackRemoteBranch",
-        definition: RouteDefinition::external(track_remote_branch),
-    },
-    Route {
-        action: "createBranch",
-        definition: RouteDefinition::external(create_branch),
-    },
-    Route {
-        action: "deleteBranch",
-        definition: RouteDefinition::external(delete_branch),
-    },
-    Route {
-        action: "fetch",
-        definition: RouteDefinition::external(fetch),
-    },
-    Route {
-        action: "pull",
-        definition: RouteDefinition::external(pull),
-    },
-    Route {
-        action: "push",
-        definition: RouteDefinition::external(push),
-    },
-    Route {
-        action: "stash",
-        definition: RouteDefinition::external(stash),
-    },
-    Route {
-        action: "stashStaged",
-        definition: RouteDefinition::external(stash_staged),
-    },
-    Route {
-        action: "stashes",
-        definition: RouteDefinition::external(stashes),
-    },
-    Route {
-        action: "applyStash",
-        definition: RouteDefinition::external(apply_stash),
-    },
-    Route {
-        action: "dropStash",
-        definition: RouteDefinition::external(drop_stash),
-    },
-    Route {
-        action: "remotes",
-        definition: RouteDefinition::external(remotes),
-    },
-    Route {
-        action: "addRemote",
-        definition: RouteDefinition::external(add_remote),
-    },
-    Route {
-        action: "removeRemote",
-        definition: RouteDefinition::external(remove_remote),
-    },
-    Route {
-        action: "tags",
-        definition: RouteDefinition::external(tags),
-    },
-    Route {
-        action: "createTag",
-        definition: RouteDefinition::external(create_tag),
-    },
-    Route {
-        action: "deleteTag",
-        definition: RouteDefinition::external(delete_tag),
-    },
-    Route {
-        action: "discardAll",
-        definition: RouteDefinition::external(discard_all),
-    },
-    Route {
-        action: "discardStaged",
-        definition: RouteDefinition::external(discard_staged),
-    },
+    Route::new::<GitTabParams, bool>("init", RouteDefinition::external(init)),
+    Route::new::<GitTabParams, GitRepositorySnapshotPayload>(
+        "status",
+        RouteDefinition::external(status),
+    ),
+    Route::new::<OpenGitDiffTabParams, WorkspaceListSnapshot>(
+        "openDiffTab",
+        RouteDefinition::full(open_diff_tab),
+    ),
+    Route::new::<GitTabParams, GitDiffPayload>("diff", RouteDefinition::external(diff)),
+    Route::new::<SaveGitDiffFileParams, bool>(
+        "saveDiffFile",
+        RouteDefinition::external(save_diff_file),
+    ),
+    Route::new::<GitPathsParams, bool>("stagePaths", RouteDefinition::external(stage_paths)),
+    Route::new::<GitPathsParams, bool>("unstagePaths", RouteDefinition::external(unstage_paths)),
+    Route::new::<GitTabParams, bool>("stageAll", RouteDefinition::external(stage_all)),
+    Route::new::<GitTabParams, bool>("unstageAll", RouteDefinition::external(unstage_all)),
+    Route::new::<CommitGitChangesParams, bool>("commit", RouteDefinition::external(commit)),
+    Route::new::<SwitchGitBranchParams, bool>(
+        "switchBranch",
+        RouteDefinition::external(switch_branch),
+    ),
+    Route::new::<SwitchGitBranchParams, bool>(
+        "trackRemoteBranch",
+        RouteDefinition::external(track_remote_branch),
+    ),
+    Route::new::<CreateGitBranchParams, bool>(
+        "createBranch",
+        RouteDefinition::external(create_branch),
+    ),
+    Route::new::<SwitchGitBranchParams, bool>(
+        "deleteBranch",
+        RouteDefinition::external(delete_branch),
+    ),
+    Route::new::<GitTabParams, bool>("fetch", RouteDefinition::external(fetch)),
+    Route::new::<PullGitChangesParams, bool>("pull", RouteDefinition::external(pull)),
+    Route::new::<PushGitChangesParams, bool>("push", RouteDefinition::external(push)),
+    Route::new::<GitTabParams, bool>("stash", RouteDefinition::external(stash)),
+    Route::new::<GitTabParams, bool>("stashStaged", RouteDefinition::external(stash_staged)),
+    Route::new::<GitTabParams, Vec<GitStashPayload>>("stashes", RouteDefinition::external(stashes)),
+    Route::new::<GitStashParams, bool>("applyStash", RouteDefinition::external(apply_stash)),
+    Route::new::<GitStashParams, bool>("dropStash", RouteDefinition::external(drop_stash)),
+    Route::new::<GitTabParams, Vec<GitRemotePayload>>(
+        "remotes",
+        RouteDefinition::external(remotes),
+    ),
+    Route::new::<AddGitRemoteParams, bool>("addRemote", RouteDefinition::external(add_remote)),
+    Route::new::<GitRemoteParams, bool>("removeRemote", RouteDefinition::external(remove_remote)),
+    Route::new::<GitTabParams, Vec<GitTagPayload>>("tags", RouteDefinition::external(tags)),
+    Route::new::<GitTagParams, bool>("createTag", RouteDefinition::external(create_tag)),
+    Route::new::<GitTagParams, bool>("deleteTag", RouteDefinition::external(delete_tag)),
+    Route::new::<GitTabParams, bool>("discardAll", RouteDefinition::external(discard_all)),
+    Route::new::<GitTabParams, bool>("discardStaged", RouteDefinition::external(discard_staged)),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

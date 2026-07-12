@@ -41,9 +41,10 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
   ```bash
   bash scripts/check-boundaries.sh
   cargo fmt --all -- --check
-  cargo clippy --workspace --all-targets -- -D warnings
-  cargo test --workspace
-  bun run --cwd desktop typecheck
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace
+   bun run --cwd desktop check:ipc
+   bun run --cwd desktop typecheck
   bun run --cwd desktop test
   bun run --cwd desktop build
   ```
@@ -54,6 +55,8 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 - Bump release metadata with `./scripts/bump-version.sh patch|minor|major|x.y.z`.
 
 The Electron main process launches the Rust server as a sidecar process. They communicate over a Unix socket, while the renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+
+The Rust server owns the IPC contract. Update generated desktop schema, declaration, and validation artifacts with `bun run --cwd desktop generate:ipc`; use `bun run --cwd desktop check:ipc` to verify they are current.
 
 ## Language tooling
 

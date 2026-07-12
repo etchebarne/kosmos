@@ -1,10 +1,11 @@
 use core::tree::{Pane, PaneNode, SplitAxis};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{PaneIdParam, SplitPaneIdParam, WorkspaceIdParam};
 use super::tab::TabSnapshot;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SplitPaneParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -13,14 +14,14 @@ pub(crate) struct SplitPaneParams {
     pub(crate) new_pane_first: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActivatePaneParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) pane_id: PaneIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MovePaneParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -30,7 +31,7 @@ pub(crate) struct MovePaneParams {
     pub(crate) new_pane_first: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResizeSplitParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -38,7 +39,7 @@ pub(crate) struct ResizeSplitParams {
     pub(crate) ratio: f32,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SplitAxisPayload {
     Horizontal,
@@ -63,7 +64,7 @@ impl From<SplitAxis> for SplitAxisPayload {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum PaneNodeSnapshot {
     Leaf {
@@ -95,7 +96,7 @@ impl PaneNodeSnapshot {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PaneSnapshot {
     id: u64,

@@ -1,6 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateWindowStateParams {
     pub(crate) x: i32,
@@ -11,7 +12,7 @@ pub(crate) struct UpdateWindowStateParams {
     pub(crate) fullscreen: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WindowStateSnapshot {
     x: i32,

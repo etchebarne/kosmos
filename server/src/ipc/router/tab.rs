@@ -3,33 +3,22 @@ use super::super::messages::tab::{
     ActivateTabParams, CloseTabParams, MoveTabParams, OpenTabParams, SetTabKindParams,
     SplitTabParams,
 };
+use super::super::messages::workspace::WorkspaceListSnapshot;
 use super::{Route, RouteDefinition, command_response, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "open",
-        definition: RouteDefinition::full(open_tab),
-    },
-    Route {
-        action: "activate",
-        definition: RouteDefinition::full(activate_tab),
-    },
-    Route {
-        action: "setKind",
-        definition: RouteDefinition::full(set_tab_kind),
-    },
-    Route {
-        action: "close",
-        definition: RouteDefinition::full(close_tab),
-    },
-    Route {
-        action: "move",
-        definition: RouteDefinition::full(move_tab),
-    },
-    Route {
-        action: "split",
-        definition: RouteDefinition::full(split_tab),
-    },
+    Route::new::<OpenTabParams, WorkspaceListSnapshot>("open", RouteDefinition::full(open_tab)),
+    Route::new::<ActivateTabParams, WorkspaceListSnapshot>(
+        "activate",
+        RouteDefinition::full(activate_tab),
+    ),
+    Route::new::<SetTabKindParams, WorkspaceListSnapshot>(
+        "setKind",
+        RouteDefinition::full(set_tab_kind),
+    ),
+    Route::new::<CloseTabParams, WorkspaceListSnapshot>("close", RouteDefinition::full(close_tab)),
+    Route::new::<MoveTabParams, WorkspaceListSnapshot>("move", RouteDefinition::full(move_tab)),
+    Route::new::<SplitTabParams, WorkspaceListSnapshot>("split", RouteDefinition::full(split_tab)),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

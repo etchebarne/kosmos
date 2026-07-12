@@ -1,28 +1,29 @@
 use core::tree::{Workspace, WorkspaceList};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::WorkspaceIdParam;
 use super::pane::PaneNodeSnapshot;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenWorkspaceParams {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActivateWorkspaceParams {
     pub(crate) workspace_id: WorkspaceIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CloseWorkspaceParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceListSnapshot {
     active_workspace_id: Option<u64>,
@@ -42,9 +43,9 @@ impl WorkspaceListSnapshot {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkspaceSnapshot {
+pub(crate) struct WorkspaceSnapshot {
     id: u64,
     name: String,
     directory: String,

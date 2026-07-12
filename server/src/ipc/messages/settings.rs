@@ -1,34 +1,43 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateSettingParams {
     pub(crate) id: String,
-    pub(crate) value: serde_json::Value,
+    pub(crate) value: SettingValueParam,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum SettingValueParam {
+    Boolean(bool),
+    String(String),
+    Number(f64),
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsSnapshot {
     categories: Vec<SettingCategoryPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SettingCategoryPayload {
+pub(crate) struct SettingCategoryPayload {
     id: String,
     label: String,
     description: Option<String>,
     items: Vec<SettingItemPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-enum SettingItemPayload {
+pub(crate) enum SettingItemPayload {
     Group {
         id: String,
         label: String,
@@ -41,22 +50,24 @@ enum SettingItemPayload {
         description: Option<String>,
         control: SettingControlPayload,
         value: SettingValuePayload,
+        #[schemars(rename = "defaultValue")]
         default_value: SettingValuePayload,
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-enum SettingControlPayload {
+pub(crate) enum SettingControlPayload {
     Switch,
     Select {
         options: Vec<SettingOptionPayload>,
     },
     Input {
+        #[schemars(rename = "inputType")]
         input_type: SettingInputKindPayload,
         placeholder: Option<String>,
         min: Option<f64>,
@@ -65,23 +76,23 @@ enum SettingControlPayload {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SettingOptionPayload {
+pub(crate) struct SettingOptionPayload {
     value: String,
     label: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum SettingInputKindPayload {
+pub(crate) enum SettingInputKindPayload {
     Text,
     Number,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(untagged)]
-enum SettingValuePayload {
+pub(crate) enum SettingValuePayload {
     Boolean(bool),
     String(String),
     Number(f64),

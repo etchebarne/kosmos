@@ -12,46 +12,46 @@ use super::super::messages::file_tree::{
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "get",
-        definition: RouteDefinition::external(get_file_tree),
-    },
-    Route {
-        action: "gitStatus",
-        definition: RouteDefinition::external(get_git_status),
-    },
-    Route {
-        action: "getChildren",
-        definition: RouteDefinition::external(get_file_tree_children),
-    },
-    Route {
-        action: "setExpandedPaths",
-        definition: RouteDefinition::full(set_expanded_paths),
-    },
-    Route {
-        action: "createEntry",
-        definition: RouteDefinition::external(create_entry),
-    },
-    Route {
-        action: "renameEntry",
-        definition: RouteDefinition::external(rename_entry),
-    },
-    Route {
-        action: "moveEntries",
-        definition: RouteDefinition::external(move_entries),
-    },
-    Route {
-        action: "copyEntries",
-        definition: RouteDefinition::external(copy_entries),
-    },
-    Route {
-        action: "deleteEntries",
-        definition: RouteDefinition::external(delete_entries),
-    },
-    Route {
-        action: "resolvePath",
-        definition: RouteDefinition::external(resolve_path),
-    },
+    Route::new::<GetFileTreeParams, FileTreeSnapshot>(
+        "get",
+        RouteDefinition::external(get_file_tree),
+    ),
+    Route::new::<GetFileTreeGitStatusParams, FileTreeGitStatusSnapshot>(
+        "gitStatus",
+        RouteDefinition::external(get_git_status),
+    ),
+    Route::new::<GetFileTreeChildrenParams, FileTreeChildrenSnapshot>(
+        "getChildren",
+        RouteDefinition::external(get_file_tree_children),
+    ),
+    Route::new::<SetFileTreeExpandedPathsParams, bool>(
+        "setExpandedPaths",
+        RouteDefinition::full(set_expanded_paths),
+    ),
+    Route::new::<CreateFileTreeEntryParams, bool>(
+        "createEntry",
+        RouteDefinition::external(create_entry),
+    ),
+    Route::new::<RenameFileTreeEntryParams, bool>(
+        "renameEntry",
+        RouteDefinition::external(rename_entry),
+    ),
+    Route::new::<TransferFileTreeEntriesParams, bool>(
+        "moveEntries",
+        RouteDefinition::external(move_entries),
+    ),
+    Route::new::<TransferFileTreeEntriesParams, bool>(
+        "copyEntries",
+        RouteDefinition::external(copy_entries),
+    ),
+    Route::new::<DeleteFileTreeEntriesParams, bool>(
+        "deleteEntries",
+        RouteDefinition::external(delete_entries),
+    ),
+    Route::new::<ResolveFileTreePathParams, FileTreeResolvedPath>(
+        "resolvePath",
+        RouteDefinition::external(resolve_path),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

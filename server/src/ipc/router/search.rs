@@ -8,14 +8,14 @@ use super::super::messages::search::{
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "query",
-        definition: RouteDefinition::external(query),
-    },
-    Route {
-        action: "document",
-        definition: RouteDefinition::external(document),
-    },
+    Route::new::<SearchWorkspaceParams, WorkspaceSearchResultsPayload>(
+        "query",
+        RouteDefinition::external(query),
+    ),
+    Route::new::<SearchDocumentParams, EditorDocumentPayload>(
+        "document",
+        RouteDefinition::external(document),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

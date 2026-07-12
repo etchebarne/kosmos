@@ -2,18 +2,19 @@ use core::tabs::git::{
     GitBranch, GitChange, GitChangeKind, GitDiff, GitDiffFile, GitDiffSection, GitDiffSectionKind,
     GitRemote, GitRepositorySnapshot, GitStash, GitTag,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitPathsParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -21,7 +22,7 @@ pub(crate) struct GitPathsParams {
     pub(crate) paths: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenGitDiffTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -29,7 +30,7 @@ pub(crate) struct OpenGitDiffTabParams {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveGitDiffFileParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -39,7 +40,7 @@ pub(crate) struct SaveGitDiffFileParams {
     pub(crate) stage: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommitGitChangesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -47,7 +48,7 @@ pub(crate) struct CommitGitChangesParams {
     pub(crate) message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SwitchGitBranchParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -55,7 +56,7 @@ pub(crate) struct SwitchGitBranchParams {
     pub(crate) branch: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateGitBranchParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -64,7 +65,7 @@ pub(crate) struct CreateGitBranchParams {
     pub(crate) start_point: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PullGitChangesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -72,7 +73,7 @@ pub(crate) struct PullGitChangesParams {
     pub(crate) rebase: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PushGitChangesParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -80,7 +81,7 @@ pub(crate) struct PushGitChangesParams {
     pub(crate) force: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitStashParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -88,7 +89,7 @@ pub(crate) struct GitStashParams {
     pub(crate) selector: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitRemoteParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -96,7 +97,7 @@ pub(crate) struct GitRemoteParams {
     pub(crate) name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AddGitRemoteParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -105,7 +106,7 @@ pub(crate) struct AddGitRemoteParams {
     pub(crate) url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitTagParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -113,7 +114,7 @@ pub(crate) struct GitTagParams {
     pub(crate) name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitRepositorySnapshotPayload {
     repository_root: String,
@@ -128,7 +129,7 @@ pub(crate) struct GitRepositorySnapshotPayload {
     changes: Vec<GitChangePayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitStashPayload {
     selector: String,
@@ -137,7 +138,7 @@ pub(crate) struct GitStashPayload {
     message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitRemotePayload {
     name: String,
@@ -145,23 +146,23 @@ pub(crate) struct GitRemotePayload {
     push_urls: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitTagPayload {
     name: String,
     target: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitDiffPayload {
     focused_path: Option<String>,
     files: Vec<GitDiffFilePayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitDiffFilePayload {
+pub(crate) struct GitDiffFilePayload {
     path: String,
     original_path: Option<String>,
     staged: Option<GitChangeKindPayload>,
@@ -169,34 +170,34 @@ struct GitDiffFilePayload {
     sections: Vec<GitDiffSectionPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitDiffSectionPayload {
+pub(crate) struct GitDiffSectionPayload {
     kind: GitDiffSectionKindPayload,
     original_content: Option<String>,
     modified_content: Option<String>,
     editable: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum GitDiffSectionKindPayload {
+pub(crate) enum GitDiffSectionKindPayload {
     Staged,
     Unstaged,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitBranchPayload {
+pub(crate) struct GitBranchPayload {
     name: String,
     current: bool,
     remote: bool,
     upstream: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitChangePayload {
+pub(crate) struct GitChangePayload {
     path: String,
     original_path: Option<String>,
     staged: Option<GitChangeKindPayload>,
@@ -205,7 +206,7 @@ struct GitChangePayload {
     is_unstaged: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum GitChangeKindPayload {
     Added,

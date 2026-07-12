@@ -1,14 +1,133 @@
-export type * from "./envelope";
-export type * from "./editor";
-export type * from "./file-tree";
-export type * from "./formatters";
-export type * from "./git";
-export type * from "./ids";
-export type * from "./language-servers";
-export type * from "./pane";
-export type * from "./search";
-export * from "./settings";
-export type * from "./tab";
-export type * from "./terminal";
-export type * from "./workspace";
-export type * from "./window";
+import type * as Generated from "./generated/types";
+
+export type * from "./generated/types";
+
+export const APPEARANCE_ZOOM_LEVEL = "appearance.zoomLevel";
+
+export type WorkspaceId = Generated.WorkspaceIdParam;
+export type PaneId = Generated.PaneIdParam;
+export type SplitPaneId = Generated.SplitPaneIdParam;
+export type TabId = Generated.TabIdParam;
+
+export type SplitAxis = Generated.SplitAxisPayload;
+export type TabKind = Generated.TabKindPayload;
+export type OpenableTabKind = Exclude<TabKind, "diff" | "editor">;
+export type TabLifecycle = Generated.TabLifecyclePayload;
+export type FileTreeEntryKind = Generated.FileTreeEntryKindParam;
+export type GitChangeKind = Generated.GitChangeKindPayload;
+export type GitDiffSectionKind = Generated.GitDiffSectionKindPayload;
+export type SearchMode = Generated.SearchModeParam;
+
+export type EditorTabParams = Pick<Generated.EditorDocumentParams, "workspaceId" | "tabId">;
+export type EditorDocument = Generated.EditorDocumentPayload;
+export type EditorGitLineHunks = Generated.EditorGitLineHunksPayload;
+export type EditorGitLineHunk = Generated.EditorGitLineHunkPayload;
+
+export type GitBranch = Generated.GitBranchPayload;
+export type GitChange = Generated.GitChangePayload;
+export type GitRepositorySnapshot = Generated.GitRepositorySnapshotPayload;
+export type GitStash = Generated.GitStashPayload;
+export type GitRemote = Generated.GitRemotePayload;
+export type GitTag = Generated.GitTagPayload;
+export type GitDiffSection = Generated.GitDiffSectionPayload;
+export type GitDiffFile = Generated.GitDiffFilePayload;
+export type GitDiff = Generated.GitDiffPayload;
+
+export type FormatterInstallationState = Generated.InstallationStatePayload;
+export type FormatterFailure = Generated.FormatterFailurePayload;
+
+export type SearchMatch = Generated.SearchMatchPayload;
+export type WorkspaceSearchResults = Generated.WorkspaceSearchResultsPayload;
+export type SearchDocument = EditorDocument;
+
+export type TerminalShell = Generated.TerminalShellSnapshot;
+export type TerminalOutput = Generated.TerminalOutputSnapshot;
+
+export type SettingValue = Generated.SettingValuePayload;
+export type SettingControl = Generated.SettingControlPayload;
+export type SettingOption = Generated.SettingOptionPayload;
+export type SettingItem = Generated.SettingItemPayload;
+export type SettingGroup = Extract<SettingItem, { type: "group" }>;
+export type SettingDefinition = Extract<SettingItem, { type: "setting" }>;
+export type SettingCategory = Generated.SettingCategoryPayload;
+
+export type WindowState = Generated.WindowStateSnapshot;
+
+export type LanguageServerInstallationState = Generated.InstallationStatePayload;
+export type LanguageServerRuntimeState = Generated.RuntimeStatePayload;
+export type LanguageServerFailure = Generated.LanguageServerFailurePayload;
+export type LanguageServerLog = Generated.LanguageServerLogPayload;
+export type LanguageServerPosition = Generated.LanguageServerPositionPayload;
+export type LanguageServerRange = Generated.LanguageServerRangePayload;
+export type LanguageServerChange = Generated.LanguageServerChangePayload;
+export type LanguageServerHover = Generated.LanguageServerHoverPayload;
+export type LanguageServerSignatureHelp = Generated.LanguageServerSignatureHelpPayload;
+export type LanguageServerSignatureInformation = Generated.LanguageServerSignatureInformationPayload;
+export type LanguageServerLocation = Generated.LanguageServerLocationPayload;
+export type LanguageServerDocumentSymbol = Generated.LanguageServerDocumentSymbolPayload;
+export type LanguageServerWorkspaceSymbol = Generated.LanguageServerWorkspaceSymbolPayload;
+export type LanguageServerDiagnostic = Generated.LanguageServerDiagnosticPayload;
+export type LanguageServerDiagnosticSnapshot = Generated.LanguageServerDiagnosticSnapshotPayload;
+export type LanguageServerDiagnosticsChanged = Generated.LanguageServerDiagnosticsChangedNotification;
+export type LanguageServerCompletionList = Generated.LanguageServerCompletionListPayload;
+export type LanguageServerCompletionItem = Generated.LanguageServerCompletionItemPayload;
+export type LanguageServerCompletionTextEdit = Generated.LanguageServerCompletionTextEditPayload;
+export type LanguageServerTextEdit = Generated.LanguageServerTextEditPayload;
+export type LanguageServerPrepareRename = Generated.LanguageServerPrepareRenamePayload;
+export type LanguageServerCodeAction = Generated.LanguageServerCodeActionPayload;
+export type StagedWorkspaceEdit = Generated.StagedWorkspaceEditPayload;
+export type StagedWorkspaceEditDocument = Generated.StagedWorkspaceEditDocumentPayload;
+export type StagedWorkspaceEditOperation = Generated.StagedWorkspaceEditOperationPayload;
+export type WorkspaceEditTransactionStatus = Generated.WorkspaceEditTransactionStatusPayload;
+export type WorkspaceEditRecovery = Generated.WorkspaceEditRecoveryPayload;
+export type LanguageServerColor = Generated.LanguageServerColorPayload;
+export type LanguageServerColorInformation = Generated.LanguageServerColorInformationPayload;
+export type LanguageServerColorPresentation = Generated.LanguageServerColorPresentationPayload;
+
+export type KosmosIpcParams = object;
+export type KosmosIpcRequest = {
+  domain: Generated.KosmosIpcDomain;
+  action: string;
+  params?: KosmosIpcParams;
+  requestKey?: string;
+};
+export type KosmosServerResponse =
+  | { type: "response"; id: number; ok: true; result: unknown }
+  | { type: "response"; id: number; ok: false; error: Generated.KosmosIpcError };
+export type KosmosServerNotification =
+  | Generated.WorkspaceChangedNotification
+  | Generated.LanguageServerDiagnosticsChangedNotification
+  | Generated.LanguageServerDiagnosticsResyncNotification
+  | Generated.LanguageServerStatusChangedNotification
+  | Generated.LanguageServerLogAvailableNotification
+  | Generated.LanguageServerApplyEditNotification
+  | Generated.LanguageServerApplyEditCancelledNotification;
+export type KosmosServerMessage = KosmosServerResponse | KosmosServerNotification;
+export type KosmosIpcRequestResult<T = unknown> =
+  | { ok: true; result: T }
+  | { ok: false; error: Generated.KosmosIpcError };
+
+export type KosmosApi = {
+  request<T = unknown>(request: KosmosIpcRequest): Promise<T>;
+  cancelRequest(requestKey: string): void;
+  acknowledgeServerApplyEdit(
+    id: number,
+    token: string,
+    applied: boolean,
+    failureReason?: string,
+  ): void;
+  pendingServerApplyEdits(): Promise<
+    Array<Extract<KosmosServerNotification, { event: "languageServerApplyEdit" }>>
+  >;
+  selectWorkspaceDirectory(): Promise<string | undefined>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  setZoomLevel(zoomLevel: number): Promise<void>;
+  revealPath(path: string): Promise<void>;
+  onFlushState(callback: () => Promise<void>): () => void;
+  onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void;
+  onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
+  onServerNotification(callback: (notification: KosmosServerNotification) => void): () => void;
+  onServerReconnected(callback: () => void): () => void;
+};

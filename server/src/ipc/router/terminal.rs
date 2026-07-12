@@ -1,5 +1,6 @@
 use core::tabs::terminal::TerminalError;
 
+use super::super::messages::EmptyParams;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::terminal::{
     OpenTerminalParams, ResizeTerminalParams, RestartTerminalParams, TerminalOutputSnapshot,
@@ -8,30 +9,27 @@ use super::super::messages::terminal::{
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "shells",
-        definition: RouteDefinition::snapshot(list_shells),
-    },
-    Route {
-        action: "open",
-        definition: RouteDefinition::live(open_terminal),
-    },
-    Route {
-        action: "read",
-        definition: RouteDefinition::live(read_terminal_output),
-    },
-    Route {
-        action: "write",
-        definition: RouteDefinition::live(write_terminal_input),
-    },
-    Route {
-        action: "resize",
-        definition: RouteDefinition::live(resize_terminal),
-    },
-    Route {
-        action: "restart",
-        definition: RouteDefinition::live(restart_terminal),
-    },
+    Route::new::<EmptyParams, Vec<TerminalShellSnapshot>>(
+        "shells",
+        RouteDefinition::snapshot(list_shells),
+    ),
+    Route::new::<OpenTerminalParams, TerminalOutputSnapshot>(
+        "open",
+        RouteDefinition::live(open_terminal),
+    ),
+    Route::new::<TerminalTabParams, TerminalOutputSnapshot>(
+        "read",
+        RouteDefinition::live(read_terminal_output),
+    ),
+    Route::new::<WriteTerminalInputParams, bool>(
+        "write",
+        RouteDefinition::live(write_terminal_input),
+    ),
+    Route::new::<ResizeTerminalParams, bool>("resize", RouteDefinition::live(resize_terminal)),
+    Route::new::<RestartTerminalParams, TerminalOutputSnapshot>(
+        "restart",
+        RouteDefinition::live(restart_terminal),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

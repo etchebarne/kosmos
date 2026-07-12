@@ -4,31 +4,32 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::{
     ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
 };
+use super::super::messages::{EmptyParams, workspace::WorkspaceListSnapshot};
 use super::{
     Route, RouteDefinition, command_response, find_route, parse_params, workspace_list_response,
 };
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "list",
-        definition: RouteDefinition::snapshot(list_workspaces),
-    },
-    Route {
-        action: "flush",
-        definition: RouteDefinition::persistence_barrier(flush_persistence),
-    },
-    Route {
-        action: "open",
-        definition: RouteDefinition::full(open_workspace),
-    },
-    Route {
-        action: "activate",
-        definition: RouteDefinition::active_workspace(activate_workspace),
-    },
-    Route {
-        action: "close",
-        definition: RouteDefinition::full(close_workspace),
-    },
+    Route::new::<EmptyParams, WorkspaceListSnapshot>(
+        "list",
+        RouteDefinition::snapshot(list_workspaces),
+    ),
+    Route::new::<EmptyParams, bool>(
+        "flush",
+        RouteDefinition::persistence_barrier(flush_persistence),
+    ),
+    Route::new::<OpenWorkspaceParams, WorkspaceListSnapshot>(
+        "open",
+        RouteDefinition::full(open_workspace),
+    ),
+    Route::new::<ActivateWorkspaceParams, WorkspaceListSnapshot>(
+        "activate",
+        RouteDefinition::active_workspace(activate_workspace),
+    ),
+    Route::new::<CloseWorkspaceParams, WorkspaceListSnapshot>(
+        "close",
+        RouteDefinition::full(close_workspace),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

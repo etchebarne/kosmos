@@ -1,18 +1,16 @@
 use core::settings::{SettingValue, SettingsError};
 
+use super::super::messages::EmptyParams;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
-use super::super::messages::settings::{SettingsSnapshot, UpdateSettingParams};
+use super::super::messages::settings::{SettingValueParam, SettingsSnapshot, UpdateSettingParams};
 use super::{Route, RouteDefinition, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "get",
-        definition: RouteDefinition::snapshot(get),
-    },
-    Route {
-        action: "update",
-        definition: RouteDefinition::settings(update),
-    },
+    Route::new::<EmptyParams, SettingsSnapshot>("get", RouteDefinition::snapshot(get)),
+    Route::new::<UpdateSettingParams, SettingsSnapshot>(
+        "update",
+        RouteDefinition::settings(update),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
@@ -45,12 +43,12 @@ fn update(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     }
 }
 
-fn setting_value(value: serde_json::Value) -> Option<SettingValue> {
+fn setting_value(value: SettingValueParam) -> Option<SettingValue> {
     match value {
-        serde_json::Value::Bool(value) => Some(SettingValue::Boolean(value)),
-        serde_json::Value::String(value) => Some(SettingValue::String(value)),
-        serde_json::Value::Number(value) => value.as_f64().map(SettingValue::Number),
-        _ => None,
+        SettingValueParam::Boolean(value) => Some(SettingValue::Boolean(value)),
+        SettingValueParam::String(value) => Some(SettingValue::String(value)),
+        SettingValueParam::Number(value) if value.is_finite() => Some(SettingValue::Number(value)),
+        SettingValueParam::Number(_) => None,
     }
 }
 

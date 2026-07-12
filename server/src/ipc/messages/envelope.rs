@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -16,7 +17,7 @@ pub(crate) enum ClientMessage {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum ServerMessage {
     Response(ResponseEnvelope),
@@ -56,10 +57,7 @@ impl ServerMessage {
     }
 
     pub(crate) fn workspace_changed(workspace_ids: Vec<u64>) -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::WorkspaceChanged,
-            payload: serde_json::json!({ "workspaceIds": workspace_ids }),
-        })
+        Self::Notification(NotificationEnvelope::WorkspaceChanged { workspace_ids })
     }
 
     pub(crate) fn language_server_diagnostics_changed(
@@ -75,38 +73,26 @@ impl ServerMessage {
             .into_iter()
             .map(crate::ipc::messages::language_servers::LanguageServerDiagnosticPayload::from_core)
             .collect::<Vec<_>>();
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerDiagnosticsChanged,
-            payload: serde_json::json!({
-                "workspaceId": workspace_id,
-                "path": path,
-                "serverId": server_id,
-                "generation": generation,
-                "version": version,
-                "diagnostics": diagnostics,
-            }),
+        Self::Notification(NotificationEnvelope::LanguageServerDiagnosticsChanged {
+            workspace_id,
+            path,
+            server_id,
+            generation,
+            version,
+            diagnostics,
         })
     }
 
     pub(crate) fn language_server_diagnostics_resync() -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerDiagnosticsResync,
-            payload: serde_json::json!({}),
-        })
+        Self::Notification(NotificationEnvelope::LanguageServerDiagnosticsResync {})
     }
 
     pub(crate) fn language_server_status_changed(server_id: String) -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerStatusChanged,
-            payload: serde_json::json!({ "serverId": server_id }),
-        })
+        Self::Notification(NotificationEnvelope::LanguageServerStatusChanged { server_id })
     }
 
     pub(crate) fn language_server_log_available(server_id: String) -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerLogAvailable,
-            payload: serde_json::json!({ "serverId": server_id }),
-        })
+        Self::Notification(NotificationEnvelope::LanguageServerLogAvailable { server_id })
     }
 
     pub(crate) fn language_server_apply_edit(
@@ -114,27 +100,42 @@ impl ServerMessage {
         token: String,
         edit: core::language_servers::StagedWorkspaceEdit,
     ) -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerApplyEdit,
-            payload: serde_json::json!({
-                "id": id,
-                "token": token,
-                "edit": crate::ipc::messages::language_servers::StagedWorkspaceEditPayload::from_core(edit)
-            }),
+        Self::Notification(NotificationEnvelope::LanguageServerApplyEdit {
+            id,
+            token,
+            edit: crate::ipc::messages::language_servers::StagedWorkspaceEditPayload::from_core(
+                edit,
+            ),
         })
     }
 
     pub(crate) fn language_server_apply_edit_cancelled(id: u64, token: String) -> Self {
-        Self::Notification(NotificationEnvelope {
-            event: NotificationEvent::LanguageServerApplyEditCancelled,
-            payload: serde_json::json!({ "id": id, "token": token }),
-        })
+        Self::Notification(NotificationEnvelope::LanguageServerApplyEditCancelled { id, token })
     }
 
     pub(crate) fn is_ok(&self) -> bool {
         match self {
             Self::Response(response) => response.ok,
             Self::Notification(_) => false,
+        }
+    }
+}
+
+impl Domain {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Pane => "pane",
+            Self::Tab => "tab",
+            Self::FileTree => "fileTree",
+            Self::Formatters => "formatters",
+            Self::Editor => "editor",
+            Self::Git => "git",
+            Self::Search => "search",
+            Self::Terminal => "terminal",
+            Self::Settings => "settings",
+            Self::LanguageServers => "languageServers",
+            Self::Window => "window",
         }
     }
 }
@@ -149,7 +150,7 @@ pub(crate) struct RequestEnvelope {
     pub(crate) params: serde_json::Value,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Domain {
     Workspace,
@@ -184,24 +185,94 @@ struct ErrorEnvelope {
     message: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct NotificationEnvelope {
-    event: NotificationEvent,
-    #[serde(flatten)]
-    payload: serde_json::Value,
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "event",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum NotificationEnvelope {
+    WorkspaceChanged {
+        workspace_ids: Vec<u64>,
+    },
+    LanguageServerDiagnosticsChanged {
+        workspace_id: u64,
+        path: String,
+        server_id: String,
+        generation: u64,
+        version: i64,
+        diagnostics: Vec<crate::ipc::messages::language_servers::LanguageServerDiagnosticPayload>,
+    },
+    LanguageServerDiagnosticsResync {},
+    LanguageServerStatusChanged {
+        server_id: String,
+    },
+    LanguageServerLogAvailable {
+        server_id: String,
+    },
+    LanguageServerApplyEdit {
+        id: u64,
+        token: String,
+        edit: crate::ipc::messages::language_servers::StagedWorkspaceEditPayload,
+    },
+    LanguageServerApplyEditCancelled {
+        id: u64,
+        token: String,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[allow(dead_code)]
+#[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
-enum NotificationEvent {
-    WorkspaceChanged,
-    LanguageServerDiagnosticsChanged,
-    LanguageServerDiagnosticsResync,
-    LanguageServerStatusChanged,
-    LanguageServerLogAvailable,
-    LanguageServerApplyEdit,
-    LanguageServerApplyEditCancelled,
+pub(crate) struct WorkspaceChangedNotification {
+    workspace_ids: Vec<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerDiagnosticsChangedNotification {
+    workspace_id: u64,
+    path: String,
+    server_id: String,
+    generation: u64,
+    version: i64,
+    diagnostics: Vec<crate::ipc::messages::language_servers::LanguageServerDiagnosticPayload>,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+pub(crate) struct LanguageServerDiagnosticsResyncNotification {}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerStatusChangedNotification {
+    server_id: String,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerLogAvailableNotification {
+    server_id: String,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerApplyEditNotification {
+    id: u64,
+    token: String,
+    edit: crate::ipc::messages::language_servers::StagedWorkspaceEditPayload,
+}
+
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguageServerApplyEditCancelledNotification {
+    id: u64,
+    token: String,
 }
 
 #[cfg(test)]

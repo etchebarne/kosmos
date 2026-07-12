@@ -1,24 +1,25 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FormatterParams {
     pub(crate) formatter_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FormatterPrioritiesParams {
     pub(crate) formatter_ids: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FormatterListSnapshot {
     formatters: Vec<FormatterSnapshot>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FormatterSnapshot {
     id: String,
@@ -36,9 +37,9 @@ pub(crate) struct FormatterSnapshot {
     supported: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum InstallationStatePayload {
+pub(crate) enum InstallationStatePayload {
     NotInstalled,
     Installing,
     Installed,
@@ -46,9 +47,9 @@ enum InstallationStatePayload {
     Failed,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FormatterFailurePayload {
+pub(crate) struct FormatterFailurePayload {
     code: String,
     message: String,
 }

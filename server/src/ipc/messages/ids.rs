@@ -1,7 +1,8 @@
 use core::tree::{PaneId, SplitPaneId, TabId, WorkspaceId};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 pub(crate) struct WorkspaceIdParam(u64);
 
 impl From<WorkspaceIdParam> for WorkspaceId {
@@ -16,7 +17,7 @@ impl From<WorkspaceId> for WorkspaceIdParam {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 pub(crate) struct PaneIdParam(u64);
 
 impl From<PaneIdParam> for PaneId {
@@ -25,7 +26,7 @@ impl From<PaneIdParam> for PaneId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 pub(crate) struct SplitPaneIdParam(u64);
 
 impl From<SplitPaneIdParam> for SplitPaneId {
@@ -34,7 +35,7 @@ impl From<SplitPaneIdParam> for SplitPaneId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 pub(crate) struct TabIdParam(u64);
 
 impl From<TabIdParam> for TabId {

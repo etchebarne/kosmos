@@ -1,9 +1,10 @@
 use core::tabs::search::{SearchMode, WorkspaceSearchResults};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchWorkspaceParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -12,7 +13,7 @@ pub(crate) struct SearchWorkspaceParams {
     pub(crate) mode: SearchModeParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchDocumentParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -20,7 +21,7 @@ pub(crate) struct SearchDocumentParams {
     pub(crate) path: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SearchModeParam {
     Name,
@@ -36,16 +37,16 @@ impl From<SearchModeParam> for SearchMode {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceSearchResultsPayload {
     matches: Vec<SearchMatchPayload>,
     limit_reached: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchMatchPayload {
+pub(crate) struct SearchMatchPayload {
     path: String,
     line_number: Option<u32>,
     preview: Option<String>,

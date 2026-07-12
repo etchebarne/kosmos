@@ -43,6 +43,9 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace
 
+      - name: Check IPC contract generation
+        run: bun run --cwd desktop check:ipc
+
       - name: Typecheck desktop
         run: bun run --cwd desktop typecheck
 

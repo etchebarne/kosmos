@@ -2,25 +2,23 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::pane::{
     ActivatePaneParams, MovePaneParams, ResizeSplitParams, SplitPaneParams,
 };
+use super::super::messages::workspace::WorkspaceListSnapshot;
 use super::{Route, RouteDefinition, command_response, find_route, parse_params};
 
 pub(super) const ROUTES: &[Route] = &[
-    Route {
-        action: "split",
-        definition: RouteDefinition::full(split_pane),
-    },
-    Route {
-        action: "activate",
-        definition: RouteDefinition::full(activate_pane),
-    },
-    Route {
-        action: "move",
-        definition: RouteDefinition::full(move_pane),
-    },
-    Route {
-        action: "resize",
-        definition: RouteDefinition::full(resize_split),
-    },
+    Route::new::<SplitPaneParams, WorkspaceListSnapshot>(
+        "split",
+        RouteDefinition::full(split_pane),
+    ),
+    Route::new::<ActivatePaneParams, WorkspaceListSnapshot>(
+        "activate",
+        RouteDefinition::full(activate_pane),
+    ),
+    Route::new::<MovePaneParams, WorkspaceListSnapshot>("move", RouteDefinition::full(move_pane)),
+    Route::new::<ResizeSplitParams, WorkspaceListSnapshot>(
+        "resize",
+        RouteDefinition::full(resize_split),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {

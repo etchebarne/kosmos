@@ -31,7 +31,7 @@ From the repository root, `./scripts/run.sh` builds the Rust server, starts it, 
 - `src/renderer/` contains the React renderer.
 - `src/renderer/ipc/` contains domain functions that renderer code imports to talk to the Rust server.
 - `src/components/ui/` contains shadcn/ui components generated for Base UI.
-- `src/shared/ipc/` contains protocol envelope and domain types shared across Electron processes.
+- `src/shared/ipc/generated/` contains schema-derived IPC declarations and runtime validators; `src/shared/ipc/index.ts` is the small Electron-facing facade.
 
 The renderer never talks to the Rust server directly. Renderer consumers should import functions from `src/renderer/ipc/`, which call Electron IPC through the preload API. The main process forwards those calls to the existing newline-delimited JSON protocol on the server Unix socket.
 
@@ -54,6 +54,8 @@ The socket path matches the Rust server lookup order: `$KOSMOS_SOCKET`, then `$X
 bun run build
 bun run dev
 bun run start
+bun run generate:ipc
+bun run check:ipc
 bun run typecheck
 ```
 
@@ -66,6 +68,7 @@ bash scripts/check-boundaries.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+bun run --cwd desktop check:ipc
 bun run --cwd desktop typecheck
 bun run --cwd desktop test
 bun run --cwd desktop build

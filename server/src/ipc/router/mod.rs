@@ -11,6 +11,8 @@ mod terminal;
 mod window;
 mod workspace;
 
+use schemars::JsonSchema;
+use schemars::schema::RootSchema;
 use serde::de::DeserializeOwned;
 
 use super::messages::envelope::{Domain, RequestEnvelope, ServerMessage};
@@ -22,6 +24,38 @@ type CancellableRouteHandler = fn(
     &RequestEnvelope,
     &core::language_servers::LanguageServerRequestCancellation,
 ) -> ServerMessage;
+
+pub(crate) const DOMAINS: &[Domain] = &[
+    Domain::Workspace,
+    Domain::Pane,
+    Domain::Tab,
+    Domain::FileTree,
+    Domain::Formatters,
+    Domain::Editor,
+    Domain::Git,
+    Domain::Search,
+    Domain::Terminal,
+    Domain::Settings,
+    Domain::LanguageServers,
+    Domain::Window,
+];
+
+pub(crate) fn routes_for(domain: Domain) -> &'static [Route] {
+    match domain {
+        Domain::Workspace => workspace::ROUTES,
+        Domain::Pane => pane::ROUTES,
+        Domain::Tab => tab::ROUTES,
+        Domain::FileTree => file_tree::ROUTES,
+        Domain::Formatters => formatters::ROUTES,
+        Domain::Editor => editor::ROUTES,
+        Domain::Git => git::ROUTES,
+        Domain::Search => search::ROUTES,
+        Domain::Terminal => terminal::ROUTES,
+        Domain::Settings => settings::ROUTES,
+        Domain::LanguageServers => language_servers::ROUTES,
+        Domain::Window => window::ROUTES,
+    }
+}
 
 pub(crate) fn prepare(request: RequestEnvelope) -> Result<PreparedRoute, ServerMessage> {
     let definition = match request.domain {
@@ -120,9 +154,42 @@ pub(super) struct RouteDefinition {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Route {
+pub(crate) struct Route {
     pub(super) action: &'static str,
     pub(super) definition: RouteDefinition,
+    pub(super) contract: ActionContract,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ActionContract {
+    pub(crate) params_schema: fn() -> RootSchema,
+    pub(crate) result_schema: fn() -> RootSchema,
+}
+
+impl ActionContract {
+    pub(crate) const fn of<Params: JsonSchema, Result: JsonSchema>() -> Self {
+        Self {
+            params_schema: schema_for::<Params>,
+            result_schema: schema_for::<Result>,
+        }
+    }
+}
+
+impl Route {
+    pub(super) const fn new<Params: JsonSchema, Result: JsonSchema>(
+        action: &'static str,
+        definition: RouteDefinition,
+    ) -> Self {
+        Self {
+            action,
+            definition,
+            contract: ActionContract::of::<Params, Result>(),
+        }
+    }
+}
+
+fn schema_for<T: JsonSchema>() -> RootSchema {
+    schemars::schema_for!(T)
 }
 
 pub(super) fn find_route(routes: &[Route], action: &str) -> Option<RouteDefinition> {
@@ -263,21 +330,6 @@ pub(super) fn unsupported_action(request: &RequestEnvelope) -> ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const DOMAINS: &[Domain] = &[
-        Domain::Workspace,
-        Domain::Pane,
-        Domain::Tab,
-        Domain::FileTree,
-        Domain::Formatters,
-        Domain::Editor,
-        Domain::Git,
-        Domain::Search,
-        Domain::Terminal,
-        Domain::Settings,
-        Domain::LanguageServers,
-        Domain::Window,
-    ];
 
     const EXPECTED_MODES: &[(Domain, &str, ExecutionMode)] = &[
         (Domain::Workspace, "list", ExecutionMode::Snapshot),
@@ -680,23 +732,6 @@ mod tests {
     fn unknown_actions_do_not_resolve() {
         for domain in DOMAINS {
             assert!(prepare(request(*domain, "missing")).is_err());
-        }
-    }
-
-    fn routes_for(domain: Domain) -> &'static [Route] {
-        match domain {
-            Domain::Workspace => workspace::ROUTES,
-            Domain::Pane => pane::ROUTES,
-            Domain::Tab => tab::ROUTES,
-            Domain::FileTree => file_tree::ROUTES,
-            Domain::Formatters => formatters::ROUTES,
-            Domain::Editor => editor::ROUTES,
-            Domain::Git => git::ROUTES,
-            Domain::Search => search::ROUTES,
-            Domain::Terminal => terminal::ROUTES,
-            Domain::Settings => settings::ROUTES,
-            Domain::LanguageServers => language_servers::ROUTES,
-            Domain::Window => window::ROUTES,
         }
     }
 

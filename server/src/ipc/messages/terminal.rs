@@ -1,9 +1,10 @@
 use core::tabs::terminal::{TerminalOutput, TerminalShell};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenTerminalParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -12,14 +13,14 @@ pub(crate) struct OpenTerminalParams {
     pub(crate) rows: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WriteTerminalInputParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -27,7 +28,7 @@ pub(crate) struct WriteTerminalInputParams {
     pub(crate) data: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResizeTerminalParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -36,7 +37,7 @@ pub(crate) struct ResizeTerminalParams {
     pub(crate) rows: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RestartTerminalParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -46,7 +47,7 @@ pub(crate) struct RestartTerminalParams {
     pub(crate) shell: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalShellSnapshot {
     name: String,
@@ -64,7 +65,7 @@ impl TerminalShellSnapshot {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalOutputSnapshot {
     output: String,

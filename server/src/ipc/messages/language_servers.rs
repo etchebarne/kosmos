@@ -1,14 +1,16 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::AnyJson;
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerParams {
     pub(crate) server_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenLanguageServerDocumentParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -19,7 +21,7 @@ pub(crate) struct OpenLanguageServerDocumentParams {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChangeLanguageServerDocumentParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -30,7 +32,7 @@ pub(crate) struct ChangeLanguageServerDocumentParams {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CloseLanguageServerDocumentParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -38,7 +40,7 @@ pub(crate) struct CloseLanguageServerDocumentParams {
     pub(crate) generation: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveLanguageServerDocumentParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -48,7 +50,7 @@ pub(crate) struct SaveLanguageServerDocumentParams {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerHoverParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -60,7 +62,7 @@ pub(crate) struct LanguageServerHoverParams {
 
 pub(crate) type LanguageServerPositionParams = LanguageServerHoverParams;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerReferencesParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -71,21 +73,21 @@ pub(crate) struct LanguageServerReferencesParams {
     pub(crate) include_declaration: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerWorkspaceSymbolsParams {
     pub(crate) query: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolveLanguageServerWorkspaceSymbolParams {
     pub(crate) server_id: String,
     pub(crate) workspace_id: WorkspaceIdParam,
-    pub(crate) raw: serde_json::Value,
+    pub(crate) raw: AnyJson,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerDiagnosticsParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -94,7 +96,7 @@ pub(crate) struct LanguageServerDiagnosticsParams {
     pub(crate) version: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerCompletionParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -107,7 +109,7 @@ pub(crate) struct LanguageServerCompletionParams {
     pub(crate) filter: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolveLanguageServerCompletionParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -115,10 +117,10 @@ pub(crate) struct ResolveLanguageServerCompletionParams {
     pub(crate) generation: u64,
     pub(crate) version: i64,
     pub(crate) server_id: String,
-    pub(crate) raw: serde_json::Value,
+    pub(crate) raw: AnyJson,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerColorPresentationParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -130,7 +132,7 @@ pub(crate) struct LanguageServerColorPresentationParams {
     pub(crate) color: LanguageServerColorPayload,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerFormattingParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -143,7 +145,7 @@ pub(crate) struct LanguageServerFormattingParams {
     pub(crate) insert_spaces: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerRenameParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -155,7 +157,7 @@ pub(crate) struct LanguageServerRenameParams {
     pub(crate) server_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerCodeActionsParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -163,10 +165,10 @@ pub(crate) struct LanguageServerCodeActionsParams {
     pub(crate) generation: u64,
     pub(crate) version: i64,
     pub(crate) range: LanguageServerRangePayload,
-    pub(crate) context: serde_json::Value,
+    pub(crate) context: AnyJson,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolveLanguageServerCodeActionParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -175,16 +177,16 @@ pub(crate) struct ResolveLanguageServerCodeActionParams {
     pub(crate) version: i64,
     pub(crate) action_id: u64,
     pub(crate) server_id: String,
-    pub(crate) raw: serde_json::Value,
+    pub(crate) raw: AnyJson,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StageLanguageServerCodeActionParams {
     pub(crate) action: LanguageServerCodeActionPayload,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExecuteLanguageServerCommandParams {
     pub(crate) workspace_id: WorkspaceIdParam,
@@ -195,14 +197,14 @@ pub(crate) struct ExecuteLanguageServerCommandParams {
     pub(crate) authorization: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceEditTransactionParams {
     pub(crate) transaction_id: u64,
     pub(crate) authorization: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceEditTransactionStatusPayload {
     transaction_id: u64,
@@ -212,7 +214,7 @@ pub(crate) struct WorkspaceEditTransactionStatusPayload {
     requires_acknowledgement: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceEditRecoveryPayload {
     authorization: String,
@@ -220,7 +222,7 @@ pub(crate) struct WorkspaceEditRecoveryPayload {
     status: WorkspaceEditTransactionStatusPayload,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum WorkspaceEditTransactionPhasePayload {
     Staged,
@@ -234,7 +236,7 @@ enum WorkspaceEditTransactionPhasePayload {
     FinishedUncommitted,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerColorPayload {
     red: f64,
@@ -243,40 +245,40 @@ pub(crate) struct LanguageServerColorPayload {
     alpha: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TrustLanguageServerWorkspaceParams {
     pub(crate) workspace_id: WorkspaceIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerChangePayload {
     pub(crate) range: LanguageServerRangePayload,
     pub(crate) text: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerPositionPayload {
     pub(crate) line: u32,
     pub(crate) character: u32,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerRangePayload {
     pub(crate) start: LanguageServerPositionPayload,
     pub(crate) end: LanguageServerPositionPayload,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerListSnapshot {
     servers: Vec<LanguageServerSnapshot>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerSnapshot {
     id: String,
@@ -297,7 +299,7 @@ pub(crate) struct LanguageServerSnapshot {
     supported: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum InstallationStatePayload {
     NotInstalled,
@@ -307,7 +309,7 @@ enum InstallationStatePayload {
     Failed,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum RuntimeStatePayload {
     Inactive,
@@ -317,35 +319,35 @@ enum RuntimeStatePayload {
     Crashed,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerFailurePayload {
     code: String,
     message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerLogPayload {
     kind: LanguageServerLogKindPayload,
     message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum LanguageServerLogKindPayload {
     Stderr,
     Runtime,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerHoverPayload {
     contents: Vec<LanguageServerHoverContentPayload>,
     range: Option<LanguageServerRangePayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerDiagnosticPayload {
     range: LanguageServerRangePayload,
@@ -355,21 +357,21 @@ pub(crate) struct LanguageServerDiagnosticPayload {
     code: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerDiagnosticSnapshotPayload {
     server_id: String,
     diagnostics: Vec<LanguageServerDiagnosticPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerCompletionListPayload {
     items: Vec<LanguageServerCompletionItemPayload>,
     is_incomplete: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerCompletionItemPayload {
     server_id: String,
@@ -388,10 +390,10 @@ pub(crate) struct LanguageServerCompletionItemPayload {
     commit_characters: Vec<String>,
     preselect: bool,
     deprecated: bool,
-    raw: serde_json::Value,
+    raw: AnyJson,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerCompletionTextEditPayload {
     insert: LanguageServerRangePayload,
@@ -399,7 +401,7 @@ struct LanguageServerCompletionTextEditPayload {
     new_text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerColorInformationPayload {
     server_id: String,
@@ -407,7 +409,7 @@ pub(crate) struct LanguageServerColorInformationPayload {
     color: LanguageServerColorPayload,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerColorPresentationPayload {
     label: String,
@@ -415,14 +417,14 @@ pub(crate) struct LanguageServerColorPresentationPayload {
     additional_text_edits: Vec<LanguageServerCompletionTextEditPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerTextEditPayload {
     range: LanguageServerRangePayload,
     new_text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerPrepareRenamePayload {
     server_id: String,
@@ -430,7 +432,7 @@ pub(crate) struct LanguageServerPrepareRenamePayload {
     placeholder: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerCodeActionPayload {
     action_id: u64,
@@ -441,10 +443,10 @@ pub(crate) struct LanguageServerCodeActionPayload {
     disabled_reason: Option<String>,
     resolve_supported: bool,
     command_authorization: Option<String>,
-    raw: serde_json::Value,
+    raw: AnyJson,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StagedWorkspaceEditPayload {
     transaction_id: u64,
@@ -453,29 +455,38 @@ pub(crate) struct StagedWorkspaceEditPayload {
     operations: Vec<StagedWorkspaceEditOperationPayload>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 enum StagedWorkspaceEditOperationPayload {
     TextDocument {
         document: usize,
     },
     CreateFile {
+        #[schemars(rename = "workspaceId")]
         workspace_id: WorkspaceIdParam,
         path: String,
     },
     RenameFile {
+        #[schemars(rename = "workspaceId")]
         workspace_id: WorkspaceIdParam,
+        #[schemars(rename = "oldPath")]
         old_path: String,
+        #[schemars(rename = "newPath")]
         new_path: String,
     },
     DeleteFile {
+        #[schemars(rename = "workspaceId")]
         workspace_id: WorkspaceIdParam,
         path: String,
         recursive: bool,
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StagedWorkspaceEditDocumentPayload {
     workspace_id: WorkspaceIdParam,
@@ -487,7 +498,7 @@ struct StagedWorkspaceEditDocumentPayload {
     version: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerSignatureHelpPayload {
     signatures: Vec<LanguageServerSignatureInformationPayload>,
@@ -495,7 +506,7 @@ pub(crate) struct LanguageServerSignatureHelpPayload {
     active_parameter: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerSignatureInformationPayload {
     label: String,
@@ -504,14 +515,21 @@ struct LanguageServerSignatureInformationPayload {
     active_parameter: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerParameterInformationPayload {
-    label: serde_json::Value,
+    label: LanguageServerParameterLabelPayload,
     documentation: Option<LanguageServerHoverContentPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(untagged)]
+enum LanguageServerParameterLabelPayload {
+    Text(String),
+    Utf16Offsets([u32; 2]),
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerLocationPayload {
     workspace_id: WorkspaceIdParam,
@@ -520,7 +538,7 @@ pub(crate) struct LanguageServerLocationPayload {
     selection_range: LanguageServerRangePayload,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerDocumentSymbolPayload {
     name: String,
@@ -532,7 +550,7 @@ pub(crate) struct LanguageServerDocumentSymbolPayload {
     children: Vec<LanguageServerDocumentSymbolPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerWorkspaceSymbolPayload {
     server_id: String,
@@ -542,11 +560,11 @@ pub(crate) struct LanguageServerWorkspaceSymbolPayload {
     container_name: Option<String>,
     deprecated: bool,
     location: Option<LanguageServerLocationPayload>,
-    raw: serde_json::Value,
+    raw: AnyJson,
     resolve_supported: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum LanguageServerDiagnosticSeverityPayload {
     Error,
@@ -555,14 +573,14 @@ enum LanguageServerDiagnosticSeverityPayload {
     Hint,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageServerHoverContentPayload {
     kind: LanguageServerMarkupKindPayload,
     value: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum LanguageServerMarkupKindPayload {
     PlainText,
@@ -813,7 +831,7 @@ impl LanguageServerCompletionItemPayload {
             commit_characters: item.commit_characters,
             preselect: item.preselect,
             deprecated: item.deprecated,
-            raw: item.raw,
+            raw: item.raw.into(),
         }
     }
 }
@@ -858,7 +876,7 @@ impl LanguageServerCodeActionPayload {
             disabled_reason: action.disabled_reason,
             resolve_supported: action.resolve_supported,
             command_authorization: action.command_authorization,
-            raw: action.raw,
+            raw: action.raw.into(),
         }
     }
 
@@ -872,7 +890,7 @@ impl LanguageServerCodeActionPayload {
             disabled_reason: self.disabled_reason,
             resolve_supported: self.resolve_supported,
             command_authorization: self.command_authorization,
-            raw: self.raw,
+            raw: self.raw.into_inner(),
         }
     }
 }
@@ -990,8 +1008,8 @@ impl LanguageServerSignatureHelpPayload {
                         .into_iter()
                         .map(|parameter| LanguageServerParameterInformationPayload {
                             label: match parameter.label {
-                                core::language_servers::LanguageServerParameterLabel::Text(label) => serde_json::Value::String(label),
-                                core::language_servers::LanguageServerParameterLabel::Utf16Offsets(start, end) => serde_json::json!([start, end]),
+                                core::language_servers::LanguageServerParameterLabel::Text(label) => LanguageServerParameterLabelPayload::Text(label),
+                                core::language_servers::LanguageServerParameterLabel::Utf16Offsets(start, end) => LanguageServerParameterLabelPayload::Utf16Offsets([start, end]),
                             },
                             documentation: parameter.documentation.map(LanguageServerHoverContentPayload::from_core),
                         })
@@ -1058,7 +1076,7 @@ impl LanguageServerWorkspaceSymbolPayload {
             location: symbol
                 .location
                 .map(LanguageServerLocationPayload::from_core),
-            raw: symbol.raw,
+            raw: symbol.raw.into(),
             resolve_supported: symbol.resolve_supported,
         }
     }

@@ -1,10 +1,11 @@
 use core::tabs::editor::EditorDocument;
 use core::tabs::git::GitLineHunk;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenEditorTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -12,14 +13,14 @@ pub(crate) struct OpenEditorTabParams {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EditorDocumentParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveEditorDocumentParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
@@ -27,22 +28,22 @@ pub(crate) struct SaveEditorDocumentParams {
     pub(crate) content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EditorDocumentPayload {
     path: String,
     content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EditorGitLineHunksPayload {
     hunks: Vec<EditorGitLineHunkPayload>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct EditorGitLineHunkPayload {
+pub(crate) struct EditorGitLineHunkPayload {
     old_start: u32,
     old_lines: u32,
     new_start: u32,

@@ -1,5 +1,3 @@
-mod ipc;
-
 use std::io;
 use std::path::PathBuf;
 
@@ -21,7 +19,7 @@ fn main() -> io::Result<()> {
         Err(error) => eprintln!("formatter manager unavailable: {error}"),
     }
 
-    ipc::run(socket_path(), state, store)
+    kosmos_server::ipc::run(socket_path(), state, store)
 }
 
 fn socket_path() -> PathBuf {
