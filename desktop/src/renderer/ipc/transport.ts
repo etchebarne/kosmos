@@ -1,4 +1,5 @@
 import type { KosmosIpcDomain, KosmosIpcParams } from "@/shared/ipc";
+import { hasIpcErrorCode, requestResultValue } from "@/renderer/lib/errors";
 
 export type RequestCancellation = {
   readonly isCancellationRequested: boolean;
@@ -21,7 +22,7 @@ export function requestServer<T = unknown>(
   cancellation?: RequestCancellation,
 ): Promise<T> {
   if (!cancellation) {
-    return kosmosApi().request<T>({ domain, action, params });
+    return kosmosApi().request<T>({ domain, action, params }).then(requestResultValue);
   }
   return requestServerCancellable(domain, action, params, cancellation);
 }
@@ -51,7 +52,7 @@ async function requestServerCancellable<T>(
     if (cancellation.isCancellationRequested) {
       cancel();
     }
-    return await request;
+    return requestResultValue(await request);
   } catch (error) {
     if (isRequestCancelledError(error)) {
       throw new RequestCancelledError();
@@ -65,12 +66,7 @@ async function requestServerCancellable<T>(
 export function isRequestCancelledError(error: unknown): boolean {
   return (
     error instanceof RequestCancelledError ||
-    (typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "language_servers.request_cancelled") ||
-    (error instanceof Error &&
-      error.message.startsWith("language_servers.request_cancelled:"))
+    hasIpcErrorCode(error, "language_servers.request_cancelled")
   );
 }
 

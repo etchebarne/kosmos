@@ -24,7 +24,6 @@ import {
   listWorkspaceEditRecoveries,
   openLanguageServerDocument,
   resolveLanguageServerCompletion,
-  trustLanguageServerWorkspace,
   commitWorkspaceEdit,
   executeLanguageServerCommand,
   finalizeWorkspaceEdit,
@@ -35,6 +34,7 @@ import {
   resolveLanguageServerCodeAction,
   rollbackWorkspaceEdit,
   stageLanguageServerCodeAction,
+  trustLanguageServerWorkspace,
 } from "@/renderer/ipc";
 import type {
   FormatterSnapshot,
@@ -96,6 +96,9 @@ import {
   type OpenWorkspaceEditTarget,
 } from "./workspace-edit-transaction";
 import { useWorkspaceStore } from "@/renderer/stores/workspace-store";
+import { hasIpcErrorCode } from "./errors";
+import { requestWorkspaceTrust } from "@/renderer/stores/workspace-trust-store";
+import { canRetryWorkspaceTrustDocument } from "./workspace-trust-retry";
 
 export type LanguageDocumentHandle = {
   dispose(): void;
@@ -157,7 +160,6 @@ const codeActionMetadata = new WeakMap<
   }
 >();
 const preparedRenameServers = new Map<string, string>();
-const trustRequests = new Map<WorkspaceId, Promise<boolean>>();
 const DIAGNOSTIC_OWNER_PREFIX = "kosmos-language-server:";
 const BINDING_RETRY_DELAY_MS = 2_000;
 const COMPLETION_TRIGGER_CHARACTERS = [
@@ -1699,11 +1701,14 @@ async function ensureOpen(document: LanguageDocument): Promise<void> {
   try {
     complete = await openDocument(document, version);
   } catch (caughtError) {
-    if (!(await trustWorkspaceAfterError(document.workspaceId, caughtError))) {
+    if (!(await requestWorkspaceTrustAfterError(document.workspaceId, caughtError))) {
       if (isTransientBindingError(caughtError)) {
         scheduleBindingRetry(document, connectionEpoch);
       }
       throw caughtError;
+    }
+    if (!canRetryWorkspaceTrustDocument(document, connectionEpoch)) {
+      return;
     }
     document.generation = nextDocumentGeneration();
     try {
@@ -1785,28 +1790,14 @@ function openDocument(document: LanguageDocument, version: number): Promise<bool
   });
 }
 
-function trustWorkspaceAfterError(workspaceId: WorkspaceId, error: unknown): Promise<boolean> {
-  if (
-    !(error instanceof Error) ||
-    !error.message.startsWith("language_servers.workspace_not_trusted:")
-  ) {
+function requestWorkspaceTrustAfterError(workspaceId: WorkspaceId, error: unknown): Promise<boolean> {
+  if (!hasIpcErrorCode(error, "language_servers.workspace_not_trusted")) {
     return Promise.resolve(false);
   }
-  const existing = trustRequests.get(workspaceId);
-  if (existing) {
-    return existing;
-  }
 
-  const request = Promise.resolve().then(async () => {
-    await trustLanguageServerWorkspace({ workspaceId });
-    return true;
-  });
-  trustRequests.set(workspaceId, request);
-  void request.then(
-    () => trustRequests.delete(workspaceId),
-    () => trustRequests.delete(workspaceId),
-  );
-  return request;
+  return requestWorkspaceTrust(workspaceId, () =>
+    trustLanguageServerWorkspace({ workspaceId }),
+  ).then((decision) => decision === "trust");
 }
 
 async function synchronizeChange(
@@ -2309,17 +2300,14 @@ function randomGenerationSeed(): number {
 }
 
 function isTransientBindingError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
   return [
-    "language_servers.worker_busy:",
-    "language_servers.worker_unavailable:",
-    "language_servers.server_start_failed:",
-    "language_servers.server_exited:",
-    "language_servers.request_timeout:",
-    "language_servers.runtime_unavailable:",
-  ].some((prefix) => error.message.startsWith(prefix));
+    "language_servers.worker_busy",
+    "language_servers.worker_unavailable",
+    "language_servers.server_start_failed",
+    "language_servers.server_exited",
+    "language_servers.request_timeout",
+    "language_servers.runtime_unavailable",
+  ].some((code) => hasIpcErrorCode(error, code));
 }
 
 function enqueue(document: LanguageDocument, operation: () => Promise<unknown>): void {

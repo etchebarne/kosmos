@@ -2,14 +2,13 @@ import { BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electro
 
 import type {
   KosmosIpcDomain,
-  KosmosIpcError,
   KosmosIpcRequest,
   KosmosIpcRequestResult,
   KosmosServerNotification,
 } from "../../shared/ipc";
-import { errorMessage } from "../error-message";
-import { KosmosIpcRequestError, type KosmosServerClient } from "../server/client";
+import type { KosmosServerClient } from "../server/client";
 import { setWindowZoomLevel } from "../window/shortcuts";
+import { ipcRequestFailure } from "./request-result";
 
 export type ApplyEditOwner = {
   id: number;
@@ -98,7 +97,7 @@ export function registerIpcHandlers(
 
       return { ok: true, result };
     } catch (caughtError: unknown) {
-      return { ok: false, error: ipcRequestError(caughtError) };
+      return ipcRequestFailure(caughtError);
     } finally {
       if (cancellation && request.requestKey) {
         const requests = rendererRequests.get(event.sender.id);
@@ -212,12 +211,4 @@ function validateRequest(request: KosmosIpcRequest): void {
   if (typeof request.action !== "string" || request.action.length === 0) {
     throw new Error("IPC request action must be a non-empty string");
   }
-}
-
-function ipcRequestError(error: unknown): KosmosIpcError {
-  if (error instanceof KosmosIpcRequestError) {
-    return { code: error.code, message: error.messageWithoutCode };
-  }
-
-  return { code: "ipc.request_failed", message: errorMessage(error) };
 }

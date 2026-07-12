@@ -1049,6 +1049,20 @@ mod tests {
     }
 
     #[test]
+    fn workspace_trust_requirement_returns_a_typed_error() {
+        let response = serde_json::to_value(language_server_error(
+            10,
+            LanguageServerError::WorkspaceNotTrusted,
+        ))
+        .expect("response should serialize");
+
+        assert_eq!(
+            response["error"]["code"],
+            "language_servers.workspace_not_trusted"
+        );
+    }
+
+    #[test]
     fn status_requires_a_server_id() {
         let mut state = core::State::new();
         let response = status(

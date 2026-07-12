@@ -108,7 +108,7 @@ export type KosmosIpcRequestResult<T = unknown> =
   | { ok: false; error: Generated.KosmosIpcError };
 
 export type KosmosApi = {
-  request<T = unknown>(request: KosmosIpcRequest): Promise<T>;
+  request<T = unknown>(request: KosmosIpcRequest): Promise<KosmosIpcRequestResult<T>>;
   cancelRequest(requestKey: string): void;
   acknowledgeServerApplyEdit(
     id: number,

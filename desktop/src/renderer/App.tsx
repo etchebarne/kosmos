@@ -4,6 +4,7 @@ import { Header } from "@/renderer/components/internal/header";
 import { WorkspaceView } from "@/renderer/components/internal/workspace-view";
 import { WorkspaceSymbolPicker } from "@/renderer/components/internal/workspace-symbol-picker";
 import { WorkspaceEditRecovery } from "@/renderer/components/internal/workspace-edit-recovery";
+import { WorkspaceTrustDialog } from "@/renderer/components/internal/workspace-trust-dialog";
 import { setLanguageLocationOpener } from "@/renderer/lib/language-client";
 import { findSetting, useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import { APPEARANCE_ZOOM_LEVEL } from "@/shared/ipc";
@@ -93,6 +94,7 @@ export function App() {
       <WorkspaceView />
       <WorkspaceSymbolPicker />
       <WorkspaceEditRecovery />
+      <WorkspaceTrustDialog />
     </main>
   );
 }

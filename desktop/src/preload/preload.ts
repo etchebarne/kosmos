@@ -7,26 +7,12 @@ import type {
   KosmosServerNotification,
   WorkspaceId,
 } from "../shared/ipc";
-
-class KosmosPreloadRequestError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(`${code}: ${message}`);
-    this.name = "KosmosIpcRequestError";
-  }
-}
+import { reconstructIpcRequestResult } from "./request-result";
 
 const kosmos: KosmosApi = {
-  async request<T = unknown>(request: KosmosIpcRequest): Promise<T> {
+  async request<T = unknown>(request: KosmosIpcRequest): Promise<KosmosIpcRequestResult<T>> {
     const response = (await ipcRenderer.invoke("kosmos:request", request)) as KosmosIpcRequestResult<T>;
-
-    if (response.ok) {
-      return response.result;
-    }
-
-    throw new KosmosPreloadRequestError(response.error.code, response.error.message);
+    return reconstructIpcRequestResult<T>(response);
   },
   cancelRequest(requestKey: string): void {
     ipcRenderer.send("kosmos:cancelRequest", requestKey);

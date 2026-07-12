@@ -1278,6 +1278,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn workspace_must_be_trusted_before_opening_language_documents() {
+        let root = test_directory("workspace-trust");
+        let paths = LanguageServerPaths::new(root.join("data"), root.join("cache"));
+        paths.prepare().unwrap();
+        let store = StateStore::open(root.join("state.sqlite")).unwrap();
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let document_path = workspace.join("main.ts");
+        fs::write(&document_path, "const value = 1;\n").unwrap();
+        let manager = LanguageServerManager::open(paths, store.clone()).unwrap();
+
+        let rejected = manager.open_document(test_document(&workspace, &document_path));
+        assert!(matches!(
+            rejected,
+            Err(LanguageServerError::WorkspaceNotTrusted)
+        ));
+
+        manager.trust_workspace(&workspace).unwrap();
+        assert_eq!(
+            store.trusted_language_server_workspaces().unwrap(),
+            vec![workspace.clone()]
+        );
+        assert!(!matches!(
+            manager.open_document(test_document(&workspace, &document_path)),
+            Err(LanguageServerError::WorkspaceNotTrusted)
+        ));
+
+        drop(manager);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     struct TestFixture {
         root: PathBuf,
         paths: LanguageServerPaths,
@@ -1369,6 +1401,22 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+    }
+
+    fn test_document<'a>(
+        workspace: &'a std::path::Path,
+        document_path: &'a std::path::Path,
+    ) -> LanguageServerDocumentOpen<'a> {
+        LanguageServerDocumentOpen {
+            workspace_id: WorkspaceId::new(1),
+            workspace_root: workspace,
+            absolute_path: document_path,
+            relative_path: "main.ts",
+            language_id: "typescript",
+            generation: 1,
+            version: 1,
+            text: "const value = 1;\n",
+        }
     }
 
     fn test_directory(name: &str) -> PathBuf {

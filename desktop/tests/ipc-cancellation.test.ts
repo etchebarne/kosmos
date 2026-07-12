@@ -23,14 +23,20 @@ describe("cancellable renderer IPC", () => {
     let rejectRequest: ((error: Error) => void) | undefined;
     installApi({
       request: () =>
-        new Promise((_resolve, reject) => {
-          rejectRequest = reject;
+        new Promise((resolve) => {
+          rejectRequest = (error) => {
+            resolve({
+              ok: false,
+              error: {
+                code: "language_servers.request_cancelled",
+                message: error.message,
+              },
+            });
+          };
         }),
       cancelRequest: (requestKey) => {
         cancelledKeys.push(requestKey);
-        rejectRequest?.(
-          new Error("language_servers.request_cancelled: request was cancelled"),
-        );
+        rejectRequest?.(new Error("request was cancelled"));
       },
     });
 
@@ -50,7 +56,7 @@ describe("cancellable renderer IPC", () => {
     installApi({
       request: async () => {
         requestCount += 1;
-        return null;
+        return { ok: true, result: null };
       },
       cancelRequest: () => {},
     });
