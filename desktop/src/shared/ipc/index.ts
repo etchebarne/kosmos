@@ -18,6 +18,8 @@ export type SearchMode = Generated.SearchModeParam;
 
 export type EditorTabParams = Pick<Generated.EditorDocumentParams, "workspaceId" | "tabId">;
 export type EditorDocument = Generated.EditorDocumentPayload;
+export type EditorSave = Generated.SaveEditorDocumentPayload;
+export type EditorSaveWarning = Generated.EditorSaveWarningPayload;
 export type EditorGitLineHunks = Generated.EditorGitLineHunksPayload;
 export type EditorGitLineHunk = Generated.EditorGitLineHunkPayload;
 export type CloseResult = Generated.CloseResultPayload;

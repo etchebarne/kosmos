@@ -10,6 +10,7 @@ use super::notifications::{NotificationHub, NotificationSubscription};
 use super::response::ResponseSender;
 
 const MAX_QUEUED_REQUESTS: usize = 64;
+const EDITOR_SAVE_WORKERS: usize = 2;
 const LANGUAGE_SERVER_FEATURE_WORKERS: usize = 4;
 
 #[derive(Clone)]
@@ -18,6 +19,7 @@ pub(crate) struct Dispatcher {
     #[cfg(test)]
     state: Arc<Mutex<core::Application>>,
     external_requests: mpsc::SyncSender<ExternalRequest>,
+    editor_save_requests: mpsc::SyncSender<EditorSaveRequest>,
     language_server_requests: mpsc::SyncSender<ExternalRequest>,
     language_server_feature_requests: mpsc::SyncSender<ExternalRequest>,
     persistent_requests: mpsc::SyncSender<PersistentRequest>,
@@ -50,6 +52,7 @@ impl Dispatcher {
             .unwrap_or_else(|error| error.into_inner())
             .set_event_sink(Arc::new(notifications.clone()));
         let (external_requests, external_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
+        let (editor_save_requests, editor_save_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
         let (language_server_requests, language_server_receiver) =
             mpsc::sync_channel(MAX_QUEUED_REQUESTS);
         let (language_server_feature_requests, language_server_feature_receiver) =
@@ -57,6 +60,7 @@ impl Dispatcher {
         let (persistent_requests, persistent_receiver) = mpsc::sync_channel(MAX_QUEUED_REQUESTS);
 
         spawn_external_worker(external_receiver)?;
+        spawn_editor_save_workers(Arc::clone(&application), editor_save_receiver)?;
         spawn_language_server_worker(language_server_receiver)?;
         spawn_language_server_feature_workers(language_server_feature_receiver)?;
         spawn_persistence_worker(
@@ -82,6 +86,7 @@ impl Dispatcher {
             #[cfg(test)]
             state: application,
             external_requests,
+            editor_save_requests,
             language_server_requests,
             language_server_feature_requests,
             persistent_requests,
@@ -195,6 +200,33 @@ impl Dispatcher {
                 ));
                 None
             }
+            SchedulingMode::EditorSave => {
+                let operation = match self.application.lock() {
+                    Ok(mut application) => match route.prepare_editor_save(&mut application) {
+                        Ok(operation) => operation,
+                        Err(response) => {
+                            responses.send(response);
+                            return None;
+                        }
+                    },
+                    Err(_) => {
+                        responses.send(state_unavailable(route.request_id()));
+                        return None;
+                    }
+                };
+                let (completion, completed) = mpsc::channel();
+                queue_editor_save_request(
+                    &self.editor_save_requests,
+                    EditorSaveRequest {
+                        route,
+                        responses,
+                        operation,
+                        completion,
+                        cancellation,
+                    },
+                );
+                Some(completed)
+            }
             SchedulingMode::External => {
                 let (completion, completed) = mpsc::channel();
                 let operation =
@@ -285,6 +317,14 @@ struct ExternalRequest {
     route: PreparedRoute,
     responses: ResponseSender,
     operation: core::PreparedExternalOperation,
+    completion: mpsc::Sender<()>,
+    cancellation: core::language_servers::LanguageServerRequestCancellation,
+}
+
+struct EditorSaveRequest {
+    route: PreparedRoute,
+    responses: ResponseSender,
+    operation: core::PreparedEditorSessionSave,
     completion: mpsc::Sender<()>,
     cancellation: core::language_servers::LanguageServerRequestCancellation,
 }
@@ -400,6 +440,59 @@ fn spawn_external_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Resul
             }
         })
         .map(|_| ())
+}
+
+fn spawn_editor_save_workers(
+    application: Arc<Mutex<core::Application>>,
+    requests: mpsc::Receiver<EditorSaveRequest>,
+) -> io::Result<()> {
+    let requests = Arc::new(Mutex::new(requests));
+    for index in 0..EDITOR_SAVE_WORKERS {
+        let application = Arc::clone(&application);
+        let requests = Arc::clone(&requests);
+        thread::Builder::new()
+            .name(format!("kosmos-editor-saves-{index}"))
+            .spawn(move || {
+                loop {
+                    let received = requests
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .recv();
+                    let Ok(request) = received else {
+                        break;
+                    };
+                    if request.cancellation.is_cancelled() {
+                        request
+                            .responses
+                            .send(request_cancelled(request.route.request_id()));
+                        let _ = request.completion.send(());
+                        continue;
+                    }
+
+                    let EditorSaveRequest {
+                        route,
+                        responses,
+                        operation,
+                        completion,
+                        cancellation,
+                    } = request;
+                    let request_id = route.request_id();
+                    let response = catch_unwind(AssertUnwindSafe(|| {
+                        let execution = operation.execute(&cancellation);
+                        match application.lock() {
+                            Ok(mut application) => {
+                                route.complete_editor_save(&mut application, execution)
+                            }
+                            Err(_) => state_unavailable(request_id),
+                        }
+                    }))
+                    .unwrap_or_else(|_| handler_panicked(request_id));
+                    responses.send(response);
+                    let _ = completion.send(());
+                }
+            })?;
+    }
+    Ok(())
 }
 
 fn spawn_language_server_worker(requests: mpsc::Receiver<ExternalRequest>) -> io::Result<()> {
@@ -649,6 +742,33 @@ fn queue_external_request(requests: &mpsc::SyncSender<ExternalRequest>, request:
     }
 }
 
+fn queue_editor_save_request(
+    requests: &mpsc::SyncSender<EditorSaveRequest>,
+    request: EditorSaveRequest,
+) {
+    let request_id = request.route.request_id();
+
+    match requests.try_send(request) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(request)) => {
+            request.responses.send(ServerMessage::error(
+                request_id,
+                "ipc.worker_busy",
+                "editor save worker queue is full",
+            ));
+            let _ = request.completion.send(());
+        }
+        Err(mpsc::TrySendError::Disconnected(request)) => {
+            request.responses.send(ServerMessage::error(
+                request_id,
+                "ipc.worker_unavailable",
+                "editor save worker is unavailable",
+            ));
+            let _ = request.completion.send(());
+        }
+    }
+}
+
 fn queue_persistent_request(
     requests: &mpsc::SyncSender<PersistentRequest>,
     request: PersistentRequest,
@@ -749,6 +869,7 @@ fn persistence_error(request_id: u64, error: core::ApplicationError) -> ServerMe
         core::ApplicationError::Persistence(_) => "persistence.save_failed",
         core::ApplicationError::Editor(_)
         | core::ApplicationError::EditorSession(_)
+        | core::ApplicationError::RequestCancelled
         | core::ApplicationError::CloseNotFound
         | core::ApplicationError::InvalidCloseDecision => "persistence.operation_failed",
     };

@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use crate::tree::WorkspaceId;
 
 pub use catalog::{LanguageServerDefinition, LanguageToolFeature, language_server_catalog};
+pub(crate) use edits::apply_document_text_edits;
 pub use edits::{
     StagedWorkspaceEdit, StagedWorkspaceEditDocument, StagedWorkspaceEditOperation,
     WorkspaceEditError, WorkspaceEditModelDirective, WorkspaceEditOpenDocument,

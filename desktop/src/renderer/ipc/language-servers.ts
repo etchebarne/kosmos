@@ -18,7 +18,6 @@ import type {
   OpenLanguageServerDocumentParams,
   TrustLanguageServerWorkspaceParams,
   ResolveLanguageServerCompletionParams,
-  SaveLanguageServerDocumentParams,
   LanguageServerTextEdit,
   LanguageServerSignatureHelp,
   LanguageServerLocation,
@@ -95,12 +94,6 @@ export function closeLanguageServerDocument(
   params: CloseLanguageServerDocumentParams,
 ): Promise<boolean> {
   return requestServer(DOMAIN, "closeDocument", params);
-}
-
-export function saveLanguageServerDocument(
-  params: SaveLanguageServerDocumentParams,
-): Promise<boolean> {
-  return requestServer(DOMAIN, "saveDocument", params);
 }
 
 export function getLanguageServerHover(

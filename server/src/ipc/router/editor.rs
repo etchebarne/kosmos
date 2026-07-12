@@ -4,6 +4,7 @@ use super::super::messages::editor::{
     ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
     EditorGitLineHunksPayload, OpenEditorLocationParams, OpenEditorLocationPayload,
     OpenEditorSessionParams, OpenEditorTabParams, SaveEditorDocumentParams,
+    SaveEditorDocumentPayload,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::WorkspaceListSnapshot;
@@ -34,9 +35,9 @@ pub(super) const ROUTES: &[Route] = &[
         "changeSession",
         RouteDefinition::application(change_session),
     ),
-    Route::new::<SaveEditorDocumentParams, EditorDocumentPayload>(
+    Route::new::<SaveEditorDocumentParams, SaveEditorDocumentPayload>(
         "save",
-        RouteDefinition::application(save),
+        RouteDefinition::editor_save(prepare_save, complete_save),
     ),
 ];
 
@@ -141,20 +142,30 @@ fn change_session(application: &mut core::Application, request: &RequestEnvelope
     }
 }
 
-fn save(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+fn prepare_save(
+    application: &mut core::Application,
+    request: &RequestEnvelope,
+) -> Result<core::PreparedEditorSessionSave, ServerMessage> {
     match parse_params::<SaveEditorDocumentParams>(request) {
-        Ok(params) => match application.save_editor_session_unformatted(
-            params.workspace_id.map(Into::into),
-            params.tab_id.into(),
-            params.revision,
-        ) {
-            Ok(session) => ServerMessage::ok(
-                request.id,
-                EditorDocumentPayload::from_session(session, true),
-            ),
-            Err(error) => application_error(request.id, error),
-        },
-        Err(response) => response,
+        Ok(params) => application
+            .prepare_save_editor_session(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                params.revision,
+            )
+            .map_err(|error| application_error(request.id, error)),
+        Err(response) => Err(response),
+    }
+}
+
+fn complete_save(
+    application: &mut core::Application,
+    execution: core::ExecutedEditorSessionSave,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    match application.complete_save_editor_session(execution) {
+        Ok(result) => ServerMessage::ok(request.id, SaveEditorDocumentPayload::from_core(result)),
+        Err(error) => application_error(request.id, error),
     }
 }
 
@@ -179,6 +190,7 @@ fn application_error(id: u64, error: core::ApplicationError) -> ServerMessage {
             ..
         }) => "editor.stale_revision",
         core::ApplicationError::EditorSession(_) => "editor.session_invalid",
+        core::ApplicationError::RequestCancelled => "language_servers.request_cancelled",
         _ => "editor.session_failed",
     };
     ServerMessage::error(id, code, error.to_string())
@@ -245,6 +257,118 @@ mod tests {
         let _ = std::fs::remove_file(database);
     }
 
+    #[test]
+    fn save_maps_success_to_the_revisioned_core_result() {
+        let (mut application, root, database, workspace_id, tab_id) = editor_application();
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+
+        let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 2));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["result"]["savedRevision"], 2);
+        assert_eq!(response["result"]["currentRevision"], 2);
+        assert_eq!(response["result"]["savedContent"], "saved");
+        assert_eq!(response["result"]["warnings"], serde_json::json!([]));
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_maps_stale_revisions_without_executing_the_core_operation() {
+        let (mut application, root, database, workspace_id, tab_id) = editor_application();
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 2)
+            .unwrap();
+
+        let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 1));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["error"]["code"], "editor.stale_revision");
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "before"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_maps_disk_failures_as_fatal_errors() {
+        let (mut application, root, database, workspace_id, tab_id) = editor_application();
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+        std::fs::remove_file(root.join("document.txt")).unwrap();
+        std::fs::create_dir(root.join("document.txt")).unwrap();
+
+        let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 2));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["error"]["code"], "editor.not_regular_file");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_preserves_formatter_failures_as_non_fatal_warnings() {
+        let (mut application, root, database, workspace_id, tab_id) = editor_application();
+        application
+            .update_setting(
+                core::settings::EDITOR_FORMAT_ON_SAVE,
+                core::settings::SettingValue::Boolean(true),
+            )
+            .unwrap();
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+
+        let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 2));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["result"]["savedContent"], "saved");
+        assert_eq!(response["result"]["warnings"][0]["kind"], "formatting");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
     fn application() -> (
         core::Application,
         std::path::PathBuf,
@@ -277,6 +401,40 @@ mod tests {
         )
     }
 
+    fn editor_application() -> (
+        core::Application,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        core::tree::WorkspaceId,
+        core::tree::TabId,
+    ) {
+        let (mut application, root, database, workspace_id) = application();
+        application
+            .state_mut()
+            .open_editor_tab(
+                Some(workspace_id),
+                core::tree::TabId::new(1),
+                "document.txt",
+            )
+            .unwrap();
+        let tab_id = application.state().editor_view_states()[0].tab_id();
+        (application, root, database, workspace_id, tab_id)
+    }
+
+    fn execute_save(
+        application: &mut core::Application,
+        request: &RequestEnvelope,
+    ) -> ServerMessage {
+        match prepare_save(application, request) {
+            Ok(prepared) => complete_save(
+                application,
+                prepared.execute(&core::language_servers::LanguageServerRequestCancellation::new()),
+                request,
+            ),
+            Err(response) => response,
+        }
+    }
+
     fn request(id: u64, workspace_id: core::tree::WorkspaceId, path: &str) -> RequestEnvelope {
         RequestEnvelope {
             id,
@@ -285,6 +443,24 @@ mod tests {
             params: serde_json::json!({
                 "workspaceId": workspace_id.value(),
                 "path": path,
+            }),
+        }
+    }
+
+    fn save_request(
+        id: u64,
+        workspace_id: core::tree::WorkspaceId,
+        tab_id: core::tree::TabId,
+        revision: u64,
+    ) -> RequestEnvelope {
+        RequestEnvelope {
+            id,
+            domain: Domain::Editor,
+            action: "save".to_owned(),
+            params: serde_json::json!({
+                "workspaceId": workspace_id.value(),
+                "tabId": tab_id.value(),
+                "revision": revision,
             }),
         }
     }

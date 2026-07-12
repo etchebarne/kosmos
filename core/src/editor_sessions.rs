@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::language_servers::WorkspaceEditOpenDocument;
 use crate::language_servers::{StagedWorkspaceEdit, StagedWorkspaceEditOperation};
@@ -39,6 +40,30 @@ impl EditorSessionSnapshot {
 #[derive(Clone, Default)]
 pub struct EditorSessionRegistry {
     sessions: HashMap<EditorSessionId, EditorSessionSnapshot>,
+    save_gates: HashMap<EditorSessionId, EditorSessionSaveGate>,
+}
+
+#[derive(Clone)]
+pub struct EditorSessionSaveGate {
+    state: Arc<(Mutex<EditorSessionSaveGateState>, Condvar)>,
+}
+
+#[derive(Default)]
+struct EditorSessionSaveGateState {
+    next_sequence: u64,
+    next_to_run: u64,
+    completed: std::collections::BTreeSet<u64>,
+}
+
+pub struct EditorSessionSaveTicket {
+    gate: EditorSessionSaveGate,
+    sequence: u64,
+    pending: bool,
+}
+
+pub struct EditorSessionSavePermit {
+    gate: EditorSessionSaveGate,
+    sequence: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,6 +101,7 @@ impl EditorSessionRegistry {
                 revision,
             };
             self.sessions.insert(id, snapshot.clone());
+            self.save_gates.entry(id).or_default();
             return Ok(EditorSessionUpdate::Applied(snapshot));
         };
 
@@ -135,6 +161,49 @@ impl EditorSessionRegistry {
         Ok(current.clone())
     }
 
+    pub fn prepare_save(
+        &mut self,
+        id: EditorSessionId,
+        revision: u64,
+    ) -> Result<(EditorSessionSnapshot, EditorSessionSaveTicket), EditorSessionError> {
+        let session = self
+            .sessions
+            .get(&id)
+            .cloned()
+            .ok_or(EditorSessionError::Missing(id))?;
+        if session.revision != revision {
+            return Err(EditorSessionError::StaleRevision {
+                expected: session.revision,
+                received: revision,
+            });
+        }
+        let ticket = self.save_gates.entry(id).or_default().issue();
+        Ok((session, ticket))
+    }
+
+    pub fn complete_save(
+        &mut self,
+        id: EditorSessionId,
+        revision: u64,
+        saved_content: String,
+    ) -> Result<EditorSessionSnapshot, EditorSessionError> {
+        let current = self
+            .sessions
+            .get_mut(&id)
+            .ok_or(EditorSessionError::Missing(id))?;
+        if revision > current.revision {
+            return Err(EditorSessionError::StaleRevision {
+                expected: current.revision,
+                received: revision,
+            });
+        }
+        if revision == current.revision {
+            current.content = saved_content.clone();
+        }
+        current.saved_content = saved_content;
+        Ok(current.clone())
+    }
+
     pub fn snapshot(&self, id: EditorSessionId) -> Option<EditorSessionSnapshot> {
         self.sessions.get(&id).cloned()
     }
@@ -169,10 +238,13 @@ impl EditorSessionRegistry {
 
     pub fn remove(&mut self, id: EditorSessionId) {
         self.sessions.remove(&id);
+        self.save_gates.remove(&id);
     }
 
     pub fn remove_workspace(&mut self, workspace_id: WorkspaceId) {
         self.sessions
+            .retain(|id, _| id.workspace_id != workspace_id);
+        self.save_gates
             .retain(|id, _| id.workspace_id != workspace_id);
     }
 
@@ -225,14 +297,93 @@ impl EditorSessionRegistry {
                 StagedWorkspaceEditOperation::DeleteFile {
                     workspace_id, path, ..
                 } => {
+                    let removed = self
+                        .sessions
+                        .iter()
+                        .filter(|(_, session)| {
+                            session.id.workspace_id == *workspace_id
+                                && path_at_or_below(&session.path, path)
+                        })
+                        .map(|(id, _)| *id)
+                        .collect::<Vec<_>>();
                     self.sessions.retain(|_, session| {
                         session.id.workspace_id != *workspace_id
                             || !path_at_or_below(&session.path, path)
                     });
+                    for id in removed {
+                        self.save_gates.remove(&id);
+                    }
                 }
                 StagedWorkspaceEditOperation::CreateFile { .. } => {}
             }
         }
+    }
+}
+
+impl Default for EditorSessionSaveGate {
+    fn default() -> Self {
+        Self {
+            state: Arc::new((
+                Mutex::new(EditorSessionSaveGateState::default()),
+                Condvar::new(),
+            )),
+        }
+    }
+}
+
+impl EditorSessionSaveGate {
+    fn issue(&self) -> EditorSessionSaveTicket {
+        let (state, _) = &*self.state;
+        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        let sequence = state.next_sequence;
+        state.next_sequence = state.next_sequence.saturating_add(1);
+        EditorSessionSaveTicket {
+            gate: self.clone(),
+            sequence,
+            pending: true,
+        }
+    }
+
+    fn complete(&self, sequence: u64) {
+        let (state, wake) = &*self.state;
+        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        state.completed.insert(sequence);
+        while {
+            let next = state.next_to_run;
+            state.completed.remove(&next)
+        } {
+            state.next_to_run = state.next_to_run.saturating_add(1);
+        }
+        wake.notify_all();
+    }
+}
+
+impl EditorSessionSaveTicket {
+    pub fn acquire(mut self) -> EditorSessionSavePermit {
+        let (state, wake) = &*self.gate.state;
+        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        while state.next_to_run != self.sequence {
+            state = wake.wait(state).unwrap_or_else(|error| error.into_inner());
+        }
+        self.pending = false;
+        EditorSessionSavePermit {
+            gate: self.gate.clone(),
+            sequence: self.sequence,
+        }
+    }
+}
+
+impl Drop for EditorSessionSaveTicket {
+    fn drop(&mut self) {
+        if self.pending {
+            self.gate.complete(self.sequence);
+        }
+    }
+}
+
+impl Drop for EditorSessionSavePermit {
+    fn drop(&mut self) {
+        self.gate.complete(self.sequence);
     }
 }
 

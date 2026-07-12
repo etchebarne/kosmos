@@ -1,6 +1,6 @@
-use core::EditorSessionSnapshot;
 use core::tabs::editor::EditorDocument;
 use core::tabs::git::GitLineHunk;
+use core::{EditorSessionSaveResult, EditorSessionSnapshot};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,30 @@ pub(crate) struct EditorDocumentPayload {
 
 #[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SaveEditorDocumentPayload {
+    saved_revision: u64,
+    saved_content: String,
+    current_revision: u64,
+    warnings: Vec<EditorSaveWarningPayload>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorSaveWarningPayload {
+    kind: EditorSaveWarningKindPayload,
+    code: String,
+    message: String,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum EditorSaveWarningKindPayload {
+    Formatting,
+    LanguageServerNotification,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct OpenEditorLocationPayload {
     snapshot: WorkspaceListSnapshot,
     target: EditorLocationTargetPayload,
@@ -114,6 +138,32 @@ impl EditorDocumentPayload {
             saved_content: session.saved_content,
             revision: session.revision,
             accepted,
+        }
+    }
+}
+
+impl SaveEditorDocumentPayload {
+    pub(crate) fn from_core(result: EditorSessionSaveResult) -> Self {
+        Self {
+            saved_revision: result.saved_revision(),
+            saved_content: result.saved_content().to_owned(),
+            current_revision: result.current_revision(),
+            warnings: result
+                .warnings()
+                .iter()
+                .map(|warning| EditorSaveWarningPayload {
+                    kind: match warning.kind() {
+                        core::EditorSessionSaveWarningKind::Formatting => {
+                            EditorSaveWarningKindPayload::Formatting
+                        }
+                        core::EditorSessionSaveWarningKind::LanguageServerNotification => {
+                            EditorSaveWarningKindPayload::LanguageServerNotification
+                        }
+                    },
+                    code: warning.code().to_owned(),
+                    message: warning.message().to_owned(),
+                })
+                .collect(),
         }
     }
 }

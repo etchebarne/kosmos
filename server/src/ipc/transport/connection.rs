@@ -101,7 +101,7 @@ fn dispatch_requests(
         } = pending;
         let request_id = route.request_id();
         match route.mode() {
-            SchedulingMode::External => {
+            SchedulingMode::External | SchedulingMode::EditorSave => {
                 if let Some(completed) =
                     dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None)
                 {

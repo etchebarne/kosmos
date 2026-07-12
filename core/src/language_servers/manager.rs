@@ -536,17 +536,15 @@ impl LanguageServerManager {
             .close_document(workspace_id, path, generation)
     }
 
-    pub fn save_document(
+    pub(crate) fn save_current_document(
         &self,
         workspace_id: WorkspaceId,
         path: &str,
-        generation: u64,
-        version: i64,
         text: &str,
     ) -> Result<(), LanguageServerError> {
         self.inner
             .runtime
-            .save_document(workspace_id, path, generation, version, text)
+            .save_current_document(workspace_id, path, text)
     }
 
     pub fn hover(
@@ -812,6 +810,23 @@ impl LanguageServerManager {
             path,
             generation,
             version,
+            options,
+            cancellation,
+        )
+    }
+
+    pub(crate) fn formatting_current_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        text: &str,
+        options: LanguageServerFormattingOptions,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerTextEdit>, LanguageServerError> {
+        self.inner.runtime.formatting_current_document(
+            workspace_id,
+            path,
+            text,
             options,
             cancellation,
         )

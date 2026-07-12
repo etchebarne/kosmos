@@ -22,6 +22,12 @@ type RouteHandler = fn(&mut core::State, &RequestEnvelope) -> ServerMessage;
 type ApplicationRouteHandler = fn(&mut core::Application, &RequestEnvelope) -> ServerMessage;
 type PersistentApplicationRouteHandler =
     fn(&mut core::PreparedPersistentOperation, &RequestEnvelope) -> ServerMessage;
+type EditorSavePrepareRouteHandler = fn(
+    &mut core::Application,
+    &RequestEnvelope,
+) -> Result<core::PreparedEditorSessionSave, ServerMessage>;
+type EditorSaveCompleteRouteHandler =
+    fn(&mut core::Application, core::ExecutedEditorSessionSave, &RequestEnvelope) -> ServerMessage;
 type CancellableRouteHandler = fn(
     &mut core::State,
     &RequestEnvelope,
@@ -148,7 +154,9 @@ impl PreparedRoute {
         match self.definition.handler {
             RouteHandlerKind::Standard(handler) => handler(state, &self.request),
             RouteHandlerKind::Cancellable(handler) => handler(state, &self.request, cancellation),
-            RouteHandlerKind::Application(_) | RouteHandlerKind::PersistentApplication(_) => {
+            RouteHandlerKind::Application(_)
+            | RouteHandlerKind::PersistentApplication(_)
+            | RouteHandlerKind::EditorSave { .. } => {
                 unreachable!("application routes must execute against the live application")
             }
         }
@@ -165,9 +173,32 @@ impl PreparedRoute {
                 handler(application.state_mut(), &self.request, cancellation)
             }
             RouteHandlerKind::Application(handler) => handler(application, &self.request),
-            RouteHandlerKind::PersistentApplication(_) => {
+            RouteHandlerKind::PersistentApplication(_) | RouteHandlerKind::EditorSave { .. } => {
                 unreachable!("persistent application routes require a prepared operation")
             }
+        }
+    }
+
+    pub(crate) fn prepare_editor_save(
+        &self,
+        application: &mut core::Application,
+    ) -> Result<core::PreparedEditorSessionSave, ServerMessage> {
+        match self.definition.handler {
+            RouteHandlerKind::EditorSave { prepare, .. } => prepare(application, &self.request),
+            _ => unreachable!("only editor save routes prepare editor saves"),
+        }
+    }
+
+    pub(crate) fn complete_editor_save(
+        &self,
+        application: &mut core::Application,
+        execution: core::ExecutedEditorSessionSave,
+    ) -> ServerMessage {
+        match self.definition.handler {
+            RouteHandlerKind::EditorSave { complete, .. } => {
+                complete(application, execution, &self.request)
+            }
+            _ => unreachable!("only editor save routes complete editor saves"),
         }
     }
 
@@ -182,7 +213,7 @@ impl PreparedRoute {
                 handler(operation.state_mut(), &self.request, cancellation)
             }
             RouteHandlerKind::PersistentApplication(handler) => handler(operation, &self.request),
-            RouteHandlerKind::Application(_) => {
+            RouteHandlerKind::Application(_) | RouteHandlerKind::EditorSave { .. } => {
                 unreachable!("live application routes cannot execute against a prepared operation")
             }
         }
@@ -260,6 +291,10 @@ enum RouteHandlerKind {
     Cancellable(CancellableRouteHandler),
     Application(ApplicationRouteHandler),
     PersistentApplication(PersistentApplicationRouteHandler),
+    EditorSave {
+        prepare: EditorSavePrepareRouteHandler,
+        complete: EditorSaveCompleteRouteHandler,
+    },
 }
 
 impl RouteDefinition {
@@ -324,6 +359,16 @@ impl RouteDefinition {
         }
     }
 
+    pub(super) const fn editor_save(
+        prepare: EditorSavePrepareRouteHandler,
+        complete: EditorSaveCompleteRouteHandler,
+    ) -> Self {
+        Self {
+            handler: RouteHandlerKind::EditorSave { prepare, complete },
+            mode: SchedulingMode::EditorSave,
+        }
+    }
+
     const fn new(handler: RouteHandler, mode: SchedulingMode) -> Self {
         Self {
             handler: RouteHandlerKind::Standard(handler),
@@ -342,6 +387,7 @@ pub(crate) enum SchedulingMode {
     SerialMutation,
     PersistenceBarrier,
     Application,
+    EditorSave,
 }
 
 #[cfg(test)]
@@ -486,7 +532,7 @@ mod tests {
         ),
         (Domain::Editor, "document", ExecutionMode::External),
         (Domain::Editor, "gitLineHunks", ExecutionMode::External),
-        (Domain::Editor, "save", ExecutionMode::External),
+        (Domain::Editor, "save", ExecutionMode::EditorSave),
         (Domain::Git, "init", ExecutionMode::External),
         (Domain::Git, "status", ExecutionMode::External),
         (
@@ -557,11 +603,6 @@ mod tests {
         (
             Domain::LanguageServers,
             "closeDocument",
-            ExecutionMode::LanguageServer,
-        ),
-        (
-            Domain::LanguageServers,
-            "saveDocument",
             ExecutionMode::LanguageServer,
         ),
         (
@@ -846,6 +887,7 @@ mod scheduling_tests {
                         | SchedulingMode::SerialMutation
                         | SchedulingMode::PersistenceBarrier
                         | SchedulingMode::Application
+                        | SchedulingMode::EditorSave
                 ));
             }
         }

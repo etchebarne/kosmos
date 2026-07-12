@@ -44,6 +44,11 @@ export type TabLifecyclePayload = "ephemeral" | "keepAlive";
 export type SplitAxisPayload = "horizontal" | "vertical";
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorSaveWarningKindPayload".
+ */
+export type EditorSaveWarningKindPayload = "formatting" | "languageServerNotification";
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "Boolean".
  */
 export type Boolean = boolean;
@@ -363,6 +368,7 @@ export interface KosmosIpcTypes {
   OpenEditorTabParams?: OpenEditorTabParams;
   WorkspaceListSnapshot?: WorkspaceListSnapshot;
   SaveEditorDocumentParams?: SaveEditorDocumentParams;
+  SaveEditorDocumentPayload?: SaveEditorDocumentPayload;
   TransferFileTreeEntriesParams?: TransferFileTreeEntriesParams;
   Boolean?: Boolean;
   CreateFileTreeEntryParams?: CreateFileTreeEntryParams;
@@ -437,7 +443,6 @@ export interface KosmosIpcTypes {
   ResolveWorkspaceEditRecoveryParams?: ResolveWorkspaceEditRecoveryParams;
   ResolveLanguageServerWorkspaceSymbolParams?: ResolveLanguageServerWorkspaceSymbolParams;
   LanguageServerWorkspaceSymbolPayload?: LanguageServerWorkspaceSymbolPayload;
-  SaveLanguageServerDocumentParams?: SaveLanguageServerDocumentParams;
   Nullable_LanguageServerSignatureHelpPayload?: Nullable_LanguageServerSignatureHelpPayload;
   StageLanguageServerCodeActionParams?: StageLanguageServerCodeActionParams;
   Nullable_StagedWorkspaceEditPayload?: Nullable_StagedWorkspaceEditPayload;
@@ -623,6 +628,25 @@ export interface SaveEditorDocumentParams {
   revision: number;
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "SaveEditorDocumentPayload".
+ */
+export interface SaveEditorDocumentPayload {
+  currentRevision: number;
+  savedContent: string;
+  savedRevision: number;
+  warnings: EditorSaveWarningPayload[];
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorSaveWarningPayload".
+ */
+export interface EditorSaveWarningPayload {
+  code: string;
+  kind: EditorSaveWarningKindPayload;
+  message: string;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -1504,17 +1528,6 @@ export interface LanguageServerWorkspaceSymbolPayload {
   raw: AnyJson;
   resolveSupported: boolean;
   serverId: string;
-  workspaceId: WorkspaceIdParam;
-}
-/**
- * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "SaveLanguageServerDocumentParams".
- */
-export interface SaveLanguageServerDocumentParams {
-  generation: number;
-  path: string;
-  text: string;
-  version: number;
   workspaceId: WorkspaceIdParam;
 }
 /**

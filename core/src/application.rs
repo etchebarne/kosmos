@@ -5,14 +5,15 @@ use std::sync::Arc;
 
 use crate::State;
 use crate::editor_sessions::{
-    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,
-    EditorSessionUpdate,
+    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSavePermit,
+    EditorSessionSaveTicket, EditorSessionSnapshot, EditorSessionUpdate,
 };
 use crate::events::CoreEventSink;
+use crate::formatters::FormattingError;
 use crate::language_servers::{
-    StagedWorkspaceEdit, WorkspaceEditCoordinator, WorkspaceEditDeliveryOutcome,
-    WorkspaceEditDeliveryStep, WorkspaceEditError, WorkspaceEditRecoveryIntent,
-    WorkspaceEditTransactionStatus,
+    LanguageServerError, LanguageServerRequestCancellation, StagedWorkspaceEdit,
+    WorkspaceEditCoordinator, WorkspaceEditDeliveryOutcome, WorkspaceEditDeliveryStep,
+    WorkspaceEditError, WorkspaceEditRecoveryIntent, WorkspaceEditTransactionStatus,
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{ResolvedSettings, SettingValue, SettingsError};
@@ -104,6 +105,48 @@ pub struct PreparedExternalOperation {
     state: State,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EditorSessionSaveWarningKind {
+    Formatting,
+    LanguageServerNotification,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditorSessionSaveWarning {
+    kind: EditorSessionSaveWarningKind,
+    code: String,
+    message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditorSessionSaveResult {
+    saved_revision: u64,
+    saved_content: String,
+    current_revision: u64,
+    warnings: Vec<EditorSessionSaveWarning>,
+}
+
+pub struct PreparedEditorSessionSave {
+    state: State,
+    id: EditorSessionId,
+    path: String,
+    content: String,
+    revision: u64,
+    format_on_save: bool,
+    ticket: Option<EditorSessionSaveTicket>,
+}
+
+pub struct ExecutedEditorSessionSave {
+    prepared: PreparedEditorSessionSave,
+    permit: Option<EditorSessionSavePermit>,
+    result: Result<CompletedEditorSessionSave, ApplicationError>,
+}
+
+struct CompletedEditorSessionSave {
+    saved_content: String,
+    warnings: Vec<EditorSessionSaveWarning>,
+}
+
 #[derive(Debug)]
 pub enum ApplicationError {
     DurabilityInFlight,
@@ -111,6 +154,7 @@ pub enum ApplicationError {
     StalePreparedOperation,
     Editor(EditorError),
     EditorSession(EditorSessionError),
+    RequestCancelled,
     CloseNotFound,
     InvalidCloseDecision,
 }
@@ -295,6 +339,59 @@ impl Application {
         self.editor_sessions
             .mark_saved(id, revision)
             .map_err(ApplicationError::from)
+    }
+
+    pub fn prepare_save_editor_session(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        revision: u64,
+    ) -> Result<PreparedEditorSessionSave, ApplicationError> {
+        let (workspace_id, path) = self.state.editor_session_target(workspace_id, tab_id)?;
+        let id = EditorSessionId::new(workspace_id, tab_id);
+        let (session, ticket) = self.editor_sessions.prepare_save(id, revision)?;
+        let format_on_save = self.state.resolved_settings().editor().format_on_save();
+
+        Ok(PreparedEditorSessionSave {
+            state: self.state.persistent_candidate().into_state(),
+            id,
+            path,
+            content: session.content,
+            revision,
+            format_on_save,
+            ticket: Some(ticket),
+        })
+    }
+
+    pub fn complete_save_editor_session(
+        &mut self,
+        execution: ExecutedEditorSessionSave,
+    ) -> Result<EditorSessionSaveResult, ApplicationError> {
+        let ExecutedEditorSessionSave {
+            prepared,
+            permit,
+            result,
+        } = execution;
+        let completed = result?;
+        let current_revision = match self.editor_sessions.complete_save(
+            prepared.id,
+            prepared.revision,
+            completed.saved_content.clone(),
+        ) {
+            Ok(session) => session.revision,
+            // The tab can close after an atomic write. The write remains successful even
+            // though there is no session baseline left to update.
+            Err(EditorSessionError::Missing(_)) => prepared.revision,
+            Err(error) => return Err(error.into()),
+        };
+        let result = EditorSessionSaveResult {
+            saved_revision: prepared.revision,
+            saved_content: completed.saved_content,
+            current_revision,
+            warnings: completed.warnings,
+        };
+        drop(permit);
+        Ok(result)
     }
 
     pub fn begin_close(
@@ -599,6 +696,136 @@ impl Application {
     }
 }
 
+impl PreparedEditorSessionSave {
+    pub fn execute(
+        mut self,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> ExecutedEditorSessionSave {
+        if cancellation.is_cancelled() {
+            // Dropping an unacquired ticket advances the sequence without waiting for a
+            // preceding save, so cancellation cannot turn into a later disk write.
+            drop(self.ticket.take());
+            return ExecutedEditorSessionSave {
+                prepared: self,
+                permit: None,
+                result: Err(ApplicationError::RequestCancelled),
+            };
+        }
+        let permit = self
+            .ticket
+            .take()
+            .expect("editor session saves are executed once")
+            .acquire();
+        let result = self.execute_policy(cancellation);
+        ExecutedEditorSessionSave {
+            prepared: self,
+            permit: Some(permit),
+            result,
+        }
+    }
+
+    fn execute_policy(
+        &self,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<CompletedEditorSessionSave, ApplicationError> {
+        if cancellation.is_cancelled() {
+            return Err(ApplicationError::RequestCancelled);
+        }
+
+        let mut warnings = Vec::new();
+        let saved_content = if self.format_on_save {
+            match self.state.format_editor_session_content(
+                self.id.workspace_id,
+                &self.path,
+                self.revision,
+                &self.content,
+                cancellation,
+            ) {
+                Ok(content) => content,
+                Err(FormattingError::LanguageServer(LanguageServerError::RequestCancelled)) => {
+                    return Err(ApplicationError::RequestCancelled);
+                }
+                Err(error) => {
+                    warnings.push(EditorSessionSaveWarning::formatting(error));
+                    self.content.clone()
+                }
+            }
+        } else {
+            self.content.clone()
+        };
+
+        if cancellation.is_cancelled() {
+            return Err(ApplicationError::RequestCancelled);
+        }
+        self.state.save_editor_document(
+            Some(self.id.workspace_id),
+            self.id.tab_id,
+            &saved_content,
+        )?;
+
+        if let Err(error) =
+            self.state
+                .notify_editor_session_saved(self.id.workspace_id, &self.path, &saved_content)
+        {
+            warnings.push(EditorSessionSaveWarning::language_server_notification(
+                error,
+            ));
+        }
+        Ok(CompletedEditorSessionSave {
+            saved_content,
+            warnings,
+        })
+    }
+}
+
+impl EditorSessionSaveWarning {
+    fn formatting(error: FormattingError) -> Self {
+        Self {
+            kind: EditorSessionSaveWarningKind::Formatting,
+            code: error.code().to_owned(),
+            message: error.to_string(),
+        }
+    }
+
+    fn language_server_notification(error: LanguageServerError) -> Self {
+        Self {
+            kind: EditorSessionSaveWarningKind::LanguageServerNotification,
+            code: error.code().to_owned(),
+            message: error.to_string(),
+        }
+    }
+
+    pub fn kind(&self) -> EditorSessionSaveWarningKind {
+        self.kind
+    }
+
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl EditorSessionSaveResult {
+    pub fn saved_revision(&self) -> u64 {
+        self.saved_revision
+    }
+
+    pub fn saved_content(&self) -> &str {
+        &self.saved_content
+    }
+
+    pub fn current_revision(&self) -> u64 {
+        self.current_revision
+    }
+
+    pub fn warnings(&self) -> &[EditorSessionSaveWarning] {
+        &self.warnings
+    }
+}
+
 impl Deref for Application {
     type Target = State;
 
@@ -663,6 +890,7 @@ impl fmt::Display for ApplicationError {
                 .write_str("persistent state changed before the prepared operation completed"),
             Self::Editor(error) => error.fmt(formatter),
             Self::EditorSession(error) => error.fmt(formatter),
+            Self::RequestCancelled => formatter.write_str("editor save request was cancelled"),
             Self::CloseNotFound => formatter.write_str("pending close decision does not exist"),
             Self::InvalidCloseDecision => {
                 formatter.write_str("close decision no longer matches application state")
@@ -679,6 +907,7 @@ impl std::error::Error for ApplicationError {
             Self::EditorSession(error) => Some(error),
             Self::DurabilityInFlight
             | Self::StalePreparedOperation
+            | Self::RequestCancelled
             | Self::CloseNotFound
             | Self::InvalidCloseDecision => None,
         }
@@ -707,6 +936,8 @@ impl From<EditorSessionError> for ApplicationError {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -902,6 +1133,311 @@ mod tests {
         drop(operation);
         application.abandon_persistent_operation();
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_editor_session_format_disabled_writes_one_requested_revision() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-format-disabled");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        let result = application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+
+        assert_eq!(result.saved_revision(), 2);
+        assert_eq!(result.saved_content(), "saved");
+        assert_eq!(result.current_revision(), 2);
+        assert!(result.warnings().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "saved"
+        );
+        assert!(
+            !application
+                .editor_session_document(Some(workspace_id), tab_id)
+                .unwrap()
+                .is_dirty()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_no_formatter_available_keeps_the_original_content() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-no-formatter");
+        application
+            .update_setting(
+                crate::settings::EDITOR_FORMAT_ON_SAVE,
+                SettingValue::Boolean(true),
+            )
+            .unwrap();
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        let result = application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+
+        assert_eq!(result.saved_content(), "saved");
+        assert_eq!(result.warnings().len(), 1);
+        assert_eq!(
+            result.warnings()[0].kind(),
+            EditorSessionSaveWarningKind::Formatting
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "saved"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_cancellation_before_the_gate_performs_no_write() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-cancelled");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        let cancellation = LanguageServerRequestCancellation::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            application.complete_save_editor_session(prepared.execute(&cancellation)),
+            Err(ApplicationError::RequestCancelled)
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "before"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_disk_failure_keeps_the_session_dirty() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-disk-failure");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .unwrap();
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        std::fs::remove_file(root.join("document.txt")).unwrap();
+        std::fs::create_dir(root.join("document.txt")).unwrap();
+
+        assert!(matches!(
+            application.complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            ),
+            Err(ApplicationError::Editor(_))
+        ));
+        assert!(
+            application
+                .editor_session_document(Some(workspace_id), tab_id)
+                .unwrap()
+                .is_dirty()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_stale_revision_is_rejected_before_issuing_a_write() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-stale-revision");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 2)
+            .unwrap();
+
+        assert!(matches!(
+            application.prepare_save_editor_session(Some(workspace_id), tab_id, 1),
+            Err(ApplicationError::EditorSession(
+                EditorSessionError::StaleRevision { .. }
+            ))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "before"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_newer_content_remains_dirty_after_an_older_completion() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-newer-content");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "first".to_owned(), 2)
+            .unwrap();
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 3)
+            .unwrap();
+
+        let result = application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+        let session = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+
+        assert_eq!(result.saved_revision(), 2);
+        assert_eq!(result.current_revision(), 3);
+        assert_eq!(session.content, "newer");
+        assert_eq!(session.saved_content, "first");
+        assert!(session.is_dirty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "first"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn save_editor_session_n_then_n_plus_one_complete_in_issue_order_on_separate_workers() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("save-ordered-workers");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "first".to_owned(), 2)
+            .unwrap();
+        let first = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "second".to_owned(), 3)
+            .unwrap();
+        let second = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 3)
+            .unwrap();
+        let application = Arc::new(Mutex::new(application));
+        let second_application = Arc::clone(&application);
+        let second_worker = thread::spawn(move || {
+            let execution = second.execute(&LanguageServerRequestCancellation::new());
+            second_application
+                .lock()
+                .unwrap()
+                .complete_save_editor_session(execution)
+                .unwrap();
+        });
+
+        let first_execution = first.execute(&LanguageServerRequestCancellation::new());
+        application
+            .lock()
+            .unwrap()
+            .complete_save_editor_session(first_execution)
+            .unwrap();
+        second_worker.join().unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "second"
+        );
+        assert!(
+            !application
+                .lock()
+                .unwrap()
+                .editor_session_document(Some(workspace_id), tab_id)
+                .unwrap()
+                .is_dirty()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
     }
 
     #[test]

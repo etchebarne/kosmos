@@ -4,7 +4,7 @@ import {
   changeEditorSession,
   openEditorSession,
 } from "@/renderer/ipc";
-import type { EditorDocument } from "@/shared/ipc";
+import type { EditorDocument, EditorSave, EditorSaveWarning } from "@/shared/ipc";
 
 type LanguageDocumentHandle = { dispose(): void };
 type LanguageDocumentAttacher = (
@@ -446,6 +446,30 @@ export function reconcileEditorBuffer(buffer: EditorBuffer, content: string): bo
   }
 
   return buffer.model.getValue() !== buffer.savedContent;
+}
+
+export function applyEditorSaveProjection(buffer: EditorBuffer, result: EditorSave): boolean {
+  if (
+    buffer.model.isDisposed() ||
+    result.savedRevision !== result.currentRevision ||
+    result.savedRevision !== buffer.session.revision
+  ) {
+    return false;
+  }
+
+  buffer.savedContent = result.savedContent;
+  if (buffer.model.getValue() !== result.savedContent) {
+    buffer.model.setValue(result.savedContent);
+  }
+  return true;
+}
+
+export function editorSaveWarningMessage(warning: EditorSaveWarning): string {
+  const label =
+    warning.kind === "formatting"
+      ? "Formatting failed"
+      : "Language server save notification failed";
+  return `${label}: ${warning.message}`;
 }
 
 export function disposeEditorBuffer(workspaceId: number, tabId: number): void {

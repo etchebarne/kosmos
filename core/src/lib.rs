@@ -11,7 +11,9 @@ pub mod settings;
 pub use application::{
     Application, ApplicationError, CloseDecision, CloseDocumentDecision,
     CloseDocumentDecisionRequest, CloseIntent, CloseIntentResult, CloseTarget,
-    PreparedExternalOperation, PreparedPersistentOperation,
+    EditorSessionSaveResult, EditorSessionSaveWarning, EditorSessionSaveWarningKind,
+    ExecutedEditorSessionSave, PreparedEditorSessionSave, PreparedExternalOperation,
+    PreparedPersistentOperation,
 };
 pub use editor_sessions::{
     EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,

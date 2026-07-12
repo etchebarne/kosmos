@@ -18,8 +18,8 @@ use super::super::messages::language_servers::{
     ResolveLanguageServerCodeActionParams, ResolveLanguageServerCompletionParams,
     ResolveLanguageServerWorkspaceSymbolParams, ResolveWorkspaceEditRecoveryParams,
     ResolvedToolingCapabilitiesParams, ResolvedToolingSnapshotPayload,
-    SaveLanguageServerDocumentParams, StageLanguageServerCodeActionParams,
-    StagedWorkspaceEditPayload, TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
+    StageLanguageServerCodeActionParams, StagedWorkspaceEditPayload,
+    TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
     WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
 };
 use super::super::messages::{AnyJson, EmptyParams};
@@ -58,10 +58,6 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<CloseLanguageServerDocumentParams, bool>(
         "closeDocument",
         RouteDefinition::language_server(close_document),
-    ),
-    Route::new::<SaveLanguageServerDocumentParams, bool>(
-        "saveDocument",
-        RouteDefinition::language_server(save_document),
     ),
     Route::new::<LanguageServerHoverParams, Option<LanguageServerHoverPayload>>(
         "hover",
@@ -779,23 +775,6 @@ fn close_document(state: &mut core::State, request: &RequestEnvelope) -> ServerM
         params.workspace_id.into(),
         &params.path,
         params.generation,
-    ) {
-        Ok(()) => ServerMessage::ok(request.id, true),
-        Err(error) => language_server_error(request.id, error),
-    }
-}
-
-fn save_document(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    let params = match parse_params::<SaveLanguageServerDocumentParams>(request) {
-        Ok(params) => params,
-        Err(response) => return response,
-    };
-    match state.save_language_server_document(
-        params.workspace_id.into(),
-        &params.path,
-        params.generation,
-        params.version,
-        &params.text,
     ) {
         Ok(()) => ServerMessage::ok(request.id, true),
         Err(error) => language_server_error(request.id, error),

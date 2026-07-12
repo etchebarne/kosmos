@@ -886,17 +886,36 @@
         },
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "EditorSaveWarningKindPayload": {
+              "enum": [
+                "formatting",
+                "languageServerNotification"
+              ],
+              "type": "string"
+            },
+            "EditorSaveWarningPayload": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "kind": {
+                  "$ref": "#/definitions/EditorSaveWarningKindPayload"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            }
+          },
           "properties": {
-            "accepted": {
-              "type": "boolean"
-            },
-            "content": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "revision": {
+            "currentRevision": {
               "format": "uint64",
               "maximum": 9007199254740991,
               "minimum": 0.0,
@@ -904,16 +923,27 @@
             },
             "savedContent": {
               "type": "string"
+            },
+            "savedRevision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "warnings": {
+              "items": {
+                "$ref": "#/definitions/EditorSaveWarningPayload"
+              },
+              "type": "array"
             }
           },
           "required": [
-            "accepted",
-            "content",
-            "path",
-            "revision",
-            "savedContent"
+            "currentRevision",
+            "savedContent",
+            "savedRevision",
+            "warnings"
           ],
-          "title": "EditorDocumentPayload",
+          "title": "SaveEditorDocumentPayload",
           "type": "object"
         }
       }
@@ -8150,56 +8180,6 @@
             "transactionId"
           ],
           "title": "WorkspaceEditTransactionParams",
-          "type": "object"
-        },
-        "result": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "title": "Boolean",
-          "type": "boolean"
-        }
-      },
-      "saveDocument": {
-        "params": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "definitions": {
-            "WorkspaceIdParam": {
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 0.0,
-              "type": "integer"
-            }
-          },
-          "properties": {
-            "generation": {
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 0.0,
-              "type": "integer"
-            },
-            "path": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "version": {
-              "format": "int64",
-              "maximum": 9007199254740991,
-              "minimum": -9007199254740991,
-              "type": "integer"
-            },
-            "workspaceId": {
-              "$ref": "#/definitions/WorkspaceIdParam"
-            }
-          },
-          "required": [
-            "generation",
-            "path",
-            "text",
-            "version",
-            "workspaceId"
-          ],
-          "title": "SaveLanguageServerDocumentParams",
           "type": "object"
         },
         "result": {

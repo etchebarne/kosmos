@@ -3,7 +3,6 @@ import {
   changeLanguageServerDocument,
   closeLanguageServerDocument,
   requestLanguageServerFormatting,
-  saveLanguageServerDocument,
   getLanguageServerColorPresentations,
   getLanguageServerCompletions,
   getLanguageServerDiagnostics,
@@ -1435,28 +1434,6 @@ export async function formatLanguageDocument(
   return applied;
 }
 
-
-export async function notifyLanguageDocumentSaved(
-  model: monaco.editor.ITextModel,
-  text: string,
-): Promise<void> {
-  const document = documents.get(model.uri.toString());
-  if (!document || document.disposed) {
-    return;
-  }
-  await afterPendingChanges(document, async () => {
-    if (!document.opened || document.disposed) {
-      return;
-    }
-    await saveLanguageServerDocument({
-      workspaceId: document.workspaceId,
-      path: document.path,
-      generation: document.generation,
-      version: document.model.getVersionId(),
-      text,
-    });
-  });
-}
 
 export function attachLanguageDocument(
   workspaceId: WorkspaceId,

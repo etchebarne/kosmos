@@ -561,20 +561,6 @@ impl State {
             .close_document(workspace_id, path, generation)
     }
 
-    pub fn save_language_server_document(
-        &self,
-        workspace_id: WorkspaceId,
-        path: &str,
-        generation: u64,
-        version: i64,
-        text: &str,
-    ) -> Result<(), LanguageServerError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or(LanguageServerError::ManagerUnavailable)?
-            .save_document(workspace_id, path, generation, version, text)
-    }
-
     pub fn language_server_hover(
         &self,
         workspace_id: WorkspaceId,
@@ -866,6 +852,83 @@ impl State {
         request: DocumentFormattingRequest<'_>,
         cancellation: &LanguageServerRequestCancellation,
     ) -> Result<Vec<LanguageServerTextEdit>, FormattingError> {
+        if let Some(edits) = self.format_with_standalone_formatter(&request, cancellation)? {
+            return Ok(edits);
+        }
+        self.language_server_manager
+            .as_ref()
+            .ok_or(LanguageServerError::ManagerUnavailable)?
+            .formatting(
+                request.workspace_id,
+                request.path,
+                request.generation,
+                request.version,
+                request.options,
+                cancellation,
+            )
+            .map_err(FormattingError::from)
+    }
+
+    pub(crate) fn format_editor_session_content(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        revision: u64,
+        text: &str,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<String, FormattingError> {
+        let request = DocumentFormattingRequest {
+            workspace_id,
+            path,
+            // Standalone formatters also match by path. Editor sessions do not own Monaco's
+            // language identifier, so that path is the durable input to the save policy.
+            language_id: "",
+            generation: revision,
+            version: i64::try_from(revision).unwrap_or(i64::MAX),
+            text,
+            options: crate::language_servers::LanguageServerFormattingOptions {
+                tab_size: 4,
+                insert_spaces: true,
+            },
+        };
+        let edits =
+            if let Some(edits) = self.format_with_standalone_formatter(&request, cancellation)? {
+                edits
+            } else {
+                self.language_server_manager
+                    .as_ref()
+                    .ok_or(LanguageServerError::ManagerUnavailable)?
+                    .formatting_current_document(
+                        workspace_id,
+                        path,
+                        text,
+                        request.options,
+                        cancellation,
+                    )
+                    .map_err(FormattingError::from)?
+            };
+        crate::language_servers::apply_document_text_edits(text, &edits).map_err(|error| {
+            FormattingError::from(LanguageServerError::InvalidDocument(error.to_string()))
+        })
+    }
+
+    pub(crate) fn notify_editor_session_saved(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        text: &str,
+    ) -> Result<(), LanguageServerError> {
+        match &self.language_server_manager {
+            Some(manager) => manager.save_current_document(workspace_id, path, text),
+            None => Ok(()),
+        }
+    }
+
+    fn format_with_standalone_formatter(
+        &self,
+        request: &DocumentFormattingRequest<'_>,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Option<Vec<LanguageServerTextEdit>>, FormattingError> {
         if cancellation.is_cancelled() {
             return Err(LanguageServerError::RequestCancelled.into());
         }
@@ -924,20 +987,9 @@ impl State {
             if formatted.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
                 return Err(FormatterError::OutputTooLarge.into());
             }
-            return Ok(full_document_edit(request.text, formatted));
+            return Ok(Some(full_document_edit(request.text, formatted)));
         }
-        self.language_server_manager
-            .as_ref()
-            .ok_or(LanguageServerError::ManagerUnavailable)?
-            .formatting(
-                request.workspace_id,
-                request.path,
-                request.generation,
-                request.version,
-                request.options,
-                cancellation,
-            )
-            .map_err(FormattingError::from)
+        Ok(None)
     }
 
     pub fn language_server_prepare_rename(

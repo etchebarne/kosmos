@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { getEditorDocument, getEditorGitLineHunks, saveEditorDocument } from "@/renderer/ipc";
 import {
   getOrCreateEditorBuffer,
+  applyEditorSaveProjection,
+  editorSaveWarningMessage,
   assertEditorBufferEditable,
   flushEditorBuffer,
   isEditorBufferLocked,
@@ -14,14 +16,9 @@ import {
   type EditorBuffer,
 } from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
-import {
-  formatLanguageDocument,
-  notifyLanguageDocumentSaved,
-} from "@/renderer/lib/language-client";
+import { formatLanguageDocument } from "@/renderer/lib/language-client";
 import { editorGitDecorations } from "@/renderer/lib/editor-git-decorations";
-import { createDocumentSaveCoordinator } from "@/renderer/lib/document-save-coordinator";
 import { errorMessage } from "@/renderer/lib/errors";
-import { formattingErrorAfterContextChange } from "@/renderer/lib/formatting-error-state";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import type { EditorDocument, EditorGitLineHunk, TabId, WorkspaceId } from "@/shared/ipc";
@@ -215,10 +212,9 @@ function LoadedEditor({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const bufferRef = useRef<EditorBuffer | null>(null);
-  const saveCoordinatorRef = useRef(createDocumentSaveCoordinator());
-  const formatErrorDocumentRef = useRef(`${workspaceId}:${tabId}:${document.path}`);
+  const warningDocumentRef = useRef(`${workspaceId}:${tabId}:${document.path}`);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
-  const [formatError, setFormatError] = useState<string | null>(null);
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
   const pendingSelection = useWorkspaceStore((state) => state.pendingEditorSelection);
   const consumePendingEditorSelection = useWorkspaceStore(
     (state) => state.consumePendingEditorSelection,
@@ -228,19 +224,14 @@ function LoadedEditor({
   const settings = useSettingsStore((state) => editorSettings(state.snapshot));
   const minimap = settings?.minimap;
   const softWrap = settings?.softWrap;
-  const formatOnSave = settings?.formatOnSave;
 
   useEffect(() => {
     const documentKey = `${workspaceId}:${tabId}:${document.path}`;
-    const documentChanged = formatErrorDocumentRef.current !== documentKey;
-    formatErrorDocumentRef.current = documentKey;
-    setFormatError((current) =>
-      formattingErrorAfterContextChange(current, {
-        formattingEnabled: formatOnSave === true,
-        documentChanged,
-      }),
-    );
-  }, [document.path, formatOnSave, tabId, workspaceId]);
+    if (warningDocumentRef.current !== documentKey) {
+      warningDocumentRef.current = documentKey;
+      setSaveWarnings([]);
+    }
+  }, [document.path, tabId, workspaceId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -325,73 +316,34 @@ function LoadedEditor({
     const unsubscribeModel = subscribeEditorBufferModel(buffer, bindModel);
     const unsubscribeLock = subscribeEditorBufferLock(buffer, (locked) => {
       if (locked) {
-        saveCoordinatorRef.current.invalidate();
         cancelOperations();
       }
       editor.updateOptions({ readOnly: locked });
     });
     const save = async () => {
-      let model: monaco.editor.ITextModel;
       try {
         assertEditorBufferEditable(buffer);
-        model = buffer.model;
       } catch (caughtError: unknown) {
         setSaveState({ status: "error", message: errorMessage(caughtError) });
         return;
       }
       setSaveState({ status: "saving" });
+      setSaveWarnings([]);
       const cancellation = beginOperation();
-      const coordinatedSave = saveCoordinatorRef.current.begin(async () => {
+      try {
         await flushEditorBuffer(buffer);
+        assertEditorBufferEditable(buffer);
         const saved = await saveEditorDocument(
           { workspaceId, tabId, revision: buffer.session.revision },
           cancellation.token,
         );
-        buffer.savedContent = saved.savedContent;
-      });
-      try {
-        await coordinatedSave.run(async (isCurrent) => {
-          assertEditorBufferEditable(buffer);
-          let content = model.getValue();
-          let formatted = false;
-          if (editorSettings(useSettingsStore.getState().snapshot)?.formatOnSave) {
-            try {
-              formatted = await formatLanguageDocument(editor, cancellation.token);
-              setFormatError(null);
-            } catch (caughtError: unknown) {
-              const message = errorMessage(caughtError);
-              setFormatError((current) => (current === message ? current : message));
-            }
-          }
-          if (!isCurrent()) {
-            return;
-          }
-          if (formatted) {
-            const formattedModel = buffer.model;
-            const formattedContent = formattedModel.getValue();
-            if (formattedContent !== content) {
-              await flushEditorBuffer(buffer);
-              const saved = await saveEditorDocument(
-                { workspaceId, tabId, revision: buffer.session.revision },
-                cancellation.token,
-              );
-              buffer.savedContent = saved.savedContent;
-            }
-            content = formattedContent;
-          }
-          const savedModel = buffer.model;
-          void notifyLanguageDocumentSaved(savedModel, content).catch(() => {});
-          if (!isCurrent()) {
-            return;
-          }
-          updateDirtyState();
-          bumpGitRevision(workspaceId);
-        });
+        applyEditorSaveProjection(buffer, saved);
+        setSaveWarnings(saved.warnings.map(editorSaveWarningMessage));
+        updateDirtyState();
+        bumpGitRevision(workspaceId);
       } catch (caughtError: unknown) {
-        if (coordinatedSave.isCurrent()) {
-          setTabDirty(workspaceId, tabId, true);
-          setSaveState({ status: "error", message: errorMessage(caughtError) });
-        }
+        setTabDirty(workspaceId, tabId, true);
+        setSaveState({ status: "error", message: errorMessage(caughtError) });
       } finally {
         finishOperation(cancellation);
       }
@@ -413,10 +365,13 @@ function LoadedEditor({
         try {
           assertEditorBufferEditable(buffer);
           await formatLanguageDocument(editor, cancellation.token);
-          setFormatError(null);
+          setSaveWarnings([]);
         } catch (caughtError: unknown) {
           const message = errorMessage(caughtError);
-          setFormatError((current) => (current === message ? current : message));
+          setSaveWarnings((current) => {
+            const warning = `Formatting failed: ${message}`;
+            return current.includes(warning) ? current : [...current, warning];
+          });
         } finally {
           finishOperation(cancellation);
         }
@@ -424,7 +379,6 @@ function LoadedEditor({
     });
 
     return () => {
-      saveCoordinatorRef.current.invalidate();
       cancelOperations();
       unsubscribeModel();
       unsubscribeLock();
@@ -533,13 +487,13 @@ function LoadedEditor({
   return (
     <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
       <div ref={containerRef} className="h-full min-h-0 min-w-0" />
-      <SaveStatus state={saveState} formatError={formatError} />
+      <SaveStatus state={saveState} warnings={saveWarnings} />
     </div>
   );
 }
 
-function SaveStatus({ state, formatError }: { state: SaveState; formatError: string | null }) {
-  if (state.status === "clean" && formatError === null) {
+function SaveStatus({ state, warnings }: { state: SaveState; warnings: string[] }) {
+  if (state.status === "clean" && warnings.length === 0) {
     return null;
   }
 
@@ -554,16 +508,16 @@ function SaveStatus({ state, formatError }: { state: SaveState; formatError: str
 
   return (
     <div
-      role={state.status === "error" || formatError ? "alert" : "status"}
+      role={state.status === "error" || warnings.length > 0 ? "alert" : "status"}
       className="pointer-events-auto absolute right-3 bottom-3 max-h-40 max-w-[min(32rem,calc(100%-1.5rem))] overflow-auto rounded border border-border/70 bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm"
     >
       {saveMessage ? <div>{saveMessage}</div> : null}
-      {formatError ? (
-        <div className="select-text whitespace-pre-wrap break-words" title={formatError}>
-          <span className="font-medium text-destructive">Formatting failed: </span>
-          {formatError}
+      {warnings.map((warning) => (
+        <div key={warning} className="select-text whitespace-pre-wrap break-words" title={warning}>
+          <span className="font-medium text-destructive">Warning: </span>
+          {warning}
         </div>
-      ) : null}
+      ))}
     </div>
   );
 }

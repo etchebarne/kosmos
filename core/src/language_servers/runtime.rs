@@ -761,19 +761,39 @@ impl LanguageServerRuntime {
         first_error.map_or(Ok(()), Err)
     }
 
-    pub(crate) fn save_document(
+    pub(crate) fn save_current_document(
         &self,
         workspace_id: WorkspaceId,
         path: &str,
-        generation: u64,
-        version: i64,
         text: &str,
     ) -> Result<(), LanguageServerError> {
-        let bindings = self.document_bindings(workspace_id, path, generation, version)?;
+        let bindings = {
+            let documents = self
+                .documents
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            documents
+                .iter()
+                .filter(|(key, _)| key.workspace_id == workspace_id && key.path == path)
+                .map(|(key, document)| {
+                    (
+                        key.clone(),
+                        Arc::clone(&document.session),
+                        document.uri.clone(),
+                        document.generation,
+                        document.version,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if bindings.is_empty() {
+            return Ok(());
+        }
+
         let mut first_error = None;
-        for binding in bindings {
-            if binding.session.is_alive()
-                && let Err(error) = binding.session.save_document(&binding.uri, text)
+        for (_, session, uri, _, _) in &bindings {
+            if session.is_alive()
+                && let Err(error) = session.save_document(uri, text)
             {
                 first_error.get_or_insert(error);
             }
@@ -781,13 +801,13 @@ impl LanguageServerRuntime {
         if let Some(error) = first_error {
             return Err(error);
         }
+
         let mut documents = self
             .documents
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        for (key, document) in &mut *documents {
-            if key.workspace_id == workspace_id
-                && key.path == path
+        for (key, _, _, generation, version) in bindings {
+            if let Some(document) = documents.get_mut(&key)
                 && document.generation == generation
                 && document.version == version
             {
@@ -1381,6 +1401,37 @@ impl LanguageServerRuntime {
             return Err(LanguageServerError::ContentModified);
         }
         Ok(edits)
+    }
+
+    pub(crate) fn formatting_current_document(
+        &self,
+        workspace_id: WorkspaceId,
+        path: &str,
+        text: &str,
+        options: LanguageServerFormattingOptions,
+        cancellation: &LanguageServerRequestCancellation,
+    ) -> Result<Vec<LanguageServerTextEdit>, LanguageServerError> {
+        let (generation, version) = self
+            .documents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .find(|(key, _)| key.workspace_id == workspace_id && key.path == path)
+            .map(|(_, document)| (document.generation, document.version, document.text.clone()))
+            .ok_or(LanguageServerError::DocumentNotOpen)
+            .and_then(|(generation, version, current_text)| {
+                (current_text == text)
+                    .then_some((generation, version))
+                    .ok_or(LanguageServerError::ContentModified)
+            })?;
+        self.formatting(
+            workspace_id,
+            path,
+            generation,
+            version,
+            options,
+            cancellation,
+        )
     }
 
     pub(crate) fn open_documents(&self) -> Vec<WorkspaceEditOpenDocument> {

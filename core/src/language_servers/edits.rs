@@ -2748,6 +2748,14 @@ fn validate_and_span_edits(
     Ok(spans)
 }
 
+pub(crate) fn apply_document_text_edits(
+    text: &str,
+    edits: &[LanguageServerTextEdit],
+) -> Result<String, WorkspaceEditError> {
+    let spans = validate_and_span_edits(text, edits)?;
+    Ok(apply_edits(text, edits, spans))
+}
+
 fn position_offset(
     text: &str,
     position: LanguageServerPosition,

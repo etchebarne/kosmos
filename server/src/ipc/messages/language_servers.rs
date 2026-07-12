@@ -56,16 +56,6 @@ pub(crate) struct CloseLanguageServerDocumentParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct SaveLanguageServerDocumentParams {
-    pub(crate) workspace_id: WorkspaceIdParam,
-    pub(crate) path: String,
-    pub(crate) generation: u64,
-    pub(crate) version: i64,
-    pub(crate) text: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct LanguageServerHoverParams {
     pub(crate) workspace_id: WorkspaceIdParam,
     pub(crate) path: String,
