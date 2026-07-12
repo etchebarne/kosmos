@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use core::tabs::file_tree::{FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError};
-use core::tabs::git::GitChange;
+use core::tabs::git::FileTreeGitDecorations;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -125,7 +125,8 @@ pub(crate) struct FileTreeGitStatusSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileTreeGitStatusEntry {
     path: String,
-    status: GitChangeKindPayload,
+    staged: Option<GitChangeKindPayload>,
+    unstaged: Option<GitChangeKindPayload>,
 }
 
 #[derive(Debug, JsonSchema, Serialize)]
@@ -186,26 +187,20 @@ impl FileTreeChildrenSnapshot {
 }
 
 impl FileTreeGitStatusSnapshot {
-    pub(crate) fn from_changes(changes: &[GitChange], mapper: &FileTreePathMapper) -> Self {
+    pub(crate) fn from_decorations(
+        decorations: &FileTreeGitDecorations,
+        mapper: &FileTreePathMapper,
+    ) -> Self {
         Self {
-            entries: changes
+            entries: decorations
+                .entries()
                 .iter()
-                .filter_map(|change| {
-                    change
-                        .unstaged()
-                        .or(change.staged())
-                        .map(|status| FileTreeGitStatusEntry {
-                            path: mapper.tree_path(change.path()),
-                            status: status.into(),
-                        })
+                .map(|decoration| FileTreeGitStatusEntry {
+                    path: mapper.tree_path(decoration.path()),
+                    staged: decoration.staged().map(Into::into),
+                    unstaged: decoration.unstaged().map(Into::into),
                 })
                 .collect(),
-        }
-    }
-
-    pub(crate) fn empty() -> Self {
-        Self {
-            entries: Vec::new(),
         }
     }
 }
@@ -271,5 +266,59 @@ mod tests {
         );
         assert!(mapper.relative_path("other/src/main.rs").is_err());
         assert!(mapper.relative_entry_path("kosmos/").is_err());
+    }
+
+    #[test]
+    fn serializes_both_git_statuses_with_rooted_paths() {
+        let root = test_directory("git-status");
+        core::tabs::git::GitRepository::init(&root).expect("repository should initialize");
+        std::fs::write(root.join("document.txt"), "staged\n").expect("file should be written");
+        core::tabs::git::GitRepository::stage_paths(&root, &["document.txt".to_owned()])
+            .expect("file should be staged");
+        std::fs::write(root.join("document.txt"), "unstaged\n").expect("file should be changed");
+        let mut state = core::State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            core::tree::PaneId::new(1),
+            core::tree::TabId::new(1),
+            core::tree::TabKind::FileTree,
+        ));
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), core::tree::TabId::new(1))
+            .expect("decorations should load");
+        let snapshot = FileTreeGitStatusSnapshot::from_decorations(
+            &decorations,
+            &FileTreePathMapper::new(&root),
+        );
+        let root_name = root.file_name().unwrap().to_string_lossy();
+
+        assert_eq!(
+            serde_json::to_value(snapshot).unwrap(),
+            serde_json::json!({
+                "entries": [{
+                    "path": format!("{root_name}/document.txt"),
+                    "staged": "added",
+                    "unstaged": "modified",
+                }],
+            })
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn test_directory(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-server-file-tree-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+
+        std::fs::create_dir_all(&root).expect("test root should be created");
+
+        root
     }
 }

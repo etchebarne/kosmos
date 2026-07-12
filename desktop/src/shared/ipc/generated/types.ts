@@ -711,7 +711,8 @@ export interface FileTreeGitStatusSnapshot {
  */
 export interface FileTreeGitStatusEntry {
   path: string;
-  status: GitChangeKindPayload;
+  staged: GitChangeKindPayload | null;
+  unstaged: GitChangeKindPayload | null;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

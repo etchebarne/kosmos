@@ -1,5 +1,4 @@
 use core::tabs::editor::EditorError;
-use core::tabs::git::GitError;
 
 use super::super::messages::editor::{
     ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
@@ -52,9 +51,6 @@ fn git_line_hunks(state: &mut core::State, request: &RequestEnvelope) -> ServerM
         {
             Ok(hunks) => {
                 ServerMessage::ok(request.id, EditorGitLineHunksPayload::from_hunks(&hunks))
-            }
-            Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => {
-                ServerMessage::ok(request.id, EditorGitLineHunksPayload::empty())
             }
             Err(error) => ServerMessage::error(
                 request.id,

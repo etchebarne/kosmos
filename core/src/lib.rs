@@ -18,7 +18,7 @@ pub use editor_sessions::{
     EditorSessionUpdate,
 };
 pub use persistence::StateStore as DurableStore;
-pub use state::{OpenEditorLocation, State};
+pub use state::{FileTreeGitDecorationsError, OpenEditorLocation, State};
 pub use workspace_changes::WorkspaceChangeWatcher;
 pub mod tabs;
 pub mod tree;

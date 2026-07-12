@@ -1285,13 +1285,31 @@
                 "path": {
                   "type": "string"
                 },
-                "status": {
-                  "$ref": "#/definitions/GitChangeKindPayload"
+                "staged": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/GitChangeKindPayload"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "unstaged": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/GitChangeKindPayload"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "path",
-                "status"
+                "staged",
+                "unstaged"
               ],
               "type": "object"
             },

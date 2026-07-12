@@ -30,8 +30,8 @@ use crate::tabs::file_tree::{
     FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
 use crate::tabs::git::{
-    GitDiff, GitDiffViewState, GitError, GitLineHunk, GitRemote, GitRepository,
-    GitRepositorySnapshot, GitStash, GitTag,
+    FileTreeGitDecorations, GitDiff, GitDiffViewState, GitError, GitLineHunk, GitRemote,
+    GitRepository, GitRepositorySnapshot, GitStash, GitTag,
 };
 use crate::tabs::search::{SearchError, SearchMode, WorkspaceSearch, WorkspaceSearchResults};
 use crate::tabs::terminal::{
@@ -72,6 +72,30 @@ pub struct OpenEditorLocation {
     workspace_id: WorkspaceId,
     tab_id: TabId,
     path: String,
+}
+
+#[derive(Debug)]
+pub enum FileTreeGitDecorationsError {
+    FileTree(FileTreeError),
+    Git(GitError),
+}
+
+impl std::fmt::Display for FileTreeGitDecorationsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FileTree(error) => error.fmt(formatter),
+            Self::Git(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for FileTreeGitDecorationsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::FileTree(error) => Some(error),
+            Self::Git(error) => Some(error),
+        }
+    }
 }
 
 impl OpenEditorLocation {
@@ -1632,6 +1656,24 @@ impl State {
         self.file_tree_workspace_directory(workspace_id, tab_id)
     }
 
+    pub fn file_tree_git_decorations(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<FileTreeGitDecorations, FileTreeGitDecorationsError> {
+        let directory = self
+            .file_tree_workspace_directory(workspace_id, tab_id)
+            .map_err(FileTreeGitDecorationsError::FileTree)?;
+
+        match GitRepository::workspace_changes(directory) {
+            Ok(changes) => Ok(FileTreeGitDecorations::from_changes(changes)),
+            Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => {
+                Ok(FileTreeGitDecorations::default())
+            }
+            Err(error) => Err(FileTreeGitDecorationsError::Git(error)),
+        }
+    }
+
     pub fn file_tree_children(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -1979,7 +2021,11 @@ impl State {
             .editor_view_state(workspace_id, tab_id)
             .ok_or(GitError::TabNotFound)?;
 
-        GitRepository::file_line_hunks(workspace.directory(), view_state.path())
+        match GitRepository::file_line_hunks(workspace.directory(), view_state.path()) {
+            Ok(hunks) => Ok(hunks),
+            Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn git_status(
@@ -3327,6 +3373,7 @@ fn next_state_instance_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tabs::git::GitChangeKind;
 
     #[test]
     fn format_document_rejects_zero_tab_size() {
@@ -4565,6 +4612,165 @@ mod tests {
     }
 
     #[test]
+    fn file_tree_git_decorations_preserve_staged_status() {
+        let root = test_directory("file-tree-git-staged");
+        GitRepository::init(&root).expect("repository should initialize");
+        std::fs::write(root.join("staged.txt"), "staged\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["staged.txt".to_owned()])
+            .expect("file should be staged");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("decorations should load");
+
+        assert_eq!(decorations.entries().len(), 1);
+        assert_eq!(decorations.entries()[0].path(), "staged.txt");
+        assert_eq!(
+            decorations.entries()[0].staged(),
+            Some(GitChangeKind::Added)
+        );
+        assert_eq!(decorations.entries()[0].unstaged(), None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_preserve_unstaged_status() {
+        let root = test_directory("file-tree-git-unstaged");
+        let path = root.join("tracked.txt");
+        GitRepository::init(&root).expect("repository should initialize");
+        std::fs::write(&path, "before\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["tracked.txt".to_owned()])
+            .expect("file should be staged");
+        commit_git(&root, "Initial");
+        std::fs::write(&path, "after\n").expect("file should be changed");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("decorations should load");
+
+        assert_eq!(decorations.entries().len(), 1);
+        assert_eq!(decorations.entries()[0].path(), "tracked.txt");
+        assert_eq!(decorations.entries()[0].staged(), None);
+        assert_eq!(
+            decorations.entries()[0].unstaged(),
+            Some(GitChangeKind::Modified)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_preserve_staged_and_unstaged_statuses() {
+        let root = test_directory("file-tree-git-both");
+        let path = root.join("tracked.txt");
+        GitRepository::init(&root).expect("repository should initialize");
+        std::fs::write(&path, "before\n").expect("file should be written");
+        GitRepository::stage_paths(&root, &["tracked.txt".to_owned()])
+            .expect("file should be staged");
+        commit_git(&root, "Initial");
+        std::fs::write(&path, "staged\n").expect("file should be changed");
+        GitRepository::stage_paths(&root, &["tracked.txt".to_owned()])
+            .expect("file should be staged");
+        std::fs::write(&path, "unstaged\n").expect("file should be changed");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("decorations should load");
+
+        assert_eq!(decorations.entries().len(), 1);
+        assert_eq!(decorations.entries()[0].path(), "tracked.txt");
+        assert_eq!(
+            decorations.entries()[0].staged(),
+            Some(GitChangeKind::Modified)
+        );
+        assert_eq!(
+            decorations.entries()[0].unstaged(),
+            Some(GitChangeKind::Modified)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_are_empty_for_a_clean_repository() {
+        let root = test_directory("file-tree-git-clean");
+        GitRepository::init(&root).expect("repository should initialize");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("decorations should load");
+
+        assert!(decorations.entries().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_scope_paths_to_a_nested_workspace() {
+        let root = test_directory("file-tree-git-nested");
+        let workspace = root.join("packages/app");
+        std::fs::create_dir_all(&workspace).expect("workspace should be created");
+        GitRepository::init(&root).expect("repository should initialize");
+        std::fs::write(root.join("outside.txt"), "outside\n").expect("file should be written");
+        std::fs::write(workspace.join("inside.txt"), "inside\n").expect("file should be written");
+        let (state, workspace_id) = file_tree_git_state(&workspace);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("decorations should load");
+
+        assert_eq!(decorations.entries().len(), 1);
+        assert_eq!(decorations.entries()[0].path(), "inside.txt");
+        assert_eq!(
+            decorations.entries()[0].unstaged(),
+            Some(GitChangeKind::Untracked)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_are_empty_without_a_repository() {
+        let root = test_directory("file-tree-git-no-repository");
+        std::fs::write(root.join("notes.txt"), "notes\n").expect("file should be written");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        let decorations = state
+            .file_tree_git_decorations(Some(workspace_id), TabId::new(1))
+            .expect("a non-repository should have no decorations");
+
+        assert!(decorations.entries().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_tree_git_decorations_report_invalid_workspace_and_tab() {
+        let root = test_directory("file-tree-git-invalid-target");
+        let (state, workspace_id) = file_tree_git_state(&root);
+
+        assert!(matches!(
+            state.file_tree_git_decorations(Some(WorkspaceId::new(99)), TabId::new(1)),
+            Err(FileTreeGitDecorationsError::FileTree(
+                FileTreeError::WorkspaceNotFound
+            ))
+        ));
+        assert!(matches!(
+            state.file_tree_git_decorations(Some(workspace_id), TabId::new(99)),
+            Err(FileTreeGitDecorationsError::FileTree(
+                FileTreeError::TabNotFound
+            ))
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn editor_git_line_hunks_use_the_editor_view_path() {
         let root = test_directory("editor-git-line-hunks");
         std::fs::write(root.join("notes.txt"), "first\nsecond\n").unwrap();
@@ -4592,6 +4798,31 @@ mod tests {
             state.editor_git_line_hunks(Some(workspace_id), TabId::new(1)),
             Err(GitError::TabNotFound)
         ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn editor_git_line_hunks_are_empty_without_a_repository() {
+        let root = test_directory("editor-git-line-hunks-no-repository");
+        std::fs::write(root.join("notes.txt"), "first\nsecond\n").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "notes.txt")
+            .unwrap();
+
+        let hunks = state
+            .editor_git_line_hunks(Some(workspace_id), TabId::new(2))
+            .expect("a non-repository should have no line hunks");
+
+        assert!(hunks.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4933,6 +5164,42 @@ mod tests {
             pane.add_tab(tab);
         }
         pane
+    }
+
+    fn file_tree_git_state(root: &Path) -> (State, WorkspaceId) {
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+
+        (state, workspace_id)
+    }
+
+    fn commit_git(root: &Path, message: &str) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args([
+                "-c",
+                "user.name=Kosmos Test",
+                "-c",
+                "user.email=kosmos@example.com",
+                "commit",
+                "--message",
+                message,
+            ])
+            .output()
+            .expect("git commit should run");
+
+        assert!(
+            output.status.success(),
+            "commit should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn location_state(

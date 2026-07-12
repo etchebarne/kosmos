@@ -145,8 +145,4 @@ impl EditorGitLineHunksPayload {
                 .collect(),
         }
     }
-
-    pub(crate) fn empty() -> Self {
-        Self { hunks: Vec::new() }
-    }
 }

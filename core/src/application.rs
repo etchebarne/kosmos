@@ -16,8 +16,9 @@ use crate::language_servers::{
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{SettingValue, SettingsError};
-use crate::state::{OpenEditorLocation, PersistentStateCandidate};
+use crate::state::{FileTreeGitDecorationsError, OpenEditorLocation, PersistentStateCandidate};
 use crate::tabs::editor::EditorError;
+use crate::tabs::git::{FileTreeGitDecorations, GitError, GitLineHunk};
 use crate::tree::{PaneId, TabId, WorkspaceId};
 use crate::window::WindowState;
 
@@ -138,6 +139,22 @@ impl Application {
 
     pub fn set_event_sink(&self, sink: Arc<dyn CoreEventSink>) {
         self.state.set_event_sink(sink);
+    }
+
+    pub fn file_tree_git_decorations(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<FileTreeGitDecorations, FileTreeGitDecorationsError> {
+        self.state.file_tree_git_decorations(workspace_id, tab_id)
+    }
+
+    pub fn editor_git_line_hunks(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Vec<GitLineHunk>, GitError> {
+        self.state.editor_git_line_hunks(workspace_id, tab_id)
     }
 
     pub fn prepare_persistent_operation(

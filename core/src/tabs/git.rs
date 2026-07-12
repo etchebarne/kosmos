@@ -41,6 +41,18 @@ pub struct GitChange {
     unstaged: Option<GitChangeKind>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FileTreeGitDecorations {
+    entries: Vec<FileTreeGitDecoration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileTreeGitDecoration {
+    path: String,
+    staged: Option<GitChangeKind>,
+    unstaged: Option<GitChangeKind>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitStash {
     selector: String,
@@ -592,6 +604,39 @@ impl GitChange {
 
     pub fn is_unstaged(&self) -> bool {
         self.unstaged.is_some()
+    }
+}
+
+impl FileTreeGitDecorations {
+    pub(crate) fn from_changes(changes: Vec<GitChange>) -> Self {
+        Self {
+            entries: changes
+                .into_iter()
+                .map(|change| FileTreeGitDecoration {
+                    path: change.path,
+                    staged: change.staged,
+                    unstaged: change.unstaged,
+                })
+                .collect(),
+        }
+    }
+
+    pub fn entries(&self) -> &[FileTreeGitDecoration] {
+        &self.entries
+    }
+}
+
+impl FileTreeGitDecoration {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn staged(&self) -> Option<GitChangeKind> {
+        self.staged
+    }
+
+    pub fn unstaged(&self) -> Option<GitChangeKind> {
+        self.unstaged
     }
 }
 

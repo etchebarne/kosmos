@@ -1,5 +1,4 @@
 use core::tabs::file_tree::FileTreeError;
-use core::tabs::git::{GitError, GitRepository};
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::file_tree::{
@@ -63,21 +62,23 @@ fn get_git_status(state: &mut core::State, request: &RequestEnvelope) -> ServerM
         Ok(params) => {
             let workspace_id = params.workspace_id.map(Into::into);
             let tab_id = params.tab_id.into();
-            let root = match state.file_tree_root(workspace_id, tab_id) {
-                Ok(root) => root,
-                Err(error) => return file_tree_error(request.id, error),
-            };
-            let mapper = FileTreePathMapper::new(root);
 
-            match GitRepository::workspace_changes(root) {
-                Ok(changes) => ServerMessage::ok(
-                    request.id,
-                    FileTreeGitStatusSnapshot::from_changes(&changes, &mapper),
-                ),
-                Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => {
-                    ServerMessage::ok(request.id, FileTreeGitStatusSnapshot::empty())
+            match state.file_tree_git_decorations(workspace_id, tab_id) {
+                Ok(decorations) => {
+                    let mapper = match file_tree_path_mapper(state, workspace_id, tab_id) {
+                        Ok(mapper) => mapper,
+                        Err(error) => return file_tree_error(request.id, error),
+                    };
+
+                    ServerMessage::ok(
+                        request.id,
+                        FileTreeGitStatusSnapshot::from_decorations(&decorations, &mapper),
+                    )
                 }
-                Err(error) => ServerMessage::error(
+                Err(core::FileTreeGitDecorationsError::FileTree(error)) => {
+                    file_tree_error(request.id, error)
+                }
+                Err(core::FileTreeGitDecorationsError::Git(error)) => ServerMessage::error(
                     request.id,
                     "file_tree.git_status_failed",
                     error.to_string(),
