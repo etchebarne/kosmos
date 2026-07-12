@@ -131,6 +131,8 @@ pub struct WorkspaceEditOpenDocument {
     pub generation: u64,
     pub version: i64,
     pub text: String,
+    /// The last saved content observed by the adapter when the edit was staged.
+    pub saved_text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -171,6 +173,20 @@ pub struct StagedWorkspaceEditDocument {
     pub new_text: String,
     pub generation: Option<u64>,
     pub version: Option<i64>,
+}
+
+/// A complete Monaco mutation selected by core from a point-in-time document observation.
+///
+/// This is intentionally data-only. Adapters own their model objects, locks, and view state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceEditModelDirective {
+    pub workspace_id: WorkspaceId,
+    pub original_path: String,
+    pub path: Option<String>,
+    pub generation: u64,
+    pub version: i64,
+    pub original_text: String,
+    pub text: String,
 }
 
 #[derive(Debug)]
@@ -234,9 +250,10 @@ pub(super) enum WorkspaceEditWatchDisposition {
 struct WorkspaceEditTransaction {
     created_at: Instant,
     authorization: String,
-    owner: Option<u64>,
     documents: Vec<TransactionDocument>,
     operations: Vec<TransactionOperation>,
+    staged: StagedWorkspaceEdit,
+    model_directives: Vec<WorkspaceEditModelDirective>,
     phase: WorkspaceEditTransactionPhase,
 }
 
@@ -573,14 +590,16 @@ impl WorkspaceEditTransactions {
             documents: staged_documents,
             operations: staged_operations,
         };
+        let model_directives = plan_open_model_lineages(&staged, open_documents)?;
         transactions.insert(
             id,
             WorkspaceEditTransaction {
                 created_at: Instant::now(),
                 authorization,
-                owner: None,
                 documents: prepared.documents,
                 operations: prepared.operations,
+                staged: staged.clone(),
+                model_directives,
                 phase: WorkspaceEditTransactionPhase::Staged,
             },
         );
@@ -834,6 +853,40 @@ impl WorkspaceEditTransactions {
             .ok_or(WorkspaceEditError::Expired)?;
         validate_outcome_authorization(outcome, authorization)?;
         Ok(outcome_operations(outcome))
+    }
+
+    pub fn staged(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<StagedWorkspaceEdit, WorkspaceEditError> {
+        let mut transactions = self
+            .transactions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        remove_expired(&mut transactions);
+        let transaction = transactions
+            .get(&transaction_id)
+            .ok_or(WorkspaceEditError::Expired)?;
+        validate_authorization(transaction, authorization)?;
+        Ok(transaction.staged.clone())
+    }
+
+    pub fn model_directives(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<Vec<WorkspaceEditModelDirective>, WorkspaceEditError> {
+        let mut transactions = self
+            .transactions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        remove_expired(&mut transactions);
+        let transaction = transactions
+            .get(&transaction_id)
+            .ok_or(WorkspaceEditError::Expired)?;
+        validate_authorization(transaction, authorization)?;
+        Ok(transaction.model_directives.clone())
     }
 
     pub fn rollback(
@@ -1264,180 +1317,6 @@ impl WorkspaceEditTransactions {
         recoveries
     }
 
-    pub fn claim_owner(
-        &self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<(), WorkspaceEditError> {
-        let mut transactions = self
-            .transactions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        remove_expired(&mut transactions);
-        let Some(transaction) = transactions.get_mut(&transaction_id) else {
-            drop(transactions);
-            let outcomes = self
-                .outcomes
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if let Some(outcome) = outcomes.get(&transaction_id) {
-                return validate_outcome_authorization(outcome, authorization);
-            }
-            drop(outcomes);
-            let acknowledgements = self
-                .acknowledgements
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let acknowledgement = acknowledgements
-                .get(&transaction_id)
-                .ok_or(WorkspaceEditError::Expired)?;
-            return if acknowledgement.authorization_hash == content_hash(authorization) {
-                Ok(())
-            } else {
-                Err(WorkspaceEditError::Invalid(
-                    "workspace edit transaction authorization is invalid".to_owned(),
-                ))
-            };
-        };
-        validate_authorization(transaction, authorization)?;
-        match transaction.owner {
-            Some(existing) if existing != owner && !transaction.phase.is_finished() => {
-                Err(WorkspaceEditError::Invalid(
-                    "workspace edit transaction belongs to another connection".to_owned(),
-                ))
-            }
-            _ => {
-                transaction.owner = Some(owner);
-                Ok(())
-            }
-        }
-    }
-
-    pub fn cancel_owned(
-        &self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        let store = self.store.clone();
-        let mut transactions = self
-            .transactions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        remove_expired(&mut transactions);
-        let Some(transaction) = transactions.get_mut(&transaction_id) else {
-            drop(transactions);
-            let outcomes = self
-                .outcomes
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let outcome = outcomes
-                .get(&transaction_id)
-                .ok_or(WorkspaceEditError::Expired)?;
-            validate_outcome_authorization(outcome, authorization)?;
-            return Ok(outcome_status(transaction_id, outcome));
-        };
-        validate_authorization(transaction, authorization)?;
-        if transaction.owner != Some(owner) {
-            return Err(WorkspaceEditError::Invalid(
-                "workspace edit cancellation came from a non-owning connection".to_owned(),
-            ));
-        }
-        if transaction.phase.is_commit_decided() {
-            return Ok(transaction_status(transaction_id, transaction));
-        }
-        if !transaction.phase.is_finished() {
-            if let Err(error) =
-                rollback_transaction_durably(store.as_ref(), transaction, transaction_id)
-                    .and_then(|()| remove_recovery_directories(transaction))
-            {
-                transaction.phase = WorkspaceEditTransactionPhase::RecoveryRequired;
-                return Err(error);
-            }
-            transaction.created_at = Instant::now();
-        }
-        Ok(transaction_status(transaction_id, transaction))
-    }
-
-    pub fn disconnect_owner(
-        &self,
-        owner: u64,
-    ) -> Vec<(
-        WorkspaceEditTransactionStatus,
-        Vec<StagedWorkspaceEditOperation>,
-    )> {
-        let store = self.store.clone();
-        let mut transactions = self
-            .transactions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        remove_expired(&mut transactions);
-        let mut statuses = Vec::new();
-        for (transaction_id, transaction) in transactions.iter_mut() {
-            if transaction.owner != Some(owner) || transaction.phase.is_finished() {
-                continue;
-            }
-            if transaction.phase == WorkspaceEditTransactionPhase::RecoveryRequired {
-                transaction.owner = None;
-                statuses.push((
-                    transaction_status(*transaction_id, transaction),
-                    staged_operations(&transaction.operations),
-                ));
-                continue;
-            }
-            if transaction.phase.is_commit_decided() {
-                transaction.owner = None;
-                statuses.push((
-                    transaction_status(*transaction_id, transaction),
-                    staged_operations(&transaction.operations),
-                ));
-                continue;
-            }
-            if rollback_transaction_durably(store.as_ref(), transaction, *transaction_id).is_ok()
-                && remove_recovery_directories(transaction).is_ok()
-            {
-                transaction.created_at = Instant::now();
-            }
-            transaction.owner = None;
-            statuses.push((
-                transaction_status(*transaction_id, transaction),
-                staged_operations(&transaction.operations),
-            ));
-        }
-        statuses
-    }
-
-    pub fn finish_disconnected_rollbacks(&self, transaction_ids: &[u64]) {
-        let store = self.store.clone();
-        let mut transactions = self
-            .transactions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        for transaction_id in transaction_ids {
-            let Some(transaction) = transactions.get_mut(transaction_id) else {
-                continue;
-            };
-            if transaction.phase != WorkspaceEditTransactionPhase::RolledBack {
-                continue;
-            }
-            let cleanup = remove_recovery_directories(transaction).and_then(|()| {
-                if let Some(store) = store.as_ref() {
-                    store
-                        .delete_workspace_edit_editor_recovery(*transaction_id)
-                        .map_err(|error| WorkspaceEditError::Recovery(error.to_string()))?;
-                }
-                delete_journal(store.as_ref(), *transaction_id)
-            });
-            transaction.phase = if cleanup.is_ok() {
-                WorkspaceEditTransactionPhase::FinishedRolledBack
-            } else {
-                WorkspaceEditTransactionPhase::RecoveryRequired
-            };
-            transaction.created_at = Instant::now();
-        }
-    }
-
     pub(super) fn watch_disposition(
         &self,
         path: &std::path::Path,
@@ -1745,6 +1624,171 @@ fn staged_renderer_edit(
         })
         .collect();
     (staged_documents, staged_operations)
+}
+
+#[derive(Clone)]
+struct VirtualOpenModel {
+    workspace_id: WorkspaceId,
+    original_path: String,
+    path: Option<String>,
+    generation: u64,
+    version: i64,
+    original_text: String,
+    text: String,
+    expected_text: String,
+    touched: bool,
+}
+
+pub(super) fn plan_open_model_lineages(
+    edit: &StagedWorkspaceEdit,
+    observations: &[WorkspaceEditOpenDocument],
+) -> Result<Vec<WorkspaceEditModelDirective>, WorkspaceEditError> {
+    let mut models = observations
+        .iter()
+        .map(|document| VirtualOpenModel {
+            workspace_id: document.workspace_id,
+            original_path: document.path.clone(),
+            path: Some(document.path.clone()),
+            generation: document.generation,
+            version: document.version,
+            original_text: document.text.clone(),
+            text: document.text.clone(),
+            expected_text: document.saved_text.clone(),
+            touched: false,
+        })
+        .collect::<Vec<_>>();
+
+    for operation in &edit.operations {
+        match operation {
+            StagedWorkspaceEditOperation::TextDocument { document } => {
+                let document = edit.documents.get(*document).ok_or_else(|| {
+                    WorkspaceEditError::Invalid(format!(
+                        "workspace edit document {document} is missing"
+                    ))
+                })?;
+                let targets = models_at(&models, document.workspace_id, &document.path, false);
+                if document.generation.is_none() || document.version.is_none() {
+                    if !targets.is_empty() {
+                        return Err(WorkspaceEditError::Stale(format!(
+                            "workspace edit target {} opened after validation",
+                            document.path
+                        )));
+                    }
+                    continue;
+                }
+                if targets.is_empty() {
+                    return Err(WorkspaceEditError::Stale(format!(
+                        "workspace edit target {} is not available",
+                        document.path
+                    )));
+                }
+                for target in targets {
+                    let target = &mut models[target];
+                    if target.text != document.original_text {
+                        return Err(WorkspaceEditError::Stale(format!(
+                            "workspace edit target {} has conflicting ordered edits",
+                            document.path
+                        )));
+                    }
+                    target.text = document.new_text.clone();
+                    target.expected_text = document.new_text.clone();
+                    target.touched = true;
+                }
+            }
+            StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path,
+                new_path,
+            } => {
+                let sources = models_at(&models, *workspace_id, old_path, true);
+                let destinations = models_at(&models, *workspace_id, new_path, true);
+                assert_clean_open_models(&models, &destinations, "overwrite")?;
+                for target in destinations {
+                    let target = &mut models[target];
+                    target.path = None;
+                    target.touched = true;
+                }
+                for source in sources {
+                    let source = &mut models[source];
+                    let path = source.path.as_deref().expect("source models have a path");
+                    let suffix = path_suffix(path, old_path).expect("source is below rename path");
+                    source.path = Some(join_prefix(new_path, suffix));
+                    source.touched = true;
+                }
+            }
+            StagedWorkspaceEditOperation::CreateFile { workspace_id, path }
+            | StagedWorkspaceEditOperation::DeleteFile {
+                workspace_id, path, ..
+            } => {
+                let affected = models_at(&models, *workspace_id, path, true);
+                let action = match operation {
+                    StagedWorkspaceEditOperation::CreateFile { .. } => "overwrite",
+                    StagedWorkspaceEditOperation::DeleteFile { .. } => "delete",
+                    _ => unreachable!(),
+                };
+                assert_clean_open_models(&models, &affected, action)?;
+                for target in affected {
+                    let target = &mut models[target];
+                    target.path = None;
+                    target.touched = true;
+                }
+            }
+        }
+    }
+
+    Ok(models
+        .into_iter()
+        .filter(|model| {
+            model.touched
+                && (model.path.as_deref() != Some(&model.original_path)
+                    || model.text != model.original_text)
+        })
+        .map(|model| WorkspaceEditModelDirective {
+            workspace_id: model.workspace_id,
+            original_path: model.original_path,
+            path: model.path,
+            generation: model.generation,
+            version: model.version,
+            original_text: model.original_text,
+            text: model.text,
+        })
+        .collect())
+}
+
+fn models_at(
+    models: &[VirtualOpenModel],
+    workspace_id: WorkspaceId,
+    path: &str,
+    descendants: bool,
+) -> Vec<usize> {
+    models
+        .iter()
+        .enumerate()
+        .filter_map(|(index, model)| {
+            (model.workspace_id == workspace_id
+                && model.path.as_deref().is_some_and(|model_path| {
+                    model_path == path || (descendants && path_is_within(model_path, path))
+                }))
+            .then_some(index)
+        })
+        .collect()
+}
+
+fn assert_clean_open_models(
+    models: &[VirtualOpenModel],
+    targets: &[usize],
+    action: &str,
+) -> Result<(), WorkspaceEditError> {
+    for target in targets {
+        let target = &models[*target];
+        if target.text != target.expected_text {
+            return Err(WorkspaceEditError::Stale(format!(
+                "cannot {action} dirty open document {}",
+                target.path.as_deref().unwrap_or(&target.original_path)
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn workspace_edit_operation_error(index: usize, error: WorkspaceEditError) -> WorkspaceEditError {
@@ -5122,6 +5166,7 @@ mod tests {
             generation: 7,
             version: 3,
             text: "dirty open".to_owned(),
+            saved_text: "open".to_owned(),
         }];
         let manager = WorkspaceEditTransactions::new();
         assert!(matches!(manager.stage(&serde_json::json!({
@@ -5401,7 +5446,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_disconnect_rolls_back_unacknowledged_closed_files() {
+    fn unacknowledged_closed_files_can_be_rolled_back() {
         let root = test_directory("disconnect-rollback");
         let path = root.join("file.txt");
         fs::write(&path, "before").unwrap();
@@ -5416,19 +5461,16 @@ mod tests {
             )
             .unwrap();
         manager
-            .claim_owner(staged.transaction_id, &staged.authorization, 42)
-            .unwrap();
-        manager
             .commit_closed(staged.transaction_id, &staged.authorization, &[])
             .unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "after");
 
-        let statuses = manager.disconnect_owner(42);
-        assert_eq!(
-            statuses[0].0.phase,
-            WorkspaceEditTransactionPhase::RolledBack
-        );
-        manager.finish_disconnected_rollbacks(&[staged.transaction_id]);
+        manager
+            .rollback(staged.transaction_id, &staged.authorization)
+            .unwrap();
+        manager
+            .finish(staged.transaction_id, &staged.authorization)
+            .unwrap();
         assert_eq!(
             manager
                 .status(staged.transaction_id, &staged.authorization)
@@ -5460,38 +5502,25 @@ mod tests {
 
         let completed = make_edit();
         manager
-            .claim_owner(completed.transaction_id, &completed.authorization, 7)
-            .unwrap();
-        manager
             .commit_closed(completed.transaction_id, &completed.authorization, &[])
             .unwrap();
         manager
             .finish(completed.transaction_id, &completed.authorization)
             .unwrap();
-        assert_eq!(
-            manager
-                .cancel_owned(completed.transaction_id, &completed.authorization, 7)
-                .unwrap()
-                .phase,
-            WorkspaceEditTransactionPhase::FinishedCommitted
-        );
+        assert!(matches!(
+            manager.rollback(completed.transaction_id, &completed.authorization),
+            Err(WorkspaceEditError::Invalid(_))
+        ));
         assert_eq!(fs::read_to_string(&path).unwrap(), "after");
 
         fs::write(&path, "before").unwrap();
         let cancelled = make_edit();
         manager
-            .claim_owner(cancelled.transaction_id, &cancelled.authorization, 8)
-            .unwrap();
-        manager
             .commit_closed(cancelled.transaction_id, &cancelled.authorization, &[])
             .unwrap();
-        assert_eq!(
-            manager
-                .cancel_owned(cancelled.transaction_id, &cancelled.authorization, 8)
-                .unwrap()
-                .phase,
-            WorkspaceEditTransactionPhase::RolledBack
-        );
+        manager
+            .rollback(cancelled.transaction_id, &cancelled.authorization)
+            .unwrap();
         manager
             .finish(cancelled.transaction_id, &cancelled.authorization)
             .unwrap();
@@ -5512,6 +5541,7 @@ mod tests {
             generation: 4,
             version: 9,
             text: "before".to_owned(),
+            saved_text: "before".to_owned(),
         }];
         let manager = WorkspaceEditTransactions::new();
         let staged = manager
@@ -6080,6 +6110,7 @@ mod tests {
             generation: 4,
             version: 7,
             text: "old model content".to_owned(),
+            saved_text: "old model content".to_owned(),
         };
         let edit = serde_json::json!({ "documentChanges": [
             { "kind": "create", "uri": file_uri(&root.join("a.txt")), "options": { "overwrite": true } },
@@ -6295,6 +6326,7 @@ mod tests {
             generation: 1,
             version: 2,
             text: "unsaved".to_owned(),
+            saved_text: "saved".to_owned(),
         };
         assert!(matches!(
             manager.stage(
@@ -6497,9 +6529,6 @@ mod tests {
             .unwrap();
         drop(reopened);
         let after_ack_loss = WorkspaceEditTransactions::open(store).unwrap();
-        after_ack_loss
-            .claim_owner(staged.transaction_id, &recovery.authorization, 99)
-            .unwrap();
         after_ack_loss
             .acknowledge_completion(staged.transaction_id, &recovery.authorization)
             .unwrap();
@@ -7051,21 +7080,6 @@ mod tests {
             );
             assert!(!status.retry_rollback);
             assert!(status.can_finalize);
-            manager
-                .claim_owner(staged.transaction_id, &staged.authorization, 71)
-                .unwrap();
-            assert_eq!(
-                manager
-                    .cancel_owned(staged.transaction_id, &staged.authorization, 71)
-                    .unwrap()
-                    .phase,
-                WorkspaceEditTransactionPhase::CommittedCleanupRequired
-            );
-            let disconnected = manager.disconnect_owner(71);
-            assert_eq!(
-                disconnected[0].0.phase,
-                WorkspaceEditTransactionPhase::CommittedCleanupRequired
-            );
             assert!(matches!(
                 manager.rollback(staged.transaction_id, &staged.authorization),
                 Err(WorkspaceEditError::Invalid(_))
@@ -7141,6 +7155,7 @@ mod tests {
             generation: 4,
             version: 9,
             text: text.to_owned(),
+            saved_text: text.to_owned(),
         }
     }
 

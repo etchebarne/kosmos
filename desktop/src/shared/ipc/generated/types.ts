@@ -200,6 +200,11 @@ export type StagedWorkspaceEditOperationPayload =
     };
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "WorkspaceEditRecoveryIntentPayload".
+ */
+export type WorkspaceEditRecoveryIntentPayload = "retryRollback" | "finalize";
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "Nullable_LanguageServerSignatureHelpPayload".
  */
 export type Nullable_LanguageServerSignatureHelpPayload = LanguageServerSignatureHelpPayload | null;
@@ -378,6 +383,7 @@ export interface KosmosIpcTypes {
   LanguageServerCodeActionPayload?: LanguageServerCodeActionPayload;
   ResolveLanguageServerCompletionParams?: ResolveLanguageServerCompletionParams;
   LanguageServerCompletionItemPayload?: LanguageServerCompletionItemPayload;
+  ResolveWorkspaceEditRecoveryParams?: ResolveWorkspaceEditRecoveryParams;
   ResolveLanguageServerWorkspaceSymbolParams?: ResolveLanguageServerWorkspaceSymbolParams;
   LanguageServerWorkspaceSymbolPayload?: LanguageServerWorkspaceSymbolPayload;
   SaveLanguageServerDocumentParams?: SaveLanguageServerDocumentParams;
@@ -1360,6 +1366,15 @@ export interface ResolveLanguageServerCompletionParams {
   serverId: string;
   version: number;
   workspaceId: WorkspaceIdParam;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolveWorkspaceEditRecoveryParams".
+ */
+export interface ResolveWorkspaceEditRecoveryParams {
+  authorization: string;
+  intent: WorkspaceEditRecoveryIntentPayload;
+  transactionId: number;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

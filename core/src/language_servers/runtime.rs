@@ -174,6 +174,7 @@ struct DocumentBinding {
     uri: String,
     language_id: String,
     text: String,
+    saved_text: String,
     session_key: SessionKey,
     session: Arc<LanguageServerSession>,
 }
@@ -592,6 +593,7 @@ impl LanguageServerRuntime {
                     uri,
                     language_id,
                     text: document.text.to_owned(),
+                    saved_text: document.text.to_owned(),
                     session_key: key,
                     session,
                 },
@@ -717,7 +719,23 @@ impl LanguageServerRuntime {
                 first_error.get_or_insert(error);
             }
         }
-        first_error.map_or(Ok(()), Err)
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        let mut documents = self
+            .documents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for (key, document) in &mut *documents {
+            if key.workspace_id == workspace_id
+                && key.path == path
+                && document.generation == generation
+                && document.version == version
+            {
+                document.saved_text = text.to_owned();
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn hover(
@@ -1321,6 +1339,7 @@ impl LanguageServerRuntime {
                     generation: document.generation,
                     version: document.version,
                     text: document.text.clone(),
+                    saved_text: document.saved_text.clone(),
                 });
         }
         open.into_values().collect()
@@ -3865,6 +3884,7 @@ fn open_document_snapshots(
                 generation: document.generation,
                 version: document.version,
                 text: document.text.clone(),
+                saved_text: document.saved_text.clone(),
             });
     }
     open.into_values().collect()

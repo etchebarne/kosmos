@@ -28,7 +28,6 @@ impl Dispatcher {
     pub(crate) fn from_application(application: core::Application) -> io::Result<Self> {
         let initial_workspaces = application.state().workspaces().clone();
         let notifications = NotificationHub::default();
-        let workspace_edit_publication = notifications.workspace_edit_publication_gate();
         let (workspace_reconciler, workspace_changes) = match core::WorkspaceChangeWatcher::new() {
             Ok((watcher, changes)) => {
                 match WorkspaceWatcherReconciler::new(watcher, notifications.clone()) {
@@ -64,7 +63,6 @@ impl Dispatcher {
             Arc::clone(&application),
             persistent_receiver,
             workspace_reconciler.clone(),
-            workspace_edit_publication,
         )?;
         if let Some(workspace_changes) = workspace_changes
             && let Err(error) = spawn_notification_worker(
@@ -131,30 +129,53 @@ impl Dispatcher {
         route: PreparedRoute,
         responses: ResponseSender,
         cancellation: core::language_servers::LanguageServerRequestCancellation,
-        owner: Option<core::WorkspaceEditOwnerToken>,
+        _owner: Option<()>,
     ) -> Option<mpsc::Receiver<()>> {
         if cancellation.is_cancelled() {
             responses.send(request_cancelled(route.request_id()));
             return None;
         }
-        if let Some((transaction_id, authorization)) = route.workspace_edit_credentials()
-            && let Some(owner) = owner
+        if let Some((transaction_id, authorization)) = route.workspace_edit_delivery_credentials() {
+            let response = match self
+                .notifications
+                .request_staged_workspace_edit(transaction_id, &authorization)
+            {
+                Ok(result) if result.applied => ServerMessage::ok(route.request_id(), true),
+                Ok(result) => ServerMessage::error(
+                    route.request_id(),
+                    "workspace_edit.rejected",
+                    result
+                        .failure_reason
+                        .unwrap_or_else(|| "workspace edit was not applied".to_owned()),
+                ),
+                Err(error) => workspace_edit_error(route.request_id(), error),
+            };
+            responses.send(response);
+            return None;
+        }
+        if let Some((transaction_id, authorization, intent)) =
+            route.workspace_edit_recovery_request()
         {
-            let claim = self
+            let response = self
                 .application
                 .lock()
                 .map_err(|_| {
                     core::language_servers::WorkspaceEditError::Invalid(
-                        "workspace edit state is unavailable".to_owned(),
+                        "workspace edit application is unavailable".to_owned(),
                     )
                 })
                 .and_then(|mut application| {
-                    application.claim_workspace_edit_owner(transaction_id, &authorization, owner)
-                });
-            if let Err(error) = claim {
-                responses.send(workspace_edit_error(route.request_id(), error));
-                return None;
-            }
+                    application.resolve_workspace_edit_recovery(
+                        transaction_id,
+                        &authorization,
+                        intent,
+                    )
+                })
+                .map(crate::ipc::messages::language_servers::WorkspaceEditTransactionStatusPayload::from_core)
+                .map(|status| ServerMessage::ok(route.request_id(), status))
+                .unwrap_or_else(|error| workspace_edit_error(route.request_id(), error));
+            responses.send(response);
+            return None;
         }
 
         match route.mode() {
@@ -440,7 +461,6 @@ fn spawn_persistence_worker(
     application: Arc<Mutex<core::Application>>,
     requests: mpsc::Receiver<PersistentRequest>,
     workspace_reconciler: Option<WorkspaceWatcherReconciler>,
-    workspace_edit_publication: Arc<Mutex<()>>,
 ) -> io::Result<()> {
     thread::Builder::new()
         .name("kosmos-persistent-operations".to_owned())
@@ -459,7 +479,6 @@ fn spawn_persistence_worker(
                     &request.route,
                     workspace_reconciler.as_ref(),
                     &request.cancellation,
-                    &workspace_edit_publication,
                 );
 
                 request.responses.send(response);
@@ -523,13 +542,7 @@ fn execute_persistent(
     route: &PreparedRoute,
     workspace_reconciler: Option<&WorkspaceWatcherReconciler>,
     cancellation: &core::language_servers::LanguageServerRequestCancellation,
-    workspace_edit_publication: &Mutex<()>,
 ) -> ServerMessage {
-    let _publication = route.workspace_edit_credentials().map(|_| {
-        workspace_edit_publication
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-    });
     if matches!(route.mode(), SchedulingMode::PersistenceBarrier) {
         return execute_live(application, route, cancellation);
     }
@@ -554,9 +567,6 @@ fn execute_persistent(
         abandon_persistent_operation(application);
         return persistence_error(route.request_id(), error);
     }
-
-    #[cfg(test)]
-    pause_after_workspace_edit_persistence(route.request_id());
 
     let mut application = match application.lock() {
         Ok(application) => application,
@@ -708,11 +718,6 @@ fn persistence_error(request_id: u64, error: core::ApplicationError) -> ServerMe
 }
 
 #[cfg(test)]
-fn pause_after_workspace_edit_persistence(request_id: u64) {
-    tests::pause_after_workspace_edit_persistence(request_id);
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -734,19 +739,11 @@ mod tests {
     static LANGUAGE_SERVER_FEATURE_GATE: OnceLock<(Mutex<FeatureGate>, Condvar)> = OnceLock::new();
     static LANGUAGE_SERVER_FEATURE_TEST_LOCK: Mutex<()> = Mutex::new(());
     static CANCELLED_ROUTE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
-    static PUBLICATION_GATE: OnceLock<(Mutex<PublicationGate>, Condvar)> = OnceLock::new();
-    const PUBLICATION_GATE_REQUEST_ID: u64 = u64::MAX - 1;
 
     #[derive(Default)]
     struct FeatureGate {
         release: bool,
         started: usize,
-    }
-
-    #[derive(Default)]
-    struct PublicationGate {
-        release: bool,
-        started: bool,
     }
 
     #[test]
@@ -884,103 +881,6 @@ mod tests {
         assert_eq!(persisted_workspace_count, 2);
 
         let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn disconnect_waits_for_workspace_edit_publication_before_rollback() {
-        let root = test_workspace("workspace-edit-publication");
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        let (store, database) = test_store("workspace-edit-publication");
-        let paths = core::language_servers::LanguageServerPaths::new(
-            root.join("language-servers"),
-            root.join("language-server-cache"),
-        );
-        let manager = core::language_servers::LanguageServerManager::open(paths, store.clone())
-            .expect("language server manager should open");
-        let mut state = core::State::new();
-        let workspace_id = state.open_workspace(&root);
-        assert!(state.set_tab_kind(
-            Some(workspace_id),
-            core::tree::PaneId::new(1),
-            core::tree::TabId::new(1),
-            core::tree::TabKind::FileTree,
-        ));
-        state
-            .open_editor_tab(Some(workspace_id), core::tree::TabId::new(1), "src/main.rs")
-            .unwrap();
-        store.save(&state).unwrap();
-        let staged = manager
-            .stage_workspace_edit(
-                &serde_json::json!({ "documentChanges": [{
-                    "kind": "rename",
-                    "oldUri": format!("file://{}", root.join("src").display()),
-                    "newUri": format!("file://{}", root.join("renamed").display())
-                }]}),
-                &[core::language_servers::WorkspaceEditRoot {
-                    workspace_id,
-                    path: root.clone(),
-                }],
-            )
-            .unwrap();
-        state.attach_language_server_manager(manager);
-        let dispatcher = Dispatcher::new(state, store.clone()).unwrap();
-        let (responses, receiver) = test_response_channel();
-        let subscription = dispatcher.subscribe(responses.clone());
-        reset_publication_gate();
-        let route = router::prepare(RequestEnvelope {
-            id: PUBLICATION_GATE_REQUEST_ID,
-            domain: Domain::LanguageServers,
-            action: "commitWorkspaceEdit".to_owned(),
-            params: serde_json::json!({
-                "transactionId": staged.transaction_id,
-                "authorization": staged.authorization,
-            }),
-        })
-        .unwrap();
-        let completion = dispatcher
-            .dispatch_cancellable(
-                route,
-                responses,
-                core::language_servers::LanguageServerRequestCancellation::new(),
-                subscription.workspace_edit_owner(),
-            )
-            .unwrap();
-        wait_for_publication_gate();
-        assert!(root.join("renamed/main.rs").is_file());
-        assert_eq!(
-            store.load().unwrap().editor_view_states()[0].path(),
-            "renamed/main.rs"
-        );
-
-        let (dropped, drop_finished) = mpsc::channel();
-        std::thread::spawn(move || {
-            drop(subscription);
-            dropped.send(()).unwrap();
-        });
-        assert!(
-            drop_finished
-                .recv_timeout(Duration::from_millis(50))
-                .is_err()
-        );
-        release_publication_gate();
-        completion.recv_timeout(Duration::from_secs(2)).unwrap();
-        drop_finished.recv_timeout(Duration::from_secs(2)).unwrap();
-        let _ = receiver.recv_timeout(Duration::from_secs(2));
-
-        assert!(root.join("src/main.rs").is_file());
-        assert!(!root.join("renamed").exists());
-        assert_eq!(
-            dispatcher.state.lock().unwrap().editor_view_states()[0].path(),
-            "src/main.rs"
-        );
-        assert_eq!(
-            store.load().unwrap().editor_view_states()[0].path(),
-            "src/main.rs"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
-        let _ = std::fs::remove_file(database);
     }
 
     #[test]
@@ -1399,43 +1299,6 @@ mod tests {
     fn release_language_server_feature_route() {
         let (gate, condition) = language_server_feature_gate();
         let mut gate = gate.lock().expect("gate should lock");
-        gate.release = true;
-        condition.notify_all();
-    }
-
-    fn publication_gate() -> &'static (Mutex<PublicationGate>, Condvar) {
-        PUBLICATION_GATE.get_or_init(|| (Mutex::new(PublicationGate::default()), Condvar::new()))
-    }
-
-    pub(super) fn pause_after_workspace_edit_persistence(request_id: u64) {
-        if request_id != PUBLICATION_GATE_REQUEST_ID {
-            return;
-        }
-        let (gate, condition) = publication_gate();
-        let mut gate = gate.lock().unwrap();
-        gate.started = true;
-        condition.notify_all();
-        while !gate.release {
-            gate = condition.wait(gate).unwrap();
-        }
-    }
-
-    fn reset_publication_gate() {
-        *publication_gate().0.lock().unwrap() = PublicationGate::default();
-    }
-
-    fn wait_for_publication_gate() {
-        let (gate, condition) = publication_gate();
-        let gate = gate.lock().unwrap();
-        let (gate, timeout) = condition
-            .wait_timeout_while(gate, Duration::from_secs(2), |gate| !gate.started)
-            .unwrap();
-        assert!(gate.started && !timeout.timed_out());
-    }
-
-    fn release_publication_gate() {
-        let (gate, condition) = publication_gate();
-        let mut gate = gate.lock().unwrap();
         gate.release = true;
         condition.notify_all();
     }

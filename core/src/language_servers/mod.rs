@@ -5,6 +5,7 @@ mod manager;
 mod runtime;
 #[cfg(target_os = "linux")]
 mod secure_edit;
+mod workspace_edit_coordinator;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -16,11 +17,17 @@ use crate::tree::WorkspaceId;
 pub use catalog::{LanguageServerDefinition, language_server_catalog};
 pub use edits::{
     StagedWorkspaceEdit, StagedWorkspaceEditDocument, StagedWorkspaceEditOperation,
-    WorkspaceEditError, WorkspaceEditOpenDocument, WorkspaceEditRecovery, WorkspaceEditRoot,
-    WorkspaceEditTransactionPhase, WorkspaceEditTransactionStatus,
+    WorkspaceEditError, WorkspaceEditModelDirective, WorkspaceEditOpenDocument,
+    WorkspaceEditRecovery, WorkspaceEditRoot, WorkspaceEditTransactionPhase,
+    WorkspaceEditTransactionStatus,
 };
 pub use installation::LanguageServerPaths;
 pub use manager::LanguageServerManager;
+pub use workspace_edit_coordinator::{
+    PendingWorkspaceEditDelivery, WorkspaceEditCoordinator, WorkspaceEditDeliveryLease,
+    WorkspaceEditDeliveryOutcome, WorkspaceEditDeliveryStep, WorkspaceEditDirective,
+    WorkspaceEditRecoveryIntent,
+};
 
 #[derive(Clone, Default)]
 pub struct LanguageServerRequestCancellation {

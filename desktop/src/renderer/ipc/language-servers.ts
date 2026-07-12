@@ -234,6 +234,10 @@ export function executeLanguageServerCommand(
   return requestLanguageServerFeature("executeCommand", params, cancellation);
 }
 
+export function applyWorkspaceEdit(params: WorkspaceEditTransactionParams): Promise<boolean> {
+  return requestServer(DOMAIN, "applyWorkspaceEdit", params);
+}
+
 export function commitWorkspaceEdit(params: WorkspaceEditTransactionParams): Promise<boolean> {
   return requestServer(DOMAIN, "commitWorkspaceEdit", params);
 }
@@ -262,6 +266,14 @@ export function getWorkspaceEditStatus(
   params: WorkspaceEditTransactionParams,
 ): Promise<WorkspaceEditTransactionStatus> {
   return requestServer(DOMAIN, "workspaceEditStatus", params);
+}
+
+export function resolveWorkspaceEditRecovery(params: {
+  transactionId: number;
+  authorization: string;
+  intent: "retryRollback" | "finalize";
+}): Promise<WorkspaceEditTransactionStatus> {
+  return requestServer(DOMAIN, "resolveWorkspaceEditRecovery", params);
 }
 
 export function listWorkspaceEditRecoveries(): Promise<WorkspaceEditRecovery[]> {

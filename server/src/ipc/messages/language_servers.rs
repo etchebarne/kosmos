@@ -204,6 +204,21 @@ pub(crate) struct WorkspaceEditTransactionParams {
     pub(crate) authorization: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolveWorkspaceEditRecoveryParams {
+    pub(crate) transaction_id: u64,
+    pub(crate) authorization: String,
+    pub(crate) intent: WorkspaceEditRecoveryIntentPayload,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum WorkspaceEditRecoveryIntentPayload {
+    RetryRollback,
+    Finalize,
+}
+
 #[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceEditTransactionStatusPayload {
@@ -453,6 +468,44 @@ pub(crate) struct StagedWorkspaceEditPayload {
     authorization: String,
     documents: Vec<StagedWorkspaceEditDocumentPayload>,
     operations: Vec<StagedWorkspaceEditOperationPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub(crate) directive: Option<Box<WorkspaceEditDirectivePayload>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum WorkspaceEditDirectivePayload {
+    #[serde(rename = "applyOpenModels")]
+    Apply {
+        transaction_id: u64,
+        models: Vec<WorkspaceEditModelDirectivePayload>,
+    },
+    #[serde(rename = "undoOpenModels")]
+    Undo {
+        transaction_id: u64,
+        models: Vec<WorkspaceEditModelDirectivePayload>,
+    },
+    #[serde(rename = "reconcileCommittedModels")]
+    ReconcileCommitted { transaction_id: u64 },
+    #[serde(rename = "reconcileRolledBackModels")]
+    ReconcileRolledBack { transaction_id: u64 },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkspaceEditModelDirectivePayload {
+    workspace_id: WorkspaceIdParam,
+    original_path: String,
+    path: Option<String>,
+    generation: u64,
+    version: i64,
+    original_text: String,
+    text: String,
 }
 
 #[derive(Debug, JsonSchema, Serialize)]
@@ -947,6 +1000,65 @@ impl StagedWorkspaceEditPayload {
                     },
                 })
                 .collect(),
+            directive: None,
+        }
+    }
+
+    pub(crate) fn from_core_with_directive(
+        edit: core::language_servers::StagedWorkspaceEdit,
+        directive: core::language_servers::WorkspaceEditDirective,
+    ) -> Self {
+        let mut payload = Self::from_core(edit);
+        payload.directive = Some(Box::new(WorkspaceEditDirectivePayload::from_core(
+            directive,
+        )));
+        payload
+    }
+}
+
+impl WorkspaceEditDirectivePayload {
+    fn from_core(directive: core::language_servers::WorkspaceEditDirective) -> Self {
+        match directive {
+            core::language_servers::WorkspaceEditDirective::ApplyOpenModels {
+                transaction_id,
+                models,
+            } => Self::Apply {
+                transaction_id,
+                models: models
+                    .into_iter()
+                    .map(WorkspaceEditModelDirectivePayload::from_core)
+                    .collect(),
+            },
+            core::language_servers::WorkspaceEditDirective::UndoOpenModels {
+                transaction_id,
+                models,
+            } => Self::Undo {
+                transaction_id,
+                models: models
+                    .into_iter()
+                    .map(WorkspaceEditModelDirectivePayload::from_core)
+                    .collect(),
+            },
+            core::language_servers::WorkspaceEditDirective::ReconcileCommittedModels {
+                transaction_id,
+            } => Self::ReconcileCommitted { transaction_id },
+            core::language_servers::WorkspaceEditDirective::ReconcileRolledBackModels {
+                transaction_id,
+            } => Self::ReconcileRolledBack { transaction_id },
+        }
+    }
+}
+
+impl WorkspaceEditModelDirectivePayload {
+    fn from_core(model: core::language_servers::WorkspaceEditModelDirective) -> Self {
+        Self {
+            workspace_id: model.workspace_id.into(),
+            original_path: model.original_path,
+            path: model.path,
+            generation: model.generation,
+            version: model.version,
+            original_text: model.original_text,
+            text: model.text,
         }
     }
 }

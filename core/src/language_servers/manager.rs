@@ -886,6 +886,26 @@ impl LanguageServerManager {
             .staged_operations(transaction_id, authorization)
     }
 
+    pub fn staged_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<StagedWorkspaceEdit, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .staged(transaction_id, authorization)
+    }
+
+    pub fn workspace_edit_model_directives(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<Vec<super::WorkspaceEditModelDirective>, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .model_directives(transaction_id, authorization)
+    }
+
     pub fn rollback_workspace_edit(
         &self,
         transaction_id: u64,
@@ -938,44 +958,6 @@ impl LanguageServerManager {
 
     pub fn workspace_edit_recoveries(&self) -> Vec<super::WorkspaceEditRecovery> {
         self.inner.workspace_edits.recoveries()
-    }
-
-    pub fn claim_workspace_edit_owner(
-        &self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<(), WorkspaceEditError> {
-        self.inner
-            .workspace_edits
-            .claim_owner(transaction_id, authorization, owner)
-    }
-
-    pub fn cancel_owned_workspace_edit(
-        &self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<super::WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        self.inner
-            .workspace_edits
-            .cancel_owned(transaction_id, authorization, owner)
-    }
-
-    pub fn disconnect_workspace_edit_owner(
-        &self,
-        owner: u64,
-    ) -> Vec<(
-        super::WorkspaceEditTransactionStatus,
-        Vec<super::StagedWorkspaceEditOperation>,
-    )> {
-        self.inner.workspace_edits.disconnect_owner(owner)
-    }
-
-    pub fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
-        self.inner
-            .workspace_edits
-            .finish_disconnected_rollbacks(transaction_ids);
     }
 
     fn open_documents(&self) -> Vec<WorkspaceEditOpenDocument> {

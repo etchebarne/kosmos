@@ -1,5 +1,5 @@
 import {
-  acknowledgeWorkspaceEditCompletion,
+  applyWorkspaceEdit,
   changeLanguageServerDocument,
   closeLanguageServerDocument,
   requestLanguageServerFormatting,
@@ -17,22 +17,19 @@ import {
   getLanguageServerReferences,
   getLanguageServerDocumentSymbols,
   getLanguageServerStatus,
-  getWorkspaceEditStatus,
   isRequestCancelledError,
   listFormatters,
   listLanguageServers,
   listWorkspaceEditRecoveries,
   openLanguageServerDocument,
   resolveLanguageServerCompletion,
-  commitWorkspaceEdit,
+  resolveWorkspaceEditRecovery,
   executeLanguageServerCommand,
-  finalizeWorkspaceEdit,
   finishWorkspaceEdit,
   getLanguageServerCodeActions,
   prepareLanguageServerRename,
   requestLanguageServerRename,
   resolveLanguageServerCodeAction,
-  rollbackWorkspaceEdit,
   stageLanguageServerCodeAction,
   trustLanguageServerWorkspace,
 } from "@/renderer/ipc";
@@ -49,6 +46,8 @@ import type {
   LanguageServerCodeAction,
   KosmosServerNotification,
   StagedWorkspaceEdit,
+  WorkspaceEditDirective,
+  WorkspaceEditModelDirective,
   WorkspaceEditRecovery,
 } from "@/shared/ipc";
 import {
@@ -85,15 +84,9 @@ import {
   type EditorBuffer,
 } from "./editor-buffers";
 import {
-  planWorkspaceEditModelLineages,
-  type WorkspaceEditModelOutcome,
-} from "./workspace-edit-model-lineages";
-import {
-  applyWorkspaceEditTransaction,
   registerPersistedWorkspaceEditRecoveries,
   retryWorkspaceEditRecoveries,
   replaceWorkspaceEditModel,
-  type OpenWorkspaceEditTarget,
 } from "./workspace-edit-transaction";
 import { useWorkspaceStore } from "@/renderer/stores/workspace-store";
 import { hasIpcErrorCode } from "./errors";
@@ -207,7 +200,7 @@ let documentSupport: DocumentSupport = {
 let catalogRetryTimer: number | null = null;
 let nextGeneration = randomGenerationSeed();
 let initialized = false;
-const activeServerWorkspaceEdits = new Map<string, AbortController>();
+const activeServerWorkspaceEdits = new Map<string, OpenWorkspaceEditTarget>();
 let languageLocationOpener: ((
   workspaceId: WorkspaceId,
   path: string,
@@ -239,9 +232,7 @@ export function initializeLanguageClient(): void {
     } else if (notification.event === "languageServerApplyEdit") {
       handleServerWorkspaceEdit(notification);
     } else if (notification.event === "languageServerApplyEditCancelled") {
-      activeServerWorkspaceEdits
-        .get(notification.token)
-        ?.abort(new Error("Workspace edit application was cancelled by the server."));
+      void undoCancelledWorkspaceEdit(notification.token, notification.id);
     }
   });
   void window.kosmos.pendingServerApplyEdits().then((pending) => {
@@ -293,56 +284,17 @@ async function refreshPersistedWorkspaceEditRecoveries(): Promise<void> {
 }
 
 function persistedWorkspaceEditAdapter(recovery: WorkspaceEditRecovery) {
-  const params = {
-    transactionId: recovery.transactionId,
-    authorization: recovery.authorization,
-  };
   return {
-    validate() {},
-    preflight() {
-      return null;
-    },
-    async commitClosed() {
-      throw new Error("A recovered workspace edit cannot be committed again.");
-    },
-    async rollbackClosed() {
-      await rollbackWorkspaceEdit(params);
-    },
-    async finish() {
-      await finishWorkspaceEdit(params);
-    },
-    async acknowledge() {
-      await acknowledgeWorkspaceEditCompletion(params);
-    },
-    finalize() {
-      return finalizeWorkspaceEdit(params);
-    },
-    status() {
-      return getWorkspaceEditStatus(params);
-    },
-    isRecoveryRequired: workspaceEditRecoveryRequired,
-    isUnknownTransaction: workspaceEditUnknown,
-    async reconcileUnknown() {
+    async resolve(current: WorkspaceEditRecovery, intent: "retryRollback" | "finalize") {
+      const status = await resolveWorkspaceEditRecovery({
+        transactionId: current.transactionId,
+        authorization: current.authorization,
+        intent,
+      });
       await reconcileWorkspaceEditState();
-    },
-    async reconcileCompletion() {
-      await reconcileWorkspaceEditState();
+      return status;
     },
   };
-}
-
-function workspaceEditRecoveryRequired(error: unknown): boolean {
-  return ipcErrorHasCode(error, "workspace_edit.recovery_required");
-}
-
-function workspaceEditUnknown(error: unknown): boolean {
-  return ipcErrorHasCode(error, "workspace_edit.expired") ||
-    ipcErrorHasCode(error, "workspace_edit.invalid");
-}
-
-function ipcErrorHasCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code) ||
-    (error instanceof Error && error.message.includes(code));
 }
 
 function handleServerWorkspaceEdit(
@@ -351,9 +303,17 @@ function handleServerWorkspaceEdit(
   if (activeServerWorkspaceEdits.has(notification.token)) {
     return;
   }
-  const cancellation = new AbortController();
-  activeServerWorkspaceEdits.set(notification.token, cancellation);
-  void applyStagedWorkspaceEdit(notification.edit, cancellation.signal, true)
+  const directive = notification.edit.directive;
+  if (!directive) {
+    window.kosmos.acknowledgeServerApplyEdit(
+      notification.id,
+      notification.token,
+      false,
+      "Workspace edit directive is missing.",
+    );
+    return;
+  }
+  void applyWorkspaceEditDirective(notification.token, directive)
     .then(
       () =>
         window.kosmos.acknowledgeServerApplyEdit(
@@ -369,7 +329,18 @@ function handleServerWorkspaceEdit(
           error instanceof Error ? error.message : String(error),
         ),
     )
-    .finally(() => activeServerWorkspaceEdits.delete(notification.token));
+}
+
+async function undoCancelledWorkspaceEdit(token: string, id: number): Promise<void> {
+  const target = activeServerWorkspaceEdits.get(token);
+  if (!target) return;
+  try {
+    target.undo();
+    target.release();
+    activeServerWorkspaceEdits.delete(token);
+  } finally {
+    window.kosmos.acknowledgeServerApplyEdit(id, token, false, "Workspace edit was cancelled.");
+  }
 }
 
 const requestCatalogRefresh = createQueuedRefresh(async () => {
@@ -920,77 +891,27 @@ async function resolveCodeActionMetadata(
 
 export async function applyStagedWorkspaceEdit(
   edit: StagedWorkspaceEdit,
-  signal?: AbortSignal,
-  deferCompletionAcknowledgement = false,
 ): Promise<void> {
-  const validateDocument = (
-    document: StagedWorkspaceEdit["documents"][number],
-    path = document.path,
-    strictGeneration = true,
-  ): void => {
-    const uri = locationUri({ ...document, path });
-    const model = monaco.editor.getModel(uri);
-    if (document.generation === null || document.version === null) {
-      if (model) {
-        throw new Error(`Workspace edit target ${document.path} opened after validation.`);
-      }
-      return;
-    }
-    const languageDocument = documents.get(uri.toString());
-    if (
-      !model ||
-      !languageDocument ||
-      languageDocument.disposed ||
-      (strictGeneration &&
-        (languageDocument.generation !== document.generation ||
-          model.getVersionId() !== document.version)) ||
-      model.getValue() !== document.originalText
-    ) {
-      throw new Error(`Workspace edit target ${document.path} changed before it could be applied.`);
-    }
-  };
-  await applyWorkspaceEditTransaction(edit, {
-    validate: validateDocument,
-    preflight() {
-      return null;
-    },
-    preflightTargets() {
-      return preflightWorkspaceEditModelTargets(edit, validateDocument);
-    },
-    async commitClosed(transactionId) {
-      await commitWorkspaceEdit({ transactionId, authorization: edit.authorization });
-    },
-    async rollbackClosed(transactionId) {
-      await rollbackWorkspaceEdit({ transactionId, authorization: edit.authorization });
-    },
-    async finish(transactionId) {
-      await finishWorkspaceEdit({ transactionId, authorization: edit.authorization });
-    },
-    async acknowledge(transactionId) {
-      await acknowledgeWorkspaceEditCompletion({
-        transactionId,
-        authorization: edit.authorization,
-      });
-    },
-    async finalize(transactionId) {
-      return finalizeWorkspaceEdit({ transactionId, authorization: edit.authorization });
-    },
-    status(transactionId) {
-      return getWorkspaceEditStatus({ transactionId, authorization: edit.authorization });
-    },
-    isRecoveryRequired: workspaceEditRecoveryRequired,
-    isUnknownTransaction: workspaceEditUnknown,
-    async reconcileUnknown() {
-      await reconcileWorkspaceEditState();
-    },
-    async reconcileCompletion() {
-      await reconcileWorkspaceEditState();
-    },
-  }, signal, deferCompletionAcknowledgement);
-  window.dispatchEvent(new CustomEvent("kosmos:workspace-edit-applied"));
+  const applied = await applyWorkspaceEdit({
+    transactionId: edit.transactionId,
+    authorization: edit.authorization,
+  });
+  if (!applied) throw new Error("Workspace edit was not applied.");
 }
 
-type WorkspaceEditBufferOutcome = WorkspaceEditModelOutcome<EditorBuffer>;
+type WorkspaceEditBufferOutcome = WorkspaceEditModelDirective & {
+  value: EditorBuffer;
+  finalPath: string | null;
+  finalContent: string;
+};
+
+type OpenWorkspaceEditTarget = {
+  validate(): void;
+  apply(): void;
+  undo(): void;
+  complete(): void;
+  release(): void;
+};
 
 type PreparedWorkspaceEditBuffer = {
   outcome: WorkspaceEditBufferOutcome;
@@ -1007,37 +928,60 @@ type PreparedWorkspaceEditBuffer = {
   originalModel: monaco.editor.ITextModel;
 };
 
-function preflightWorkspaceEditModelTargets(
-  edit: StagedWorkspaceEdit,
-  validateDocument: (
-    document: StagedWorkspaceEdit["documents"][number],
-    path?: string,
-    strictGeneration?: boolean,
-  ) => void,
-): OpenWorkspaceEditTarget[] {
-  const buffers = collectWorkspaceEditBuffers(edit);
-  for (const operation of edit.operations) {
-    if (operation.kind !== "textDocument") continue;
-    const document = edit.documents[operation.document];
-    if (document && document.generation !== null && document.version !== null) {
-      validateDocument(document, document.originalPath);
-    }
+async function applyWorkspaceEditDirective(
+  token: string,
+  directive: WorkspaceEditDirective,
+): Promise<void> {
+  if (directive.kind === "applyOpenModels") {
+    const target = preflightWorkspaceEditModelTarget(directive.transactionId, directive.models);
+    activeServerWorkspaceEdits.set(token, target);
+    target.validate();
+    target.apply();
+    return;
   }
-  const outcomes = planWorkspaceEditModelLineages(
-    edit,
-    [...buffers].map((buffer) => ({
-      workspaceId: buffer.workspaceId,
-      path: buffer.path,
-      content: buffer.model.getValue(),
-      savedContent: buffer.savedContent,
-      value: buffer,
+  const target = activeServerWorkspaceEdits.get(token);
+  if (directive.kind === "undoOpenModels") {
+    if (!target) return;
+    target.undo();
+    target.release();
+    activeServerWorkspaceEdits.delete(token);
+    return;
+  }
+  if (!target) {
+    await reconcileWorkspaceEditState();
+    return;
+  }
+  if (directive.kind === "reconcileCommittedModels") target.complete();
+  target.release();
+  activeServerWorkspaceEdits.delete(token);
+  await reconcileWorkspaceEditState();
+}
+
+function preflightWorkspaceEditModelTarget(
+  transactionId: number,
+  models: WorkspaceEditModelDirective[],
+): OpenWorkspaceEditTarget {
+  const outcomes = models.flatMap((directive) =>
+    editorBuffersForPath(directive.workspaceId, directive.originalPath).map((value) => ({
+      ...directive,
+      value,
+      finalPath: directive.path,
+      finalContent: directive.text,
     })),
   );
-  if (outcomes.length === 0) return [];
-
   const prepared = outcomes.map<PreparedWorkspaceEditBuffer>((outcome) => {
     const state = captureEditorBufferState(outcome.value);
     const languageDocument = documents.get(state.model.uri.toString()) ?? null;
+    if (
+      state.path !== outcome.originalPath ||
+      state.model.getValue() !== outcome.originalText ||
+      !languageDocument ||
+      languageDocument.disposed ||
+      languageDocument.generation !== outcome.generation ||
+      state.model.getVersionId() !== outcome.version
+    ) {
+      throw new Error(`Open workspace edit target ${outcome.originalPath} changed before application.`);
+    }
     return {
       outcome,
       state,
@@ -1051,30 +995,9 @@ function preflightWorkspaceEditModelTargets(
     };
   });
   const releases = prepared.map(({ outcome }) =>
-    lockEditorBuffer(outcome.value, edit.transactionId)
+    lockEditorBuffer(outcome.value, transactionId)
   );
-  return [workspaceEditModelTarget(prepared, releases)];
-}
-
-function collectWorkspaceEditBuffers(edit: StagedWorkspaceEdit): Set<EditorBuffer> {
-  const buffers = new Set<EditorBuffer>();
-  const addPath = (workspaceId: number, path: string) => {
-    for (const buffer of editorBuffersForPath(workspaceId, path)) buffers.add(buffer);
-  };
-  for (const operation of edit.operations) {
-    if (operation.kind === "textDocument") {
-      const document = edit.documents[operation.document];
-      if (document && document.generation !== null && document.version !== null) {
-        addPath(document.workspaceId, document.originalPath);
-      }
-    } else if (operation.kind === "renameFile") {
-      addPath(operation.workspaceId, operation.oldPath);
-      addPath(operation.workspaceId, operation.newPath);
-    } else {
-      addPath(operation.workspaceId, operation.path);
-    }
-  }
-  return buffers;
+  return workspaceEditModelTarget(prepared, releases);
 }
 
 function workspaceEditModelTarget(

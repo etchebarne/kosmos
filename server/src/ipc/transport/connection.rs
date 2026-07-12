@@ -25,7 +25,6 @@ pub(crate) fn handle(stream: UnixStream, dispatcher: Dispatcher) -> io::Result<(
     let (requests, request_receiver) = mpsc::sync_channel(MAX_PENDING_REQUESTS);
     let notification_subscription = dispatcher.subscribe(responses.clone());
     let renderer_id = notification_subscription.id();
-    let workspace_edit_owner = notification_subscription.workspace_edit_owner();
 
     thread::spawn(move || write_responses(stream, response_receiver, shutdown));
     thread::spawn({
@@ -40,7 +39,7 @@ pub(crate) fn handle(stream: UnixStream, dispatcher: Dispatcher) -> io::Result<(
                 responses,
                 closed,
                 active,
-                workspace_edit_owner,
+                None,
             )
         }
     });
@@ -85,7 +84,7 @@ fn dispatch_requests(
     responses: ResponseSender,
     closed: Arc<AtomicBool>,
     active: ActiveRequests,
-    workspace_edit_owner: Option<core::WorkspaceEditOwnerToken>,
+    _workspace_edit_owner: Option<()>,
 ) {
     let mut external_completions = Vec::new();
 
@@ -103,12 +102,9 @@ fn dispatch_requests(
         let request_id = route.request_id();
         match route.mode() {
             SchedulingMode::External => {
-                if let Some(completed) = dispatcher.dispatch_cancellable(
-                    route,
-                    responses.clone(),
-                    cancellation,
-                    workspace_edit_owner,
-                ) {
+                if let Some(completed) =
+                    dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None)
+                {
                     external_completions.push(PendingCompletion {
                         request_id,
                         completed,
@@ -118,12 +114,9 @@ fn dispatch_requests(
                 }
             }
             SchedulingMode::LanguageServer | SchedulingMode::LanguageServerFeature => {
-                if let Some(completed) = dispatcher.dispatch_cancellable(
-                    route,
-                    responses.clone(),
-                    cancellation,
-                    workspace_edit_owner,
-                ) {
+                if let Some(completed) =
+                    dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None)
+                {
                     track_completion(active.clone(), request_id, completed);
                 } else {
                     active.finish(request_id);
@@ -132,23 +125,16 @@ fn dispatch_requests(
             SchedulingMode::SerialMutation | SchedulingMode::PersistenceBarrier => {
                 wait_for_completions(&mut external_completions, &active);
 
-                if let Some(completed) = dispatcher.dispatch_cancellable(
-                    route,
-                    responses.clone(),
-                    cancellation,
-                    workspace_edit_owner,
-                ) {
+                if let Some(completed) =
+                    dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None)
+                {
                     let _ = completed.recv();
                 }
                 active.finish(request_id);
             }
             SchedulingMode::Live | SchedulingMode::Snapshot => {
-                let _ = dispatcher.dispatch_cancellable(
-                    route,
-                    responses.clone(),
-                    cancellation,
-                    workspace_edit_owner,
-                );
+                let _ =
+                    dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None);
                 active.finish(request_id);
             }
         }

@@ -29,7 +29,12 @@ fn server_envelope_fixtures_preserve_response_and_notification_wire_shapes() {
         ServerMessage::language_server_diagnostics_resync(),
         ServerMessage::language_server_status_changed("rust-analyzer".to_owned()),
         ServerMessage::language_server_log_available("rust-analyzer".to_owned()),
-        ServerMessage::language_server_apply_edit(1, "token".to_owned(), staged_edit()),
+        ServerMessage::language_server_apply_edit(
+            1,
+            "token".to_owned(),
+            staged_edit(),
+            directive(),
+        ),
         ServerMessage::language_server_apply_edit_cancelled(1, "token".to_owned()),
     ];
     let expected_events = [
@@ -52,11 +57,19 @@ fn server_envelope_fixtures_preserve_response_and_notification_wire_shapes() {
         1,
         "token".to_owned(),
         staged_edit(),
+        directive(),
     ))
     .unwrap();
     assert_eq!(apply_edit["edit"]["operations"][0]["workspaceId"], 1);
     assert_eq!(apply_edit["edit"]["operations"][0]["oldPath"], "old.rs");
     assert_eq!(apply_edit["edit"]["operations"][0]["newPath"], "new.rs");
+}
+
+fn directive() -> core::language_servers::WorkspaceEditDirective {
+    core::language_servers::WorkspaceEditDirective::ApplyOpenModels {
+        transaction_id: 1,
+        models: Vec::new(),
+    }
 }
 
 fn diagnostics() -> core::events::LanguageServerDiagnosticsChanged {

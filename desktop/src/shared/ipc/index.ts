@@ -75,7 +75,28 @@ export type LanguageServerCompletionTextEdit = Generated.LanguageServerCompletio
 export type LanguageServerTextEdit = Generated.LanguageServerTextEditPayload;
 export type LanguageServerPrepareRename = Generated.LanguageServerPrepareRenamePayload;
 export type LanguageServerCodeAction = Generated.LanguageServerCodeActionPayload;
-export type StagedWorkspaceEdit = Generated.StagedWorkspaceEditPayload;
+export type WorkspaceEditModelDirective = {
+  workspaceId: WorkspaceId;
+  originalPath: string;
+  path: string | null;
+  generation: number;
+  version: number;
+  originalText: string;
+  text: string;
+};
+export type WorkspaceEditDirective =
+  | {
+    kind: "applyOpenModels" | "undoOpenModels";
+    transactionId: number;
+    models: WorkspaceEditModelDirective[];
+  }
+  | {
+    kind: "reconcileCommittedModels" | "reconcileRolledBackModels";
+    transactionId: number;
+  };
+export type StagedWorkspaceEdit = Generated.StagedWorkspaceEditPayload & {
+  directive?: WorkspaceEditDirective;
+};
 export type StagedWorkspaceEditDocument = Generated.StagedWorkspaceEditDocumentPayload;
 export type StagedWorkspaceEditOperation = Generated.StagedWorkspaceEditOperationPayload;
 export type WorkspaceEditTransactionStatus = Generated.WorkspaceEditTransactionStatusPayload;
@@ -100,7 +121,7 @@ export type KosmosServerNotification =
   | Generated.LanguageServerDiagnosticsResyncNotification
   | Generated.LanguageServerStatusChangedNotification
   | Generated.LanguageServerLogAvailableNotification
-  | Generated.LanguageServerApplyEditNotification
+  | (Generated.LanguageServerApplyEditNotification & { edit: StagedWorkspaceEdit })
   | Generated.LanguageServerApplyEditCancelledNotification;
 export type KosmosServerMessage = KosmosServerResponse | KosmosServerNotification;
 export type KosmosIpcRequestResult<T = unknown> =

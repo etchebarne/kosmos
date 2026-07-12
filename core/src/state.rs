@@ -935,6 +935,32 @@ impl State {
         Ok(())
     }
 
+    pub(crate) fn staged_workspace_edit(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<StagedWorkspaceEdit, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .staged_workspace_edit(transaction_id, authorization)
+    }
+
+    pub(crate) fn workspace_edit_model_directives(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<Vec<crate::language_servers::WorkspaceEditModelDirective>, WorkspaceEditError> {
+        self.language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .workspace_edit_model_directives(transaction_id, authorization)
+    }
+
     pub fn rollback_workspace_edit(
         &mut self,
         transaction_id: u64,
@@ -1262,68 +1288,6 @@ impl State {
                 WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
             })?
             .workspace_edit_recoveries())
-    }
-
-    pub(crate) fn claim_workspace_edit_owner(
-        &self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<(), WorkspaceEditError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or_else(|| {
-                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-            })?
-            .claim_workspace_edit_owner(transaction_id, authorization, owner)
-    }
-
-    pub(crate) fn cancel_owned_workspace_edit(
-        &mut self,
-        transaction_id: u64,
-        authorization: &str,
-        owner: u64,
-    ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
-            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-        })?;
-        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
-        let status = manager.cancel_owned_workspace_edit(transaction_id, authorization, owner)?;
-        if matches!(
-            status.phase,
-            crate::language_servers::WorkspaceEditTransactionPhase::RolledBack
-                | crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
-        ) {
-            self.reconcile_workspace_edit_resources(transaction_id, &operations, true);
-        }
-        Ok(status)
-    }
-
-    pub(crate) fn disconnect_workspace_edit_owner(
-        &mut self,
-        owner: u64,
-    ) -> Vec<crate::language_servers::WorkspaceEditTransactionStatus> {
-        let outcomes = self
-            .language_server_manager
-            .as_ref()
-            .map(|manager| manager.disconnect_workspace_edit_owner(owner))
-            .unwrap_or_default();
-        for (status, operations) in &outcomes {
-            if matches!(
-                status.phase,
-                crate::language_servers::WorkspaceEditTransactionPhase::RolledBack
-                    | crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
-            ) {
-                self.reconcile_workspace_edit_resources(status.transaction_id, operations, true);
-            }
-        }
-        outcomes.into_iter().map(|(status, _)| status).collect()
-    }
-
-    pub(crate) fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
-        if let Some(manager) = self.language_server_manager.as_ref() {
-            manager.finish_disconnected_workspace_edit_rollbacks(transaction_ids);
-        }
     }
 
     fn workspace_edit_roots(&self) -> Result<Vec<WorkspaceEditRoot>, LanguageServerError> {

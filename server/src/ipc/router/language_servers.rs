@@ -16,9 +16,9 @@ use super::super::messages::language_servers::{
     LanguageServerSnapshot, LanguageServerTextEditPayload, LanguageServerWorkspaceSymbolPayload,
     LanguageServerWorkspaceSymbolsParams, OpenLanguageServerDocumentParams,
     ResolveLanguageServerCodeActionParams, ResolveLanguageServerCompletionParams,
-    ResolveLanguageServerWorkspaceSymbolParams, SaveLanguageServerDocumentParams,
-    StageLanguageServerCodeActionParams, StagedWorkspaceEditPayload,
-    TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
+    ResolveLanguageServerWorkspaceSymbolParams, ResolveWorkspaceEditRecoveryParams,
+    SaveLanguageServerDocumentParams, StageLanguageServerCodeActionParams,
+    StagedWorkspaceEditPayload, TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
     WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
 };
 use super::super::messages::{AnyJson, EmptyParams};
@@ -150,6 +150,10 @@ pub(super) const ROUTES: &[Route] = &[
         RouteDefinition::language_server_feature(execute_command),
     ),
     Route::new::<WorkspaceEditTransactionParams, bool>(
+        "applyWorkspaceEdit",
+        RouteDefinition::live(apply_workspace_edit),
+    ),
+    Route::new::<WorkspaceEditTransactionParams, bool>(
         "commitWorkspaceEdit",
         RouteDefinition::live_full(commit_workspace_edit),
     ),
@@ -172,6 +176,10 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload>(
         "workspaceEditStatus",
         RouteDefinition::live(workspace_edit_status),
+    ),
+    Route::new::<ResolveWorkspaceEditRecoveryParams, WorkspaceEditTransactionStatusPayload>(
+        "resolveWorkspaceEditRecovery",
+        RouteDefinition::live(resolve_workspace_edit_recovery),
     ),
     Route::new::<EmptyParams, Vec<WorkspaceEditRecoveryPayload>>(
         "listWorkspaceEditRecoveries",
@@ -347,6 +355,16 @@ fn commit_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> 
     }
 }
 
+fn apply_workspace_edit(_state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    // The dispatcher routes this action through the delivery hub so it never waits for Monaco
+    // while holding the application mutex.
+    ServerMessage::error(
+        request.id,
+        "workspace_edit.delivery_unavailable",
+        "workspace edit delivery was not initialized",
+    )
+}
+
 fn rollback_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
         Ok(params) => params,
@@ -410,6 +428,22 @@ fn workspace_edit_status(state: &mut core::State, request: &RequestEnvelope) -> 
         ),
         Err(error) => workspace_edit_error(request.id, error),
     }
+}
+
+fn resolve_workspace_edit_recovery(
+    _state: &mut core::State,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    let params = match parse_params::<ResolveWorkspaceEditRecoveryParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    let _ = (params.transaction_id, params.authorization, params.intent);
+    ServerMessage::error(
+        request.id,
+        "workspace_edit.delivery_unavailable",
+        "workspace edit recovery coordinator was not initialized",
+    )
 }
 
 fn list_workspace_edit_recoveries(

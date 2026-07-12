@@ -99,12 +99,13 @@ impl ServerMessage {
         id: u64,
         token: String,
         edit: core::language_servers::StagedWorkspaceEdit,
+        directive: core::language_servers::WorkspaceEditDirective,
     ) -> Self {
         Self::Notification(NotificationEnvelope::LanguageServerApplyEdit {
             id,
             token,
-            edit: crate::ipc::messages::language_servers::StagedWorkspaceEditPayload::from_core(
-                edit,
+            edit: crate::ipc::messages::language_servers::StagedWorkspaceEditPayload::from_core_with_directive(
+                edit, directive,
             ),
         })
     }

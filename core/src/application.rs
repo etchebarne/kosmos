@@ -4,7 +4,11 @@ use std::sync::Arc;
 
 use crate::State;
 use crate::events::CoreEventSink;
-use crate::language_servers::{WorkspaceEditError, WorkspaceEditTransactionStatus};
+use crate::language_servers::{
+    StagedWorkspaceEdit, WorkspaceEditCoordinator, WorkspaceEditDeliveryOutcome,
+    WorkspaceEditDeliveryStep, WorkspaceEditError, WorkspaceEditRecoveryIntent,
+    WorkspaceEditTransactionStatus,
+};
 use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{SettingValue, SettingsError};
 use crate::state::PersistentStateCandidate;
@@ -18,11 +22,8 @@ pub struct Application {
     state: State,
     store: StateStore,
     durability_lease_active: bool,
-    next_workspace_edit_owner: u64,
+    workspace_edit_coordinator: WorkspaceEditCoordinator,
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct WorkspaceEditOwnerToken(u64);
 
 pub struct PreparedPersistentOperation {
     candidate: PersistentStateCandidate,
@@ -46,7 +47,7 @@ impl Application {
             state,
             store,
             durability_lease_active: false,
-            next_workspace_edit_owner: 1,
+            workspace_edit_coordinator: WorkspaceEditCoordinator::default(),
         }
     }
 
@@ -105,30 +106,48 @@ impl Application {
         self.state.update_window_state(window_state);
     }
 
-    pub fn workspace_edit_owner_token(&mut self) -> WorkspaceEditOwnerToken {
-        let token = WorkspaceEditOwnerToken(self.next_workspace_edit_owner);
-        self.next_workspace_edit_owner = self.next_workspace_edit_owner.wrapping_add(1).max(1);
-        token
+    pub fn prepare_workspace_edit_delivery(
+        &mut self,
+        edit: StagedWorkspaceEdit,
+    ) -> WorkspaceEditDeliveryStep {
+        self.workspace_edit_coordinator
+            .start(&mut self.state, &self.store, edit)
     }
 
-    pub fn claim_workspace_edit_owner(
+    pub fn prepare_staged_workspace_edit_delivery(
         &mut self,
         transaction_id: u64,
         authorization: &str,
-        owner: WorkspaceEditOwnerToken,
-    ) -> Result<(), WorkspaceEditError> {
-        self.state
-            .claim_workspace_edit_owner(transaction_id, authorization, owner.0)
+    ) -> Result<WorkspaceEditDeliveryStep, WorkspaceEditError> {
+        let edit = self
+            .state
+            .staged_workspace_edit(transaction_id, authorization)?;
+        Ok(self.prepare_workspace_edit_delivery(edit))
     }
 
-    pub fn cancel_owned_workspace_edit(
+    pub fn complete_workspace_edit_delivery(
+        &mut self,
+        lease: crate::language_servers::WorkspaceEditDeliveryLease,
+        step: u64,
+        outcome: WorkspaceEditDeliveryOutcome,
+    ) -> Result<WorkspaceEditDeliveryStep, WorkspaceEditError> {
+        self.workspace_edit_coordinator
+            .complete(&mut self.state, &self.store, lease, step, outcome)
+    }
+
+    pub fn resolve_workspace_edit_recovery(
         &mut self,
         transaction_id: u64,
         authorization: &str,
-        owner: WorkspaceEditOwnerToken,
+        intent: WorkspaceEditRecoveryIntent,
     ) -> Result<WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        self.state
-            .cancel_owned_workspace_edit(transaction_id, authorization, owner.0)
+        self.workspace_edit_coordinator.recover(
+            &mut self.state,
+            &self.store,
+            transaction_id,
+            authorization,
+            intent,
+        )
     }
 
     pub fn workspace_edit_status(
@@ -156,18 +175,6 @@ impl Application {
     ) -> Result<bool, WorkspaceEditError> {
         self.state
             .acknowledge_workspace_edit_completion(transaction_id, authorization)
-    }
-
-    pub fn disconnect_workspace_edit_owner(
-        &mut self,
-        owner: WorkspaceEditOwnerToken,
-    ) -> Vec<WorkspaceEditTransactionStatus> {
-        self.state.disconnect_workspace_edit_owner(owner.0)
-    }
-
-    pub fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
-        self.state
-            .finish_disconnected_workspace_edit_rollbacks(transaction_ids);
     }
 
     pub fn persist_current_state(&self) -> Result<(), ApplicationError> {

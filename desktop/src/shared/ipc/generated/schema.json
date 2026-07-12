@@ -3713,6 +3713,33 @@
           "type": "boolean"
         }
       },
+      "applyWorkspaceEdit": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "authorization": {
+              "type": "string"
+            },
+            "transactionId": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "authorization",
+            "transactionId"
+          ],
+          "title": "WorkspaceEditTransactionParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "title": "Boolean",
+          "type": "boolean"
+        }
+      },
       "changeDocument": {
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -7183,6 +7210,89 @@
             "textEdit"
           ],
           "title": "LanguageServerCompletionItemPayload",
+          "type": "object"
+        }
+      },
+      "resolveWorkspaceEditRecovery": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "WorkspaceEditRecoveryIntentPayload": {
+              "enum": [
+                "retryRollback",
+                "finalize"
+              ],
+              "type": "string"
+            }
+          },
+          "properties": {
+            "authorization": {
+              "type": "string"
+            },
+            "intent": {
+              "$ref": "#/definitions/WorkspaceEditRecoveryIntentPayload"
+            },
+            "transactionId": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "authorization",
+            "intent",
+            "transactionId"
+          ],
+          "title": "ResolveWorkspaceEditRecoveryParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "WorkspaceEditTransactionPhasePayload": {
+              "enum": [
+                "staged",
+                "committed",
+                "finishingCommitted",
+                "committedCleanupRequired",
+                "rolledBack",
+                "recoveryRequired",
+                "finishedCommitted",
+                "finishedRolledBack",
+                "finishedUncommitted"
+              ],
+              "type": "string"
+            }
+          },
+          "properties": {
+            "canFinalize": {
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/definitions/WorkspaceEditTransactionPhasePayload"
+            },
+            "requiresAcknowledgement": {
+              "type": "boolean"
+            },
+            "retryRollback": {
+              "type": "boolean"
+            },
+            "transactionId": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "canFinalize",
+            "phase",
+            "requiresAcknowledgement",
+            "retryRollback",
+            "transactionId"
+          ],
+          "title": "WorkspaceEditTransactionStatusPayload",
           "type": "object"
         }
       },

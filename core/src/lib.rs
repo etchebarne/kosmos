@@ -9,7 +9,6 @@ pub mod persistence;
 pub mod settings;
 pub use application::{
     Application, ApplicationError, PreparedExternalOperation, PreparedPersistentOperation,
-    WorkspaceEditOwnerToken,
 };
 pub use persistence::StateStore as DurableStore;
 pub use state::State;

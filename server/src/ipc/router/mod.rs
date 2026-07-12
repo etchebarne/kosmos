@@ -94,17 +94,31 @@ impl PreparedRoute {
         self.definition.mode
     }
 
-    pub(crate) fn workspace_edit_credentials(&self) -> Option<(u64, String)> {
+    pub(crate) fn workspace_edit_delivery_credentials(&self) -> Option<(u64, String)> {
+        (matches!(self.request.domain, Domain::LanguageServers)
+            && self.request.action == "applyWorkspaceEdit")
+            .then(|| {
+                let transaction_id = self.request.params.get("transactionId")?.as_u64()?;
+                let authorization = self
+                    .request
+                    .params
+                    .get("authorization")?
+                    .as_str()?
+                    .to_owned();
+                Some((transaction_id, authorization))
+            })
+            .flatten()
+    }
+
+    pub(crate) fn workspace_edit_recovery_request(
+        &self,
+    ) -> Option<(
+        u64,
+        String,
+        core::language_servers::WorkspaceEditRecoveryIntent,
+    )> {
         if !matches!(self.request.domain, Domain::LanguageServers)
-            || !matches!(
-                self.request.action.as_str(),
-                "commitWorkspaceEdit"
-                    | "rollbackWorkspaceEdit"
-                    | "finishWorkspaceEdit"
-                    | "finalizeWorkspaceEdit"
-                    | "acknowledgeWorkspaceEditCompletion"
-                    | "workspaceEditStatus"
-            )
+            || self.request.action != "resolveWorkspaceEditRecovery"
         {
             return None;
         }
@@ -115,7 +129,12 @@ impl PreparedRoute {
             .get("authorization")?
             .as_str()?
             .to_owned();
-        Some((transaction_id, authorization))
+        let intent = match self.request.params.get("intent")?.as_str()? {
+            "retryRollback" => core::language_servers::WorkspaceEditRecoveryIntent::RetryRollback,
+            "finalize" => core::language_servers::WorkspaceEditRecoveryIntent::Finalize,
+            _ => return None,
+        };
+        Some((transaction_id, authorization, intent))
     }
 
     pub(crate) fn execute(
