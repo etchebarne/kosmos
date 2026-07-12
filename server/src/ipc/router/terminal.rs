@@ -5,18 +5,37 @@ use super::super::messages::terminal::{
     OpenTerminalParams, ResizeTerminalParams, RestartTerminalParams, TerminalOutputSnapshot,
     TerminalShellSnapshot, TerminalTabParams, WriteTerminalInputParams,
 };
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "shells",
+        definition: RouteDefinition::snapshot(list_shells),
+    },
+    Route {
+        action: "open",
+        definition: RouteDefinition::live(open_terminal),
+    },
+    Route {
+        action: "read",
+        definition: RouteDefinition::live(read_terminal_output),
+    },
+    Route {
+        action: "write",
+        definition: RouteDefinition::live(write_terminal_input),
+    },
+    Route {
+        action: "resize",
+        definition: RouteDefinition::live(resize_terminal),
+    },
+    Route {
+        action: "restart",
+        definition: RouteDefinition::live(restart_terminal),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "shells" => Some(RouteDefinition::snapshot(list_shells)),
-        "open" => Some(RouteDefinition::live(open_terminal)),
-        "read" => Some(RouteDefinition::live(read_terminal_output)),
-        "write" => Some(RouteDefinition::live(write_terminal_input)),
-        "resize" => Some(RouteDefinition::live(resize_terminal)),
-        "restart" => Some(RouteDefinition::live(restart_terminal)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn list_shells(_state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

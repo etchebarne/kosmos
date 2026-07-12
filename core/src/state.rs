@@ -695,6 +695,12 @@ impl State {
         if cancellation.is_cancelled() {
             return Err(LanguageServerError::RequestCancelled.into());
         }
+        if request.options.tab_size == 0 {
+            return Err(FormatterError::InvalidOptions(
+                "tab size must be greater than zero".to_owned(),
+            )
+            .into());
+        }
         if request.text.len() > crate::tabs::editor::MAX_EDITOR_FILE_BYTES {
             return Err(FormatterError::InvalidDocument(
                 "document exceeds the editor size limit".to_owned(),
@@ -3104,6 +3110,35 @@ fn next_state_instance_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_document_rejects_zero_tab_size() {
+        let state = State::new();
+        let cancellation = LanguageServerRequestCancellation::new();
+
+        let result = state.format_document(
+            DocumentFormattingRequest {
+                workspace_id: WorkspaceId::new(1),
+                path: "missing.rs",
+                language_id: "rust",
+                generation: 1,
+                version: 1,
+                text: "",
+                options: crate::language_servers::LanguageServerFormattingOptions {
+                    tab_size: 0,
+                    insert_spaces: true,
+                },
+            },
+            &cancellation,
+        );
+
+        assert!(matches!(
+            result,
+            Err(FormattingError::Formatter(FormatterError::InvalidOptions(
+                _
+            )))
+        ));
+    }
 
     #[test]
     fn opening_workspace_creates_active_workspace() {

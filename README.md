@@ -28,15 +28,26 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 ## Project layout
 
-- `core/` contains the Rust logic layer.
-- `server/` contains the Rust backend process that imports `core`.
-- `desktop/` contains the Bun/Electron frontend and its assets.
+- `core/` owns application policy, state transitions, and persistence decisions.
+- `server/` translates IPC and schedules core commands; it owns the Unix-socket transport.
+- `desktop/` renders the UI and adapts Electron, Monaco, and other UI libraries through IPC.
 
 ## Development
 
 - Run the app with `./scripts/run.sh`.
-- Test the Rust workspace with `cargo test --workspace`.
-- Build the Electron desktop app with `bun install --cwd desktop` and `bun run --cwd desktop build`.
+- Install desktop dependencies with `bun install --cwd desktop --frozen-lockfile`.
+- Run the full local verification sequence from the repository root:
+
+  ```bash
+  bash scripts/check-boundaries.sh
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets -- -D warnings
+  cargo test --workspace
+  bun run --cwd desktop typecheck
+  bun run --cwd desktop test
+  bun run --cwd desktop build
+  ```
+
 - Build production Linux AppImage, deb, and rpm packages with `./scripts/bundle-linux.sh`. Artifacts are written to `desktop/release/`.
 - Building the rpm locally requires `rpmbuild`; install it with `sudo pacman -S rpm-tools` on Arch Linux, `sudo apt-get install rpm` on Debian-based systems, or `sudo dnf install rpm-build` on Fedora.
 - The AppImage-based AUR package template lives in `aur/kosmos-bin/`.

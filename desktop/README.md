@@ -35,6 +35,8 @@ From the repository root, `./scripts/run.sh` builds the Rust server, starts it, 
 
 The renderer never talks to the Rust server directly. Renderer consumers should import functions from `src/renderer/ipc/`, which call Electron IPC through the preload API. The main process forwards those calls to the existing newline-delimited JSON protocol on the server Unix socket.
 
+Core owns application policy and state transitions. The server translates IPC and schedules core commands. Desktop renders the UI and adapts Electron and UI libraries; it does not own application policy.
+
 Example:
 
 ```ts
@@ -53,4 +55,18 @@ bun run build
 bun run dev
 bun run start
 bun run typecheck
+```
+
+## Verification
+
+Run the complete verification sequence from the repository root:
+
+```bash
+bash scripts/check-boundaries.sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+bun run --cwd desktop typecheck
+bun run --cwd desktop test
+bun run --cwd desktop build
 ```

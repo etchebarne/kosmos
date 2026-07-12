@@ -9,22 +9,53 @@ use super::super::messages::file_tree::{
     RenameFileTreeEntryParams, ResolveFileTreePathParams, SetFileTreeExpandedPathsParams,
     TransferFileTreeEntriesParams,
 };
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "get",
+        definition: RouteDefinition::external(get_file_tree),
+    },
+    Route {
+        action: "gitStatus",
+        definition: RouteDefinition::external(get_git_status),
+    },
+    Route {
+        action: "getChildren",
+        definition: RouteDefinition::external(get_file_tree_children),
+    },
+    Route {
+        action: "setExpandedPaths",
+        definition: RouteDefinition::full(set_expanded_paths),
+    },
+    Route {
+        action: "createEntry",
+        definition: RouteDefinition::external(create_entry),
+    },
+    Route {
+        action: "renameEntry",
+        definition: RouteDefinition::external(rename_entry),
+    },
+    Route {
+        action: "moveEntries",
+        definition: RouteDefinition::external(move_entries),
+    },
+    Route {
+        action: "copyEntries",
+        definition: RouteDefinition::external(copy_entries),
+    },
+    Route {
+        action: "deleteEntries",
+        definition: RouteDefinition::external(delete_entries),
+    },
+    Route {
+        action: "resolvePath",
+        definition: RouteDefinition::external(resolve_path),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "get" => Some(RouteDefinition::external(get_file_tree)),
-        "gitStatus" => Some(RouteDefinition::external(get_git_status)),
-        "getChildren" => Some(RouteDefinition::external(get_file_tree_children)),
-        "setExpandedPaths" => Some(RouteDefinition::full(set_expanded_paths)),
-        "createEntry" => Some(RouteDefinition::external(create_entry)),
-        "renameEntry" => Some(RouteDefinition::external(rename_entry)),
-        "moveEntries" => Some(RouteDefinition::external(move_entries)),
-        "copyEntries" => Some(RouteDefinition::external(copy_entries)),
-        "deleteEntries" => Some(RouteDefinition::external(delete_entries)),
-        "resolvePath" => Some(RouteDefinition::external(resolve_path)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn get_git_status(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

@@ -3,20 +3,37 @@ use super::super::messages::tab::{
     ActivateTabParams, CloseTabParams, MoveTabParams, OpenTabParams, SetTabKindParams,
     SplitTabParams,
 };
-use super::{RouteDefinition, command_response, parse_params};
+use super::{Route, RouteDefinition, command_response, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "open",
+        definition: RouteDefinition::full(open_tab),
+    },
+    Route {
+        action: "activate",
+        definition: RouteDefinition::full(activate_tab),
+    },
+    Route {
+        action: "setKind",
+        definition: RouteDefinition::full(set_tab_kind),
+    },
+    Route {
+        action: "close",
+        definition: RouteDefinition::full(close_tab),
+    },
+    Route {
+        action: "move",
+        definition: RouteDefinition::full(move_tab),
+    },
+    Route {
+        action: "split",
+        definition: RouteDefinition::full(split_tab),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    let handler = match action {
-        "open" => open_tab,
-        "activate" => activate_tab,
-        "setKind" => set_tab_kind,
-        "close" => close_tab,
-        "move" => move_tab,
-        "split" => split_tab,
-        _ => return None,
-    };
-
-    Some(RouteDefinition::full(handler))
+    find_route(ROUTES, action)
 }
 
 fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

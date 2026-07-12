@@ -59,6 +59,7 @@ pub enum FormatterError {
     UnsupportedPlatform,
     OperationInProgress,
     InvalidPreferences(String),
+    InvalidOptions(String),
     WorkerBusy,
     WorkerUnavailable(String),
     Install(String),
@@ -80,6 +81,7 @@ impl FormatterError {
             Self::UnsupportedPlatform => "formatters.unsupported_platform",
             Self::OperationInProgress => "formatters.operation_in_progress",
             Self::InvalidPreferences(_) => "formatters.invalid_preferences",
+            Self::InvalidOptions(_) => "formatters.invalid_options",
             Self::WorkerBusy => "formatters.worker_busy",
             Self::WorkerUnavailable(_) => "formatters.worker_unavailable",
             Self::Install(_) => "formatters.install_failed",
@@ -112,6 +114,9 @@ impl fmt::Display for FormatterError {
             }
             Self::InvalidPreferences(message) => {
                 write!(formatter, "formatter preferences are invalid: {message}")
+            }
+            Self::InvalidOptions(message) => {
+                write!(formatter, "formatter options are invalid: {message}")
             }
             Self::WorkerBusy => formatter.write_str("formatter installer is busy"),
             Self::WorkerUnavailable(message) => {

@@ -5,14 +5,21 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::search::{
     SearchDocumentParams, SearchWorkspaceParams, WorkspaceSearchResultsPayload,
 };
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "query",
+        definition: RouteDefinition::external(query),
+    },
+    Route {
+        action: "document",
+        definition: RouteDefinition::external(document),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "query" => Some(RouteDefinition::external(query)),
-        "document" => Some(RouteDefinition::external(document)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn query(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

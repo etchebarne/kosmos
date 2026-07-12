@@ -2,18 +2,29 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::pane::{
     ActivatePaneParams, MovePaneParams, ResizeSplitParams, SplitPaneParams,
 };
-use super::{RouteDefinition, command_response, parse_params};
+use super::{Route, RouteDefinition, command_response, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "split",
+        definition: RouteDefinition::full(split_pane),
+    },
+    Route {
+        action: "activate",
+        definition: RouteDefinition::full(activate_pane),
+    },
+    Route {
+        action: "move",
+        definition: RouteDefinition::full(move_pane),
+    },
+    Route {
+        action: "resize",
+        definition: RouteDefinition::full(resize_split),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    let handler = match action {
-        "split" => split_pane,
-        "activate" => activate_pane,
-        "move" => move_pane,
-        "resize" => resize_split,
-        _ => return None,
-    };
-
-    Some(RouteDefinition::full(handler))
+    find_route(ROUTES, action)
 }
 
 fn split_pane(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

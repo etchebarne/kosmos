@@ -21,61 +21,169 @@ use super::super::messages::language_servers::{
     TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
     WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
 };
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "list",
+        definition: RouteDefinition::snapshot(list),
+    },
+    Route {
+        action: "status",
+        definition: RouteDefinition::snapshot(status),
+    },
+    Route {
+        action: "install",
+        definition: RouteDefinition::live(install),
+    },
+    Route {
+        action: "uninstall",
+        definition: RouteDefinition::live(uninstall),
+    },
+    Route {
+        action: "restart",
+        definition: RouteDefinition::language_server(restart),
+    },
+    Route {
+        action: "openDocument",
+        definition: RouteDefinition::language_server(open_document),
+    },
+    Route {
+        action: "changeDocument",
+        definition: RouteDefinition::language_server(change_document),
+    },
+    Route {
+        action: "closeDocument",
+        definition: RouteDefinition::language_server(close_document),
+    },
+    Route {
+        action: "saveDocument",
+        definition: RouteDefinition::language_server(save_document),
+    },
+    Route {
+        action: "hover",
+        definition: RouteDefinition::language_server_feature(hover),
+    },
+    Route {
+        action: "signatureHelp",
+        definition: RouteDefinition::language_server_feature(signature_help),
+    },
+    Route {
+        action: "definition",
+        definition: RouteDefinition::language_server_feature(definition),
+    },
+    Route {
+        action: "declaration",
+        definition: RouteDefinition::language_server_feature(declaration),
+    },
+    Route {
+        action: "typeDefinition",
+        definition: RouteDefinition::language_server_feature(type_definition),
+    },
+    Route {
+        action: "implementation",
+        definition: RouteDefinition::language_server_feature(implementation),
+    },
+    Route {
+        action: "references",
+        definition: RouteDefinition::language_server_feature(references),
+    },
+    Route {
+        action: "documentSymbols",
+        definition: RouteDefinition::language_server_feature(document_symbols),
+    },
+    Route {
+        action: "workspaceSymbols",
+        definition: RouteDefinition::language_server_feature(workspace_symbols),
+    },
+    Route {
+        action: "resolveWorkspaceSymbol",
+        definition: RouteDefinition::language_server_feature(resolve_workspace_symbol),
+    },
+    Route {
+        action: "diagnostics",
+        definition: RouteDefinition::language_server_feature(diagnostics),
+    },
+    Route {
+        action: "completion",
+        definition: RouteDefinition::language_server_feature(completion),
+    },
+    Route {
+        action: "resolveCompletion",
+        definition: RouteDefinition::language_server_feature(resolve_completion),
+    },
+    Route {
+        action: "documentColors",
+        definition: RouteDefinition::language_server_feature(document_colors),
+    },
+    Route {
+        action: "colorPresentations",
+        definition: RouteDefinition::language_server_feature(color_presentations),
+    },
+    Route {
+        action: "formatting",
+        definition: RouteDefinition::language_server_feature(formatting),
+    },
+    Route {
+        action: "prepareRename",
+        definition: RouteDefinition::language_server_feature(prepare_rename),
+    },
+    Route {
+        action: "rename",
+        definition: RouteDefinition::language_server_feature(rename),
+    },
+    Route {
+        action: "codeActions",
+        definition: RouteDefinition::language_server_feature(code_actions),
+    },
+    Route {
+        action: "resolveCodeAction",
+        definition: RouteDefinition::language_server_feature(resolve_code_action),
+    },
+    Route {
+        action: "stageCodeAction",
+        definition: RouteDefinition::language_server_feature(stage_code_action),
+    },
+    Route {
+        action: "executeCommand",
+        definition: RouteDefinition::language_server_feature(execute_command),
+    },
+    Route {
+        action: "commitWorkspaceEdit",
+        definition: RouteDefinition::live_full(commit_workspace_edit),
+    },
+    Route {
+        action: "rollbackWorkspaceEdit",
+        definition: RouteDefinition::live_full(rollback_workspace_edit),
+    },
+    Route {
+        action: "finishWorkspaceEdit",
+        definition: RouteDefinition::live_full(finish_workspace_edit),
+    },
+    Route {
+        action: "finalizeWorkspaceEdit",
+        definition: RouteDefinition::live_full(finalize_workspace_edit),
+    },
+    Route {
+        action: "acknowledgeWorkspaceEditCompletion",
+        definition: RouteDefinition::live_full(acknowledge_workspace_edit_completion),
+    },
+    Route {
+        action: "workspaceEditStatus",
+        definition: RouteDefinition::live(workspace_edit_status),
+    },
+    Route {
+        action: "listWorkspaceEditRecoveries",
+        definition: RouteDefinition::live(list_workspace_edit_recoveries),
+    },
+    Route {
+        action: "trustWorkspace",
+        definition: RouteDefinition::language_server(trust_workspace),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "list" => Some(RouteDefinition::snapshot(list)),
-        "status" => Some(RouteDefinition::snapshot(status)),
-        "install" => Some(RouteDefinition::live(install)),
-        "uninstall" => Some(RouteDefinition::live(uninstall)),
-        "restart" => Some(RouteDefinition::language_server(restart)),
-        "openDocument" => Some(RouteDefinition::language_server(open_document)),
-        "changeDocument" => Some(RouteDefinition::language_server(change_document)),
-        "closeDocument" => Some(RouteDefinition::language_server(close_document)),
-        "saveDocument" => Some(RouteDefinition::language_server(save_document)),
-        "hover" => Some(RouteDefinition::language_server_feature(hover)),
-        "signatureHelp" => Some(RouteDefinition::language_server_feature(signature_help)),
-        "definition" => Some(RouteDefinition::language_server_feature(definition)),
-        "declaration" => Some(RouteDefinition::language_server_feature(declaration)),
-        "typeDefinition" => Some(RouteDefinition::language_server_feature(type_definition)),
-        "implementation" => Some(RouteDefinition::language_server_feature(implementation)),
-        "references" => Some(RouteDefinition::language_server_feature(references)),
-        "documentSymbols" => Some(RouteDefinition::language_server_feature(document_symbols)),
-        "workspaceSymbols" => Some(RouteDefinition::language_server_feature(workspace_symbols)),
-        "resolveWorkspaceSymbol" => Some(RouteDefinition::language_server_feature(
-            resolve_workspace_symbol,
-        )),
-        "diagnostics" => Some(RouteDefinition::language_server_feature(diagnostics)),
-        "completion" => Some(RouteDefinition::language_server_feature(completion)),
-        "resolveCompletion" => Some(RouteDefinition::language_server_feature(resolve_completion)),
-        "documentColors" => Some(RouteDefinition::language_server_feature(document_colors)),
-        "colorPresentations" => Some(RouteDefinition::language_server_feature(
-            color_presentations,
-        )),
-        "formatting" => Some(RouteDefinition::language_server_feature(formatting)),
-        "prepareRename" => Some(RouteDefinition::language_server_feature(prepare_rename)),
-        "rename" => Some(RouteDefinition::language_server_feature(rename)),
-        "codeActions" => Some(RouteDefinition::language_server_feature(code_actions)),
-        "resolveCodeAction" => Some(RouteDefinition::language_server_feature(
-            resolve_code_action,
-        )),
-        "stageCodeAction" => Some(RouteDefinition::language_server_feature(stage_code_action)),
-        "executeCommand" => Some(RouteDefinition::language_server_feature(execute_command)),
-        "commitWorkspaceEdit" => Some(RouteDefinition::live_full(commit_workspace_edit)),
-        "rollbackWorkspaceEdit" => Some(RouteDefinition::live_full(rollback_workspace_edit)),
-        "finishWorkspaceEdit" => Some(RouteDefinition::live_full(finish_workspace_edit)),
-        "finalizeWorkspaceEdit" => Some(RouteDefinition::live_full(finalize_workspace_edit)),
-        "acknowledgeWorkspaceEditCompletion" => Some(RouteDefinition::live_full(
-            acknowledge_workspace_edit_completion,
-        )),
-        "workspaceEditStatus" => Some(RouteDefinition::live(workspace_edit_status)),
-        "listWorkspaceEditRecoveries" => {
-            Some(RouteDefinition::live(list_workspace_edit_recoveries))
-        }
-        "trustWorkspace" => Some(RouteDefinition::language_server(trust_workspace)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn prepare_rename(
@@ -832,13 +940,6 @@ fn formatting(
         Ok(params) => params,
         Err(response) => return response,
     };
-    if params.tab_size == 0 {
-        return ServerMessage::error(
-            request.id,
-            "ipc.invalid_params",
-            "formatting tab size must be greater than zero",
-        );
-    }
     match state.format_document(
         core::formatters::DocumentFormattingRequest {
             workspace_id: params.workspace_id.into(),
@@ -861,6 +962,9 @@ fn formatting(
                 .map(LanguageServerTextEditPayload::from_core)
                 .collect::<Vec<_>>(),
         ),
+        Err(core::formatters::FormattingError::Formatter(
+            core::formatters::FormatterError::InvalidOptions(message),
+        )) => ServerMessage::error(request.id, "ipc.invalid_params", message),
         Err(error) => ServerMessage::error(request.id, error.code(), error.to_string()),
     }
 }
@@ -954,6 +1058,34 @@ mod tests {
                 action: "status".to_owned(),
                 params: serde_json::json!({}),
             },
+        );
+        let response = serde_json::to_value(response).expect("response should serialize");
+
+        assert_eq!(response["error"]["code"], "ipc.invalid_params");
+    }
+
+    #[test]
+    fn formatting_rejects_zero_tab_size() {
+        let mut state = core::State::new();
+        let cancellation = core::language_servers::LanguageServerRequestCancellation::new();
+        let response = formatting(
+            &mut state,
+            &RequestEnvelope {
+                id: 9,
+                domain: Domain::LanguageServers,
+                action: "formatting".to_owned(),
+                params: serde_json::json!({
+                    "workspaceId": 1,
+                    "path": "missing.rs",
+                    "languageId": "rust",
+                    "generation": 1,
+                    "version": 1,
+                    "text": "",
+                    "tabSize": 0,
+                    "insertSpaces": true
+                }),
+            },
+            &cancellation,
         );
         let response = serde_json::to_value(response).expect("response should serialize");
 

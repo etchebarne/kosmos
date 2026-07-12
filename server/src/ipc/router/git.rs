@@ -8,44 +8,133 @@ use super::super::messages::git::{
     OpenGitDiffTabParams, PullGitChangesParams, PushGitChangesParams, SaveGitDiffFileParams,
     SwitchGitBranchParams,
 };
-use super::{RouteDefinition, parse_params, workspace_list_response};
+use super::{Route, RouteDefinition, find_route, parse_params, workspace_list_response};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "init",
+        definition: RouteDefinition::external(init),
+    },
+    Route {
+        action: "status",
+        definition: RouteDefinition::external(status),
+    },
+    Route {
+        action: "openDiffTab",
+        definition: RouteDefinition::full(open_diff_tab),
+    },
+    Route {
+        action: "diff",
+        definition: RouteDefinition::external(diff),
+    },
+    Route {
+        action: "saveDiffFile",
+        definition: RouteDefinition::external(save_diff_file),
+    },
+    Route {
+        action: "stagePaths",
+        definition: RouteDefinition::external(stage_paths),
+    },
+    Route {
+        action: "unstagePaths",
+        definition: RouteDefinition::external(unstage_paths),
+    },
+    Route {
+        action: "stageAll",
+        definition: RouteDefinition::external(stage_all),
+    },
+    Route {
+        action: "unstageAll",
+        definition: RouteDefinition::external(unstage_all),
+    },
+    Route {
+        action: "commit",
+        definition: RouteDefinition::external(commit),
+    },
+    Route {
+        action: "switchBranch",
+        definition: RouteDefinition::external(switch_branch),
+    },
+    Route {
+        action: "trackRemoteBranch",
+        definition: RouteDefinition::external(track_remote_branch),
+    },
+    Route {
+        action: "createBranch",
+        definition: RouteDefinition::external(create_branch),
+    },
+    Route {
+        action: "deleteBranch",
+        definition: RouteDefinition::external(delete_branch),
+    },
+    Route {
+        action: "fetch",
+        definition: RouteDefinition::external(fetch),
+    },
+    Route {
+        action: "pull",
+        definition: RouteDefinition::external(pull),
+    },
+    Route {
+        action: "push",
+        definition: RouteDefinition::external(push),
+    },
+    Route {
+        action: "stash",
+        definition: RouteDefinition::external(stash),
+    },
+    Route {
+        action: "stashStaged",
+        definition: RouteDefinition::external(stash_staged),
+    },
+    Route {
+        action: "stashes",
+        definition: RouteDefinition::external(stashes),
+    },
+    Route {
+        action: "applyStash",
+        definition: RouteDefinition::external(apply_stash),
+    },
+    Route {
+        action: "dropStash",
+        definition: RouteDefinition::external(drop_stash),
+    },
+    Route {
+        action: "remotes",
+        definition: RouteDefinition::external(remotes),
+    },
+    Route {
+        action: "addRemote",
+        definition: RouteDefinition::external(add_remote),
+    },
+    Route {
+        action: "removeRemote",
+        definition: RouteDefinition::external(remove_remote),
+    },
+    Route {
+        action: "tags",
+        definition: RouteDefinition::external(tags),
+    },
+    Route {
+        action: "createTag",
+        definition: RouteDefinition::external(create_tag),
+    },
+    Route {
+        action: "deleteTag",
+        definition: RouteDefinition::external(delete_tag),
+    },
+    Route {
+        action: "discardAll",
+        definition: RouteDefinition::external(discard_all),
+    },
+    Route {
+        action: "discardStaged",
+        definition: RouteDefinition::external(discard_staged),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    let handler = match action {
-        "init" => init,
-        "status" => status,
-        "openDiffTab" => return Some(RouteDefinition::full(open_diff_tab)),
-        "diff" => diff,
-        "saveDiffFile" => save_diff_file,
-        "stagePaths" => stage_paths,
-        "unstagePaths" => unstage_paths,
-        "stageAll" => stage_all,
-        "unstageAll" => unstage_all,
-        "commit" => commit,
-        "switchBranch" => switch_branch,
-        "trackRemoteBranch" => track_remote_branch,
-        "createBranch" => create_branch,
-        "deleteBranch" => delete_branch,
-        "fetch" => fetch,
-        "pull" => pull,
-        "push" => push,
-        "stash" => stash,
-        "stashStaged" => stash_staged,
-        "stashes" => stashes,
-        "applyStash" => apply_stash,
-        "dropStash" => drop_stash,
-        "remotes" => remotes,
-        "addRemote" => add_remote,
-        "removeRemote" => remove_remote,
-        "tags" => tags,
-        "createTag" => create_tag,
-        "deleteTag" => delete_tag,
-        "discardAll" => discard_all,
-        "discardStaged" => discard_staged,
-        _ => return None,
-    };
-
-    Some(RouteDefinition::external(handler))
+    find_route(ROUTES, action)
 }
 
 fn open_diff_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

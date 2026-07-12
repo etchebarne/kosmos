@@ -4,17 +4,35 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::{
     ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
 };
-use super::{RouteDefinition, command_response, parse_params, workspace_list_response};
+use super::{
+    Route, RouteDefinition, command_response, find_route, parse_params, workspace_list_response,
+};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "list",
+        definition: RouteDefinition::snapshot(list_workspaces),
+    },
+    Route {
+        action: "flush",
+        definition: RouteDefinition::persistence_barrier(flush_persistence),
+    },
+    Route {
+        action: "open",
+        definition: RouteDefinition::full(open_workspace),
+    },
+    Route {
+        action: "activate",
+        definition: RouteDefinition::active_workspace(activate_workspace),
+    },
+    Route {
+        action: "close",
+        definition: RouteDefinition::full(close_workspace),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "list" => Some(RouteDefinition::snapshot(list_workspaces)),
-        "flush" => Some(RouteDefinition::persistence_barrier(flush_persistence)),
-        "open" => Some(RouteDefinition::full(open_workspace)),
-        "activate" => Some(RouteDefinition::active_workspace(activate_workspace)),
-        "close" => Some(RouteDefinition::full(close_workspace)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn flush_persistence(_state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

@@ -2,14 +2,21 @@ use core::settings::{SettingValue, SettingsError};
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::settings::{SettingsSnapshot, UpdateSettingParams};
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "get",
+        definition: RouteDefinition::snapshot(get),
+    },
+    Route {
+        action: "update",
+        definition: RouteDefinition::settings(update),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "get" => Some(RouteDefinition::snapshot(get)),
-        "update" => Some(RouteDefinition::settings(update)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn get(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

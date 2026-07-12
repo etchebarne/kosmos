@@ -113,9 +113,23 @@ impl PreparedRoute {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct RouteDefinition {
     handler: RouteHandlerKind,
     mode: ExecutionMode,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Route {
+    pub(super) action: &'static str,
+    pub(super) definition: RouteDefinition,
+}
+
+pub(super) fn find_route(routes: &[Route], action: &str) -> Option<RouteDefinition> {
+    routes
+        .iter()
+        .find(|route| route.action == action)
+        .map(|route| route.definition)
 }
 
 #[derive(Clone, Copy)]
@@ -250,210 +264,467 @@ pub(super) fn unsupported_action(request: &RequestEnvelope) -> ServerMessage {
 mod tests {
     use super::*;
 
-    #[test]
-    fn execution_modes_are_declared_by_the_routed_operation() {
-        assert_modes(Domain::Workspace, &["list"], ExecutionMode::Snapshot);
-        assert_modes(
-            Domain::Workspace,
-            &["flush"],
-            ExecutionMode::Persistent(PersistenceMode::Barrier),
-        );
-        assert_modes(
-            Domain::Workspace,
-            &["activate"],
-            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
-        );
-        assert_modes(
-            Domain::Workspace,
-            &["open", "close"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::Pane,
-            &["split", "activate", "move", "resize"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::Tab,
-            &["open", "activate", "setKind", "close", "move", "split"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::FileTree,
-            &[
-                "get",
-                "gitStatus",
-                "getChildren",
-                "createEntry",
-                "renameEntry",
-                "moveEntries",
-                "copyEntries",
-                "deleteEntries",
-                "resolvePath",
-            ],
-            ExecutionMode::External,
-        );
-        assert_modes(
-            Domain::FileTree,
-            &["setExpandedPaths"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::Editor,
-            &["openTab"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::Editor,
-            &["document", "gitLineHunks", "save"],
-            ExecutionMode::External,
-        );
-        assert_modes(
-            Domain::Git,
-            &[
-                "init",
-                "status",
-                "diff",
-                "stagePaths",
-                "unstagePaths",
-                "stageAll",
-                "unstageAll",
-                "commit",
-                "switchBranch",
-                "trackRemoteBranch",
-                "createBranch",
-                "deleteBranch",
-                "fetch",
-                "pull",
-                "push",
-                "stash",
-                "stashStaged",
-                "stashes",
-                "applyStash",
-                "dropStash",
-                "remotes",
-                "addRemote",
-                "removeRemote",
-                "tags",
-                "createTag",
-                "deleteTag",
-                "discardAll",
-                "discardStaged",
-            ],
-            ExecutionMode::External,
-        );
-        assert_modes(
-            Domain::Search,
-            &["query", "document"],
-            ExecutionMode::External,
-        );
-        assert_modes(
-            Domain::Git,
-            &["openDiffTab"],
-            ExecutionMode::Persistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::Terminal,
-            &["open", "read", "write", "resize", "restart"],
-            ExecutionMode::Live,
-        );
-        assert_modes(Domain::Terminal, &["shells"], ExecutionMode::Snapshot);
-        assert_modes(Domain::Settings, &["get"], ExecutionMode::Snapshot);
-        assert_modes(
-            Domain::LanguageServers,
-            &["list", "status"],
-            ExecutionMode::Snapshot,
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &[
-                "openDocument",
-                "changeDocument",
-                "closeDocument",
-                "saveDocument",
-                "trustWorkspace",
-                "restart",
-            ],
-            ExecutionMode::LanguageServer,
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &["commitWorkspaceEdit", "rollbackWorkspaceEdit"],
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &[
-                "finishWorkspaceEdit",
-                "finalizeWorkspaceEdit",
-                "acknowledgeWorkspaceEditCompletion",
-            ],
-            ExecutionMode::LivePersistent(PersistenceMode::Full),
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &["workspaceEditStatus", "listWorkspaceEditRecoveries"],
-            ExecutionMode::Live,
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &[
-                "hover",
-                "diagnostics",
-                "completion",
-                "resolveCompletion",
-                "documentColors",
-                "colorPresentations",
-                "formatting",
-            ],
-            ExecutionMode::LanguageServerFeature,
-        );
-        assert_modes(
-            Domain::LanguageServers,
-            &["install", "uninstall"],
-            ExecutionMode::Live,
-        );
-        assert_modes(
-            Domain::Formatters,
-            &["list", "status"],
-            ExecutionMode::Snapshot,
-        );
-        assert_modes(
-            Domain::Formatters,
-            &["install", "uninstall"],
-            ExecutionMode::Live,
-        );
-        assert_modes(
-            Domain::Settings,
-            &["update"],
-            ExecutionMode::Persistent(PersistenceMode::Settings),
-        );
-        assert_modes(Domain::Window, &["get"], ExecutionMode::Snapshot);
-        assert_modes(
-            Domain::Window,
-            &["update"],
-            ExecutionMode::Persistent(PersistenceMode::Window),
-        );
-    }
+    const DOMAINS: &[Domain] = &[
+        Domain::Workspace,
+        Domain::Pane,
+        Domain::Tab,
+        Domain::FileTree,
+        Domain::Formatters,
+        Domain::Editor,
+        Domain::Git,
+        Domain::Search,
+        Domain::Terminal,
+        Domain::Settings,
+        Domain::LanguageServers,
+        Domain::Window,
+    ];
 
-    fn assert_modes(domain: Domain, actions: &[&str], expected: ExecutionMode) {
-        for action in actions {
+    const EXPECTED_MODES: &[(Domain, &str, ExecutionMode)] = &[
+        (Domain::Workspace, "list", ExecutionMode::Snapshot),
+        (
+            Domain::Workspace,
+            "flush",
+            ExecutionMode::Persistent(PersistenceMode::Barrier),
+        ),
+        (
+            Domain::Workspace,
+            "open",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Workspace,
+            "activate",
+            ExecutionMode::Persistent(PersistenceMode::ActiveWorkspace),
+        ),
+        (
+            Domain::Workspace,
+            "close",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Pane,
+            "split",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Pane,
+            "activate",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Pane,
+            "move",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Pane,
+            "resize",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "open",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "activate",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "setKind",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "close",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "move",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::Tab,
+            "split",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (Domain::FileTree, "get", ExecutionMode::External),
+        (Domain::FileTree, "gitStatus", ExecutionMode::External),
+        (Domain::FileTree, "getChildren", ExecutionMode::External),
+        (
+            Domain::FileTree,
+            "setExpandedPaths",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (Domain::FileTree, "createEntry", ExecutionMode::External),
+        (Domain::FileTree, "renameEntry", ExecutionMode::External),
+        (Domain::FileTree, "moveEntries", ExecutionMode::External),
+        (Domain::FileTree, "copyEntries", ExecutionMode::External),
+        (Domain::FileTree, "deleteEntries", ExecutionMode::External),
+        (Domain::FileTree, "resolvePath", ExecutionMode::External),
+        (Domain::Formatters, "list", ExecutionMode::Snapshot),
+        (Domain::Formatters, "status", ExecutionMode::Snapshot),
+        (Domain::Formatters, "install", ExecutionMode::Live),
+        (Domain::Formatters, "uninstall", ExecutionMode::Live),
+        (Domain::Formatters, "set-priorities", ExecutionMode::Live),
+        (
+            Domain::Editor,
+            "openTab",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (Domain::Editor, "document", ExecutionMode::External),
+        (Domain::Editor, "gitLineHunks", ExecutionMode::External),
+        (Domain::Editor, "save", ExecutionMode::External),
+        (Domain::Git, "init", ExecutionMode::External),
+        (Domain::Git, "status", ExecutionMode::External),
+        (
+            Domain::Git,
+            "openDiffTab",
+            ExecutionMode::Persistent(PersistenceMode::Full),
+        ),
+        (Domain::Git, "diff", ExecutionMode::External),
+        (Domain::Git, "saveDiffFile", ExecutionMode::External),
+        (Domain::Git, "stagePaths", ExecutionMode::External),
+        (Domain::Git, "unstagePaths", ExecutionMode::External),
+        (Domain::Git, "stageAll", ExecutionMode::External),
+        (Domain::Git, "unstageAll", ExecutionMode::External),
+        (Domain::Git, "commit", ExecutionMode::External),
+        (Domain::Git, "switchBranch", ExecutionMode::External),
+        (Domain::Git, "trackRemoteBranch", ExecutionMode::External),
+        (Domain::Git, "createBranch", ExecutionMode::External),
+        (Domain::Git, "deleteBranch", ExecutionMode::External),
+        (Domain::Git, "fetch", ExecutionMode::External),
+        (Domain::Git, "pull", ExecutionMode::External),
+        (Domain::Git, "push", ExecutionMode::External),
+        (Domain::Git, "stash", ExecutionMode::External),
+        (Domain::Git, "stashStaged", ExecutionMode::External),
+        (Domain::Git, "stashes", ExecutionMode::External),
+        (Domain::Git, "applyStash", ExecutionMode::External),
+        (Domain::Git, "dropStash", ExecutionMode::External),
+        (Domain::Git, "remotes", ExecutionMode::External),
+        (Domain::Git, "addRemote", ExecutionMode::External),
+        (Domain::Git, "removeRemote", ExecutionMode::External),
+        (Domain::Git, "tags", ExecutionMode::External),
+        (Domain::Git, "createTag", ExecutionMode::External),
+        (Domain::Git, "deleteTag", ExecutionMode::External),
+        (Domain::Git, "discardAll", ExecutionMode::External),
+        (Domain::Git, "discardStaged", ExecutionMode::External),
+        (Domain::Search, "query", ExecutionMode::External),
+        (Domain::Search, "document", ExecutionMode::External),
+        (Domain::Terminal, "shells", ExecutionMode::Snapshot),
+        (Domain::Terminal, "open", ExecutionMode::Live),
+        (Domain::Terminal, "read", ExecutionMode::Live),
+        (Domain::Terminal, "write", ExecutionMode::Live),
+        (Domain::Terminal, "resize", ExecutionMode::Live),
+        (Domain::Terminal, "restart", ExecutionMode::Live),
+        (Domain::Settings, "get", ExecutionMode::Snapshot),
+        (
+            Domain::Settings,
+            "update",
+            ExecutionMode::Persistent(PersistenceMode::Settings),
+        ),
+        (Domain::LanguageServers, "list", ExecutionMode::Snapshot),
+        (Domain::LanguageServers, "status", ExecutionMode::Snapshot),
+        (Domain::LanguageServers, "install", ExecutionMode::Live),
+        (Domain::LanguageServers, "uninstall", ExecutionMode::Live),
+        (
+            Domain::LanguageServers,
+            "restart",
+            ExecutionMode::LanguageServer,
+        ),
+        (
+            Domain::LanguageServers,
+            "openDocument",
+            ExecutionMode::LanguageServer,
+        ),
+        (
+            Domain::LanguageServers,
+            "changeDocument",
+            ExecutionMode::LanguageServer,
+        ),
+        (
+            Domain::LanguageServers,
+            "closeDocument",
+            ExecutionMode::LanguageServer,
+        ),
+        (
+            Domain::LanguageServers,
+            "saveDocument",
+            ExecutionMode::LanguageServer,
+        ),
+        (
+            Domain::LanguageServers,
+            "hover",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "signatureHelp",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "definition",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "declaration",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "typeDefinition",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "implementation",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "references",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "documentSymbols",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "workspaceSymbols",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "resolveWorkspaceSymbol",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "diagnostics",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "completion",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "resolveCompletion",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "documentColors",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "colorPresentations",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "formatting",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "prepareRename",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "rename",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "codeActions",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "resolveCodeAction",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "stageCodeAction",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "executeCommand",
+            ExecutionMode::LanguageServerFeature,
+        ),
+        (
+            Domain::LanguageServers,
+            "commitWorkspaceEdit",
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::LanguageServers,
+            "rollbackWorkspaceEdit",
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::LanguageServers,
+            "finishWorkspaceEdit",
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::LanguageServers,
+            "finalizeWorkspaceEdit",
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::LanguageServers,
+            "acknowledgeWorkspaceEditCompletion",
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        ),
+        (
+            Domain::LanguageServers,
+            "workspaceEditStatus",
+            ExecutionMode::Live,
+        ),
+        (
+            Domain::LanguageServers,
+            "listWorkspaceEditRecoveries",
+            ExecutionMode::Live,
+        ),
+        (
+            Domain::LanguageServers,
+            "trustWorkspace",
+            ExecutionMode::LanguageServer,
+        ),
+        (Domain::Window, "get", ExecutionMode::Snapshot),
+        (
+            Domain::Window,
+            "update",
+            ExecutionMode::Persistent(PersistenceMode::Window),
+        ),
+    ];
+
+    #[test]
+    fn route_registries_are_exhaustive_and_match_their_resolvers() {
+        for domain in DOMAINS {
+            let routes = routes_for(*domain);
+
+            for (index, route) in routes.iter().enumerate() {
+                assert!(
+                    !routes[..index]
+                        .iter()
+                        .any(|previous| previous.action == route.action),
+                    "duplicate {:?}.{} route",
+                    domain,
+                    route.action
+                );
+                assert_eq!(
+                    mode_for(*domain, route.action),
+                    route.definition.mode,
+                    "resolver changed {:?}.{} metadata",
+                    domain,
+                    route.action
+                );
+                assert_eq!(
+                    expected_mode(*domain, route.action),
+                    Some(route.definition.mode),
+                    "unreviewed {:?}.{} route",
+                    domain,
+                    route.action
+                );
+            }
+
+            let expected = EXPECTED_MODES
+                .iter()
+                .filter(|(expected_domain, _, _)| same_domain(*expected_domain, *domain))
+                .count();
             assert_eq!(
-                mode_for(domain, action),
+                routes.len(),
                 expected,
-                "unexpected {action} mode"
+                "missing expected {:?} route",
+                domain
+            );
+        }
+
+        for (index, (domain, action, mode)) in EXPECTED_MODES.iter().enumerate() {
+            assert!(
+                !EXPECTED_MODES[..index]
+                    .iter()
+                    .any(|(previous_domain, previous_action, _)| {
+                        same_domain(*previous_domain, *domain) && previous_action == action
+                    }),
+                "duplicate expected {:?}.{} mode",
+                domain,
+                action
+            );
+            assert_eq!(
+                mode_for(*domain, action),
+                *mode,
+                "unexpected {:?}.{} mode",
+                domain,
+                action
             );
         }
     }
 
+    #[test]
+    fn unknown_actions_do_not_resolve() {
+        for domain in DOMAINS {
+            assert!(prepare(request(*domain, "missing")).is_err());
+        }
+    }
+
+    fn routes_for(domain: Domain) -> &'static [Route] {
+        match domain {
+            Domain::Workspace => workspace::ROUTES,
+            Domain::Pane => pane::ROUTES,
+            Domain::Tab => tab::ROUTES,
+            Domain::FileTree => file_tree::ROUTES,
+            Domain::Formatters => formatters::ROUTES,
+            Domain::Editor => editor::ROUTES,
+            Domain::Git => git::ROUTES,
+            Domain::Search => search::ROUTES,
+            Domain::Terminal => terminal::ROUTES,
+            Domain::Settings => settings::ROUTES,
+            Domain::LanguageServers => language_servers::ROUTES,
+            Domain::Window => window::ROUTES,
+        }
+    }
+
+    fn expected_mode(domain: Domain, action: &str) -> Option<ExecutionMode> {
+        EXPECTED_MODES
+            .iter()
+            .find(|(expected_domain, expected_action, _)| {
+                same_domain(*expected_domain, domain) && *expected_action == action
+            })
+            .map(|(_, _, mode)| *mode)
+    }
+
+    fn same_domain(left: Domain, right: Domain) -> bool {
+        std::mem::discriminant(&left) == std::mem::discriminant(&right)
+    }
+
     fn mode_for(domain: Domain, action: &str) -> ExecutionMode {
-        let request = RequestEnvelope {
+        prepare(request(domain, action))
+            .expect("route should exist")
+            .mode()
+    }
+
+    fn request(domain: Domain, action: &str) -> RequestEnvelope {
+        RequestEnvelope {
             id: 1,
             domain,
             action: action.to_owned(),
             params: serde_json::Value::Null,
-        };
-
-        prepare(request).expect("route should exist").mode()
+        }
     }
 }

@@ -2,17 +2,33 @@ use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::formatters::{
     FormatterListSnapshot, FormatterParams, FormatterPrioritiesParams, FormatterSnapshot,
 };
-use super::{RouteDefinition, parse_params};
+use super::{Route, RouteDefinition, find_route, parse_params};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "list",
+        definition: RouteDefinition::snapshot(list),
+    },
+    Route {
+        action: "status",
+        definition: RouteDefinition::snapshot(status),
+    },
+    Route {
+        action: "install",
+        definition: RouteDefinition::live(install),
+    },
+    Route {
+        action: "uninstall",
+        definition: RouteDefinition::live(uninstall),
+    },
+    Route {
+        action: "set-priorities",
+        definition: RouteDefinition::live(set_priorities),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "list" => Some(RouteDefinition::snapshot(list)),
-        "status" => Some(RouteDefinition::snapshot(status)),
-        "install" => Some(RouteDefinition::live(install)),
-        "uninstall" => Some(RouteDefinition::live(uninstall)),
-        "set-priorities" => Some(RouteDefinition::live(set_priorities)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn list(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {

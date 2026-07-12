@@ -6,16 +6,29 @@ use super::super::messages::editor::{
     SaveEditorDocumentParams,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
-use super::{RouteDefinition, parse_params, workspace_list_response};
+use super::{Route, RouteDefinition, find_route, parse_params, workspace_list_response};
+
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        action: "openTab",
+        definition: RouteDefinition::full(open_tab),
+    },
+    Route {
+        action: "document",
+        definition: RouteDefinition::external(document),
+    },
+    Route {
+        action: "gitLineHunks",
+        definition: RouteDefinition::external(git_line_hunks),
+    },
+    Route {
+        action: "save",
+        definition: RouteDefinition::external(save),
+    },
+];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
-    match action {
-        "openTab" => Some(RouteDefinition::full(open_tab)),
-        "document" => Some(RouteDefinition::external(document)),
-        "gitLineHunks" => Some(RouteDefinition::external(git_line_hunks)),
-        "save" => Some(RouteDefinition::external(save)),
-        _ => None,
-    }
+    find_route(ROUTES, action)
 }
 
 fn git_line_hunks(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
