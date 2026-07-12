@@ -296,6 +296,37 @@ export type SettingValuePayload = boolean | string | number;
 export type SettingValueParam = boolean | string | number;
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "CloseResultPayload".
+ */
+export type CloseResultPayload =
+  | {
+      snapshot: WorkspaceListSnapshot;
+      status: "completed";
+    }
+  | {
+      closeId: number;
+      documents: UnsavedDocumentPayload[];
+      status: "requiresDocumentDecision";
+    };
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "CloseDecisionPayload".
+ */
+export type CloseDecisionPayload =
+  | {
+      kind: "cancel";
+    }
+  | {
+      documents: CloseDocumentDecisionPayload[];
+      kind: "resolve";
+    };
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "CloseDocumentDecisionKindPayload".
+ */
+export type CloseDocumentDecisionKindPayload = "save" | "discard";
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "Array_of_TerminalShellSnapshot".
  */
 export type ArrayOf_TerminalShellSnapshot = TerminalShellSnapshot[];
@@ -306,14 +337,16 @@ export type ArrayOf_TerminalShellSnapshot = TerminalShellSnapshot[];
 export type Nullable_WindowStateSnapshot = WindowStateSnapshot | null;
 
 export interface KosmosIpcTypes {
-  EditorDocumentParams?: EditorDocumentParams;
+  ChangeEditorSessionParams?: ChangeEditorSessionParams;
   EditorDocumentPayload?: EditorDocumentPayload;
+  EditorDocumentParams?: EditorDocumentParams;
   EditorGitLineHunksPayload?: EditorGitLineHunksPayload;
+  OpenEditorSessionParams?: OpenEditorSessionParams;
   OpenEditorTabParams?: OpenEditorTabParams;
   WorkspaceListSnapshot?: WorkspaceListSnapshot;
   SaveEditorDocumentParams?: SaveEditorDocumentParams;
-  Boolean?: Boolean;
   TransferFileTreeEntriesParams?: TransferFileTreeEntriesParams;
+  Boolean?: Boolean;
   CreateFileTreeEntryParams?: CreateFileTreeEntryParams;
   DeleteFileTreeEntriesParams?: DeleteFileTreeEntriesParams;
   GetFileTreeParams?: GetFileTreeParams;
@@ -404,8 +437,10 @@ export interface KosmosIpcTypes {
   UpdateSettingParams?: UpdateSettingParams;
   ActivateTabParams?: ActivateTabParams;
   CloseTabParams?: CloseTabParams;
+  CloseResultPayload?: CloseResultPayload;
   MoveTabParams?: MoveTabParams;
   OpenTabParams?: OpenTabParams;
+  ResolveCloseParams?: ResolveCloseParams;
   SetTabKindParams?: SetTabKindParams;
   SplitTabParams?: SplitTabParams;
   OpenTerminalParams?: OpenTerminalParams;
@@ -432,9 +467,11 @@ export interface KosmosIpcTypes {
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "EditorDocumentParams".
+ * via the `definition` "ChangeEditorSessionParams".
  */
-export interface EditorDocumentParams {
+export interface ChangeEditorSessionParams {
+  content: string;
+  revision: number;
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
 }
@@ -443,8 +480,19 @@ export interface EditorDocumentParams {
  * via the `definition` "EditorDocumentPayload".
  */
 export interface EditorDocumentPayload {
+  accepted: boolean;
   content: string;
   path: string;
+  revision: number;
+  savedContent: string;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorDocumentParams".
+ */
+export interface EditorDocumentParams {
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -462,6 +510,17 @@ export interface EditorGitLineHunkPayload {
   newStart: number;
   oldLines: number;
   oldStart: number;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "OpenEditorSessionParams".
+ */
+export interface OpenEditorSessionParams {
+  content: string;
+  path: string;
+  revision: number;
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -515,7 +574,7 @@ export interface TabSnapshot {
  * via the `definition` "SaveEditorDocumentParams".
  */
 export interface SaveEditorDocumentParams {
-  content: string;
+  revision: number;
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
 }
@@ -1586,6 +1645,16 @@ export interface CloseTabParams {
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "UnsavedDocumentPayload".
+ */
+export interface UnsavedDocumentPayload {
+  path: string;
+  revision: number;
+  tabId: number;
+  workspaceId: number;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "MoveTabParams".
  */
 export interface MoveTabParams {
@@ -1604,6 +1673,24 @@ export interface OpenTabParams {
   paneId?: PaneIdParam | null;
   title?: string | null;
   workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolveCloseParams".
+ */
+export interface ResolveCloseParams {
+  closeId: number;
+  decision: CloseDecisionPayload;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "CloseDocumentDecisionPayload".
+ */
+export interface CloseDocumentDecisionPayload {
+  decision: CloseDocumentDecisionKindPayload;
+  revision: number;
+  tabId: TabIdParam;
+  workspaceId: WorkspaceIdParam;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

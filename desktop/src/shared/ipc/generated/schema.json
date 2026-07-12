@@ -2,6 +2,88 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "actions": {
     "editor": {
+      "changeSession": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "content",
+            "revision",
+            "tabId"
+          ],
+          "title": "ChangeEditorSessionParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accepted",
+            "content",
+            "path",
+            "revision",
+            "savedContent"
+          ],
+          "title": "EditorDocumentPayload",
+          "type": "object"
+        }
+      },
       "document": {
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -43,16 +125,31 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
             "content": {
               "type": "string"
             },
             "path": {
               "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
             }
           },
           "required": [
+            "accepted",
             "content",
-            "path"
+            "path",
+            "revision",
+            "savedContent"
           ],
           "title": "EditorDocumentPayload",
           "type": "object"
@@ -143,6 +240,92 @@
             "hunks"
           ],
           "title": "EditorGitLineHunksPayload",
+          "type": "object"
+        }
+      },
+      "openSession": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "content",
+            "path",
+            "revision",
+            "tabId"
+          ],
+          "title": "OpenEditorSessionParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accepted",
+            "content",
+            "path",
+            "revision",
+            "savedContent"
+          ],
+          "title": "EditorDocumentPayload",
           "type": "object"
         }
       },
@@ -407,8 +590,11 @@
             }
           },
           "properties": {
-            "content": {
-              "type": "string"
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             },
             "tabId": {
               "$ref": "#/definitions/TabIdParam"
@@ -425,7 +611,7 @@
             }
           },
           "required": [
-            "content",
+            "revision",
             "tabId"
           ],
           "title": "SaveEditorDocumentParams",
@@ -433,8 +619,35 @@
         },
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
-          "title": "Boolean",
-          "type": "boolean"
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accepted",
+            "content",
+            "path",
+            "revision",
+            "savedContent"
+          ],
+          "title": "EditorDocumentPayload",
+          "type": "object"
         }
       }
     },
@@ -9983,16 +10196,31 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
             "content": {
               "type": "string"
             },
             "path": {
               "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
             }
           },
           "required": [
+            "accepted",
             "content",
-            "path"
+            "path",
+            "revision",
+            "savedContent"
           ],
           "title": "EditorDocumentPayload",
           "type": "object"
@@ -11078,6 +11306,62 @@
               ],
               "type": "object"
             },
+            "UnsavedDocumentPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
             "WorkspaceSnapshot": {
               "properties": {
                 "activePaneId": {
@@ -11112,29 +11396,54 @@
               "type": "object"
             }
           },
-          "properties": {
-            "activeWorkspaceId": {
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 0.0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "workspaces": {
-              "items": {
-                "$ref": "#/definitions/WorkspaceSnapshot"
+          "oneOf": [
+            {
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/definitions/WorkspaceListSnapshot"
+                },
+                "status": {
+                  "enum": [
+                    "completed"
+                  ],
+                  "type": "string"
+                }
               },
-              "type": "array"
+              "required": [
+                "snapshot",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "closeId": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "documents": {
+                  "items": {
+                    "$ref": "#/definitions/UnsavedDocumentPayload"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "requiresDocumentDecision"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "closeId",
+                "documents",
+                "status"
+              ],
+              "type": "object"
             }
-          },
-          "required": [
-            "workspaces",
-            "activeWorkspaceId"
           ],
-          "title": "WorkspaceListSnapshot",
-          "type": "object"
+          "title": "CloseResultPayload"
         }
       },
       "move": {
@@ -11666,6 +11975,395 @@
           ],
           "title": "WorkspaceListSnapshot",
           "type": "object"
+        }
+      },
+      "resolveClose": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "CloseDecisionPayload": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "cancel"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "documents": {
+                      "items": {
+                        "$ref": "#/definitions/CloseDocumentDecisionPayload"
+                      },
+                      "type": "array"
+                    },
+                    "kind": {
+                      "enum": [
+                        "resolve"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "documents",
+                    "kind"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "CloseDocumentDecisionKindPayload": {
+              "enum": [
+                "save",
+                "discard"
+              ],
+              "type": "string"
+            },
+            "CloseDocumentDecisionPayload": {
+              "properties": {
+                "decision": {
+                  "$ref": "#/definitions/CloseDocumentDecisionKindPayload"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "$ref": "#/definitions/TabIdParam"
+                },
+                "workspaceId": {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                }
+              },
+              "required": [
+                "decision",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "closeId": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "decision": {
+              "$ref": "#/definitions/CloseDecisionPayload"
+            }
+          },
+          "required": [
+            "closeId",
+            "decision"
+          ],
+          "title": "ResolveCloseParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "PaneNodeSnapshot": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "pane": {
+                      "$ref": "#/definitions/PaneSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "leaf"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pane",
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "axis": {
+                      "$ref": "#/definitions/SplitAxisPayload"
+                    },
+                    "first": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "id": {
+                      "format": "uint64",
+                      "minimum": 0.0,
+                      "type": "integer"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "split"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "first",
+                    "id",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "PaneSnapshot": {
+              "properties": {
+                "activeTabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabs": {
+                  "items": {
+                    "$ref": "#/definitions/TabSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "activeTabId",
+                "id",
+                "tabs"
+              ],
+              "type": "object"
+            },
+            "SplitAxisPayload": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "type": "string"
+            },
+            "TabKindPayload": {
+              "enum": [
+                "blank",
+                "diff",
+                "fileTree",
+                "editor",
+                "git",
+                "search",
+                "terminal"
+              ],
+              "type": "string"
+            },
+            "TabLifecyclePayload": {
+              "enum": [
+                "ephemeral",
+                "keepAlive"
+              ],
+              "type": "string"
+            },
+            "TabSnapshot": {
+              "properties": {
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/definitions/TabKindPayload"
+                },
+                "lifecycle": {
+                  "$ref": "#/definitions/TabLifecyclePayload"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "lifecycle",
+                "title"
+              ],
+              "type": "object"
+            },
+            "UnsavedDocumentPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceSnapshot": {
+              "properties": {
+                "activePaneId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "directory": {
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "$ref": "#/definitions/PaneNodeSnapshot"
+                }
+              },
+              "required": [
+                "activePaneId",
+                "directory",
+                "id",
+                "name",
+                "root"
+              ],
+              "type": "object"
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/definitions/WorkspaceListSnapshot"
+                },
+                "status": {
+                  "enum": [
+                    "completed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "snapshot",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "closeId": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "documents": {
+                  "items": {
+                    "$ref": "#/definitions/UnsavedDocumentPayload"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "requiresDocumentDecision"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "closeId",
+                "documents",
+                "status"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "CloseResultPayload"
         }
       },
       "setKind": {
@@ -13140,6 +13838,62 @@
               ],
               "type": "object"
             },
+            "UnsavedDocumentPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
             "WorkspaceSnapshot": {
               "properties": {
                 "activePaneId": {
@@ -13174,29 +13928,342 @@
               "type": "object"
             }
           },
-          "properties": {
-            "activeWorkspaceId": {
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 0.0,
-              "type": [
-                "integer",
-                "null"
+          "oneOf": [
+            {
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/definitions/WorkspaceListSnapshot"
+                },
+                "status": {
+                  "enum": [
+                    "completed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "snapshot",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "closeId": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "documents": {
+                  "items": {
+                    "$ref": "#/definitions/UnsavedDocumentPayload"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "requiresDocumentDecision"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "closeId",
+                "documents",
+                "status"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "CloseResultPayload"
+        }
+      },
+      "closeApplication": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "title": "EmptyParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "PaneNodeSnapshot": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "pane": {
+                      "$ref": "#/definitions/PaneSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "leaf"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pane",
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "axis": {
+                      "$ref": "#/definitions/SplitAxisPayload"
+                    },
+                    "first": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "id": {
+                      "format": "uint64",
+                      "minimum": 0.0,
+                      "type": "integer"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "split"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "first",
+                    "id",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
               ]
             },
-            "workspaces": {
-              "items": {
-                "$ref": "#/definitions/WorkspaceSnapshot"
+            "PaneSnapshot": {
+              "properties": {
+                "activeTabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabs": {
+                  "items": {
+                    "$ref": "#/definitions/TabSnapshot"
+                  },
+                  "type": "array"
+                }
               },
-              "type": "array"
+              "required": [
+                "activeTabId",
+                "id",
+                "tabs"
+              ],
+              "type": "object"
+            },
+            "SplitAxisPayload": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "type": "string"
+            },
+            "TabKindPayload": {
+              "enum": [
+                "blank",
+                "diff",
+                "fileTree",
+                "editor",
+                "git",
+                "search",
+                "terminal"
+              ],
+              "type": "string"
+            },
+            "TabLifecyclePayload": {
+              "enum": [
+                "ephemeral",
+                "keepAlive"
+              ],
+              "type": "string"
+            },
+            "TabSnapshot": {
+              "properties": {
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/definitions/TabKindPayload"
+                },
+                "lifecycle": {
+                  "$ref": "#/definitions/TabLifecyclePayload"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "lifecycle",
+                "title"
+              ],
+              "type": "object"
+            },
+            "UnsavedDocumentPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceSnapshot": {
+              "properties": {
+                "activePaneId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "directory": {
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "$ref": "#/definitions/PaneNodeSnapshot"
+                }
+              },
+              "required": [
+                "activePaneId",
+                "directory",
+                "id",
+                "name",
+                "root"
+              ],
+              "type": "object"
             }
           },
-          "required": [
-            "workspaces",
-            "activeWorkspaceId"
+          "oneOf": [
+            {
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/definitions/WorkspaceListSnapshot"
+                },
+                "status": {
+                  "enum": [
+                    "completed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "snapshot",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "closeId": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "documents": {
+                  "items": {
+                    "$ref": "#/definitions/UnsavedDocumentPayload"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "requiresDocumentDecision"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "closeId",
+                "documents",
+                "status"
+              ],
+              "type": "object"
+            }
           ],
-          "title": "WorkspaceListSnapshot",
-          "type": "object"
+          "title": "CloseResultPayload"
         }
       },
       "flush": {
@@ -13631,6 +14698,395 @@
           ],
           "title": "WorkspaceListSnapshot",
           "type": "object"
+        }
+      },
+      "resolveClose": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "CloseDecisionPayload": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "cancel"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "documents": {
+                      "items": {
+                        "$ref": "#/definitions/CloseDocumentDecisionPayload"
+                      },
+                      "type": "array"
+                    },
+                    "kind": {
+                      "enum": [
+                        "resolve"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "documents",
+                    "kind"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "CloseDocumentDecisionKindPayload": {
+              "enum": [
+                "save",
+                "discard"
+              ],
+              "type": "string"
+            },
+            "CloseDocumentDecisionPayload": {
+              "properties": {
+                "decision": {
+                  "$ref": "#/definitions/CloseDocumentDecisionKindPayload"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "$ref": "#/definitions/TabIdParam"
+                },
+                "workspaceId": {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                }
+              },
+              "required": [
+                "decision",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "closeId": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "decision": {
+              "$ref": "#/definitions/CloseDecisionPayload"
+            }
+          },
+          "required": [
+            "closeId",
+            "decision"
+          ],
+          "title": "ResolveCloseParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "PaneNodeSnapshot": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "pane": {
+                      "$ref": "#/definitions/PaneSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "leaf"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pane",
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "axis": {
+                      "$ref": "#/definitions/SplitAxisPayload"
+                    },
+                    "first": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "id": {
+                      "format": "uint64",
+                      "minimum": 0.0,
+                      "type": "integer"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "split"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "first",
+                    "id",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "PaneSnapshot": {
+              "properties": {
+                "activeTabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabs": {
+                  "items": {
+                    "$ref": "#/definitions/TabSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "activeTabId",
+                "id",
+                "tabs"
+              ],
+              "type": "object"
+            },
+            "SplitAxisPayload": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "type": "string"
+            },
+            "TabKindPayload": {
+              "enum": [
+                "blank",
+                "diff",
+                "fileTree",
+                "editor",
+                "git",
+                "search",
+                "terminal"
+              ],
+              "type": "string"
+            },
+            "TabLifecyclePayload": {
+              "enum": [
+                "ephemeral",
+                "keepAlive"
+              ],
+              "type": "string"
+            },
+            "TabSnapshot": {
+              "properties": {
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/definitions/TabKindPayload"
+                },
+                "lifecycle": {
+                  "$ref": "#/definitions/TabLifecyclePayload"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "lifecycle",
+                "title"
+              ],
+              "type": "object"
+            },
+            "UnsavedDocumentPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "revision",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceSnapshot": {
+              "properties": {
+                "activePaneId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "directory": {
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "$ref": "#/definitions/PaneNodeSnapshot"
+                }
+              },
+              "required": [
+                "activePaneId",
+                "directory",
+                "id",
+                "name",
+                "root"
+              ],
+              "type": "object"
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/definitions/WorkspaceListSnapshot"
+                },
+                "status": {
+                  "enum": [
+                    "completed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "snapshot",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "closeId": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "documents": {
+                  "items": {
+                    "$ref": "#/definitions/UnsavedDocumentPayload"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "requiresDocumentDecision"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "closeId",
+                "documents",
+                "status"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "CloseResultPayload"
         }
       }
     }

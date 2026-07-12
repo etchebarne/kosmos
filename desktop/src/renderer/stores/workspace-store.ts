@@ -3,11 +3,15 @@ import { create } from "zustand";
 import { errorMessage } from "@/renderer/lib/errors";
 import {
   disposeEditorBuffer,
+  disposeAllEditorBuffers,
   disposeWorkspaceEditorBuffers,
+  flushEditorBuffer,
+  flushEditorBuffers,
+  flushWorkspaceEditorBuffers,
+  editorBuffer,
 } from "@/renderer/lib/editor-buffers";
 import {
   activeWorkspaceFrom,
-  closeWorkspaceLocally,
   editorSourceTabId,
   mergeLocalSplitRatios,
   resizeSplitLocally,
@@ -17,6 +21,7 @@ import {
   activatePane as activatePaneIpc,
   activateTab as activateTabIpc,
   activateWorkspace,
+  closeApplication,
   closeTab as closeTabIpc,
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
@@ -26,6 +31,8 @@ import {
   openTab as openTabIpc,
   openWorkspace,
   resizeSplit as resizeSplitIpc,
+  resolveTabClose,
+  resolveWorkspaceClose,
   setFileTreeExpandedPaths as setFileTreeExpandedPathsIpc,
   setTabKind as setTabKindIpc,
   selectWorkspaceDirectory,
@@ -33,6 +40,9 @@ import {
   type WorkspaceListSnapshot,
 } from "@/renderer/ipc";
 import type {
+  CloseDocumentDecision,
+  CloseResult,
+  UnsavedDocument,
   OpenableTabKind,
   PaneId,
   SplitAxis,
@@ -46,6 +56,25 @@ import { useGitStore } from "./git-store";
 
 type WorkspaceRequest = () => Promise<WorkspaceListSnapshot>;
 type FileTreeExpansionFlusher = () => Promise<void> | void;
+type PendingClose = {
+  closeId: number;
+  documents: UnsavedDocument[];
+  scope: "tab" | "workspace" | "application";
+  tabId?: TabId;
+  workspaceId?: WorkspaceId;
+};
+type CloseResolution = "cancel" | Record<string, CloseDocumentDecision>;
+
+function resolvedDocumentDecision(
+  resolution: Record<string, CloseDocumentDecision>,
+  document: Pick<UnsavedDocument, "workspaceId" | "tabId">,
+): CloseDocumentDecision {
+  const decision = resolution[`${document.workspaceId}:${document.tabId}`];
+  if (!decision) {
+    throw new Error("Choose a save or discard decision for every changed document.");
+  }
+  return decision;
+}
 
 type WorkspaceStore = {
   dirtyTabs: Record<WorkspaceId, Record<TabId, true>>;
@@ -64,6 +93,7 @@ type WorkspaceStore = {
     endLineNumber: number;
     endColumn: number;
   } | null;
+  pendingClose: PendingClose | null;
   activatePane(paneId: PaneId): void;
   activateTab(paneId: PaneId, tabId: TabId): void;
   addWorkspace(): Promise<void>;
@@ -72,6 +102,8 @@ type WorkspaceStore = {
   flushPendingState(): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   refreshWorkspaces(): Promise<void>;
+  requestApplicationClose(): Promise<boolean>;
+  resolvePendingClose(resolution: CloseResolution): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
   openEditorTab(tabId: TabId, path: string): void;
   openEditorLocation(
@@ -109,6 +141,48 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let resizeRequestId = 0;
   const navigationRequests = createRequestGeneration();
   let navigationQueue = Promise.resolve();
+  let applicationCloseResolver: ((completed: boolean) => void) | null = null;
+
+  function closeDocumentKey(document: Pick<UnsavedDocument, "workspaceId" | "tabId">): string {
+    return `${document.workspaceId}:${document.tabId}`;
+  }
+
+  function disposeClosedTarget(pending: PendingClose): void {
+    if (pending.scope === "application") {
+      disposeAllEditorBuffers();
+      set({ dirtyTabs: {} });
+      return;
+    }
+    if (pending.scope === "tab" && pending.tabId !== undefined && pending.workspaceId !== undefined) {
+      disposeEditorBuffer(pending.workspaceId, pending.tabId);
+      get().setTabDirty(pending.workspaceId, pending.tabId, false);
+      return;
+    }
+    if (pending.workspaceId === undefined) return;
+    const workspaceId = pending.workspaceId;
+    disposeWorkspaceEditorBuffers(workspaceId);
+    set((state) => {
+      if (!state.dirtyTabs[workspaceId]) return {};
+      const dirtyTabs = { ...state.dirtyTabs };
+      delete dirtyTabs[workspaceId];
+      return { dirtyTabs };
+    });
+  }
+
+  function setCloseResult(pending: Omit<PendingClose, "closeId" | "documents">, result: CloseResult): void {
+    if (result.status === "requiresDocumentDecision") {
+      set({
+        pendingClose: {
+          ...pending,
+          closeId: result.closeId,
+          documents: result.documents,
+        },
+      });
+      return;
+    }
+    disposeClosedTarget({ ...pending, closeId: 0, documents: [] });
+    set({ snapshot: result.snapshot, pendingClose: null });
+  }
 
   function updateFromServer(request: WorkspaceRequest): void {
     set({ error: null });
@@ -165,6 +239,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     snapshot: null,
     switchRequestId: 0,
     pendingEditorSelection: null,
+    pendingClose: null,
     activatePane(paneId) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
       if (!activeWorkspace || paneId === activeWorkspace.activePaneId) {
@@ -204,50 +279,31 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         return;
       }
 
-      updateFromServer(() =>
-        closeTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId }).then((snapshot) => {
-          window.setTimeout(() => disposeEditorBuffer(activeWorkspace.id, tabId), 0);
-          get().setTabDirty(activeWorkspace.id, tabId, false);
-          return snapshot;
-        }),
-      );
+      void (async () => {
+        try {
+          const buffer = editorBuffer(activeWorkspace.id, tabId);
+          if (buffer) await flushEditorBuffer(buffer);
+          const result = await closeTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId });
+          setCloseResult(
+            { scope: "tab", workspaceId: activeWorkspace.id, tabId },
+            result,
+          );
+        } catch (caughtError) {
+          set({ error: errorMessage(caughtError) });
+        }
+      })();
     },
     async closeWorkspace(workspaceId) {
-      const { snapshot, switchRequestId } = get();
-      const requestId = switchRequestId + 1;
-      const previousSnapshot = snapshot;
-
-      set({
-        error: null,
-        snapshot: closeWorkspaceLocally(snapshot, workspaceId),
-        switchRequestId: requestId,
-      });
-
       try {
-        const nextSnapshot = await closeWorkspaceIpc(workspaceId);
-        disposeWorkspaceEditorBuffers(workspaceId);
-        set((state) => {
-          if (!state.dirtyTabs[workspaceId]) {
-            return {};
-          }
-
-          const dirtyTabs = { ...state.dirtyTabs };
-          delete dirtyTabs[workspaceId];
-
-          return { dirtyTabs };
-        });
-
-        if (get().switchRequestId === requestId) {
-          set({ snapshot: nextSnapshot });
-        }
+        await flushWorkspaceEditorBuffers(workspaceId);
+        const result = await closeWorkspaceIpc(workspaceId);
+        setCloseResult({ scope: "workspace", workspaceId }, result);
       } catch (caughtError) {
-        if (get().switchRequestId === requestId) {
-          set({ error: errorMessage(caughtError), snapshot: previousSnapshot });
-        }
+        set({ error: errorMessage(caughtError) });
       }
     },
     flushPendingState() {
-      return flushFileTreeExpansionSaves();
+      return Promise.all([flushFileTreeExpansionSaves(), flushEditorBuffers()]).then(() => undefined);
     },
     async initializeWorkspaces() {
       const requestId = get().loadRequestId + 1;
@@ -277,6 +333,84 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           error: null,
           snapshot: mergeLocalSplitRatios(snapshot, state.snapshot),
         }));
+      } catch (caughtError) {
+        set({ error: errorMessage(caughtError) });
+      }
+    },
+    async requestApplicationClose() {
+      try {
+        await get().flushPendingState();
+        const result = await closeApplication();
+        if (result.status === "completed") {
+          disposeAllEditorBuffers();
+          set({ dirtyTabs: {}, snapshot: result.snapshot, pendingClose: null });
+          return true;
+        }
+        set({
+          pendingClose: {
+            scope: "application",
+            closeId: result.closeId,
+            documents: result.documents,
+          },
+        });
+        return await new Promise<boolean>((resolve) => {
+          applicationCloseResolver = resolve;
+        });
+      } catch (caughtError) {
+        set({ error: errorMessage(caughtError) });
+        throw caughtError;
+      }
+    },
+    async resolvePendingClose(resolution) {
+      const pending = get().pendingClose;
+      if (!pending) return;
+      try {
+        const result =
+          resolution === "cancel"
+            ? pending.scope === "tab"
+              ? await resolveTabClose({ closeId: pending.closeId, decision: { kind: "cancel" } })
+              : await resolveWorkspaceClose({ closeId: pending.closeId, decision: { kind: "cancel" } })
+            : pending.scope === "tab"
+              ? await resolveTabClose({
+                  closeId: pending.closeId,
+                  decision: {
+                    kind: "resolve",
+                    documents: pending.documents.map((document) => ({
+                      workspaceId: document.workspaceId,
+                      tabId: document.tabId,
+                      revision: document.revision,
+                      decision: resolvedDocumentDecision(resolution, document),
+                    })),
+                  },
+                })
+              : await resolveWorkspaceClose({
+                  closeId: pending.closeId,
+                  decision: {
+                    kind: "resolve",
+                    documents: pending.documents.map((document) => ({
+                      workspaceId: document.workspaceId,
+                      tabId: document.tabId,
+                      revision: document.revision,
+                      decision: resolvedDocumentDecision(resolution, document),
+                    })),
+                  },
+                });
+        if (result.status !== "completed") {
+          set({
+            pendingClose: {
+              ...pending,
+              closeId: result.closeId,
+              documents: result.documents,
+            },
+          });
+          return;
+        }
+        if (resolution !== "cancel") disposeClosedTarget(pending);
+        set({ snapshot: result.snapshot, pendingClose: null });
+        if (pending.scope === "application") {
+          applicationCloseResolver?.(resolution !== "cancel");
+          applicationCloseResolver = null;
+        }
       } catch (caughtError) {
         set({ error: errorMessage(caughtError) });
       }

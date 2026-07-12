@@ -935,6 +935,21 @@ impl State {
         Ok(())
     }
 
+    pub fn commit_workspace_edit_with_open_documents(
+        &mut self,
+        transaction_id: u64,
+        authorization: &str,
+        documents: &[crate::language_servers::WorkspaceEditOpenDocument],
+    ) -> Result<(), WorkspaceEditError> {
+        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
+            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+        })?;
+        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
+        manager.commit_workspace_edit_with_documents(transaction_id, authorization, documents)?;
+        self.reconcile_workspace_edit_resources(transaction_id, &operations, false);
+        Ok(())
+    }
+
     pub(crate) fn staged_workspace_edit(
         &self,
         transaction_id: u64,
@@ -1721,6 +1736,25 @@ impl State {
             .ok_or(EditorError::TabNotFound)?;
 
         EditorDocument::read(workspace.directory(), view_state.path())
+    }
+
+    pub fn editor_session_target(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(WorkspaceId, String), EditorError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(EditorError::WorkspaceNotFound)?;
+        if !self.is_editor_tab(workspace_id, tab_id) {
+            return Err(EditorError::TabNotFound);
+        }
+        let path = self
+            .editor_view_state(workspace_id, tab_id)
+            .ok_or(EditorError::TabNotFound)?
+            .path()
+            .to_owned();
+        Ok((workspace_id, path))
     }
 
     pub fn editor_location(

@@ -2,7 +2,8 @@ use core::tabs::editor::EditorError;
 use core::tabs::git::GitError;
 
 use super::super::messages::editor::{
-    EditorDocumentParams, EditorDocumentPayload, EditorGitLineHunksPayload, OpenEditorTabParams,
+    ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
+    EditorGitLineHunksPayload, OpenEditorSessionParams, OpenEditorTabParams,
     SaveEditorDocumentParams,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
@@ -16,13 +17,24 @@ pub(super) const ROUTES: &[Route] = &[
     ),
     Route::new::<EditorDocumentParams, EditorDocumentPayload>(
         "document",
-        RouteDefinition::external(document),
+        RouteDefinition::application(document),
     ),
     Route::new::<EditorDocumentParams, EditorGitLineHunksPayload>(
         "gitLineHunks",
         RouteDefinition::external(git_line_hunks),
     ),
-    Route::new::<SaveEditorDocumentParams, bool>("save", RouteDefinition::external(save)),
+    Route::new::<OpenEditorSessionParams, EditorDocumentPayload>(
+        "openSession",
+        RouteDefinition::application(open_session),
+    ),
+    Route::new::<ChangeEditorSessionParams, EditorDocumentPayload>(
+        "changeSession",
+        RouteDefinition::application(change_session),
+    ),
+    Route::new::<SaveEditorDocumentParams, EditorDocumentPayload>(
+        "save",
+        RouteDefinition::application(save),
+    ),
 ];
 
 pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
@@ -64,32 +76,95 @@ fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage
     }
 }
 
-fn document(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn document(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<EditorDocumentParams>(request) {
         Ok(params) => {
-            match state.editor_document(params.workspace_id.map(Into::into), params.tab_id.into()) {
-                Ok(document) => {
-                    ServerMessage::ok(request.id, EditorDocumentPayload::from_document(&document))
-                }
-                Err(error) => editor_error(request.id, error),
+            match application
+                .editor_session_document(params.workspace_id.map(Into::into), params.tab_id.into())
+            {
+                Ok(session) => ServerMessage::ok(
+                    request.id,
+                    EditorDocumentPayload::from_session(session, true),
+                ),
+                Err(error) => application_error(request.id, error),
             }
         }
         Err(response) => response,
     }
 }
 
-fn save(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<SaveEditorDocumentParams>(request) {
-        Ok(params) => match state.save_editor_document(
+fn open_session(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<OpenEditorSessionParams>(request) {
+        Ok(params) => match application.open_editor_session(
             params.workspace_id.map(Into::into),
             params.tab_id.into(),
-            &params.content,
+            &params.path,
+            params.content,
+            params.revision,
         ) {
-            Ok(()) => ServerMessage::ok(request.id, true),
-            Err(error) => editor_error(request.id, error),
+            Ok(update) => ServerMessage::ok(request.id, session_update_payload(update)),
+            Err(error) => application_error(request.id, error),
         },
         Err(response) => response,
     }
+}
+
+fn change_session(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<ChangeEditorSessionParams>(request) {
+        Ok(params) => match application.change_editor_session(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            params.content,
+            params.revision,
+        ) {
+            Ok(update) => ServerMessage::ok(request.id, session_update_payload(update)),
+            Err(error) => application_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn save(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SaveEditorDocumentParams>(request) {
+        Ok(params) => match application.save_editor_session_unformatted(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            params.revision,
+        ) {
+            Ok(session) => ServerMessage::ok(
+                request.id,
+                EditorDocumentPayload::from_session(session, true),
+            ),
+            Err(error) => application_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn session_update_payload(update: core::EditorSessionUpdate) -> EditorDocumentPayload {
+    match update {
+        core::EditorSessionUpdate::Applied(session) => {
+            EditorDocumentPayload::from_session(session, true)
+        }
+        core::EditorSessionUpdate::Stale(session) => {
+            EditorDocumentPayload::from_session(session, false)
+        }
+    }
+}
+
+fn application_error(id: u64, error: core::ApplicationError) -> ServerMessage {
+    let code = match &error {
+        core::ApplicationError::Editor(error) => editor_error_code(error),
+        core::ApplicationError::EditorSession(core::EditorSessionError::ContentTooLarge) => {
+            "editor.content_too_large"
+        }
+        core::ApplicationError::EditorSession(core::EditorSessionError::StaleRevision {
+            ..
+        }) => "editor.stale_revision",
+        core::ApplicationError::EditorSession(_) => "editor.session_invalid",
+        _ => "editor.session_failed",
+    };
+    ServerMessage::error(id, code, error.to_string())
 }
 
 fn editor_error(id: u64, error: EditorError) -> ServerMessage {

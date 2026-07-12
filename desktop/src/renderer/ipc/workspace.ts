@@ -1,6 +1,8 @@
 import type {
   ActivateWorkspaceParams,
   CloseWorkspaceParams,
+  CloseResultPayload,
+  ResolveCloseParams,
   OpenWorkspaceParams,
   WorkspaceId,
   WorkspaceListSnapshot,
@@ -22,8 +24,16 @@ export function activateWorkspace(workspaceId: WorkspaceId): Promise<WorkspaceLi
   return requestServer(DOMAIN, "activate", { workspaceId } satisfies ActivateWorkspaceParams);
 }
 
-export function closeWorkspace(workspaceId?: WorkspaceId | null): Promise<WorkspaceListSnapshot> {
+export function closeWorkspace(workspaceId?: WorkspaceId | null): Promise<CloseResultPayload> {
   return requestServer(DOMAIN, "close", { workspaceId } satisfies CloseWorkspaceParams);
+}
+
+export function resolveWorkspaceClose(params: ResolveCloseParams): Promise<CloseResultPayload> {
+  return requestServer(DOMAIN, "resolveClose", params);
+}
+
+export function closeApplication(): Promise<CloseResultPayload> {
+  return requestServer(DOMAIN, "closeApplication");
 }
 
 export type { WorkspaceListSnapshot, WorkspaceSnapshot } from "@/shared/ipc";

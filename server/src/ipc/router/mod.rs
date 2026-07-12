@@ -19,6 +19,7 @@ use super::messages::envelope::{Domain, RequestEnvelope, ServerMessage};
 use super::messages::workspace::WorkspaceListSnapshot;
 
 type RouteHandler = fn(&mut core::State, &RequestEnvelope) -> ServerMessage;
+type ApplicationRouteHandler = fn(&mut core::Application, &RequestEnvelope) -> ServerMessage;
 type CancellableRouteHandler = fn(
     &mut core::State,
     &RequestEnvelope,
@@ -145,6 +146,23 @@ impl PreparedRoute {
         match self.definition.handler {
             RouteHandlerKind::Standard(handler) => handler(state, &self.request),
             RouteHandlerKind::Cancellable(handler) => handler(state, &self.request, cancellation),
+            RouteHandlerKind::Application(_) => {
+                unreachable!("application routes must execute against the live application")
+            }
+        }
+    }
+
+    pub(crate) fn execute_application(
+        &self,
+        application: &mut core::Application,
+        cancellation: &core::language_servers::LanguageServerRequestCancellation,
+    ) -> ServerMessage {
+        match self.definition.handler {
+            RouteHandlerKind::Standard(handler) => handler(application.state_mut(), &self.request),
+            RouteHandlerKind::Cancellable(handler) => {
+                handler(application.state_mut(), &self.request, cancellation)
+            }
+            RouteHandlerKind::Application(handler) => handler(application, &self.request),
         }
     }
 
@@ -218,6 +236,7 @@ pub(super) fn find_route(routes: &[Route], action: &str) -> Option<RouteDefiniti
 enum RouteHandlerKind {
     Standard(RouteHandler),
     Cancellable(CancellableRouteHandler),
+    Application(ApplicationRouteHandler),
 }
 
 impl RouteDefinition {
@@ -268,6 +287,13 @@ impl RouteDefinition {
         Self::new(handler, SchedulingMode::PersistenceBarrier)
     }
 
+    pub(super) const fn application(handler: ApplicationRouteHandler) -> Self {
+        Self {
+            handler: RouteHandlerKind::Application(handler),
+            mode: SchedulingMode::Application,
+        }
+    }
+
     const fn new(handler: RouteHandler, mode: SchedulingMode) -> Self {
         Self {
             handler: RouteHandlerKind::Standard(handler),
@@ -285,6 +311,7 @@ pub(crate) enum SchedulingMode {
     LanguageServerFeature,
     SerialMutation,
     PersistenceBarrier,
+    Application,
 }
 
 #[cfg(test)]
@@ -788,6 +815,7 @@ mod scheduling_tests {
                         | SchedulingMode::LanguageServerFeature
                         | SchedulingMode::SerialMutation
                         | SchedulingMode::PersistenceBarrier
+                        | SchedulingMode::Application
                 ));
             }
         }

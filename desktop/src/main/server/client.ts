@@ -78,9 +78,9 @@ export class KosmosServerClient {
   }
 
   async flushPersistence(): Promise<void> {
-    this.shuttingDown = true;
     await this.waitForIdle();
     await this.sendRequest("workspace", "flush", {});
+    this.shuttingDown = true;
   }
 
   async acknowledgeApplyEdit(

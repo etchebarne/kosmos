@@ -1,3 +1,4 @@
+use core::EditorSessionSnapshot;
 use core::tabs::editor::EditorDocument;
 use core::tabs::git::GitLineHunk;
 use schemars::JsonSchema;
@@ -25,7 +26,26 @@ pub(crate) struct EditorDocumentParams {
 pub(crate) struct SaveEditorDocumentParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenEditorSessionParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
     pub(crate) content: String,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChangeEditorSessionParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) content: String,
+    pub(crate) revision: u64,
 }
 
 #[derive(Debug, JsonSchema, Serialize)]
@@ -33,6 +53,9 @@ pub(crate) struct SaveEditorDocumentParams {
 pub(crate) struct EditorDocumentPayload {
     path: String,
     content: String,
+    saved_content: String,
+    revision: u64,
+    accepted: bool,
 }
 
 #[derive(Debug, JsonSchema, Serialize)]
@@ -55,6 +78,19 @@ impl EditorDocumentPayload {
         Self {
             path: document.path().to_owned(),
             content: document.content().to_owned(),
+            saved_content: document.content().to_owned(),
+            revision: 0,
+            accepted: true,
+        }
+    }
+
+    pub(crate) fn from_session(session: EditorSessionSnapshot, accepted: bool) -> Self {
+        Self {
+            path: session.path,
+            content: session.content,
+            saved_content: session.saved_content,
+            revision: session.revision,
+            accepted,
         }
     }
 }

@@ -187,6 +187,14 @@ impl Dispatcher {
                 responses.send(execute_live(&self.application, &route, &cancellation));
                 None
             }
+            SchedulingMode::Application => {
+                responses.send(execute_application(
+                    &self.application,
+                    &route,
+                    &cancellation,
+                ));
+                None
+            }
             SchedulingMode::External => {
                 let (completion, completed) = mpsc::channel();
                 let operation =
@@ -537,6 +545,21 @@ fn execute_live(
     execute_handler(route, application.state_mut(), cancellation)
 }
 
+fn execute_application(
+    application: &Mutex<core::Application>,
+    route: &PreparedRoute,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    let mut application = match application.lock() {
+        Ok(application) => application,
+        Err(_) => return state_unavailable(route.request_id()),
+    };
+    catch_unwind(AssertUnwindSafe(|| {
+        route.execute_application(&mut application, cancellation)
+    }))
+    .unwrap_or_else(|_| handler_panicked(route.request_id()))
+}
+
 fn execute_persistent(
     application: &Mutex<core::Application>,
     route: &PreparedRoute,
@@ -713,6 +736,10 @@ fn persistence_error(request_id: u64, error: core::ApplicationError) -> ServerMe
         core::ApplicationError::StalePreparedOperation => "persistence.state_conflict",
         core::ApplicationError::DurabilityInFlight => "persistence.state_conflict",
         core::ApplicationError::Persistence(_) => "persistence.save_failed",
+        core::ApplicationError::Editor(_)
+        | core::ApplicationError::EditorSession(_)
+        | core::ApplicationError::CloseNotFound
+        | core::ApplicationError::InvalidCloseDecision => "persistence.operation_failed",
     };
     ServerMessage::error(request_id, code, error.to_string())
 }

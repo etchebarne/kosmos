@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
+use super::super::messages::tab::{CloseDecisionPayload, CloseResultPayload, ResolveCloseParams};
 use super::super::messages::workspace::{
     ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
 };
@@ -26,9 +27,17 @@ pub(super) const ROUTES: &[Route] = &[
         "activate",
         RouteDefinition::active_workspace(activate_workspace),
     ),
-    Route::new::<CloseWorkspaceParams, WorkspaceListSnapshot>(
+    Route::new::<CloseWorkspaceParams, CloseResultPayload>(
         "close",
-        RouteDefinition::full(close_workspace),
+        RouteDefinition::application(close_workspace),
+    ),
+    Route::new::<ResolveCloseParams, CloseResultPayload>(
+        "resolveClose",
+        RouteDefinition::application(resolve_close),
+    ),
+    Route::new::<EmptyParams, CloseResultPayload>(
+        "closeApplication",
+        RouteDefinition::application(close_application),
     ),
 ];
 
@@ -67,17 +76,65 @@ fn activate_workspace(state: &mut core::State, request: &RequestEnvelope) -> Ser
     }
 }
 
-fn close_workspace(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn close_workspace(
+    application: &mut core::Application,
+    request: &RequestEnvelope,
+) -> ServerMessage {
     match parse_params::<CloseWorkspaceParams>(request) {
-        Ok(params) => command_response(
-            request.id,
-            state
-                .close_workspace(params.workspace_id.map(Into::into))
-                .is_some(),
-            state,
-            "workspace.close_failed",
-            "workspace could not be closed",
-        ),
+        Ok(params) => {
+            let workspace_id = params
+                .workspace_id
+                .map(Into::into)
+                .or_else(|| application.state().workspaces().active_workspace_id());
+            let result = workspace_id.map_or(
+                Err(core::ApplicationError::InvalidCloseDecision),
+                |workspace_id| {
+                    application.begin_close(core::CloseIntent {
+                        target: core::CloseTarget::Workspace { workspace_id },
+                    })
+                },
+            );
+            super::tab::close_response(application, request.id, result)
+        }
         Err(response) => response,
     }
+}
+
+fn resolve_close(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<ResolveCloseParams>(request) {
+        Ok(params) => {
+            let decision = match params.decision {
+                CloseDecisionPayload::Cancel => core::CloseDecision::Cancel {
+                    close_id: params.close_id,
+                },
+                CloseDecisionPayload::Resolve { documents } => core::CloseDecision::Resolve {
+                    close_id: params.close_id,
+                    documents: documents
+                        .into_iter()
+                        .map(|document| core::CloseDocumentDecisionRequest {
+                            id: core::EditorSessionId::new(
+                                document.workspace_id.into(),
+                                document.tab_id.into(),
+                            ),
+                            revision: document.revision,
+                            decision: document.decision.into(),
+                        })
+                        .collect(),
+                },
+            };
+            let result = application.resolve_close(decision);
+            super::tab::close_response(application, request.id, result)
+        }
+        Err(response) => response,
+    }
+}
+
+fn close_application(
+    application: &mut core::Application,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    let result = application.begin_close(core::CloseIntent {
+        target: core::CloseTarget::Application,
+    });
+    super::tab::close_response(application, request.id, result)
 }

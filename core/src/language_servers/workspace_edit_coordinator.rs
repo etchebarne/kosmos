@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::EditorSessionRegistry;
 use crate::State;
 use crate::events::WorkspaceEditApplication;
 use crate::persistence::StateStore;
@@ -89,7 +90,21 @@ impl WorkspaceEditCoordinator {
         store: &StateStore,
         edit: StagedWorkspaceEdit,
     ) -> WorkspaceEditDeliveryStep {
-        if let Err(error) = state.commit_workspace_edit(edit.transaction_id, &edit.authorization) {
+        self.start_with_editor_sessions(state, store, &EditorSessionRegistry::default(), edit)
+    }
+
+    pub fn start_with_editor_sessions(
+        &mut self,
+        state: &mut State,
+        store: &StateStore,
+        sessions: &EditorSessionRegistry,
+        edit: StagedWorkspaceEdit,
+    ) -> WorkspaceEditDeliveryStep {
+        if let Err(error) = state.commit_workspace_edit_with_open_documents(
+            edit.transaction_id,
+            &edit.authorization,
+            &sessions.workspace_edit_observations(),
+        ) {
             return self.complete_start_failure(state, store, &edit, error);
         }
         if let Err(error) = persist_state(state, store) {

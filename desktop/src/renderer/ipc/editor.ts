@@ -2,6 +2,8 @@ import type {
   EditorDocument,
   EditorGitLineHunks,
   EditorTabParams,
+  ChangeEditorSessionParams,
+  OpenEditorSessionParams,
   OpenEditorTabParams,
   SaveEditorDocumentParams,
   WorkspaceListSnapshot,
@@ -27,6 +29,14 @@ export function getEditorGitLineHunks(params: EditorTabParams): Promise<EditorGi
 export function saveEditorDocument(
   params: SaveEditorDocumentParams,
   cancellation?: RequestCancellation,
-): Promise<boolean> {
+): Promise<EditorDocument> {
   return requestServer(DOMAIN, "save", params, cancellation);
+}
+
+export function openEditorSession(params: OpenEditorSessionParams): Promise<EditorDocument> {
+  return requestServer(DOMAIN, "openSession", params);
+}
+
+export function changeEditorSession(params: ChangeEditorSessionParams): Promise<EditorDocument> {
+  return requestServer(DOMAIN, "changeSession", params);
 }

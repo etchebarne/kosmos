@@ -132,7 +132,7 @@ fn dispatch_requests(
                 }
                 active.finish(request_id);
             }
-            SchedulingMode::Live | SchedulingMode::Snapshot => {
+            SchedulingMode::Live | SchedulingMode::Snapshot | SchedulingMode::Application => {
                 let _ =
                     dispatcher.dispatch_cancellable(route, responses.clone(), cancellation, None);
                 active.finish(request_id);

@@ -4,40 +4,30 @@ import { errorMessage } from "./error-message";
 import { registerIpcHandlers, type ApplyEditOwner } from "./ipc/handlers";
 import { KosmosServerClient } from "./server/client";
 import { KosmosServerProcess } from "./server/process";
+import { createShutdownAttempt } from "./shutdown-attempt";
 import { createMainWindow } from "./window/main-window";
 
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 const RENDERER_FLUSH_TIMEOUT_MS = 1_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 5_000;
-let shutdownComplete = false;
-let shutdownStarted = false;
 const applyEditOwners = new Map<string, ApplyEditOwner>();
+const shutdownAttempt = createShutdownAttempt(async () => {
+  await flushAndStopServer();
+  serverClient.disconnect();
+  serverProcess.stop();
+});
 
 app.commandLine.appendSwitch("use-webgpu-adapter", "opengles");
 
 app.on("browser-window-created", (_event, window) => {
-  let rendererFlushed = false;
-  let rendererFlushStarted = false;
-
   window.on("close", (event) => {
-    if (shutdownComplete || rendererFlushed) {
+    if (shutdownAttempt.complete) {
       return;
     }
 
     event.preventDefault();
-    if (rendererFlushStarted) {
-      return;
-    }
-
-    rendererFlushStarted = true;
-    void flushRendererState(window).finally(() => {
-      rendererFlushed = true;
-
-      if (!window.isDestroyed()) {
-        window.close();
-      }
-    });
+    void beginShutdown(window);
   });
 });
 
@@ -130,22 +120,13 @@ app.whenReady().then(startApp).catch((error: unknown) => {
 });
 
 app.on("before-quit", (event) => {
-  if (shutdownComplete) {
+  if (shutdownAttempt.complete) {
     return;
   }
 
   event.preventDefault();
 
-  if (shutdownStarted) {
-    return;
-  }
-
-  shutdownStarted = true;
-
-  void flushAndStopServer().finally(() => {
-    shutdownComplete = true;
-    app.quit();
-  });
+  void beginShutdown();
 });
 
 app.on("window-all-closed", () => {
@@ -154,43 +135,66 @@ app.on("window-all-closed", () => {
   }
 });
 
-async function flushAndStopServer(): Promise<void> {
-  try {
-    await flushRendererState();
-    await Promise.race([
-      serverClient.flushPersistence(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Server shutdown timed out")), SERVER_SHUTDOWN_TIMEOUT_MS),
-      ),
-    ]);
-  } catch {
-    // Shutdown still needs to proceed if the sidecar is already unavailable.
-  } finally {
-    serverClient.disconnect();
-    serverProcess.stop();
+async function beginShutdown(window?: BrowserWindow): Promise<void> {
+  const outcome = await shutdownAttempt.attempt(() => resolveRendererShutdown(window));
+  if (outcome === "completed") {
+    app.quit();
+    return;
+  }
+  if (outcome === "failed") {
+    dialog.showErrorBox("Kosmos is still running", "Shutdown could not be completed. Try again.");
   }
 }
 
-function flushRendererState(targetWindow?: BrowserWindow): Promise<void> {
+async function flushAndStopServer(): Promise<void> {
+  await Promise.race([
+    serverClient.flushPersistence(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Server shutdown timed out")), SERVER_SHUTDOWN_TIMEOUT_MS),
+    ),
+  ]);
+}
+
+function resolveRendererShutdown(targetWindow?: BrowserWindow): Promise<boolean> {
   const window = targetWindow ?? BrowserWindow.getAllWindows()[0];
   if (!window || window.webContents.isDestroyed()) {
-    return Promise.resolve();
+    return Promise.reject(new Error("Renderer is unavailable to resolve unsaved document changes."));
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const finish = () => {
       clearTimeout(timeout);
-      ipcMain.off("kosmos:rendererStateFlushed", onFlushed);
-      resolve();
+      ipcMain.off("kosmos:shutdownResolved", onResolved);
     };
-    const onFlushed = (event: IpcMainEvent) => {
-      if (event.sender === window.webContents) {
-        finish();
+    const onResolved = (event: IpcMainEvent, result: unknown) => {
+      if (event.sender !== window.webContents) {
+        return;
+      }
+      finish();
+      if (
+        result &&
+        typeof result === "object" &&
+        "approved" in result &&
+        result.approved === true
+      ) {
+        resolve(true);
+      } else if (
+        result &&
+        typeof result === "object" &&
+        "error" in result &&
+        typeof result.error === "string"
+      ) {
+        reject(new Error(result.error));
+      } else {
+        resolve(false);
       }
     };
-    const timeout = setTimeout(finish, RENDERER_FLUSH_TIMEOUT_MS);
+    const timeout = setTimeout(() => {
+      finish();
+      reject(new Error("Renderer shutdown approval timed out"));
+    }, RENDERER_FLUSH_TIMEOUT_MS);
 
-    ipcMain.on("kosmos:rendererStateFlushed", onFlushed);
-    window.webContents.send("kosmos:flushState");
+    ipcMain.on("kosmos:shutdownResolved", onResolved);
+    window.webContents.send("kosmos:prepareShutdown");
   });
 }

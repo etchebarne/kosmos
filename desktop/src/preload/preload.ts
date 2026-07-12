@@ -56,6 +56,20 @@ const kosmos: KosmosApi = {
     ipcRenderer.on("kosmos:flushState", listener);
     return () => ipcRenderer.off("kosmos:flushState", listener);
   },
+  onShutdownRequest(callback: () => Promise<boolean>): () => void {
+    const listener = () => {
+      void callback()
+        .then((approved) => ipcRenderer.send("kosmos:shutdownResolved", { approved }))
+        .catch((error: unknown) =>
+          ipcRenderer.send("kosmos:shutdownResolved", {
+            approved: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+    };
+    ipcRenderer.on("kosmos:prepareShutdown", listener);
+    return () => ipcRenderer.off("kosmos:prepareShutdown", listener);
+  },
   onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void {
     const listener = (_event: IpcRendererEvent, zoomLevel: number) => {
       callback(zoomLevel);

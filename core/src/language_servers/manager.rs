@@ -869,11 +869,22 @@ impl LanguageServerManager {
         transaction_id: u64,
         authorization: &str,
     ) -> Result<(), WorkspaceEditError> {
-        self.inner.workspace_edits.commit_closed(
+        self.commit_workspace_edit_with_documents(
             transaction_id,
             authorization,
             &self.open_documents(),
         )
+    }
+
+    pub fn commit_workspace_edit_with_documents(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+        documents: &[WorkspaceEditOpenDocument],
+    ) -> Result<(), WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .commit_closed(transaction_id, authorization, documents)
     }
 
     pub fn workspace_edit_operations(

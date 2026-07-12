@@ -1,5 +1,11 @@
 import type { editor } from "monaco-editor";
 
+import {
+  changeEditorSession,
+  openEditorSession,
+} from "@/renderer/ipc";
+import type { EditorDocument } from "@/shared/ipc";
+
 type LanguageDocumentHandle = { dispose(): void };
 type LanguageDocumentAttacher = (
   workspaceId: number,
@@ -11,6 +17,15 @@ type EditorBufferLockState = {
   transactions: Map<number, number>;
   listeners: Set<(locked: boolean) => void>;
   operationEpoch: number;
+};
+type EditorSessionState = {
+  acknowledgedRevision: number;
+  lastError: unknown | null;
+  opening: Promise<void> | null;
+  queuedContent: string | null;
+  queuedRevision: number | null;
+  revision: number;
+  synchronization: Promise<void> | null;
 };
 
 let attachLanguageDocument: LanguageDocumentAttacher | null = null;
@@ -40,6 +55,7 @@ export type EditorBuffer = {
   languageDocument: LanguageDocumentHandle;
   modelListeners: Set<(model: editor.ITextModel) => void>;
   lockState: EditorBufferLockState;
+  session: EditorSessionState;
 };
 
 export type EditorBufferState = {
@@ -88,10 +104,133 @@ export function getOrCreateEditorBuffer(
       listeners: new Set<(locked: boolean) => void>(),
       operationEpoch: 0,
     },
+    session: existing?.session ?? {
+      acknowledgedRevision: 0,
+      lastError: null,
+      opening: null,
+      queuedContent: null,
+      queuedRevision: null,
+      revision: 0,
+      synchronization: null,
+    },
   };
   buffers.set(key, buffer);
 
   return buffer;
+}
+
+export function openEditorBufferSession(
+  buffer: EditorBuffer,
+  document: EditorDocument,
+): Promise<void> {
+  if (buffer.session.opening) {
+    return buffer.session.opening;
+  }
+  const content = buffer.model.getValue();
+  const localRevision = Math.max(buffer.session.revision, document.revision);
+  const opening = (async () => {
+    const session = await openEditorSession({
+      workspaceId: buffer.workspaceId,
+      tabId: buffer.tabId,
+      path: buffer.path,
+      content,
+      revision: localRevision,
+    });
+    buffer.session.acknowledgedRevision = Math.max(
+      buffer.session.acknowledgedRevision,
+      session.revision,
+    );
+    buffer.session.revision = Math.max(buffer.session.revision, session.revision);
+    buffer.savedContent = session.savedContent;
+
+    if (content === document.content && content !== session.content) {
+      buffer.model.setValue(session.content);
+      return;
+    }
+    if (content !== session.content) {
+      queueEditorBufferSynchronization(buffer);
+    }
+  })();
+  buffer.session.opening = opening;
+  void opening.finally(() => {
+    if (buffer.session.opening === opening) {
+      buffer.session.opening = null;
+    }
+  }).catch(() => {});
+  return opening;
+}
+
+export function queueEditorBufferSynchronization(buffer: EditorBuffer): void {
+  if (buffer.model.isDisposed()) {
+    return;
+  }
+  buffer.session.revision = Math.max(buffer.session.revision + 1, buffer.model.getVersionId());
+  buffer.session.queuedRevision = buffer.session.revision;
+  buffer.session.queuedContent = buffer.model.getValue();
+  if (buffer.session.synchronization) {
+    return;
+  }
+  buffer.session.synchronization = Promise.resolve().then(() => synchronizeEditorBuffer(buffer));
+  void buffer.session.synchronization.catch(() => {});
+}
+
+export async function flushEditorBuffer(buffer: EditorBuffer): Promise<void> {
+  await buffer.session.opening;
+  if (buffer.session.queuedContent === null && !buffer.session.synchronization) {
+    return;
+  }
+  await buffer.session.synchronization;
+  if (buffer.session.queuedContent !== null) {
+    await flushEditorBuffer(buffer);
+  }
+  if (buffer.session.lastError) {
+    throw buffer.session.lastError;
+  }
+}
+
+export async function flushEditorBuffers(): Promise<void> {
+  await Promise.all([...buffers.values()].map((buffer) => flushEditorBuffer(buffer)));
+}
+
+function synchronizeEditorBuffer(buffer: EditorBuffer): Promise<void> {
+  return (async () => {
+    try {
+      await buffer.session.opening;
+      while (buffer.session.queuedContent !== null && buffer.session.queuedRevision !== null) {
+        const content = buffer.session.queuedContent;
+        const revision = buffer.session.queuedRevision;
+        buffer.session.queuedContent = null;
+        buffer.session.queuedRevision = null;
+        const session = await changeEditorSession({
+          workspaceId: buffer.workspaceId,
+          tabId: buffer.tabId,
+          content,
+          revision,
+        });
+        buffer.session.acknowledgedRevision = Math.max(
+          buffer.session.acknowledgedRevision,
+          session.revision,
+        );
+        buffer.session.revision = Math.max(buffer.session.revision, session.revision);
+        if (!session.accepted) {
+          if (buffer.model.getValue() === session.content) {
+            buffer.savedContent = session.savedContent;
+          } else {
+            buffer.session.revision = Math.max(buffer.session.revision, session.revision);
+            buffer.session.queuedRevision = buffer.session.revision + 1;
+            buffer.session.revision = buffer.session.queuedRevision;
+            buffer.session.queuedContent = buffer.model.getValue();
+          }
+        }
+      }
+      buffer.session.lastError = null;
+    } catch (error) {
+      buffer.session.lastError = error;
+      throw error;
+    } finally {
+      buffer.session.synchronization = null;
+    }
+  })();
 }
 
 export function editorBuffersForPath(workspaceId: number, path: string): EditorBuffer[] {
@@ -104,6 +243,18 @@ export function editorBuffersForPath(workspaceId: number, path: string): EditorB
 
 export function editorBufferForModel(model: editor.ITextModel): EditorBuffer | null {
   return [...buffers.values()].find((buffer) => buffer.model === model) ?? null;
+}
+
+export function editorBuffer(workspaceId: number, tabId: number): EditorBuffer | null {
+  return buffers.get(bufferKey(workspaceId, tabId)) ?? null;
+}
+
+export async function flushWorkspaceEditorBuffers(workspaceId: number): Promise<void> {
+  await Promise.all(
+    [...buffers.values()]
+      .filter((buffer) => buffer.workspaceId === workspaceId)
+      .map((buffer) => flushEditorBuffer(buffer)),
+  );
 }
 
 export function rebindEditorBuffer(
@@ -317,6 +468,12 @@ export function disposeWorkspaceEditorBuffers(workspaceId: number): void {
     buffer.languageDocument.dispose();
     buffer.model.dispose();
     buffers.delete(key);
+  }
+}
+
+export function disposeAllEditorBuffers(): void {
+  for (const buffer of [...buffers.values()]) {
+    disposeEditorBuffer(buffer.workspaceId, buffer.tabId);
   }
 }
 

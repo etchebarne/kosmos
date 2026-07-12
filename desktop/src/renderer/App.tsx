@@ -5,6 +5,7 @@ import { WorkspaceView } from "@/renderer/components/internal/workspace-view";
 import { WorkspaceSymbolPicker } from "@/renderer/components/internal/workspace-symbol-picker";
 import { WorkspaceEditRecovery } from "@/renderer/components/internal/workspace-edit-recovery";
 import { WorkspaceTrustDialog } from "@/renderer/components/internal/workspace-trust-dialog";
+import { UnsavedChangesDialog } from "@/renderer/components/internal/unsaved-changes-dialog";
 import { setLanguageLocationOpener } from "@/renderer/lib/language-client";
 import { findSetting, useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import { APPEARANCE_ZOOM_LEVEL } from "@/shared/ipc";
@@ -36,6 +37,14 @@ export function App() {
       window.kosmos.onZoomLevelChanged((nextZoomLevel) => {
         useSettingsStore.getState().updateSetting(APPEARANCE_ZOOM_LEVEL, nextZoomLevel);
       }),
+    [],
+  );
+
+  useEffect(
+    () =>
+      window.kosmos.onShutdownRequest(() =>
+        useWorkspaceStore.getState().requestApplicationClose(),
+      ),
     [],
   );
 
@@ -95,6 +104,7 @@ export function App() {
       <WorkspaceSymbolPicker />
       <WorkspaceEditRecovery />
       <WorkspaceTrustDialog />
+      <UnsavedChangesDialog />
     </main>
   );
 }

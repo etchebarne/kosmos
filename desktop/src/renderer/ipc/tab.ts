@@ -1,9 +1,11 @@
 import type {
   ActivateTabParams,
   CloseTabParams,
+  CloseResultPayload,
   MoveTabParams,
   OpenTabParams,
   SetTabKindParams,
+  ResolveCloseParams,
   SplitTabParams,
   WorkspaceListSnapshot,
 } from "@/shared/ipc";
@@ -24,8 +26,12 @@ export function setTabKind(params: SetTabKindParams): Promise<WorkspaceListSnaps
   return requestServer(DOMAIN, "setKind", params);
 }
 
-export function closeTab(params: CloseTabParams): Promise<WorkspaceListSnapshot> {
+export function closeTab(params: CloseTabParams): Promise<CloseResultPayload> {
   return requestServer(DOMAIN, "close", params);
+}
+
+export function resolveTabClose(params: ResolveCloseParams): Promise<CloseResultPayload> {
+  return requestServer(DOMAIN, "resolveClose", params);
 }
 
 export function moveTab(params: MoveTabParams): Promise<WorkspaceListSnapshot> {

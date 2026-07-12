@@ -22,6 +22,9 @@ export type EditorTabParams = Pick<Generated.EditorDocumentParams, "workspaceId"
 export type EditorDocument = Generated.EditorDocumentPayload;
 export type EditorGitLineHunks = Generated.EditorGitLineHunksPayload;
 export type EditorGitLineHunk = Generated.EditorGitLineHunkPayload;
+export type CloseResult = Generated.CloseResultPayload;
+export type UnsavedDocument = Generated.UnsavedDocumentPayload;
+export type CloseDocumentDecision = Generated.CloseDocumentDecisionKindPayload;
 
 export type GitBranch = Generated.GitBranchPayload;
 export type GitChange = Generated.GitChangePayload;
@@ -147,6 +150,7 @@ export type KosmosApi = {
   setZoomLevel(zoomLevel: number): Promise<void>;
   revealPath(path: string): Promise<void>;
   onFlushState(callback: () => Promise<void>): () => void;
+  onShutdownRequest(callback: () => Promise<boolean>): () => void;
   onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void;
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
   onServerNotification(callback: (notification: KosmosServerNotification) => void): () => void;

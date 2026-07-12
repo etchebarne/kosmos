@@ -4,7 +4,10 @@ import { getEditorDocument, getEditorGitLineHunks, saveEditorDocument } from "@/
 import {
   getOrCreateEditorBuffer,
   assertEditorBufferEditable,
+  flushEditorBuffer,
   isEditorBufferLocked,
+  openEditorBufferSession,
+  queueEditorBufferSynchronization,
   reconcileEditorBuffer,
   subscribeEditorBufferLock,
   subscribeEditorBufferModel,
@@ -306,13 +309,21 @@ function LoadedEditor({
         }
       }
       contentSubscription?.dispose();
-      contentSubscription = nextModel.onDidChangeContent(updateDirtyState);
+      contentSubscription = nextModel.onDidChangeContent(() => {
+        queueEditorBufferSynchronization(buffer);
+        updateDirtyState();
+      });
       decorationsRef.current?.set(
         editorGitDecorations(gitLineHunks, nextModel.getLineCount()),
       );
       updateDirtyState();
     };
     bindModel(model);
+    void openEditorBufferSession(buffer, document)
+      .then(updateDirtyState)
+      .catch((caughtError: unknown) => {
+        setSaveState({ status: "error", message: errorMessage(caughtError) });
+      });
     const unsubscribeModel = subscribeEditorBufferModel(buffer, bindModel);
     const unsubscribeLock = subscribeEditorBufferLock(buffer, (locked) => {
       if (locked) {
@@ -331,19 +342,19 @@ function LoadedEditor({
         return;
       }
       setSaveState({ status: "saving" });
-      const initialContent = model.getValue();
       const cancellation = beginOperation();
-      const coordinatedSave = saveCoordinatorRef.current.begin(() =>
-        saveEditorDocument({
-          workspaceId,
-          tabId,
-          content: initialContent,
-        }, cancellation.token),
-      );
+      const coordinatedSave = saveCoordinatorRef.current.begin(async () => {
+        await flushEditorBuffer(buffer);
+        const saved = await saveEditorDocument(
+          { workspaceId, tabId, revision: buffer.session.revision },
+          cancellation.token,
+        );
+        buffer.savedContent = saved.savedContent;
+      });
       try {
         await coordinatedSave.run(async (isCurrent) => {
           assertEditorBufferEditable(buffer);
-          let content = initialContent;
+          let content = model.getValue();
           let formatted = false;
           if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
             try {
@@ -360,11 +371,13 @@ function LoadedEditor({
           if (formatted) {
             const formattedModel = buffer.model;
             const formattedContent = formattedModel.getValue();
-            if (formattedContent !== initialContent) {
-              await saveEditorDocument(
-                { workspaceId, tabId, content: formattedContent },
+            if (formattedContent !== content) {
+              await flushEditorBuffer(buffer);
+              const saved = await saveEditorDocument(
+                { workspaceId, tabId, revision: buffer.session.revision },
                 cancellation.token,
               );
+              buffer.savedContent = saved.savedContent;
             }
             content = formattedContent;
           }
@@ -373,7 +386,6 @@ function LoadedEditor({
           if (!isCurrent()) {
             return;
           }
-          buffer.savedContent = content;
           updateDirtyState();
           bumpGitRevision(workspaceId);
         });
