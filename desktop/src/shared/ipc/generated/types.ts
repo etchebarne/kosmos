@@ -1689,7 +1689,22 @@ export interface SearchMatchPayload {
  * via the `definition` "SettingsSnapshot".
  */
 export interface SettingsSnapshot {
+  appearance: ResolvedAppearanceSettingsPayload;
   categories: SettingCategoryPayload[];
+  editor: ResolvedEditorSettingsPayload;
+  revision: number;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedAppearanceSettingsPayload".
+ */
+export interface ResolvedAppearanceSettingsPayload {
+  defaultZoomLevel: number;
+  maxZoomLevel: number;
+  minZoomLevel: number;
+  zoomLevel: number;
+  zoomSettingId: string;
+  zoomStep: number;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -1708,6 +1723,15 @@ export interface SettingCategoryPayload {
 export interface SettingOptionPayload {
   label: string;
   value: string;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "ResolvedEditorSettingsPayload".
+ */
+export interface ResolvedEditorSettingsPayload {
+  formatOnSave: boolean;
+  minimap: boolean;
+  softWrap: boolean;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

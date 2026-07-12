@@ -1,11 +1,21 @@
 import type { BrowserWindow, Input } from "electron";
 
-const MIN_UI_ZOOM_FACTOR = 0.8;
-const MAX_UI_ZOOM_FACTOR = 1.4;
-const UI_ZOOM_STEP = 0.1;
-const DEFAULT_UI_ZOOM_FACTOR = 1;
+import type { ResolvedAppearanceSettings, SettingsSnapshot } from "../../shared/ipc";
 
-export function registerWindowShortcuts(window: BrowserWindow): void {
+export type WindowZoomPolicyCache = {
+  revision: number;
+  appearance: ResolvedAppearanceSettings;
+};
+
+const windowZoomPolicies = new WeakMap<BrowserWindow, WindowZoomPolicyCache>();
+
+export function registerWindowShortcuts(
+  window: BrowserWindow,
+  snapshot: SettingsSnapshot,
+  onZoomChanged: (zoomLevel: number) => void,
+): void {
+  const policy = createWindowZoomPolicyCache(snapshot);
+  windowZoomPolicies.set(window, policy);
   window.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") {
       return;
@@ -15,8 +25,7 @@ export function registerWindowShortcuts(window: BrowserWindow): void {
 
     if (zoomAction) {
       event.preventDefault();
-      const zoomLevel = handleWindowZoom(window, zoomAction);
-      window.webContents.send("kosmos:window:zoomLevelChanged", zoomLevel);
+      onZoomChanged(handleWindowZoom(window, policy, zoomAction));
       return;
     }
 
@@ -27,6 +36,40 @@ export function registerWindowShortcuts(window: BrowserWindow): void {
     event.preventDefault();
     toggleDevTools(window);
   });
+}
+
+export function createWindowZoomPolicyCache(snapshot: SettingsSnapshot): WindowZoomPolicyCache {
+  return {
+    revision: snapshot.revision,
+    appearance: snapshot.appearance,
+  };
+}
+
+export function updateWindowZoomPolicyCache(
+  policy: WindowZoomPolicyCache,
+  snapshot: SettingsSnapshot,
+): boolean {
+  if (snapshot.revision <= policy.revision) {
+    return false;
+  }
+
+  policy.revision = snapshot.revision;
+  policy.appearance = snapshot.appearance;
+  return true;
+}
+
+export function updateWindowZoomPolicy(window: BrowserWindow, snapshot: SettingsSnapshot): boolean {
+  const policy = windowZoomPolicies.get(window);
+  return policy ? updateWindowZoomPolicyCache(policy, snapshot) : false;
+}
+
+export function windowZoomPolicy(window: BrowserWindow): WindowZoomPolicyCache {
+  const policy = windowZoomPolicies.get(window);
+  if (!policy) {
+    throw new Error("Window zoom policy is unavailable");
+  }
+
+  return policy;
 }
 
 function uiZoomShortcutAction(input: Input): "in" | "out" | "reset" | undefined {
@@ -52,30 +95,45 @@ function uiZoomShortcutAction(input: Input): "in" | "out" | "reset" | undefined 
 }
 
 export function setWindowZoomLevel(window: BrowserWindow, zoomLevel: number): void {
-  window.webContents.setZoomFactor(clampUiZoomFactor(zoomLevel / 100));
+  const policy = windowZoomPolicy(window);
+  window.webContents.setZoomFactor(clampZoomLevel(zoomLevel, policy.appearance) / 100);
 }
 
-function handleWindowZoom(window: BrowserWindow, action: "in" | "out" | "reset"): number {
+export function handleWindowZoom(
+  window: BrowserWindow,
+  policy: WindowZoomPolicyCache,
+  action: "in" | "out" | "reset",
+): number {
   if (action === "reset") {
-    window.webContents.setZoomFactor(DEFAULT_UI_ZOOM_FACTOR);
-    return DEFAULT_UI_ZOOM_FACTOR * 100;
+    return setZoomLevel(window, policy.appearance.defaultZoomLevel, policy.appearance);
   }
 
-  return adjustWindowZoom(window, action === "in" ? UI_ZOOM_STEP : -UI_ZOOM_STEP) * 100;
+  const direction = action === "in" ? 1 : -1;
+  const currentZoomLevel = window.webContents.getZoomFactor() * 100;
+  return setZoomLevel(
+    window,
+    currentZoomLevel + policy.appearance.zoomStep * direction,
+    policy.appearance,
+  );
 }
 
-function adjustWindowZoom(window: BrowserWindow, delta: number): number {
-  const currentZoomFactor = window.webContents.getZoomFactor();
-  const nextZoomFactor = clampUiZoomFactor(currentZoomFactor + delta);
-
-  window.webContents.setZoomFactor(nextZoomFactor);
-  return nextZoomFactor;
+function setZoomLevel(
+  window: BrowserWindow,
+  zoomLevel: number,
+  appearance: ResolvedAppearanceSettings,
+): number {
+  const nextZoomLevel = clampZoomLevel(zoomLevel, appearance);
+  window.webContents.setZoomFactor(nextZoomLevel / 100);
+  return nextZoomLevel;
 }
 
-function clampUiZoomFactor(zoomFactor: number): number {
-  const roundedZoomFactor = Math.round(zoomFactor * 100) / 100;
+function clampZoomLevel(zoomLevel: number, appearance: ResolvedAppearanceSettings): number {
+  const roundedZoomLevel = Math.round(zoomLevel * 100) / 100;
 
-  return Math.min(MAX_UI_ZOOM_FACTOR, Math.max(MIN_UI_ZOOM_FACTOR, roundedZoomFactor));
+  return Math.min(
+    appearance.maxZoomLevel,
+    Math.max(appearance.minZoomLevel, roundedZoomLevel),
+  );
 }
 
 function togglesDevTools(input: Input): boolean {

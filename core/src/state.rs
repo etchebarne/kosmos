@@ -21,7 +21,7 @@ use crate::language_servers::{
     ResolvedToolingDocumentRequest, ResolvedToolingFeature, ResolvedToolingSnapshot,
     StagedWorkspaceEdit, StagedWorkspaceEditOperation, WorkspaceEditError, WorkspaceEditRoot,
 };
-use crate::settings::{SettingValue, Settings, SettingsError};
+use crate::settings::{ResolvedSettings, SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
     EditorDocument, EditorError, EditorLocation, EditorViewState,
     normalize_path as normalize_editor_path, save_document,
@@ -61,6 +61,7 @@ pub struct State {
     next_tab_id: u64,
     instance_id: u64,
     persistent_revision: u64,
+    settings_revision: u64,
     persistence_scope: PersistenceScope,
     tooling_capabilities: crate::events::ToolingCapabilities,
 }
@@ -145,8 +146,10 @@ impl WorkspaceEditEditorRecovery {
 #[derive(Debug)]
 pub(crate) struct PersistentStateCandidate {
     state: State,
+    source_settings: Settings,
     source_instance_id: u64,
     source_revision: u64,
+    settings_persisted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +213,15 @@ impl PersistentStateCandidate {
 
     pub(crate) fn persistence_scope(&self) -> PersistenceScope {
         self.state.persistence_scope
+    }
+
+    pub(crate) fn mark_settings_persisted(&mut self) {
+        if self.settings_persisted || self.state.settings == self.source_settings {
+            return;
+        }
+
+        self.state.settings_revision = self.state.settings_revision.saturating_add(1);
+        self.settings_persisted = true;
     }
 }
 
@@ -309,6 +321,14 @@ impl State {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    pub fn resolved_settings(&self) -> ResolvedSettings {
+        ResolvedSettings::new(self.settings_revision, &self.settings)
+    }
+
+    pub fn settings_revision(&self) -> u64 {
+        self.settings_revision
     }
 
     pub fn window_state(&self) -> Option<WindowState> {
@@ -1475,12 +1495,13 @@ impl State {
         }
     }
 
-    pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<(), SettingsError> {
-        if self.settings.update(id, value)? {
+    pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<bool, SettingsError> {
+        let changed = self.settings.update(id, value)?;
+        if changed {
             self.mark_persistent_change_with_scope(PersistenceScope::Settings);
         }
 
-        Ok(())
+        Ok(changed)
     }
 
     pub fn from_persisted(
@@ -1565,11 +1586,14 @@ impl State {
                 next_tab_id: self.next_tab_id,
                 instance_id: self.instance_id,
                 persistent_revision: self.persistent_revision,
+                settings_revision: self.settings_revision,
                 persistence_scope: self.persistence_scope,
                 tooling_capabilities: self.tooling_capabilities.clone(),
             },
+            source_settings: self.settings.clone(),
             source_instance_id: self.instance_id,
             source_revision: self.persistent_revision,
+            settings_persisted: false,
         }
     }
 
@@ -1599,6 +1623,7 @@ impl State {
         self.next_pane_id = candidate.next_pane_id;
         self.next_split_id = candidate.next_split_id;
         self.next_tab_id = candidate.next_tab_id;
+        self.settings_revision = candidate.settings_revision;
         self.persistent_revision = next_revision;
         self.persistence_scope = PersistenceScope::Clean;
 
@@ -3137,6 +3162,7 @@ impl State {
             next_tab_id: next_ids.tab_id,
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
+            settings_revision: 0,
             persistence_scope: PersistenceScope::Clean,
             tooling_capabilities: crate::events::ToolingCapabilities::default(),
         })
@@ -3360,6 +3386,7 @@ impl Default for State {
             next_tab_id: 1,
             instance_id: next_state_instance_id(),
             persistent_revision: 0,
+            settings_revision: 0,
             persistence_scope: PersistenceScope::Clean,
             tooling_capabilities: crate::events::ToolingCapabilities::default(),
         }

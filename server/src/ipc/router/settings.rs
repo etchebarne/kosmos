@@ -38,7 +38,7 @@ fn update(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     };
 
     match state.update_setting(&params.id, value) {
-        Ok(()) => settings_response(request.id, state),
+        Ok(changed) => settings_response_after_update(request.id, state, changed),
         Err(error) => settings_error(request.id, error),
     }
 }
@@ -53,7 +53,15 @@ fn setting_value(value: SettingValueParam) -> Option<SettingValue> {
 }
 
 fn settings_response(id: u64, state: &core::State) -> ServerMessage {
-    ServerMessage::ok(id, SettingsSnapshot::from_settings(state.settings()))
+    ServerMessage::ok(id, SettingsSnapshot::from_state(state))
+}
+
+fn settings_response_after_update(id: u64, state: &core::State, changed: bool) -> ServerMessage {
+    let revision = state.settings_revision().saturating_add(u64::from(changed));
+    ServerMessage::ok(
+        id,
+        SettingsSnapshot::from_state_with_revision(state, revision),
+    )
 }
 
 fn settings_error(id: u64, error: SettingsError) -> ServerMessage {
@@ -90,6 +98,8 @@ mod tests {
             response["result"]["categories"][1]["items"][0]["value"],
             true
         );
+        assert_eq!(response["result"]["revision"], 1);
+        assert_eq!(response["result"]["editor"]["softWrap"], true);
         assert_eq!(
             state.settings().boolean(core::settings::EDITOR_SOFT_WRAP),
             Some(true)

@@ -2,14 +2,23 @@ import { app, BrowserWindow, screen, type Rectangle } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { WindowState } from "../../shared/ipc";
+import type { SettingsSnapshot, WindowState } from "../../shared/ipc";
 import type { KosmosServerClient } from "../server/client";
-import { registerWindowShortcuts } from "./shortcuts";
+import {
+  registerWindowShortcuts,
+  setWindowZoomLevel,
+  windowZoomPolicy,
+} from "./shortcuts";
+import { isSettingsSnapshot } from "../settings-snapshot";
 
 const DEFAULT_WINDOW_BOUNDS = { width: 1280, height: 800 };
 const WINDOW_STATE_SAVE_DELAY_MS = 250;
 
-export async function createMainWindow(serverClient: KosmosServerClient): Promise<BrowserWindow> {
+export async function createMainWindow(
+  serverClient: KosmosServerClient,
+  settings: SettingsSnapshot,
+  onSettingsSnapshot: (window: BrowserWindow, snapshot: SettingsSnapshot) => void,
+): Promise<BrowserWindow> {
   const runtimeDirectory = getRuntimeDirectory();
   const appIconPath = getAppIconPath();
   const state = await loadWindowState(serverClient);
@@ -33,7 +42,10 @@ export async function createMainWindow(serverClient: KosmosServerClient): Promis
     },
   });
 
-  registerWindowShortcuts(window);
+  registerWindowShortcuts(window, settings, (zoomLevel) => {
+    void persistShortcutZoom(serverClient, window, zoomLevel, onSettingsSnapshot);
+  });
+  setWindowZoomLevel(window, settings.appearance.zoomLevel);
   registerWindowStatePersistence(window, serverClient);
 
   if (state.maximized) {
@@ -46,6 +58,28 @@ export async function createMainWindow(serverClient: KosmosServerClient): Promis
   void window.loadFile(path.join(runtimeDirectory, "renderer", "index.html"));
 
   return window;
+}
+
+async function persistShortcutZoom(
+  serverClient: KosmosServerClient,
+  window: BrowserWindow,
+  zoomLevel: number,
+  onSettingsSnapshot: (window: BrowserWindow, snapshot: SettingsSnapshot) => void,
+): Promise<void> {
+  try {
+    const policy = windowZoomPolicy(window);
+    const snapshot = await serverClient.request<unknown>("settings", "update", {
+      id: policy.appearance.zoomSettingId,
+      value: zoomLevel,
+    });
+    if (!isSettingsSnapshot("update", snapshot)) {
+      throw new Error("Invalid settings.update result from server");
+    }
+
+    onSettingsSnapshot(window, snapshot);
+  } catch {
+    setWindowZoomLevel(window, windowZoomPolicy(window).appearance.zoomLevel);
+  }
 }
 
 async function loadWindowState(serverClient: KosmosServerClient): Promise<WindowState> {

@@ -5,9 +5,11 @@ import type {
   KosmosIpcRequest,
   KosmosIpcRequestResult,
   KosmosServerNotification,
+  SettingsSnapshot,
 } from "../../shared/ipc";
 import type { KosmosServerClient } from "../server/client";
-import { setWindowZoomLevel } from "../window/shortcuts";
+import { isSettingsSnapshot } from "../settings-snapshot";
+import { setWindowZoomLevel, updateWindowZoomPolicy } from "../window/shortcuts";
 import { ipcRequestFailure } from "./request-result";
 
 export type ApplyEditOwner = {
@@ -35,6 +37,7 @@ const validDomains = new Set<KosmosIpcDomain>([
 export function registerIpcHandlers(
   serverClient: KosmosServerClient,
   applyEditOwners: Map<string, ApplyEditOwner>,
+  settingsSnapshots: Map<number, SettingsSnapshot>,
 ): void {
   const rendererRequests = new Map<number, Map<string, AbortController>>();
   const watchedRenderers = new Set<number>();
@@ -95,6 +98,8 @@ export function registerIpcHandlers(
         cancellation?.signal,
       );
 
+      updateWindowSettingsPolicy(event.sender, request, result, settingsSnapshots);
+
       return { ok: true, result };
     } catch (caughtError: unknown) {
       return ipcRequestFailure(caughtError);
@@ -112,6 +117,14 @@ export function registerIpcHandlers(
       .filter((owner) => owner.webContentsId === event.sender.id)
       .map((owner) => owner.notification),
   );
+  ipcMain.handle("kosmos:bootstrapSettings", (event) => {
+    const snapshot = settingsSnapshots.get(event.sender.id);
+    if (!snapshot) {
+      throw new Error("Bootstrap settings are unavailable for this window");
+    }
+
+    return snapshot;
+  });
 
   ipcMain.handle("kosmos:selectWorkspaceDirectory", async () => {
     const result = await dialog.showOpenDialog({
@@ -144,17 +157,6 @@ export function registerIpcHandlers(
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
 
-  ipcMain.handle("kosmos:window:setZoomLevel", (event, zoomLevel: unknown) => {
-    if (typeof zoomLevel !== "number" || !Number.isFinite(zoomLevel)) {
-      throw new Error("Zoom level must be a finite number");
-    }
-
-    const window = BrowserWindow.fromWebContents(event.sender);
-    if (window) {
-      setWindowZoomLevel(window, zoomLevel);
-    }
-  });
-
   ipcMain.handle("kosmos:revealPath", (_event, targetPath: unknown) => {
     if (typeof targetPath !== "string" || targetPath.length === 0) {
       throw new Error("Reveal path must be a non-empty string");
@@ -162,6 +164,29 @@ export function registerIpcHandlers(
 
     shell.showItemInFolder(targetPath);
   });
+}
+
+function updateWindowSettingsPolicy(
+  sender: WebContents,
+  request: KosmosIpcRequest,
+  result: unknown,
+  settingsSnapshots: Map<number, SettingsSnapshot>,
+): void {
+  if (
+    request.domain !== "settings" ||
+    (request.action !== "get" && request.action !== "update") ||
+    !isSettingsSnapshot(request.action, result)
+  ) {
+    return;
+  }
+
+  const window = BrowserWindow.fromWebContents(sender);
+  if (!window || !updateWindowZoomPolicy(window, result)) {
+    return;
+  }
+
+  settingsSnapshots.set(sender.id, result);
+  setWindowZoomLevel(window, result.appearance.zoomLevel);
 }
 
 function beginRendererRequest(

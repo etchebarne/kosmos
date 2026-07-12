@@ -4,14 +4,19 @@ import { errorMessage } from "./error-message";
 import { registerIpcHandlers, type ApplyEditOwner } from "./ipc/handlers";
 import { KosmosServerClient } from "./server/client";
 import { KosmosServerProcess } from "./server/process";
+import { loadBootstrapSettings, newerSettingsSnapshot } from "./settings-snapshot";
 import { createShutdownAttempt } from "./shutdown-attempt";
+import { startWithFatalHandler } from "./startup";
 import { createMainWindow } from "./window/main-window";
+import { setWindowZoomLevel, updateWindowZoomPolicy } from "./window/shortcuts";
+import type { SettingsSnapshot } from "../shared/ipc";
 
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath);
 const RENDERER_FLUSH_TIMEOUT_MS = 1_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 5_000;
 const applyEditOwners = new Map<string, ApplyEditOwner>();
+const settingsSnapshots = new Map<number, SettingsSnapshot>();
 const shutdownAttempt = createShutdownAttempt(async () => {
   await flushAndStopServer();
   serverClient.disconnect();
@@ -34,7 +39,7 @@ app.on("browser-window-created", (_event, window) => {
 async function startApp(): Promise<void> {
   Menu.setApplicationMenu(null);
   await serverProcess.start();
-  registerIpcHandlers(serverClient, applyEditOwners);
+  registerIpcHandlers(serverClient, applyEditOwners, settingsSnapshots);
   serverClient.onWorkspaceChanged((workspaceIds) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) {
@@ -105,19 +110,50 @@ async function startApp(): Promise<void> {
       }
     }
   });
-  await createMainWindow(serverClient);
+  await createWindowWithSettings();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow(serverClient);
+      void createWindowWithSettings().catch((error: unknown) => {
+        dialog.showErrorBox("Kosmos failed to create a window", errorMessage(error));
+      });
     }
   });
 }
 
-app.whenReady().then(startApp).catch((error: unknown) => {
-  dialog.showErrorBox("Kosmos failed to start", errorMessage(error));
-  app.quit();
-});
+async function createWindowWithSettings(): Promise<BrowserWindow> {
+  const settings = await fetchBootstrapSettings();
+  const window = await createMainWindow(serverClient, settings, applySettingsSnapshot);
+  settingsSnapshots.set(window.webContents.id, settings);
+  window.once("closed", () => settingsSnapshots.delete(window.webContents.id));
+  return window;
+}
+
+async function fetchBootstrapSettings(): Promise<SettingsSnapshot> {
+  return loadBootstrapSettings(() => serverClient.request<unknown>("settings", "get"));
+}
+
+function applySettingsSnapshot(window: BrowserWindow, snapshot: SettingsSnapshot): void {
+  const previous = settingsSnapshots.get(window.webContents.id);
+  if (!newerSettingsSnapshot(previous, snapshot)) {
+    return;
+  }
+
+  settingsSnapshots.set(window.webContents.id, snapshot);
+  if (updateWindowZoomPolicy(window, snapshot)) {
+    setWindowZoomLevel(window, snapshot.appearance.zoomLevel);
+  }
+  if (!window.webContents.isDestroyed()) {
+    window.webContents.send("kosmos:settingsSnapshot", snapshot);
+  }
+}
+
+void app.whenReady().then(() =>
+  startWithFatalHandler(startApp, (error: unknown) => {
+    dialog.showErrorBox("Kosmos failed to start", errorMessage(error));
+    app.quit();
+  }),
+);
 
 app.on("before-quit", (event) => {
   if (shutdownAttempt.complete) {

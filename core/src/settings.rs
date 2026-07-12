@@ -13,6 +13,30 @@ pub struct Settings {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedSettings {
+    revision: u64,
+    editor: ResolvedEditorSettings,
+    appearance: ResolvedAppearanceSettings,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedEditorSettings {
+    soft_wrap: bool,
+    minimap: bool,
+    format_on_save: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedAppearanceSettings {
+    zoom_setting_id: &'static str,
+    zoom_level: f64,
+    default_zoom_level: f64,
+    min_zoom_level: f64,
+    max_zoom_level: f64,
+    zoom_step: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SettingCategory {
     id: &'static str,
     label: &'static str,
@@ -123,6 +147,42 @@ impl Settings {
         }
     }
 
+    pub fn resolved_editor_settings(&self) -> ResolvedEditorSettings {
+        ResolvedEditorSettings {
+            soft_wrap: self
+                .boolean(EDITOR_SOFT_WRAP)
+                .expect("editor soft wrap is boolean"),
+            minimap: self
+                .boolean(EDITOR_MINIMAP)
+                .expect("editor minimap is boolean"),
+            format_on_save: self
+                .boolean(EDITOR_FORMAT_ON_SAVE)
+                .expect("editor format on save is boolean"),
+        }
+    }
+
+    pub fn resolved_appearance_settings(&self) -> ResolvedAppearanceSettings {
+        let definition = self.definition(APPEARANCE_ZOOM_LEVEL);
+        let SettingControl::Input(input) = definition.control else {
+            unreachable!("appearance zoom is a numeric input")
+        };
+        let SettingValue::Number(zoom_level) = definition.value else {
+            unreachable!("appearance zoom has a numeric value")
+        };
+        let SettingValue::Number(default_zoom_level) = definition.default_value else {
+            unreachable!("appearance zoom has a numeric default")
+        };
+
+        ResolvedAppearanceSettings {
+            zoom_setting_id: definition.id,
+            zoom_level,
+            default_zoom_level,
+            min_zoom_level: input.min.expect("appearance zoom has a minimum"),
+            max_zoom_level: input.max.expect("appearance zoom has a maximum"),
+            zoom_step: input.step.expect("appearance zoom has a step"),
+        }
+    }
+
     pub fn update(&mut self, id: &str, value: SettingValue) -> Result<bool, SettingsError> {
         let definition =
             setting_definition(id).ok_or_else(|| SettingsError::UnknownSetting(id.to_owned()))?;
@@ -152,6 +212,68 @@ impl Settings {
             .cloned()
             .unwrap_or_else(|| definition.default_value.clone());
         definition
+    }
+}
+
+impl ResolvedSettings {
+    pub fn new(revision: u64, settings: &Settings) -> Self {
+        Self {
+            revision,
+            editor: settings.resolved_editor_settings(),
+            appearance: settings.resolved_appearance_settings(),
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn editor(&self) -> &ResolvedEditorSettings {
+        &self.editor
+    }
+
+    pub fn appearance(&self) -> &ResolvedAppearanceSettings {
+        &self.appearance
+    }
+}
+
+impl ResolvedEditorSettings {
+    pub fn soft_wrap(&self) -> bool {
+        self.soft_wrap
+    }
+
+    pub fn minimap(&self) -> bool {
+        self.minimap
+    }
+
+    pub fn format_on_save(&self) -> bool {
+        self.format_on_save
+    }
+}
+
+impl ResolvedAppearanceSettings {
+    pub fn zoom_setting_id(&self) -> &str {
+        self.zoom_setting_id
+    }
+
+    pub fn zoom_level(&self) -> f64 {
+        self.zoom_level
+    }
+
+    pub fn default_zoom_level(&self) -> f64 {
+        self.default_zoom_level
+    }
+
+    pub fn min_zoom_level(&self) -> f64 {
+        self.min_zoom_level
+    }
+
+    pub fn max_zoom_level(&self) -> f64 {
+        self.max_zoom_level
+    }
+
+    pub fn zoom_step(&self) -> f64 {
+        self.zoom_step
     }
 }
 
@@ -398,5 +520,49 @@ mod tests {
             Err(SettingsError::UnknownSetting(_))
         ));
         assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn resolved_defaults_match_the_catalog() {
+        let settings = Settings::default();
+        let editor = settings.resolved_editor_settings();
+        let appearance = settings.resolved_appearance_settings();
+
+        assert!(!editor.soft_wrap());
+        assert!(!editor.minimap());
+        assert!(!editor.format_on_save());
+        assert_eq!(appearance.zoom_level(), 100.0);
+        assert_eq!(appearance.default_zoom_level(), 100.0);
+        assert_eq!(appearance.min_zoom_level(), 80.0);
+        assert_eq!(appearance.max_zoom_level(), 140.0);
+        assert_eq!(appearance.zoom_step(), 10.0);
+    }
+
+    #[test]
+    fn resolved_overrides_match_the_catalog() {
+        let mut settings = Settings::default();
+        settings
+            .update(EDITOR_SOFT_WRAP, SettingValue::Boolean(true))
+            .unwrap();
+        settings
+            .update(EDITOR_MINIMAP, SettingValue::Boolean(true))
+            .unwrap();
+        settings
+            .update(EDITOR_FORMAT_ON_SAVE, SettingValue::Boolean(true))
+            .unwrap();
+        settings
+            .update(APPEARANCE_ZOOM_LEVEL, SettingValue::Number(120.0))
+            .unwrap();
+
+        let editor = settings.resolved_editor_settings();
+        let appearance = settings.resolved_appearance_settings();
+        assert!(editor.soft_wrap());
+        assert!(editor.minimap());
+        assert!(editor.format_on_save());
+        assert_eq!(appearance.zoom_setting_id(), APPEARANCE_ZOOM_LEVEL);
+        assert_eq!(appearance.zoom_level(), 120.0);
+        assert_eq!(appearance.min_zoom_level(), 80.0);
+        assert_eq!(appearance.max_zoom_level(), 140.0);
+        assert_eq!(appearance.zoom_step(), 10.0);
     }
 }

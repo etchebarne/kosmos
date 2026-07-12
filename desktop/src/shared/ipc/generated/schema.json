@@ -10776,6 +10776,61 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "definitions": {
+            "ResolvedAppearanceSettingsPayload": {
+              "properties": {
+                "defaultZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "minZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "zoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "zoomSettingId": {
+                  "type": "string"
+                },
+                "zoomStep": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "defaultZoomLevel",
+                "maxZoomLevel",
+                "minZoomLevel",
+                "zoomLevel",
+                "zoomSettingId",
+                "zoomStep"
+              ],
+              "type": "object"
+            },
+            "ResolvedEditorSettingsPayload": {
+              "properties": {
+                "formatOnSave": {
+                  "type": "boolean"
+                },
+                "minimap": {
+                  "type": "boolean"
+                },
+                "softWrap": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "formatOnSave",
+                "minimap",
+                "softWrap"
+              ],
+              "type": "object"
+            },
             "SettingCategoryPayload": {
               "properties": {
                 "description": {
@@ -11006,15 +11061,30 @@
             }
           },
           "properties": {
+            "appearance": {
+              "$ref": "#/definitions/ResolvedAppearanceSettingsPayload"
+            },
             "categories": {
               "items": {
                 "$ref": "#/definitions/SettingCategoryPayload"
               },
               "type": "array"
+            },
+            "editor": {
+              "$ref": "#/definitions/ResolvedEditorSettingsPayload"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
-            "categories"
+            "appearance",
+            "categories",
+            "editor",
+            "revision"
           ],
           "title": "SettingsSnapshot",
           "type": "object"
@@ -11057,6 +11127,61 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "definitions": {
+            "ResolvedAppearanceSettingsPayload": {
+              "properties": {
+                "defaultZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "minZoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "zoomLevel": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "zoomSettingId": {
+                  "type": "string"
+                },
+                "zoomStep": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "defaultZoomLevel",
+                "maxZoomLevel",
+                "minZoomLevel",
+                "zoomLevel",
+                "zoomSettingId",
+                "zoomStep"
+              ],
+              "type": "object"
+            },
+            "ResolvedEditorSettingsPayload": {
+              "properties": {
+                "formatOnSave": {
+                  "type": "boolean"
+                },
+                "minimap": {
+                  "type": "boolean"
+                },
+                "softWrap": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "formatOnSave",
+                "minimap",
+                "softWrap"
+              ],
+              "type": "object"
+            },
             "SettingCategoryPayload": {
               "properties": {
                 "description": {
@@ -11287,15 +11412,30 @@
             }
           },
           "properties": {
+            "appearance": {
+              "$ref": "#/definitions/ResolvedAppearanceSettingsPayload"
+            },
             "categories": {
               "items": {
                 "$ref": "#/definitions/SettingCategoryPayload"
               },
               "type": "array"
+            },
+            "editor": {
+              "$ref": "#/definitions/ResolvedEditorSettingsPayload"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
-            "categories"
+            "appearance",
+            "categories",
+            "editor",
+            "revision"
           ],
           "title": "SettingsSnapshot",
           "type": "object"

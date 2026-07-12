@@ -15,7 +15,7 @@ use crate::language_servers::{
     WorkspaceEditTransactionStatus,
 };
 use crate::persistence::{PersistenceError, StateStore};
-use crate::settings::{SettingValue, SettingsError};
+use crate::settings::{ResolvedSettings, SettingValue, SettingsError};
 use crate::state::{FileTreeGitDecorationsError, OpenEditorLocation, PersistentStateCandidate};
 use crate::tabs::editor::EditorError;
 use crate::tabs::git::{FileTreeGitDecorations, GitError, GitLineHunk};
@@ -141,6 +141,10 @@ impl Application {
         self.state.set_event_sink(sink);
     }
 
+    pub fn resolved_settings(&self) -> ResolvedSettings {
+        self.state.resolved_settings()
+    }
+
     pub fn file_tree_git_decorations(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -192,7 +196,7 @@ impl Application {
         self.durability_lease_active = false;
     }
 
-    pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<(), SettingsError> {
+    pub fn update_setting(&mut self, id: &str, value: SettingValue) -> Result<bool, SettingsError> {
         self.state.update_setting(id, value)
     }
 
@@ -618,11 +622,13 @@ impl PreparedPersistentOperation {
         self.candidate.state_mut()
     }
 
-    pub fn persist(&self) -> Result<(), ApplicationError> {
+    pub fn persist(&mut self) -> Result<(), ApplicationError> {
         self.candidate
             .persistence_scope()
             .save(&self.store, self.candidate.state())
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        self.candidate.mark_settings_persisted();
+        Ok(())
     }
 
     pub fn open_editor_location(
@@ -749,6 +755,63 @@ mod tests {
             .complete_persistent_operation(operation)
             .unwrap();
         assert_eq!(application.state().workspaces().workspaces().len(), 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn settings_revision_advances_only_after_durable_commit() {
+        let (mut application, path) = test_application("settings-revision");
+        let mut failed = application.prepare_persistent_operation().unwrap();
+        failed
+            .state_mut()
+            .update_setting(
+                crate::settings::EDITOR_SOFT_WRAP,
+                SettingValue::Boolean(true),
+            )
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(matches!(
+            failed.persist(),
+            Err(ApplicationError::Persistence(_))
+        ));
+        application.abandon_persistent_operation();
+        assert_eq!(application.resolved_settings().revision(), 0);
+
+        std::fs::remove_dir(&path).unwrap();
+        let (mut application, path) = test_application("settings-revision-success");
+        let mut successful = application.prepare_persistent_operation().unwrap();
+        successful
+            .state_mut()
+            .update_setting(
+                crate::settings::EDITOR_SOFT_WRAP,
+                SettingValue::Boolean(true),
+            )
+            .unwrap();
+        successful.persist().unwrap();
+        assert_eq!(application.resolved_settings().revision(), 0);
+        application
+            .complete_persistent_operation(successful)
+            .unwrap();
+        assert_eq!(application.resolved_settings().revision(), 1);
+
+        let mut unchanged = application.prepare_persistent_operation().unwrap();
+        assert!(
+            !unchanged
+                .state_mut()
+                .update_setting(
+                    crate::settings::EDITOR_SOFT_WRAP,
+                    SettingValue::Boolean(true),
+                )
+                .unwrap()
+        );
+        unchanged.persist().unwrap();
+        application
+            .complete_persistent_operation(unchanged)
+            .unwrap();
+        assert_eq!(application.resolved_settings().revision(), 1);
 
         let _ = std::fs::remove_file(path);
     }

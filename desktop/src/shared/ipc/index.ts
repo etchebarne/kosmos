@@ -2,8 +2,6 @@ import type * as Generated from "./generated/types";
 
 export type * from "./generated/types";
 
-export const APPEARANCE_ZOOM_LEVEL = "appearance.zoomLevel";
-
 export type WorkspaceId = Generated.WorkspaceIdParam;
 export type PaneId = Generated.PaneIdParam;
 export type SplitPaneId = Generated.SplitPaneIdParam;
@@ -53,6 +51,9 @@ export type SettingItem = Generated.SettingItemPayload;
 export type SettingGroup = Extract<SettingItem, { type: "group" }>;
 export type SettingDefinition = Extract<SettingItem, { type: "setting" }>;
 export type SettingCategory = Generated.SettingCategoryPayload;
+export type SettingsSnapshot = Generated.SettingsSnapshot;
+export type ResolvedEditorSettings = Generated.ResolvedEditorSettingsPayload;
+export type ResolvedAppearanceSettings = Generated.ResolvedAppearanceSettingsPayload;
 
 export type WindowState = Generated.WindowStateSnapshot;
 
@@ -148,11 +149,11 @@ export type KosmosApi = {
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
-  setZoomLevel(zoomLevel: number): Promise<void>;
+  bootstrapSettings(): Promise<SettingsSnapshot>;
   revealPath(path: string): Promise<void>;
   onFlushState(callback: () => Promise<void>): () => void;
   onShutdownRequest(callback: () => Promise<boolean>): () => void;
-  onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void;
+  onSettingsSnapshot(callback: (snapshot: SettingsSnapshot) => void): () => void;
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
   onServerNotification(callback: (notification: KosmosServerNotification) => void): () => void;
   onServerReconnected(callback: () => void): () => void;

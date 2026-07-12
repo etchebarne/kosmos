@@ -225,11 +225,10 @@ function LoadedEditor({
   );
   const setTabDirty = useWorkspaceStore((state) => state.setTabDirty);
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
-  const minimap = useSettingsStore((state) => editorSettings(state.snapshot).minimap);
-  const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
-  const formatOnSave = useSettingsStore(
-    (state) => editorSettings(state.snapshot).formatOnSave,
-  );
+  const settings = useSettingsStore((state) => editorSettings(state.snapshot));
+  const minimap = settings?.minimap;
+  const softWrap = settings?.softWrap;
+  const formatOnSave = settings?.formatOnSave;
 
   useEffect(() => {
     const documentKey = `${workspaceId}:${tabId}:${document.path}`;
@@ -237,7 +236,7 @@ function LoadedEditor({
     formatErrorDocumentRef.current = documentKey;
     setFormatError((current) =>
       formattingErrorAfterContextChange(current, {
-        formattingEnabled: formatOnSave,
+        formattingEnabled: formatOnSave === true,
         documentChanged,
       }),
     );
@@ -245,7 +244,7 @@ function LoadedEditor({
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) {
+    if (!container || !settings) {
       return undefined;
     }
 
@@ -264,18 +263,17 @@ function LoadedEditor({
     );
     bufferRef.current = buffer;
     const { model } = buffer;
-    const initialSettings = editorSettings(useSettingsStore.getState().snapshot);
     const editor = monaco.editor.create(container, {
       model,
       automaticLayout: true,
       bracketPairColorization: { enabled: true },
       fontSize: 13,
-      minimap: { enabled: initialSettings.minimap },
+      minimap: { enabled: settings.minimap },
       padding: { top: 8 },
       scrollBeyondLastLine: false,
       smoothScrolling: true,
       theme: "kosmos",
-      wordWrap: initialSettings.softWrap ? "on" : "off",
+      wordWrap: settings.softWrap ? "on" : "off",
       readOnly: isEditorBufferLocked(buffer),
     });
     editorRef.current = editor;
@@ -356,7 +354,7 @@ function LoadedEditor({
           assertEditorBufferEditable(buffer);
           let content = model.getValue();
           let formatted = false;
-          if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
+          if (editorSettings(useSettingsStore.getState().snapshot)?.formatOnSave) {
             try {
               formatted = await formatLanguageDocument(editor, cancellation.token);
               setFormatError(null);
@@ -441,7 +439,7 @@ function LoadedEditor({
         bufferRef.current = null;
       }
     };
-  }, [workspaceId, tabId, document.path, bumpGitRevision, setTabDirty]);
+  }, [workspaceId, tabId, document.path, bumpGitRevision, setTabDirty, settings]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -509,6 +507,9 @@ function LoadedEditor({
   }, [document.content, gitLineHunks]);
 
   useEffect(() => {
+    if (minimap === undefined || softWrap === undefined) {
+      return;
+    }
     editorRef.current?.updateOptions({
       minimap: { enabled: minimap },
       wordWrap: softWrap ? "on" : "off",

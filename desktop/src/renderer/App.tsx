@@ -7,16 +7,11 @@ import { WorkspaceEditRecovery } from "@/renderer/components/internal/workspace-
 import { WorkspaceTrustDialog } from "@/renderer/components/internal/workspace-trust-dialog";
 import { UnsavedChangesDialog } from "@/renderer/components/internal/unsaved-changes-dialog";
 import { setLanguageLocationOpener } from "@/renderer/lib/language-client";
-import { findSetting, useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
-import { APPEARANCE_ZOOM_LEVEL } from "@/shared/ipc";
+import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 
 export function App() {
   const initializeWorkspaces = useWorkspaceStore((state) => state.initializeWorkspaces);
   const initializeSettings = useSettingsStore((state) => state.initializeSettings);
-  const zoomLevel = useSettingsStore((state) => {
-    const value = findSetting(state.snapshot, APPEARANCE_ZOOM_LEVEL)?.value;
-    return typeof value === "number" ? value : null;
-  });
 
   useEffect(() => {
     void initializeWorkspaces();
@@ -26,16 +21,10 @@ export function App() {
     void initializeSettings();
   }, [initializeSettings]);
 
-  useEffect(() => {
-    if (zoomLevel !== null) {
-      void window.kosmos.setZoomLevel(zoomLevel);
-    }
-  }, [zoomLevel]);
-
   useEffect(
     () =>
-      window.kosmos.onZoomLevelChanged((nextZoomLevel) => {
-        useSettingsStore.getState().updateSetting(APPEARANCE_ZOOM_LEVEL, nextZoomLevel);
+      window.kosmos.onSettingsSnapshot((snapshot) => {
+        useSettingsStore.getState().applySnapshot(snapshot);
       }),
     [],
   );

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { getSettings, updateSetting as updateSettingIpc } from "@/renderer/ipc";
+import { updateSetting as updateSettingIpc } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
 import type {
   SettingDefinition,
@@ -15,6 +15,7 @@ type SettingsStore = {
   pendingSettingIds: Record<string, true>;
   snapshot: SettingsSnapshot | null;
   initializeSettings(): Promise<void>;
+  applySnapshot(snapshot: SettingsSnapshot): void;
   updateSetting(id: string, value: SettingValue): void;
 };
 
@@ -36,13 +37,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
       set({ error: null, isLoading: true });
 
       try {
-        const snapshot = await getSettings();
+        const snapshot = await window.kosmos.bootstrapSettings();
         set({ snapshot: applyPendingUpdates(snapshot, pendingUpdates) });
       } catch (caughtError) {
         set({ error: errorMessage(caughtError) });
       } finally {
         set({ isLoading: false });
       }
+    },
+    applySnapshot(snapshot) {
+      set((state) => ({
+        snapshot: applySettingsSnapshot(state.snapshot, snapshot, pendingUpdates),
+      }));
     },
     updateSetting(id, value) {
       const snapshot = get().snapshot;
@@ -68,7 +74,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
           pendingUpdates.delete(id);
           set((state) => ({
             pendingSettingIds: withoutKey(state.pendingSettingIds, id),
-            snapshot: applyPendingUpdates(serverSnapshot, pendingUpdates),
+            snapshot: applySettingsSnapshot(state.snapshot, serverSnapshot, pendingUpdates),
           }));
         })
         .catch((caughtError: unknown) => {
@@ -80,7 +86,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
           set((state) => ({
             error: errorMessage(caughtError),
             pendingSettingIds: withoutKey(state.pendingSettingIds, id),
-            snapshot: updateSnapshotValue(state.snapshot, id, previous),
+            snapshot:
+              state.snapshot?.revision === snapshot.revision
+                ? updateSnapshotValue(state.snapshot, id, previous)
+                : state.snapshot,
           }));
         });
     },
@@ -128,11 +137,24 @@ function updateSnapshotValue(
   }
 
   return {
+    ...snapshot,
     categories: snapshot.categories.map((category) => ({
       ...category,
       items: updateItemsValue(category.items, id, value),
     })),
   };
+}
+
+export function applySettingsSnapshot(
+  current: SettingsSnapshot | null,
+  incoming: SettingsSnapshot,
+  pendingUpdates: Map<string, PendingUpdate> = new Map(),
+): SettingsSnapshot {
+  if (current && incoming.revision < current.revision) {
+    return current;
+  }
+
+  return applyPendingUpdates(incoming, pendingUpdates);
 }
 
 function updateItemsValue(items: SettingItem[], id: string, value: SettingValue): SettingItem[] {

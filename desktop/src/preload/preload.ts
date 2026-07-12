@@ -5,6 +5,7 @@ import type {
   KosmosIpcRequest,
   KosmosIpcRequestResult,
   KosmosServerNotification,
+  SettingsSnapshot,
   WorkspaceId,
 } from "../shared/ipc";
 import { reconstructIpcRequestResult } from "./request-result";
@@ -42,8 +43,8 @@ const kosmos: KosmosApi = {
   closeWindow(): Promise<void> {
     return ipcRenderer.invoke("kosmos:window:close") as Promise<void>;
   },
-  setZoomLevel(zoomLevel: number): Promise<void> {
-    return ipcRenderer.invoke("kosmos:window:setZoomLevel", zoomLevel) as Promise<void>;
+  bootstrapSettings(): Promise<SettingsSnapshot> {
+    return ipcRenderer.invoke("kosmos:bootstrapSettings") as Promise<SettingsSnapshot>;
   },
   revealPath(path: string): Promise<void> {
     return ipcRenderer.invoke("kosmos:revealPath", path) as Promise<void>;
@@ -70,13 +71,13 @@ const kosmos: KosmosApi = {
     ipcRenderer.on("kosmos:prepareShutdown", listener);
     return () => ipcRenderer.off("kosmos:prepareShutdown", listener);
   },
-  onZoomLevelChanged(callback: (zoomLevel: number) => void): () => void {
-    const listener = (_event: IpcRendererEvent, zoomLevel: number) => {
-      callback(zoomLevel);
+  onSettingsSnapshot(callback: (snapshot: SettingsSnapshot) => void): () => void {
+    const listener = (_event: IpcRendererEvent, snapshot: SettingsSnapshot) => {
+      callback(snapshot);
     };
 
-    ipcRenderer.on("kosmos:window:zoomLevelChanged", listener);
-    return () => ipcRenderer.off("kosmos:window:zoomLevelChanged", listener);
+    ipcRenderer.on("kosmos:settingsSnapshot", listener);
+    return () => ipcRenderer.off("kosmos:settingsSnapshot", listener);
   },
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void {
     const listener = (_event: IpcRendererEvent, workspaceIds: WorkspaceId[]) => {

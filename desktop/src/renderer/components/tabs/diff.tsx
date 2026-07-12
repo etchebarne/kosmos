@@ -333,7 +333,7 @@ function MonacoDiffEditor({
   const saveInFlightRef = useRef(false);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
-  const softWrap = useSettingsStore((state) => editorSettings(state.snapshot).softWrap);
+  const softWrap = useSettingsStore((state) => editorSettings(state.snapshot)?.softWrap);
   const unavailable = section.originalContent == null || section.modifiedContent == null;
   const conflicted = file.staged === "conflicted" || file.unstaged === "conflicted";
 
@@ -375,12 +375,11 @@ function MonacoDiffEditor({
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || unavailable) {
+    if (!container || unavailable || softWrap === undefined) {
       return undefined;
     }
 
     applyMonacoTheme();
-    const initialSettings = editorSettings(useSettingsStore.getState().snapshot);
     const originalModel = monaco.editor.createModel(
       section.originalContent ?? "",
       undefined,
@@ -396,7 +395,7 @@ function MonacoDiffEditor({
       compactMode: true,
       diffAlgorithm: "advanced",
       diffCodeLens: false,
-      diffWordWrap: initialSettings.softWrap ? "on" : "off",
+      diffWordWrap: softWrap ? "on" : "off",
       enableSplitViewResizing: false,
       experimental: { useTrueInlineView: true },
       folding: false,
@@ -422,7 +421,7 @@ function MonacoDiffEditor({
       smoothScrolling: true,
       stickyScroll: { enabled: false },
       theme: "kosmos",
-      wordWrap: initialSettings.softWrap ? "on" : "off",
+      wordWrap: softWrap ? "on" : "off",
     });
     editor.setModel({ original: originalModel, modified: modifiedModel });
     editorRef.current = editor;
@@ -453,7 +452,7 @@ function MonacoDiffEditor({
       originalModelRef.current = null;
       modifiedModelRef.current = null;
     };
-  }, [workspaceId, tabId, file.path, section.kind, unavailable]);
+  }, [workspaceId, tabId, file.path, section.kind, softWrap, unavailable]);
 
   useEffect(() => {
     const originalModel = originalModelRef.current;
@@ -478,6 +477,9 @@ function MonacoDiffEditor({
   }, [section.originalContent, section.modifiedContent, unavailable]);
 
   useEffect(() => {
+    if (softWrap === undefined) {
+      return;
+    }
     editorRef.current?.updateOptions({
       diffWordWrap: softWrap ? "on" : "off",
       wordWrap: softWrap ? "on" : "off",
