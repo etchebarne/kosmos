@@ -350,6 +350,14 @@ impl Pane {
         &self.tabs
     }
 
+    pub(crate) fn rename_tab(&mut self, tab_id: TabId, title: impl Into<String>) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id() == tab_id) else {
+            return false;
+        };
+        tab.rename(title);
+        true
+    }
+
     pub fn active_tab_id(&self) -> TabId {
         self.active_tab
             .expect("a pane exposed by core must always have an active tab")

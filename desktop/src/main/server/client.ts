@@ -469,6 +469,8 @@ function isStagedWorkspaceEdit(value: unknown): boolean {
             isNonNegativeSafeInteger(document.workspaceId) &&
             "path" in document &&
             typeof document.path === "string" &&
+            "originalPath" in document &&
+            typeof document.originalPath === "string" &&
             "originalText" in document &&
             typeof document.originalText === "string" &&
             "newText" in document &&
@@ -478,6 +480,17 @@ function isStagedWorkspaceEdit(value: unknown): boolean {
             "version" in document &&
             (document.version === null ||
               (typeof document.version === "number" && Number.isSafeInteger(document.version))),
+        ),
+      ) &&
+      "operations" in value &&
+      Array.isArray(value.operations) &&
+      value.operations.length <= 4096 &&
+      value.operations.every((operation) =>
+        Boolean(
+          operation &&
+            typeof operation === "object" &&
+            "kind" in operation &&
+            typeof operation.kind === "string",
         ),
       ),
   );

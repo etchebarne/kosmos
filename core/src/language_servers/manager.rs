@@ -120,7 +120,10 @@ impl LanguageServerManager {
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let entries = Arc::new(Mutex::new(entries));
         let manager_store = store.clone();
-        let workspace_edits = Arc::new(WorkspaceEditTransactions::new());
+        let workspace_edits = Arc::new(
+            WorkspaceEditTransactions::open(manager_store.clone())
+                .map_err(|error| LanguageServerError::Persistence(error.to_string()))?,
+        );
         let runtime = LanguageServerRuntime::new(Arc::clone(&workspace_edits));
         let worker = WorkerContext {
             paths: paths.clone(),
@@ -873,6 +876,16 @@ impl LanguageServerManager {
         )
     }
 
+    pub fn workspace_edit_operations(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<Vec<super::StagedWorkspaceEditOperation>, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .staged_operations(transaction_id, authorization)
+    }
+
     pub fn rollback_workspace_edit(
         &self,
         transaction_id: u64,
@@ -893,6 +906,16 @@ impl LanguageServerManager {
             .finish(transaction_id, authorization)
     }
 
+    pub fn acknowledge_workspace_edit_completion(
+        &self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<bool, WorkspaceEditError> {
+        self.inner
+            .workspace_edits
+            .acknowledge_completion(transaction_id, authorization)
+    }
+
     pub fn finalize_workspace_edit(
         &self,
         transaction_id: u64,
@@ -911,6 +934,10 @@ impl LanguageServerManager {
         self.inner
             .workspace_edits
             .status(transaction_id, authorization)
+    }
+
+    pub fn workspace_edit_recoveries(&self) -> Vec<super::WorkspaceEditRecovery> {
+        self.inner.workspace_edits.recoveries()
     }
 
     pub fn claim_workspace_edit_owner(
@@ -938,8 +965,17 @@ impl LanguageServerManager {
     pub fn disconnect_workspace_edit_owner(
         &self,
         owner: u64,
-    ) -> Vec<super::WorkspaceEditTransactionStatus> {
+    ) -> Vec<(
+        super::WorkspaceEditTransactionStatus,
+        Vec<super::StagedWorkspaceEditOperation>,
+    )> {
         self.inner.workspace_edits.disconnect_owner(owner)
+    }
+
+    pub fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
+        self.inner
+            .workspace_edits
+            .finish_disconnected_rollbacks(transaction_ids);
     }
 
     fn open_documents(&self) -> Vec<WorkspaceEditOpenDocument> {

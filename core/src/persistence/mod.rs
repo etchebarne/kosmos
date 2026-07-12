@@ -173,9 +173,238 @@ impl StateStore {
         Ok(())
     }
 
+    pub(crate) fn save_workspace_edit_journal(&self, id: u64, journal: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO workspace_edit_journals (id, journal) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET journal = excluded.journal",
+            params![to_i64(id, "workspace edit transaction id")?, journal],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn workspace_edit_journals(&self) -> Result<Vec<(u64, String)>> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT id, journal FROM workspace_edit_journals ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let journal: String = row.get(1)?;
+            Ok((id, journal))
+        })?;
+        rows.map(|row| {
+            let (id, journal) = row?;
+            let id = u64::try_from(id).map_err(|_| {
+                PersistenceError::InvalidState("invalid workspace edit transaction id".to_owned())
+            })?;
+            Ok((id, journal))
+        })
+        .collect()
+    }
+
+    pub(crate) fn delete_workspace_edit_journal(&self, id: u64) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM workspace_edit_journals WHERE id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn save_workspace_edit_outcome(&self, id: u64, outcome: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO workspace_edit_outcomes (id, outcome) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET outcome = excluded.outcome",
+            params![to_i64(id, "workspace edit transaction id")?, outcome],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn workspace_edit_outcomes(&self) -> Result<Vec<(u64, String)>> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT id, outcome FROM workspace_edit_outcomes ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let outcome: String = row.get(1)?;
+            Ok((id, outcome))
+        })?;
+        rows.map(|row| {
+            let (id, outcome) = row?;
+            let id = u64::try_from(id).map_err(|_| {
+                PersistenceError::InvalidState("invalid workspace edit transaction id".to_owned())
+            })?;
+            Ok((id, outcome))
+        })
+        .collect()
+    }
+
+    pub(crate) fn acknowledge_workspace_edit_completion(
+        &self,
+        id: u64,
+        authorization_hash: &str,
+        created_at: u64,
+    ) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO workspace_edit_acknowledgements (id, authorization_hash, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                 authorization_hash = excluded.authorization_hash,
+                 created_at = excluded.created_at",
+            params![
+                to_i64(id, "workspace edit transaction id")?,
+                authorization_hash,
+                to_i64(created_at, "workspace edit acknowledgement timestamp")?,
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM workspace_edit_outcomes WHERE id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        transaction.execute(
+            "DELETE FROM workspace_edit_journals WHERE id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        transaction.execute(
+            "DELETE FROM workspace_edit_editor_recovery WHERE transaction_id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn workspace_edit_acknowledgements(&self) -> Result<Vec<(u64, String, u64)>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, authorization_hash, created_at
+             FROM workspace_edit_acknowledgements ORDER BY created_at DESC, id DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, authorization_hash, created_at) = row?;
+            Ok((
+                u64::try_from(id).map_err(|_| {
+                    PersistenceError::InvalidState(
+                        "invalid workspace edit acknowledgement id".to_owned(),
+                    )
+                })?,
+                authorization_hash,
+                u64::try_from(created_at).map_err(|_| {
+                    PersistenceError::InvalidState(
+                        "invalid workspace edit acknowledgement timestamp".to_owned(),
+                    )
+                })?,
+            ))
+        })
+        .collect()
+    }
+
+    pub(crate) fn delete_workspace_edit_acknowledgement(&self, id: u64) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM workspace_edit_acknowledgements WHERE id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn restore_workspace_edit_editor_recovery(&self, id: u64) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let rows = {
+            let mut statement = transaction.prepare(
+                "SELECT workspace_id, tab_id, path, title, applied_path FROM workspace_edit_editor_recovery
+                 WHERE transaction_id = ?1 ORDER BY workspace_id, tab_id",
+            )?;
+            statement
+                .query_map(
+                    params![to_i64(id, "workspace edit transaction id")?],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                        ))
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for (workspace_id, tab_id, path, _, applied_path) in &rows {
+            let current = transaction
+                .query_row(
+                    "SELECT path FROM editor_tabs WHERE workspace_id = ?1 AND tab_id = ?2",
+                    params![workspace_id, tab_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let valid = match (applied_path.as_deref(), current.as_deref()) {
+                (Some(applied), Some(current)) => current == applied || current == path,
+                (None, None) => true,
+                (None, Some(current)) => current == path,
+                _ => false,
+            };
+            if !valid {
+                return Err(PersistenceError::InvalidState(
+                    "workspace edit editor recovery no longer has its recorded tab path".to_owned(),
+                ));
+            }
+        }
+        for (workspace_id, tab_id, ..) in &rows {
+            transaction.execute(
+                "DELETE FROM editor_tabs WHERE workspace_id = ?1 AND tab_id = ?2",
+                params![workspace_id, tab_id],
+            )?;
+        }
+        for (workspace_id, tab_id, path, title, _) in rows {
+            let title =
+                title.unwrap_or_else(|| path.rsplit('/').next().unwrap_or(&path).to_owned());
+            let changed = transaction.execute(
+                "UPDATE tabs SET kind = 'editor', title = ?3
+                 WHERE workspace_id = ?1 AND id = ?2",
+                params![workspace_id, tab_id, title],
+            )?;
+            if changed != 1 {
+                return Err(PersistenceError::InvalidState(
+                    "workspace edit editor recovery tab no longer exists".to_owned(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO editor_tabs (workspace_id, tab_id, path) VALUES (?1, ?2, ?3)",
+                params![workspace_id, tab_id, path],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM workspace_edit_editor_recovery WHERE transaction_id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_workspace_edit_editor_recovery(&self, id: u64) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "DELETE FROM workspace_edit_editor_recovery WHERE transaction_id = ?1",
+            params![to_i64(id, "workspace edit transaction id")?],
+        )?;
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection> {
         let connection = Connection::open(&self.path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
 
         Ok(connection)
     }
@@ -246,6 +475,32 @@ fn migrate(connection: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS formatter_preferences (
             formatter_id TEXT PRIMARY KEY NOT NULL,
             priority INTEGER NOT NULL UNIQUE CHECK (priority >= 0)
+        );
+
+        CREATE TABLE IF NOT EXISTS workspace_edit_journals (
+            id INTEGER PRIMARY KEY NOT NULL,
+            journal TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS workspace_edit_outcomes (
+            id INTEGER PRIMARY KEY NOT NULL,
+            outcome TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS workspace_edit_acknowledgements (
+            id INTEGER PRIMARY KEY NOT NULL,
+            authorization_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS workspace_edit_editor_recovery (
+            transaction_id INTEGER NOT NULL,
+            workspace_id INTEGER NOT NULL,
+            tab_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            title TEXT,
+            applied_path TEXT,
+            PRIMARY KEY (transaction_id, workspace_id, tab_id)
         );
 
         CREATE TABLE IF NOT EXISTS window_state (
@@ -351,6 +606,19 @@ fn migrate(connection: &Connection) -> Result<()> {
         ",
     )?;
 
+    if !table_has_column(connection, "workspace_edit_editor_recovery", "applied_path")? {
+        connection.execute(
+            "ALTER TABLE workspace_edit_editor_recovery ADD COLUMN applied_path TEXT",
+            [],
+        )?;
+    }
+    if !table_has_column(connection, "workspace_edit_editor_recovery", "title")? {
+        connection.execute(
+            "ALTER TABLE workspace_edit_editor_recovery ADD COLUMN title TEXT",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -365,6 +633,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM panes", [])?;
     transaction.execute("DELETE FROM pane_nodes", [])?;
     transaction.execute("DELETE FROM workspaces", [])?;
+    transaction.execute("DELETE FROM workspace_edit_editor_recovery", [])?;
 
     Ok(())
 }
@@ -398,8 +667,40 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
     save_file_tree_view_states(transaction, state)?;
     save_git_diff_view_states(transaction, state)?;
     save_editor_view_states(transaction, state)?;
+    save_workspace_edit_editor_recovery(transaction, state)?;
 
     Ok(())
+}
+
+fn save_workspace_edit_editor_recovery(transaction: &Transaction<'_>, state: &State) -> Result<()> {
+    for (transaction_id, recovery) in state.workspace_edit_editor_recoveries() {
+        let view_state = recovery.original();
+        transaction.execute(
+            "INSERT INTO workspace_edit_editor_recovery
+             (transaction_id, workspace_id, tab_id, path, title, applied_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                to_i64(transaction_id, "workspace edit transaction id")?,
+                to_i64(view_state.workspace_id().value(), "workspace id")?,
+                to_i64(view_state.tab_id().value(), "tab id")?,
+                view_state.path(),
+                recovery.original_title(),
+                recovery.applied_path(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for name in names {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn replace_active_workspace_metadata(
@@ -650,7 +951,7 @@ fn load_state(connection: &Connection) -> Result<State> {
     let settings = load_settings(connection)?;
     let window_state = load_window_state(connection)?;
 
-    State::from_persisted(
+    let mut state = State::from_persisted(
         workspaces,
         active_workspace_id,
         file_tree_view_states,
@@ -659,7 +960,46 @@ fn load_state(connection: &Connection) -> Result<State> {
         settings,
         window_state,
     )
-    .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))
+    .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))?;
+    load_workspace_edit_editor_recovery(connection, &mut state)?;
+    Ok(state)
+}
+
+fn load_workspace_edit_editor_recovery(connection: &Connection, state: &mut State) -> Result<()> {
+    let mut statement = connection.prepare(
+        "SELECT transaction_id, workspace_id, tab_id, path, title, applied_path
+         FROM workspace_edit_editor_recovery
+         ORDER BY transaction_id, workspace_id, tab_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (transaction_id, workspace_id, tab_id, path, title, applied_path) = row?;
+        let transaction_id = u64::try_from(transaction_id)
+            .map_err(|_| invalid_state("invalid workspace edit transaction id"))?;
+        let workspace_id = u64::try_from(workspace_id)
+            .map(WorkspaceId::new)
+            .map_err(|_| invalid_state("invalid workspace edit workspace id"))?;
+        let tab_id = u64::try_from(tab_id)
+            .map(TabId::new)
+            .map_err(|_| invalid_state("invalid workspace edit tab id"))?;
+        let title = title.unwrap_or_else(|| path.rsplit('/').next().unwrap_or(&path).to_owned());
+        state.add_workspace_edit_editor_recovery(
+            transaction_id,
+            EditorViewState::new(workspace_id, tab_id, path),
+            title,
+            applied_path,
+        );
+    }
+    Ok(())
 }
 
 fn load_window_state(connection: &Connection) -> Result<Option<WindowState>> {

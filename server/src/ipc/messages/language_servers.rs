@@ -209,6 +209,15 @@ pub(crate) struct WorkspaceEditTransactionStatusPayload {
     phase: WorkspaceEditTransactionPhasePayload,
     retry_rollback: bool,
     can_finalize: bool,
+    requires_acknowledgement: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkspaceEditRecoveryPayload {
+    authorization: String,
+    #[serde(flatten)]
+    status: WorkspaceEditTransactionStatusPayload,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,6 +225,8 @@ pub(crate) struct WorkspaceEditTransactionStatusPayload {
 enum WorkspaceEditTransactionPhasePayload {
     Staged,
     Committed,
+    FinishingCommitted,
+    CommittedCleanupRequired,
     RolledBack,
     RecoveryRequired,
     FinishedCommitted,
@@ -439,6 +450,29 @@ pub(crate) struct StagedWorkspaceEditPayload {
     transaction_id: u64,
     authorization: String,
     documents: Vec<StagedWorkspaceEditDocumentPayload>,
+    operations: Vec<StagedWorkspaceEditOperationPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum StagedWorkspaceEditOperationPayload {
+    TextDocument {
+        document: usize,
+    },
+    CreateFile {
+        workspace_id: WorkspaceIdParam,
+        path: String,
+    },
+    RenameFile {
+        workspace_id: WorkspaceIdParam,
+        old_path: String,
+        new_path: String,
+    },
+    DeleteFile {
+        workspace_id: WorkspaceIdParam,
+        path: String,
+        recursive: bool,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -446,6 +480,7 @@ pub(crate) struct StagedWorkspaceEditPayload {
 struct StagedWorkspaceEditDocumentPayload {
     workspace_id: WorkspaceIdParam,
     path: String,
+    original_path: String,
     original_text: String,
     new_text: String,
     generation: Option<u64>,
@@ -853,10 +888,45 @@ impl StagedWorkspaceEditPayload {
                 .map(|document| StagedWorkspaceEditDocumentPayload {
                     workspace_id: document.workspace_id.into(),
                     path: document.path,
+                    original_path: document.original_path,
                     original_text: document.original_text,
                     new_text: document.new_text,
                     generation: document.generation,
                     version: document.version,
+                })
+                .collect(),
+            operations: edit
+                .operations
+                .into_iter()
+                .map(|operation| match operation {
+                    core::language_servers::StagedWorkspaceEditOperation::TextDocument {
+                        document,
+                    } => StagedWorkspaceEditOperationPayload::TextDocument { document },
+                    core::language_servers::StagedWorkspaceEditOperation::CreateFile {
+                        workspace_id,
+                        path,
+                    } => StagedWorkspaceEditOperationPayload::CreateFile {
+                        workspace_id: workspace_id.into(),
+                        path,
+                    },
+                    core::language_servers::StagedWorkspaceEditOperation::RenameFile {
+                        workspace_id,
+                        old_path,
+                        new_path,
+                    } => StagedWorkspaceEditOperationPayload::RenameFile {
+                        workspace_id: workspace_id.into(),
+                        old_path,
+                        new_path,
+                    },
+                    core::language_servers::StagedWorkspaceEditOperation::DeleteFile {
+                        workspace_id,
+                        path,
+                        recursive,
+                    } => StagedWorkspaceEditOperationPayload::DeleteFile {
+                        workspace_id: workspace_id.into(),
+                        path,
+                        recursive,
+                    },
                 })
                 .collect(),
         }
@@ -874,6 +944,12 @@ impl WorkspaceEditTransactionStatusPayload {
             phase: match status.phase {
                 Phase::Staged => WorkspaceEditTransactionPhasePayload::Staged,
                 Phase::Committed => WorkspaceEditTransactionPhasePayload::Committed,
+                Phase::FinishingCommitted => {
+                    WorkspaceEditTransactionPhasePayload::FinishingCommitted
+                }
+                Phase::CommittedCleanupRequired => {
+                    WorkspaceEditTransactionPhasePayload::CommittedCleanupRequired
+                }
                 Phase::RolledBack => WorkspaceEditTransactionPhasePayload::RolledBack,
                 Phase::RecoveryRequired => WorkspaceEditTransactionPhasePayload::RecoveryRequired,
                 Phase::FinishedCommitted => WorkspaceEditTransactionPhasePayload::FinishedCommitted,
@@ -886,6 +962,16 @@ impl WorkspaceEditTransactionStatusPayload {
             },
             retry_rollback: status.retry_rollback,
             can_finalize: status.can_finalize,
+            requires_acknowledgement: status.requires_acknowledgement,
+        }
+    }
+}
+
+impl WorkspaceEditRecoveryPayload {
+    pub(crate) fn from_core(recovery: core::language_servers::WorkspaceEditRecovery) -> Self {
+        Self {
+            authorization: recovery.authorization,
+            status: WorkspaceEditTransactionStatusPayload::from_core(recovery.status),
         }
     }
 }

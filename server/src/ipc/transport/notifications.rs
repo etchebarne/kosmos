@@ -12,11 +12,21 @@ const APPLY_EDIT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct NotificationHub {
     subscribers: Arc<Mutex<Subscribers>>,
     state: Arc<Mutex<Option<Weak<Mutex<core::State>>>>>,
+    store: Arc<Mutex<Option<core::persistence::StateStore>>>,
+    workspace_edit_publication: Arc<Mutex<()>>,
 }
 
 impl NotificationHub {
+    pub(crate) fn workspace_edit_publication_gate(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.workspace_edit_publication)
+    }
+
     pub(crate) fn attach_state(&self, state: Weak<Mutex<core::State>>) {
         *self.state.lock().unwrap_or_else(|error| error.into_inner()) = Some(state);
+    }
+
+    pub(crate) fn attach_store(&self, store: core::persistence::StateStore) {
+        *self.store.lock().unwrap_or_else(|error| error.into_inner()) = Some(store);
     }
 
     pub(crate) fn subscribe(&self, responses: ResponseSender) -> NotificationSubscription {
@@ -31,8 +41,7 @@ impl NotificationHub {
 
         NotificationSubscription {
             id,
-            subscribers: Arc::clone(&self.subscribers),
-            state: Arc::clone(&self.state),
+            hub: self.clone(),
         }
     }
 
@@ -48,7 +57,7 @@ impl NotificationHub {
             .collect::<Vec<_>>();
         let pending = subscribers.remove_renderers(&disconnected);
         drop(subscribers);
-        self.disconnect_renderers(&disconnected, pending);
+        self.disconnect_renderers_async(disconnected, pending);
     }
 
     fn core_event(&self, event: core::events::CoreEvent) {
@@ -63,7 +72,7 @@ impl NotificationHub {
             .collect::<Vec<_>>();
         let pending = subscribers.remove_renderers(&disconnected);
         drop(subscribers);
-        self.disconnect_renderers(&disconnected, pending);
+        self.disconnect_renderers_async(disconnected, pending);
     }
 
     pub(crate) fn acknowledge_apply_edit(
@@ -179,25 +188,14 @@ impl NotificationHub {
                 },
             };
         }
-        if self.transaction_finished_committed(pending) {
-            return core::events::WorkspaceEditApplication {
-                applied: true,
-                failure_reason: None,
-            };
-        }
-        if pending.cancelled || !applied {
-            let _ = self.cancel_transaction(pending);
-        }
-        core::events::WorkspaceEditApplication {
-            applied: false,
-            failure_reason: Some(if pending.cancelled {
-                "workspace edit application was cancelled".to_owned()
-            } else if applied {
-                "workspace edit was not durably completed before acknowledgement".to_owned()
-            } else {
-                failure_reason.unwrap_or_else(|| "renderer rejected the workspace edit".to_owned())
-            }),
-        }
+        let reason = if pending.cancelled {
+            "workspace edit application was cancelled".to_owned()
+        } else if applied {
+            "workspace edit was not durably completed before acknowledgement".to_owned()
+        } else {
+            failure_reason.unwrap_or_else(|| "renderer rejected the workspace edit".to_owned())
+        };
+        self.resolve_interrupted_transaction(pending, &reason)
     }
 
     fn cancel_timed_out_request(
@@ -221,23 +219,10 @@ impl NotificationHub {
                 "workspace edit acknowledgement timed out and application was cancelled",
             )
         } else {
-            match self.cancel_transaction(&pending) {
-                Ok(status)
-                    if status.phase
-                        == core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted =>
-                {
-                    core::events::WorkspaceEditApplication {
-                        applied: true,
-                        failure_reason: None,
-                    }
-                }
-                Ok(_) => apply_edit_failure(
-                    "workspace edit acknowledgement timed out and application was cancelled",
-                ),
-                Err(error) => apply_edit_failure(&format!(
-                    "workspace edit acknowledgement timed out; rollback requires recovery: {error}"
-                )),
-            }
+            self.resolve_interrupted_transaction(
+                &pending,
+                "workspace edit acknowledgement timed out and application was cancelled",
+            )
         };
         if !result.applied
             && let Some(response) = response
@@ -251,33 +236,121 @@ impl NotificationHub {
         result
     }
 
-    fn transaction_finished_committed(&self, pending: &PendingApplyEdit) -> bool {
-        self.with_state(|state| {
-            state.workspace_edit_status(pending.transaction_id, &pending.authorization)
-        })
-        .and_then(Result::ok)
-        .is_some_and(|status| {
-            status.phase == core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted
-        })
-    }
-
-    fn cancel_transaction(
+    fn resolve_interrupted_transaction(
         &self,
         pending: &PendingApplyEdit,
-    ) -> Result<
-        core::language_servers::WorkspaceEditTransactionStatus,
-        core::language_servers::WorkspaceEditError,
-    > {
-        self.with_state(|state| {
-            state.cancel_owned_workspace_edit(
-                pending.transaction_id,
-                &pending.authorization,
-                pending.renderer_id,
-            )
-        })
-        .unwrap_or(Err(core::language_servers::WorkspaceEditError::Invalid(
-            "workspace edit state is unavailable".to_owned(),
-        )))
+        reason: &str,
+    ) -> core::events::WorkspaceEditApplication {
+        let _publication = self
+            .workspace_edit_publication
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.resolve_interrupted_transaction_under_gate(pending, reason)
+    }
+
+    fn resolve_interrupted_transaction_under_gate(
+        &self,
+        pending: &PendingApplyEdit,
+        reason: &str,
+    ) -> core::events::WorkspaceEditApplication {
+        let Some(state) = self.state() else {
+            return apply_edit_failure(reason);
+        };
+        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        let status =
+            match state.workspace_edit_status(pending.transaction_id, &pending.authorization) {
+                Ok(status) => status,
+                Err(error) => {
+                    return apply_edit_recovery_required(&format!(
+                        "{reason}; durable transaction outcome is unavailable: {error}"
+                    ));
+                }
+            };
+        match status.phase {
+            core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted => {
+                self.acknowledge_terminal_outcome(&mut state, pending);
+                return workspace_edit_phase_application(
+                    status.phase,
+                    reason,
+                    pending.transaction_id,
+                )
+                .expect("finished committed is a resolved application phase");
+            }
+            core::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
+            | core::language_servers::WorkspaceEditTransactionPhase::FinishedUncommitted => {
+                self.acknowledge_terminal_outcome(&mut state, pending);
+                return workspace_edit_phase_application(
+                    status.phase,
+                    reason,
+                    pending.transaction_id,
+                )
+                .expect("finished rollback is a resolved application phase");
+            }
+            phase
+                @ (core::language_servers::WorkspaceEditTransactionPhase::FinishingCommitted
+                | core::language_servers::WorkspaceEditTransactionPhase::CommittedCleanupRequired
+                | core::language_servers::WorkspaceEditTransactionPhase::RecoveryRequired) => {
+                    return workspace_edit_phase_application(
+                        phase,
+                        reason,
+                        pending.transaction_id,
+                    )
+                    .expect("recovery phases have an application response");
+                }
+            _ => {}
+        }
+
+        let status = match state.cancel_owned_workspace_edit(
+            pending.transaction_id,
+            &pending.authorization,
+            pending.renderer_id,
+        ) {
+            Ok(status) => status,
+            Err(error) => {
+                return apply_edit_recovery_required(&format!(
+                    "{reason}; rollback requires recovery: {error}"
+                ));
+            }
+        };
+        if let Err(error) = self.persist_locked_state(&state) {
+            return apply_edit_recovery_required(&format!("{reason}; {error}"));
+        }
+        match status.phase {
+            core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted => {
+                self.acknowledge_terminal_outcome(&mut state, pending);
+                core::events::WorkspaceEditApplication {
+                    applied: true,
+                    failure_reason: None,
+                }
+            }
+            core::language_servers::WorkspaceEditTransactionPhase::RolledBack => {
+                if let Err(error) = state
+                    .finish_workspace_edit(pending.transaction_id, &pending.authorization)
+                    .and_then(|_| self.persist_locked_state(&state))
+                {
+                    return apply_edit_failure(&format!(
+                        "{reason}; rollback completion requires recovery: {error}"
+                    ));
+                }
+                self.acknowledge_terminal_outcome(&mut state, pending);
+                apply_edit_failure(reason)
+            }
+            core::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
+            | core::language_servers::WorkspaceEditTransactionPhase::FinishedUncommitted => {
+                self.acknowledge_terminal_outcome(&mut state, pending);
+                apply_edit_failure(reason)
+            }
+            phase
+                @ (core::language_servers::WorkspaceEditTransactionPhase::FinishingCommitted
+                | core::language_servers::WorkspaceEditTransactionPhase::CommittedCleanupRequired
+                | core::language_servers::WorkspaceEditTransactionPhase::RecoveryRequired) => {
+                    workspace_edit_phase_application(phase, reason, pending.transaction_id)
+                        .expect("recovery phases have an application response")
+                }
+            phase => apply_edit_failure(&format!(
+                "{reason}; rollback did not reach a durable terminal outcome ({phase:?})"
+            )),
+        }
     }
 
     fn disconnect_renderers(&self, renderer_ids: &[u64], pending: Vec<PendingApplyEdit>) {
@@ -285,16 +358,56 @@ impl NotificationHub {
             debug_assert!(pending.is_empty());
             return;
         }
+        let _publication = self
+            .workspace_edit_publication
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for pending in pending {
+            let result = self.resolve_interrupted_transaction_under_gate(
+                &pending,
+                "renderer disconnected while applying workspace edit",
+            );
+            let _ = pending.result.send(result);
+        }
         if let Some(state) = self.state() {
-            let state = state.lock().unwrap_or_else(|error| error.into_inner());
+            let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+            let mut rolled_back = Vec::new();
             for renderer_id in renderer_ids {
-                state.disconnect_workspace_edit_owner(*renderer_id);
+                rolled_back.extend(
+                    state
+                        .disconnect_workspace_edit_owner(*renderer_id)
+                        .into_iter()
+                        .filter(|status| {
+                            status.phase
+                                == core::language_servers::WorkspaceEditTransactionPhase::RolledBack
+                        })
+                        .map(|status| status.transaction_id),
+                );
+            }
+            if let Some(store) = self.store.lock().ok().and_then(|store| store.clone()) {
+                match store.save(&state) {
+                    Ok(()) => state.finish_disconnected_workspace_edit_rollbacks(&rolled_back),
+                    Err(error) => {
+                        eprintln!("workspace edit disconnect rollback persistence failed: {error}");
+                    }
+                }
             }
         }
-        fail_pending_apply_edits(
-            pending,
-            "renderer disconnected while applying workspace edit",
-        );
+    }
+
+    fn disconnect_renderers_async(&self, renderer_ids: Vec<u64>, pending: Vec<PendingApplyEdit>) {
+        if renderer_ids.is_empty() {
+            debug_assert!(pending.is_empty());
+            return;
+        }
+        let hub = self.clone();
+        if std::thread::Builder::new()
+            .name("kosmos-workspace-edit-disconnect".to_owned())
+            .spawn(move || hub.disconnect_renderers(&renderer_ids, pending))
+            .is_err()
+        {
+            eprintln!("workspace edit disconnect worker failed to start");
+        }
     }
 
     fn state(&self) -> Option<Arc<Mutex<core::State>>> {
@@ -304,10 +417,43 @@ impl NotificationHub {
             .and_then(|state| state.as_ref()?.upgrade())
     }
 
-    fn with_state<T>(&self, operation: impl FnOnce(&core::State) -> T) -> Option<T> {
+    fn with_state<T>(&self, operation: impl FnOnce(&mut core::State) -> T) -> Option<T> {
         let state = self.state()?;
-        let state = state.lock().ok()?;
-        Some(operation(&state))
+        let mut state = state.lock().ok()?;
+        Some(operation(&mut state))
+    }
+
+    fn acknowledge_terminal_outcome(&self, state: &mut core::State, pending: &PendingApplyEdit) {
+        if let Err(error) = state
+            .acknowledge_workspace_edit_completion(pending.transaction_id, &pending.authorization)
+        {
+            eprintln!(
+                "workspace edit {} completion cleanup failed: {error}",
+                pending.transaction_id
+            );
+            return;
+        }
+        if let Err(error) = self.persist_locked_state(state) {
+            eprintln!(
+                "workspace edit {} completion state persistence failed: {error}",
+                pending.transaction_id
+            );
+        }
+    }
+
+    fn persist_locked_state(
+        &self,
+        state: &core::State,
+    ) -> Result<(), core::language_servers::WorkspaceEditError> {
+        let store = self.store.lock().ok().and_then(|store| store.clone());
+        let Some(store) = store else {
+            return Ok(());
+        };
+        store.save(state).map_err(|error| {
+            core::language_servers::WorkspaceEditError::Recovery(format!(
+                "workspace edit rollback persistence failed: {error}"
+            ))
+        })
     }
 }
 
@@ -359,12 +505,6 @@ impl Subscribers {
     }
 }
 
-fn fail_pending_apply_edits(pending: Vec<PendingApplyEdit>, reason: &str) {
-    for pending in pending {
-        let _ = pending.result.send(apply_edit_failure(reason));
-    }
-}
-
 fn apply_edit_failure(reason: &str) -> core::events::WorkspaceEditApplication {
     core::events::WorkspaceEditApplication {
         applied: false,
@@ -372,10 +512,55 @@ fn apply_edit_failure(reason: &str) -> core::events::WorkspaceEditApplication {
     }
 }
 
+fn apply_edit_recovery_required(reason: &str) -> core::events::WorkspaceEditApplication {
+    core::events::WorkspaceEditApplication {
+        applied: false,
+        failure_reason: Some(reason.to_owned()),
+    }
+}
+
+fn workspace_edit_phase_application(
+    phase: core::language_servers::WorkspaceEditTransactionPhase,
+    reason: &str,
+    transaction_id: u64,
+) -> Option<core::events::WorkspaceEditApplication> {
+    use core::language_servers::WorkspaceEditTransactionPhase as Phase;
+
+    match phase {
+        Phase::FinishedCommitted => Some(core::events::WorkspaceEditApplication {
+            applied: true,
+            failure_reason: None,
+        }),
+        Phase::FinishingCommitted | Phase::CommittedCleanupRequired => {
+            Some(core::events::WorkspaceEditApplication {
+                applied: true,
+                failure_reason: Some(committed_cleanup_failure_reason(reason, transaction_id)),
+            })
+        }
+        Phase::FinishedRolledBack | Phase::FinishedUncommitted => Some(apply_edit_failure(reason)),
+        Phase::RecoveryRequired => Some(apply_edit_recovery_required(&recovery_failure_reason(
+            reason,
+            transaction_id,
+        ))),
+        Phase::Staged | Phase::Committed | Phase::RolledBack => None,
+    }
+}
+
+fn recovery_failure_reason(reason: &str, transaction_id: u64) -> String {
+    format!(
+        "{reason}; workspace edit transaction {transaction_id} requires recovery; retry rollback or explicitly finalize it"
+    )
+}
+
+fn committed_cleanup_failure_reason(reason: &str, transaction_id: u64) -> String {
+    format!(
+        "{reason}; workspace edit transaction {transaction_id} is durably committed but cleanup is incomplete; retry finalize"
+    )
+}
+
 pub(crate) struct NotificationSubscription {
     id: u64,
-    subscribers: Arc<Mutex<Subscribers>>,
-    state: Arc<Mutex<Option<Weak<Mutex<core::State>>>>>,
+    hub: NotificationHub,
 }
 
 impl NotificationSubscription {
@@ -387,25 +572,12 @@ impl NotificationSubscription {
 impl Drop for NotificationSubscription {
     fn drop(&mut self) {
         let pending = self
+            .hub
             .subscribers
             .lock()
             .map(|mut subscribers| subscribers.remove_renderers(&[self.id]))
             .unwrap_or_default();
-        if let Some(state) = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|state| state.as_ref()?.upgrade())
-        {
-            state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .disconnect_workspace_edit_owner(self.id);
-        }
-        fail_pending_apply_edits(
-            pending,
-            "renderer disconnected while applying workspace edit",
-        );
+        self.hub.disconnect_renderers(&[self.id], pending);
     }
 }
 
@@ -415,7 +587,7 @@ mod tests {
     use crate::ipc::messages::envelope::ServerMessage;
     use crate::ipc::transport::response;
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn subscriptions_receive_workspace_changes_until_dropped() {
@@ -446,6 +618,7 @@ mod tests {
                 transaction_id: 9,
                 authorization: "a".repeat(64),
                 documents: Vec::new(),
+                operations: Vec::new(),
             })
         });
         let notification = receiver
@@ -490,6 +663,7 @@ mod tests {
                 transaction_id: 10,
                 authorization: "b".repeat(64),
                 documents: Vec::new(),
+                operations: Vec::new(),
             })
         });
         receiver
@@ -519,6 +693,7 @@ mod tests {
                     transaction_id: 11,
                     authorization: "c".repeat(64),
                     documents: Vec::new(),
+                    operations: Vec::new(),
                 },
                 Duration::from_millis(25),
             )
@@ -542,6 +717,307 @@ mod tests {
             result.failure_reason.as_deref(),
             Some("workspace edit acknowledgement timed out and application was cancelled")
         );
+    }
+
+    #[test]
+    fn every_workspace_edit_phase_has_safe_apply_edit_response_semantics() {
+        use core::language_servers::WorkspaceEditTransactionPhase as Phase;
+
+        let cases = [
+            (Phase::Staged, None),
+            (Phase::Committed, None),
+            (Phase::RolledBack, None),
+            (Phase::FinishingCommitted, Some((true, true))),
+            (Phase::CommittedCleanupRequired, Some((true, true))),
+            (Phase::RecoveryRequired, Some((false, true))),
+            (Phase::FinishedCommitted, Some((true, false))),
+            (Phase::FinishedRolledBack, Some((false, true))),
+            (Phase::FinishedUncommitted, Some((false, true))),
+        ];
+
+        for (phase, expected) in cases {
+            let application = workspace_edit_phase_application(phase, "interrupted", 42);
+            assert_eq!(
+                application
+                    .as_ref()
+                    .map(|result| (result.applied, result.failure_reason.is_some())),
+                expected,
+                "unexpected workspace/applyEdit response for {phase:?}"
+            );
+            if phase == Phase::RecoveryRequired {
+                assert!(
+                    application
+                        .as_ref()
+                        .unwrap()
+                        .failure_reason
+                        .as_ref()
+                        .unwrap()
+                        .contains("retry rollback")
+                );
+            }
+            if matches!(
+                phase,
+                Phase::FinishingCommitted | Phase::CommittedCleanupRequired
+            ) {
+                let application = application.as_ref().unwrap();
+                assert!(
+                    !application
+                        .failure_reason
+                        .as_ref()
+                        .unwrap()
+                        .contains("rollback")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disconnect_after_finished_commit_reports_applied_and_acknowledges_cleanup() {
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-notification-apply-edit-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should follow the Unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("test workspace should be created");
+        let database = root.join("state.sqlite");
+        let store = core::persistence::StateStore::open(&database).expect("store should open");
+        let manager = core::language_servers::LanguageServerManager::open(
+            core::language_servers::LanguageServerPaths::new(
+                root.join("language-servers"),
+                root.join("language-server-cache"),
+            ),
+            store.clone(),
+        )
+        .expect("language server manager should open");
+        let mut state = core::State::new();
+        let workspace_id = state.open_workspace(&root);
+        let staged = manager
+            .stage_workspace_edit(
+                &serde_json::json!({}),
+                &[core::language_servers::WorkspaceEditRoot {
+                    workspace_id,
+                    path: root.clone(),
+                }],
+            )
+            .expect("workspace edit should stage");
+        state.attach_language_server_manager(manager);
+        let state = Arc::new(Mutex::new(state));
+        let hub = NotificationHub::default();
+        hub.attach_state(Arc::downgrade(&state));
+        hub.attach_store(store.clone());
+        let (responses, receiver) = response_channel();
+        let subscription = hub.subscribe(responses);
+        let renderer_id = subscription.id();
+        let request_hub = hub.clone();
+        let requested = staged.clone();
+        let request = std::thread::spawn(move || request_hub.request_apply_edit(requested));
+        let notification = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("renderer should receive apply-edit notification");
+        let notification = serde_json::to_value(notification).expect("notification should encode");
+        let id = notification["id"]
+            .as_u64()
+            .expect("notification should have an ID");
+        let token = notification["token"]
+            .as_str()
+            .expect("notification should have a token");
+
+        {
+            let mut state = state.lock().expect("state should lock");
+            state
+                .commit_workspace_edit(staged.transaction_id, &staged.authorization)
+                .expect("renderer commit should succeed");
+            store.save(&state).expect("committed state should persist");
+            state
+                .finish_workspace_edit(staged.transaction_id, &staged.authorization)
+                .expect("renderer finish should succeed");
+            assert_eq!(
+                state
+                    .workspace_edit_status(staged.transaction_id, &staged.authorization)
+                    .expect("terminal outcome must remain visible through renderer completion")
+                    .phase,
+                core::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted
+            );
+        }
+
+        drop(subscription);
+        let application = request.join().expect("apply-edit request should finish");
+        assert!(application.applied);
+        assert_eq!(application.failure_reason, None);
+        hub.acknowledge_apply_edit(renderer_id, id, token, true, None);
+        let mut state = state
+            .lock()
+            .expect("state should lock after acknowledgement");
+        assert!(state.workspace_edit_recoveries().unwrap().is_empty());
+        assert!(matches!(
+            state.workspace_edit_status(staged.transaction_id, &staged.authorization),
+            Err(core::language_servers::WorkspaceEditError::Expired)
+        ));
+        assert!(
+            state
+                .acknowledge_workspace_edit_completion(staged.transaction_id, &staged.authorization)
+                .expect("acknowledgement tombstone should make cleanup retries idempotent")
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn disconnect_before_commit_durably_rolls_back_before_reporting_failure() {
+        let (root, store, state, staged) = staged_apply_edit("disconnect-before-commit", false);
+        let state = Arc::new(Mutex::new(state));
+        let hub = NotificationHub::default();
+        hub.attach_state(Arc::downgrade(&state));
+        hub.attach_store(store.clone());
+        let (responses, receiver) = response_channel();
+        let subscription = hub.subscribe(responses);
+        let renderer_id = subscription.id();
+        let request_hub = hub.clone();
+        let requested = staged.clone();
+        let request = std::thread::spawn(move || request_hub.request_apply_edit(requested));
+        let notification = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("renderer should receive apply-edit notification");
+        let notification = serde_json::to_value(notification).unwrap();
+        let id = notification["id"].as_u64().unwrap();
+        let token = notification["token"].as_str().unwrap().to_owned();
+
+        drop(subscription);
+        let application = request
+            .join()
+            .expect("disconnect should resolve apply-edit");
+        assert!(!application.applied);
+        assert_eq!(
+            application.failure_reason.as_deref(),
+            Some("renderer disconnected while applying workspace edit")
+        );
+        assert!(matches!(
+            state
+                .lock()
+                .unwrap()
+                .workspace_edit_status(staged.transaction_id, &staged.authorization),
+            Err(core::language_servers::WorkspaceEditError::Expired)
+        ));
+        hub.acknowledge_apply_edit(renderer_id, id, &token, true, None);
+        assert_eq!(
+            std::fs::read_to_string(root.join("target.txt")).unwrap(),
+            "before"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn disconnect_during_recovery_reports_recovery_and_retains_transaction() {
+        let (root, store, state, staged) = staged_apply_edit("disconnect-during-recovery", true);
+        let state = Arc::new(Mutex::new(state));
+        let hub = NotificationHub::default();
+        hub.attach_state(Arc::downgrade(&state));
+        hub.attach_store(store);
+        let (responses, receiver) = response_channel();
+        let subscription = hub.subscribe(responses);
+        let request_hub = hub.clone();
+        let requested = staged.clone();
+        let request = std::thread::spawn(move || request_hub.request_apply_edit(requested));
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("renderer should receive apply-edit notification");
+
+        {
+            let mut state = state.lock().unwrap();
+            state
+                .commit_workspace_edit(staged.transaction_id, &staged.authorization)
+                .expect("closed edit should commit");
+            std::fs::write(root.join("target.txt"), "changed after commit").unwrap();
+            assert!(matches!(
+                state.rollback_workspace_edit(staged.transaction_id, &staged.authorization),
+                Err(core::language_servers::WorkspaceEditError::Recovery(_))
+            ));
+        }
+
+        drop(subscription);
+        let application = request
+            .join()
+            .expect("disconnect should resolve apply-edit");
+        assert!(!application.applied);
+        assert!(
+            application
+                .failure_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("requires recovery"))
+        );
+        let state = state.lock().unwrap();
+        assert_eq!(
+            state
+                .workspace_edit_status(staged.transaction_id, &staged.authorization)
+                .unwrap()
+                .phase,
+            core::language_servers::WorkspaceEditTransactionPhase::RecoveryRequired
+        );
+        state
+            .claim_workspace_edit_owner(staged.transaction_id, &staged.authorization, 999)
+            .expect("disconnect should release recovery ownership without retrying rollback");
+        drop(state);
+        assert_eq!(
+            std::fs::read_to_string(root.join("target.txt")).unwrap(),
+            "changed after commit"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn staged_apply_edit(
+        name: &str,
+        overwrite: bool,
+    ) -> (
+        std::path::PathBuf,
+        core::persistence::StateStore,
+        core::State,
+        core::language_servers::StagedWorkspaceEdit,
+    ) {
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-notification-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("target.txt"), "before").unwrap();
+        let store = core::persistence::StateStore::open(root.join("state.sqlite")).unwrap();
+        let manager = core::language_servers::LanguageServerManager::open(
+            core::language_servers::LanguageServerPaths::new(
+                root.join("language-servers"),
+                root.join("language-server-cache"),
+            ),
+            store.clone(),
+        )
+        .unwrap();
+        let mut state = core::State::new();
+        let workspace_id = state.open_workspace(&root);
+        let edit = if overwrite {
+            serde_json::json!({ "documentChanges": [{
+                "kind": "create",
+                "uri": format!("file://{}", root.join("target.txt").display()),
+                "options": { "overwrite": true }
+            }]})
+        } else {
+            serde_json::json!({})
+        };
+        let staged = manager
+            .stage_workspace_edit(
+                &edit,
+                &[core::language_servers::WorkspaceEditRoot {
+                    workspace_id,
+                    path: root.clone(),
+                }],
+            )
+            .unwrap();
+        state.attach_language_server_manager(manager);
+        store.save(&state).unwrap();
+        (root, store, state, staged)
     }
 
     fn response_channel() -> (ResponseSender, response::ResponseReceiver) {

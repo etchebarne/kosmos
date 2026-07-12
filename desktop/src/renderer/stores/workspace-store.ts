@@ -71,6 +71,7 @@ type WorkspaceStore = {
   closeWorkspace(workspaceId: WorkspaceId): Promise<void>;
   flushPendingState(): Promise<void>;
   initializeWorkspaces(): Promise<void>;
+  refreshWorkspaces(): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
   openEditorTab(tabId: TabId, path: string): void;
   openEditorLocation(
@@ -267,6 +268,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         if (get().loadRequestId === requestId) {
           set({ isLoadingWorkspaces: false });
         }
+      }
+    },
+    async refreshWorkspaces() {
+      try {
+        const snapshot = await listWorkspaces();
+        set((state) => ({
+          error: null,
+          snapshot: mergeLocalSplitRatios(snapshot, state.snapshot),
+        }));
+      } catch (caughtError) {
+        set({ error: errorMessage(caughtError) });
       }
     },
     moveTab(paneId, tabId, targetPaneId, targetIndex) {

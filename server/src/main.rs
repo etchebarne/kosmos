@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 fn main() -> io::Result<()> {
     let store = core::persistence::StateStore::open(database_path()?).map_err(io::Error::other)?;
-    let mut state = store.load().map_err(io::Error::other)?;
     let language_server_manager = language_server_paths().and_then(|paths| {
         core::language_servers::LanguageServerManager::open(paths, store.clone())
             .map_err(io::Error::other)
     });
+    let mut state = store.load().map_err(io::Error::other)?;
     match language_server_manager {
         Ok(manager) => state.attach_language_server_manager(manager),
         Err(error) => eprintln!("language server manager unavailable: {error}"),

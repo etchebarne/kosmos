@@ -53,6 +53,10 @@ impl EditorViewState {
     pub fn path(&self) -> &str {
         &self.path
     }
+
+    pub(crate) fn set_path(&mut self, path: impl Into<String>) {
+        self.path = path.into();
+    }
 }
 
 impl EditorDocument {

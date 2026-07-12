@@ -36,6 +36,7 @@ import type {
   StagedWorkspaceEdit,
   WorkspaceEditTransactionParams,
   WorkspaceEditTransactionStatus,
+  WorkspaceEditRecovery,
 } from "@/shared/ipc";
 
 import { requestServer, type RequestCancellation } from "./transport";
@@ -245,6 +246,12 @@ export function finishWorkspaceEdit(params: WorkspaceEditTransactionParams): Pro
   return requestServer(DOMAIN, "finishWorkspaceEdit", params);
 }
 
+export function acknowledgeWorkspaceEditCompletion(
+  params: WorkspaceEditTransactionParams,
+): Promise<boolean> {
+  return requestServer(DOMAIN, "acknowledgeWorkspaceEditCompletion", params);
+}
+
 export function finalizeWorkspaceEdit(
   params: WorkspaceEditTransactionParams,
 ): Promise<WorkspaceEditTransactionStatus> {
@@ -255,6 +262,10 @@ export function getWorkspaceEditStatus(
   params: WorkspaceEditTransactionParams,
 ): Promise<WorkspaceEditTransactionStatus> {
   return requestServer(DOMAIN, "workspaceEditStatus", params);
+}
+
+export function listWorkspaceEditRecoveries(): Promise<WorkspaceEditRecovery[]> {
+  return requestServer(DOMAIN, "listWorkspaceEditRecoveries");
 }
 
 export function getLanguageServerDocumentColors(

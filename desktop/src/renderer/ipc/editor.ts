@@ -8,6 +8,7 @@ import type {
 } from "@/shared/ipc";
 
 import { requestServer } from "./transport";
+import type { RequestCancellation } from "./transport";
 
 const DOMAIN = "editor";
 
@@ -23,6 +24,9 @@ export function getEditorGitLineHunks(params: EditorTabParams): Promise<EditorGi
   return requestServer(DOMAIN, "gitLineHunks", params);
 }
 
-export function saveEditorDocument(params: SaveEditorDocumentParams): Promise<boolean> {
-  return requestServer(DOMAIN, "save", params);
+export function saveEditorDocument(
+  params: SaveEditorDocumentParams,
+  cancellation?: RequestCancellation,
+): Promise<boolean> {
+  return requestServer(DOMAIN, "save", params, cancellation);
 }

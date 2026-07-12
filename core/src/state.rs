@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,8 +17,8 @@ use crate::language_servers::{
     LanguageServerManager, LanguageServerPosition, LanguageServerPrepareRename,
     LanguageServerRequestCancellation, LanguageServerSignatureHelp, LanguageServerStatus,
     LanguageServerTextEdit, LanguageServerWorkspaceSymbol,
-    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, WorkspaceEditError,
-    WorkspaceEditRoot,
+    LanguageServerWorkspaceSymbolResolveRequest, StagedWorkspaceEdit, StagedWorkspaceEditOperation,
+    WorkspaceEditError, WorkspaceEditRoot,
 };
 use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::{
@@ -50,6 +50,7 @@ pub struct State {
     file_tree_view_states: Vec<FileTreeViewState>,
     git_diff_view_states: Vec<GitDiffViewState>,
     editor_view_states: Vec<EditorViewState>,
+    workspace_edit_editor_recovery: HashMap<u64, Vec<WorkspaceEditEditorRecovery>>,
     terminal_sessions: TerminalSessions,
     language_server_manager: Option<LanguageServerManager>,
     formatter_manager: Option<FormatterManager>,
@@ -59,6 +60,28 @@ pub struct State {
     next_tab_id: u64,
     instance_id: u64,
     persistent_revision: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WorkspaceEditEditorRecovery {
+    original: EditorViewState,
+    original_title: String,
+    virtual_path: String,
+    present: bool,
+}
+
+impl WorkspaceEditEditorRecovery {
+    pub(crate) fn original(&self) -> &EditorViewState {
+        &self.original
+    }
+
+    pub(crate) fn original_title(&self) -> &str {
+        &self.original_title
+    }
+
+    pub(crate) fn applied_path(&self) -> Option<&str> {
+        self.present.then_some(self.virtual_path.as_str())
+    }
 }
 
 #[derive(Debug)]
@@ -88,6 +111,21 @@ fn full_document_edit(text: &str, formatted: String) -> Vec<LanguageServerTextEd
         },
         new_text: formatted,
     }]
+}
+
+fn remap_workspace_path(path: &str, source: &str, destination: &str) -> Option<String> {
+    if path == source {
+        return Some(destination.to_owned());
+    }
+    let suffix = path.strip_prefix(source)?.strip_prefix('/')?;
+    Some(format!("{destination}/{suffix}"))
+}
+
+fn path_is_at_or_below(path: &str, parent: &str) -> bool {
+    path == parent
+        || path
+            .strip_prefix(parent)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 impl PersistentStateCandidate {
@@ -844,55 +882,321 @@ impl State {
     }
 
     pub fn commit_workspace_edit(
-        &self,
+        &mut self,
         transaction_id: u64,
         authorization: &str,
     ) -> Result<(), WorkspaceEditError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or_else(|| {
-                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-            })?
-            .commit_workspace_edit(transaction_id, authorization)
+        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
+            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+        })?;
+        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
+        manager.commit_workspace_edit(transaction_id, authorization)?;
+        self.reconcile_workspace_edit_resources(transaction_id, &operations, false);
+        Ok(())
     }
 
     pub fn rollback_workspace_edit(
-        &self,
+        &mut self,
         transaction_id: u64,
         authorization: &str,
     ) -> Result<(), WorkspaceEditError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or_else(|| {
-                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-            })?
-            .rollback_workspace_edit(transaction_id, authorization)
+        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
+            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+        })?;
+        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
+        manager.rollback_workspace_edit(transaction_id, authorization)?;
+        self.reconcile_workspace_edit_resources(transaction_id, &operations, true);
+        Ok(())
+    }
+
+    fn reconcile_workspace_edit_resources(
+        &mut self,
+        transaction_id: u64,
+        operations: &[StagedWorkspaceEditOperation],
+        reverse: bool,
+    ) {
+        if reverse {
+            if self.restore_workspace_edit_editor_recovery(transaction_id) {
+                self.mark_persistent_change();
+            }
+            return;
+        }
+        let mut changed = false;
+        for operation in operations {
+            if let StagedWorkspaceEditOperation::CreateFile {
+                workspace_id, path, ..
+            }
+            | StagedWorkspaceEditOperation::DeleteFile {
+                workspace_id, path, ..
+            } = operation
+            {
+                changed |= self.remove_deleted_editor_states(transaction_id, *workspace_id, path);
+                continue;
+            }
+            let StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path,
+                new_path,
+            } = operation
+            else {
+                continue;
+            };
+            changed |= self.remove_deleted_editor_states(transaction_id, *workspace_id, new_path);
+            let renamed = self
+                .editor_view_states
+                .iter()
+                .filter(|state| state.workspace_id() == *workspace_id)
+                .filter_map(|state| {
+                    remap_workspace_path(state.path(), old_path, new_path)
+                        .map(|path| (state.clone(), path))
+                })
+                .collect::<Vec<_>>();
+            for (state, path) in renamed {
+                let title = self
+                    .tab_title(state.workspace_id(), state.tab_id())
+                    .unwrap_or_else(|| {
+                        state
+                            .path()
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(state.path())
+                            .to_owned()
+                    });
+                self.record_workspace_edit_editor_recovery(transaction_id, state.clone(), title);
+                if let Some(current) = self.editor_view_states.iter_mut().find(|current| {
+                    current.workspace_id() == state.workspace_id()
+                        && current.tab_id() == state.tab_id()
+                }) {
+                    current.set_path(path.clone());
+                }
+                self.update_workspace_edit_editor_recovery(
+                    transaction_id,
+                    state.workspace_id(),
+                    state.tab_id(),
+                    path.clone(),
+                    true,
+                );
+                self.set_editor_tab_state(
+                    state.workspace_id(),
+                    state.tab_id(),
+                    TabKind::Editor,
+                    path.rsplit('/').next().unwrap_or(&path),
+                );
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        self.mark_persistent_change();
+    }
+
+    fn remove_deleted_editor_states(
+        &mut self,
+        transaction_id: u64,
+        workspace_id: WorkspaceId,
+        path: &str,
+    ) -> bool {
+        let removed = self
+            .editor_view_states
+            .iter()
+            .filter(|state| {
+                state.workspace_id() == workspace_id && path_is_at_or_below(state.path(), path)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if removed.is_empty() {
+            return false;
+        }
+        for state in &removed {
+            let title = self
+                .tab_title(workspace_id, state.tab_id())
+                .unwrap_or_else(|| {
+                    state
+                        .path()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(state.path())
+                        .to_owned()
+                });
+            self.record_workspace_edit_editor_recovery(transaction_id, state.clone(), title);
+            self.update_workspace_edit_editor_recovery(
+                transaction_id,
+                workspace_id,
+                state.tab_id(),
+                state.path().to_owned(),
+                false,
+            );
+            self.set_editor_tab_state(workspace_id, state.tab_id(), TabKind::Blank, "Blank");
+        }
+        self.editor_view_states
+            .retain(|state| !removed.contains(state));
+        true
+    }
+
+    fn record_workspace_edit_editor_recovery(
+        &mut self,
+        transaction_id: u64,
+        state: EditorViewState,
+        original_title: String,
+    ) {
+        let states = self
+            .workspace_edit_editor_recovery
+            .entry(transaction_id)
+            .or_default();
+        if states.iter().any(|current| {
+            current.original.workspace_id() == state.workspace_id()
+                && current.original.tab_id() == state.tab_id()
+        }) {
+            return;
+        }
+        states.push(WorkspaceEditEditorRecovery {
+            virtual_path: state.path().to_owned(),
+            original: state,
+            original_title,
+            present: true,
+        });
+    }
+
+    fn update_workspace_edit_editor_recovery(
+        &mut self,
+        transaction_id: u64,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        virtual_path: String,
+        present: bool,
+    ) {
+        let Some(recovery) = self
+            .workspace_edit_editor_recovery
+            .get_mut(&transaction_id)
+            .and_then(|states| {
+                states.iter_mut().find(|state| {
+                    state.original.workspace_id() == workspace_id
+                        && state.original.tab_id() == tab_id
+                })
+            })
+        else {
+            return;
+        };
+        recovery.virtual_path = virtual_path;
+        recovery.present = present;
+    }
+
+    fn restore_workspace_edit_editor_recovery(&mut self, transaction_id: u64) -> bool {
+        let Some(recoveries) = self.workspace_edit_editor_recovery.remove(&transaction_id) else {
+            return false;
+        };
+        for recovery in recoveries {
+            let workspace_id = recovery.original.workspace_id();
+            let tab_id = recovery.original.tab_id();
+            self.editor_view_states
+                .retain(|state| state.workspace_id() != workspace_id || state.tab_id() != tab_id);
+            self.editor_view_states.push(recovery.original);
+            self.set_editor_tab_state(
+                workspace_id,
+                tab_id,
+                TabKind::Editor,
+                &recovery.original_title,
+            );
+        }
+        true
+    }
+
+    fn tab_title(&self, workspace_id: WorkspaceId, tab_id: TabId) -> Option<String> {
+        let workspace = self.workspaces.workspace(workspace_id)?;
+        tab_title_in_node(workspace.root(), tab_id).map(str::to_owned)
+    }
+
+    fn set_editor_tab_state(
+        &mut self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        kind: TabKind,
+        title: &str,
+    ) {
+        let Some(pane_id) = tab_pane_id_in_workspace_list(&self.workspaces, workspace_id, tab_id)
+        else {
+            return;
+        };
+        if let Some(workspace) = self.workspace_mut(workspace_id)
+            && let Some(pane) = workspace.root_mut().find_pane_mut(pane_id)
+        {
+            pane.set_tab_kind(tab_id, kind);
+            pane.rename_tab(tab_id, title);
+        }
     }
 
     pub fn finish_workspace_edit(
-        &self,
+        &mut self,
         transaction_id: u64,
         authorization: &str,
     ) -> Result<bool, WorkspaceEditError> {
-        self.language_server_manager
+        let finished = self
+            .language_server_manager
             .as_ref()
             .ok_or_else(|| {
                 WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
             })?
-            .finish_workspace_edit(transaction_id, authorization)
+            .finish_workspace_edit(transaction_id, authorization)?;
+        if self
+            .workspace_edit_editor_recovery
+            .remove(&transaction_id)
+            .is_some()
+        {
+            self.mark_persistent_change();
+        }
+        Ok(finished)
+    }
+
+    pub fn acknowledge_workspace_edit_completion(
+        &mut self,
+        transaction_id: u64,
+        authorization: &str,
+    ) -> Result<bool, WorkspaceEditError> {
+        let acknowledged = self
+            .language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .acknowledge_workspace_edit_completion(transaction_id, authorization)?;
+        if self
+            .workspace_edit_editor_recovery
+            .remove(&transaction_id)
+            .is_some()
+        {
+            self.mark_persistent_change();
+        }
+        Ok(acknowledged)
     }
 
     pub fn finalize_workspace_edit(
-        &self,
+        &mut self,
         transaction_id: u64,
         authorization: &str,
     ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or_else(|| {
-                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-            })?
-            .finalize_workspace_edit(transaction_id, authorization)
+        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
+            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+        })?;
+        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
+        let status = manager.finalize_workspace_edit(transaction_id, authorization)?;
+        match status.phase {
+            crate::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted => {
+                self.reconcile_workspace_edit_resources(transaction_id, &operations, false);
+                if self
+                    .workspace_edit_editor_recovery
+                    .remove(&transaction_id)
+                    .is_some()
+                {
+                    self.mark_persistent_change();
+                }
+            }
+            crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack => {
+                self.reconcile_workspace_edit_resources(transaction_id, &operations, true);
+            }
+            _ => {}
+        }
+        Ok(status)
     }
 
     pub fn workspace_edit_status(
@@ -906,6 +1210,18 @@ impl State {
                 WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
             })?
             .workspace_edit_status(transaction_id, authorization)
+    }
+
+    pub fn workspace_edit_recoveries(
+        &self,
+    ) -> Result<Vec<crate::language_servers::WorkspaceEditRecovery>, WorkspaceEditError> {
+        Ok(self
+            .language_server_manager
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+            })?
+            .workspace_edit_recoveries())
     }
 
     pub fn claim_workspace_edit_owner(
@@ -923,27 +1239,51 @@ impl State {
     }
 
     pub fn cancel_owned_workspace_edit(
-        &self,
+        &mut self,
         transaction_id: u64,
         authorization: &str,
         owner: u64,
     ) -> Result<crate::language_servers::WorkspaceEditTransactionStatus, WorkspaceEditError> {
-        self.language_server_manager
-            .as_ref()
-            .ok_or_else(|| {
-                WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
-            })?
-            .cancel_owned_workspace_edit(transaction_id, authorization, owner)
+        let manager = self.language_server_manager.as_ref().ok_or_else(|| {
+            WorkspaceEditError::Invalid("language server manager is unavailable".to_owned())
+        })?;
+        let operations = manager.workspace_edit_operations(transaction_id, authorization)?;
+        let status = manager.cancel_owned_workspace_edit(transaction_id, authorization, owner)?;
+        if matches!(
+            status.phase,
+            crate::language_servers::WorkspaceEditTransactionPhase::RolledBack
+                | crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
+        ) {
+            self.reconcile_workspace_edit_resources(transaction_id, &operations, true);
+        }
+        Ok(status)
     }
 
     pub fn disconnect_workspace_edit_owner(
-        &self,
+        &mut self,
         owner: u64,
     ) -> Vec<crate::language_servers::WorkspaceEditTransactionStatus> {
-        self.language_server_manager
+        let outcomes = self
+            .language_server_manager
             .as_ref()
             .map(|manager| manager.disconnect_workspace_edit_owner(owner))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        for (status, operations) in &outcomes {
+            if matches!(
+                status.phase,
+                crate::language_servers::WorkspaceEditTransactionPhase::RolledBack
+                    | crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
+            ) {
+                self.reconcile_workspace_edit_resources(status.transaction_id, operations, true);
+            }
+        }
+        outcomes.into_iter().map(|(status, _)| status).collect()
+    }
+
+    pub fn finish_disconnected_workspace_edit_rollbacks(&self, transaction_ids: &[u64]) {
+        if let Some(manager) = self.language_server_manager.as_ref() {
+            manager.finish_disconnected_workspace_edit_rollbacks(transaction_ids);
+        }
     }
 
     fn workspace_edit_roots(&self) -> Result<Vec<WorkspaceEditRoot>, LanguageServerError> {
@@ -1037,6 +1377,36 @@ impl State {
         &self.editor_view_states
     }
 
+    pub(crate) fn workspace_edit_editor_recoveries(
+        &self,
+    ) -> impl Iterator<Item = (u64, &WorkspaceEditEditorRecovery)> {
+        self.workspace_edit_editor_recovery
+            .iter()
+            .flat_map(|(transaction_id, states)| {
+                states.iter().map(move |state| (*transaction_id, state))
+            })
+    }
+
+    pub(crate) fn add_workspace_edit_editor_recovery(
+        &mut self,
+        transaction_id: u64,
+        original: EditorViewState,
+        original_title: String,
+        applied_path: Option<String>,
+    ) {
+        self.workspace_edit_editor_recovery
+            .entry(transaction_id)
+            .or_default()
+            .push(WorkspaceEditEditorRecovery {
+                virtual_path: applied_path
+                    .clone()
+                    .unwrap_or_else(|| original.path().to_owned()),
+                original,
+                original_title,
+                present: applied_path.is_some(),
+            });
+    }
+
     pub fn persistent_candidate(&self) -> PersistentStateCandidate {
         PersistentStateCandidate {
             state: Self {
@@ -1046,6 +1416,7 @@ impl State {
                 file_tree_view_states: self.file_tree_view_states.clone(),
                 git_diff_view_states: self.git_diff_view_states.clone(),
                 editor_view_states: self.editor_view_states.clone(),
+                workspace_edit_editor_recovery: self.workspace_edit_editor_recovery.clone(),
                 terminal_sessions: TerminalSessions::default(),
                 language_server_manager: self.language_server_manager.clone(),
                 formatter_manager: self.formatter_manager.clone(),
@@ -1079,6 +1450,7 @@ impl State {
         self.file_tree_view_states = candidate.file_tree_view_states;
         self.git_diff_view_states = candidate.git_diff_view_states;
         self.editor_view_states = candidate.editor_view_states;
+        self.workspace_edit_editor_recovery = candidate.workspace_edit_editor_recovery;
         self.next_workspace_id = candidate.next_workspace_id;
         self.next_pane_id = candidate.next_pane_id;
         self.next_split_id = candidate.next_split_id;
@@ -2490,6 +2862,7 @@ impl State {
             file_tree_view_states,
             git_diff_view_states,
             editor_view_states,
+            workspace_edit_editor_recovery: HashMap::new(),
             terminal_sessions: TerminalSessions::default(),
             language_server_manager: None,
             formatter_manager: None,
@@ -2598,6 +2971,18 @@ fn tab_kind_in_node(node: &PaneNode, tab_id: TabId) -> Option<&TabKind> {
     }
 }
 
+fn tab_title_in_node(node: &PaneNode, tab_id: TabId) -> Option<&str> {
+    match node {
+        PaneNode::Leaf(pane) => pane
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == tab_id)
+            .map(Tab::title),
+        PaneNode::Split(split) => tab_title_in_node(split.first(), tab_id)
+            .or_else(|| tab_title_in_node(split.second(), tab_id)),
+    }
+}
+
 fn tab_pane_id_in_node(node: &PaneNode, tab_id: TabId) -> Option<PaneId> {
     match node {
         PaneNode::Leaf(pane) if pane.contains_tab(tab_id) => Some(pane.id()),
@@ -2698,6 +3083,7 @@ impl Default for State {
             file_tree_view_states: Vec::new(),
             git_diff_view_states: Vec::new(),
             editor_view_states: Vec::new(),
+            workspace_edit_editor_recovery: HashMap::new(),
             terminal_sessions: TerminalSessions::default(),
             language_server_manager: None,
             formatter_manager: None,
@@ -3101,6 +3487,531 @@ mod tests {
         assert_eq!(state.editor_view_states()[0].path(), "src/main.rs");
         assert_eq!(state.editor_view_states()[1].path(), "src/lib.rs");
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_resource_rename_updates_and_rolls_back_editor_paths_and_titles() {
+        let root = test_directory("editor-resource-rename");
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .unwrap();
+        let operations = vec![StagedWorkspaceEditOperation::RenameFile {
+            workspace_id,
+            old_path: "src/main.rs".to_owned(),
+            new_path: "src/renamed.rs".to_owned(),
+        }];
+
+        state.reconcile_workspace_edit_resources(1, &operations, false);
+        assert_eq!(state.editor_view_states()[0].path(), "src/renamed.rs");
+        assert_eq!(
+            state
+                .workspaces()
+                .workspace(workspace_id)
+                .unwrap()
+                .root()
+                .find_pane(PaneId::new(1))
+                .unwrap()
+                .active_tab()
+                .title(),
+            "renamed.rs"
+        );
+        state.reconcile_workspace_edit_resources(1, &operations, true);
+        assert_eq!(state.editor_view_states()[0].path(), "src/main.rs");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn overwrite_rename_removes_destination_tab_and_restores_both_tabs_on_rollback() {
+        let root = test_directory("editor-overwrite-rename");
+        std::fs::write(root.join("source.rs"), "source").unwrap();
+        std::fs::write(root.join("destination.rs"), "destination").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "source.rs")
+            .unwrap();
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "destination.rs")
+            .unwrap();
+        assert_eq!(state.editor_view_states().len(), 2);
+        let operations = vec![StagedWorkspaceEditOperation::RenameFile {
+            workspace_id,
+            old_path: "source.rs".to_owned(),
+            new_path: "destination.rs".to_owned(),
+        }];
+
+        state.reconcile_workspace_edit_resources(11, &operations, false);
+        assert_eq!(state.editor_view_states().len(), 1);
+        assert_eq!(state.editor_view_states()[0].path(), "destination.rs");
+
+        state.reconcile_workspace_edit_resources(11, &operations, true);
+        let mut paths = state
+            .editor_view_states()
+            .iter()
+            .map(|state| state.path())
+            .collect::<Vec<_>>();
+        paths.sort_unstable();
+        assert_eq!(paths, ["destination.rs", "source.rs"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn overwrite_create_removes_old_tab_lineage_and_persists_replacement_semantics() {
+        let root = test_directory("editor-overwrite-create-lineage");
+        let database_root = test_directory("editor-overwrite-create-lineage-store");
+        std::fs::write(root.join("a.rs"), "old content").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "a.rs")
+            .unwrap();
+        let operations = vec![
+            StagedWorkspaceEditOperation::CreateFile {
+                workspace_id,
+                path: "a.rs".to_owned(),
+            },
+            StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path: "a.rs".to_owned(),
+                new_path: "b.rs".to_owned(),
+            },
+            StagedWorkspaceEditOperation::TextDocument { document: 0 },
+        ];
+
+        state.reconcile_workspace_edit_resources(15, &operations, false);
+        assert!(state.editor_view_states().is_empty());
+        assert_eq!(
+            state
+                .workspaces()
+                .workspace(workspace_id)
+                .unwrap()
+                .root()
+                .find_pane(PaneId::new(1))
+                .unwrap()
+                .tabs()
+                .iter()
+                .find(|tab| tab.id() == TabId::new(2))
+                .unwrap()
+                .kind(),
+            &TabKind::Blank
+        );
+
+        let store =
+            crate::persistence::StateStore::open(database_root.join("state.sqlite3")).unwrap();
+        store.save(&state).unwrap();
+        assert!(store.load().unwrap().editor_view_states().is_empty());
+
+        state.reconcile_workspace_edit_resources(15, &operations, true);
+        assert_eq!(state.editor_view_states().len(), 1);
+        assert_eq!(state.editor_view_states()[0].path(), "a.rs");
+        assert_eq!(
+            state
+                .workspaces()
+                .workspace(workspace_id)
+                .unwrap()
+                .root()
+                .find_pane(PaneId::new(1))
+                .unwrap()
+                .tabs()
+                .iter()
+                .find(|tab| tab.id() == TabId::new(2))
+                .unwrap()
+                .kind(),
+            &TabKind::Editor
+        );
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database_root);
+    }
+
+    #[test]
+    fn persisted_overwrite_rename_restores_tabs_independent_of_tab_id_order() {
+        let root = test_directory("editor-overwrite-rename-persistence");
+        let database_root = test_directory("editor-overwrite-rename-persistence-store");
+        let database = database_root.join("state.sqlite3");
+        std::fs::write(root.join("source.rs"), "source").unwrap();
+        std::fs::write(root.join("destination.rs"), "destination").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "destination.rs")
+            .unwrap();
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "source.rs")
+            .unwrap();
+        let operations = vec![StagedWorkspaceEditOperation::RenameFile {
+            workspace_id,
+            old_path: "source.rs".to_owned(),
+            new_path: "destination.rs".to_owned(),
+        }];
+        state.reconcile_workspace_edit_resources(14, &operations, false);
+        let store = crate::persistence::StateStore::open(&database).unwrap();
+        store.save(&state).unwrap();
+
+        store.restore_workspace_edit_editor_recovery(14).unwrap();
+        let restored = store.load().unwrap();
+
+        let paths = restored
+            .editor_view_states()
+            .iter()
+            .map(|state| (state.tab_id(), state.path()))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(paths[&TabId::new(2)], "destination.rs");
+        assert_eq!(paths[&TabId::new(3)], "source.rs");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database_root);
+    }
+
+    #[test]
+    fn file_resource_chain_restores_original_tab_identity_view_and_title() {
+        let root = test_directory("editor-file-resource-chain");
+        std::fs::write(root.join("first.rs"), "first").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "first.rs")
+            .unwrap();
+        state
+            .workspace_mut(workspace_id)
+            .unwrap()
+            .root_mut()
+            .find_pane_mut(PaneId::new(1))
+            .unwrap()
+            .rename_tab(TabId::new(2), "Pinned source");
+        let operations = vec![
+            StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path: "first.rs".to_owned(),
+                new_path: "second.rs".to_owned(),
+            },
+            StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path: "second.rs".to_owned(),
+                new_path: "third.rs".to_owned(),
+            },
+            StagedWorkspaceEditOperation::DeleteFile {
+                workspace_id,
+                path: "third.rs".to_owned(),
+                recursive: false,
+            },
+        ];
+
+        state.reconcile_workspace_edit_resources(12, &operations, false);
+        assert!(state.editor_view_states().is_empty());
+        state.reconcile_workspace_edit_resources(12, &operations, true);
+
+        assert_eq!(state.editor_view_states().len(), 1);
+        assert_eq!(state.editor_view_states()[0].tab_id(), TabId::new(2));
+        assert_eq!(state.editor_view_states()[0].path(), "first.rs");
+        let tab = state
+            .workspaces()
+            .workspace(workspace_id)
+            .unwrap()
+            .root()
+            .find_pane(PaneId::new(1))
+            .unwrap()
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == TabId::new(2))
+            .unwrap();
+        assert_eq!(tab.kind(), &TabKind::Editor);
+        assert_eq!(tab.title(), "Pinned source");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn directory_resource_chain_persists_exact_editor_recovery() {
+        let root = test_directory("editor-directory-resource-chain");
+        let database_root = test_directory("editor-directory-resource-chain-store");
+        let database = database_root.join("state.sqlite3");
+        std::fs::create_dir_all(root.join("src/nested")).unwrap();
+        std::fs::write(root.join("src/nested/main.rs"), "main").unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/nested/main.rs")
+            .unwrap();
+        state
+            .workspace_mut(workspace_id)
+            .unwrap()
+            .root_mut()
+            .find_pane_mut(PaneId::new(1))
+            .unwrap()
+            .rename_tab(TabId::new(2), "Pinned nested file");
+        let operations = vec![
+            StagedWorkspaceEditOperation::RenameFile {
+                workspace_id,
+                old_path: "src".to_owned(),
+                new_path: "moved".to_owned(),
+            },
+            StagedWorkspaceEditOperation::DeleteFile {
+                workspace_id,
+                path: "moved".to_owned(),
+                recursive: true,
+            },
+        ];
+        state.reconcile_workspace_edit_resources(13, &operations, false);
+        let store = crate::persistence::StateStore::open(&database).unwrap();
+        store.save(&state).unwrap();
+
+        store.restore_workspace_edit_editor_recovery(13).unwrap();
+        let restored = store.load().unwrap();
+
+        assert_eq!(restored.editor_view_states().len(), 1);
+        assert_eq!(restored.editor_view_states()[0].tab_id(), TabId::new(2));
+        assert_eq!(
+            restored.editor_view_states()[0].path(),
+            "src/nested/main.rs"
+        );
+        let tab = restored
+            .workspaces()
+            .workspace(workspace_id)
+            .unwrap()
+            .root()
+            .find_pane(PaneId::new(1))
+            .unwrap()
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == TabId::new(2))
+            .unwrap();
+        assert_eq!(tab.kind(), &TabKind::Editor);
+        assert_eq!(tab.title(), "Pinned nested file");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database_root);
+    }
+
+    #[test]
+    fn startup_recovers_persisted_editor_directory_rename_before_state_load() {
+        let root = test_directory("editor-resource-rename-startup");
+        let database_root = test_directory("editor-resource-rename-database");
+        let database = database_root.join("state.sqlite3");
+        std::fs::create_dir_all(root.join("src/nested")).unwrap();
+        std::fs::write(root.join("src/nested/main.rs"), "fn main() {}").unwrap();
+        let store = crate::persistence::StateStore::open(&database).unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/nested/main.rs")
+            .unwrap();
+        store.save(&state).unwrap();
+
+        let paths = crate::language_servers::LanguageServerPaths::new(
+            database_root.join("language-servers"),
+            database_root.join("language-server-cache"),
+        );
+        let manager =
+            crate::language_servers::LanguageServerManager::open(paths, store.clone()).unwrap();
+        let staged = manager
+            .stage_workspace_edit(
+                &serde_json::json!({ "documentChanges": [{
+                    "kind": "rename",
+                    "oldUri": format!("file://{}", root.join("src").display()),
+                    "newUri": format!("file://{}", root.join("renamed").display())
+                }]}),
+                &state.workspace_edit_roots().unwrap(),
+            )
+            .unwrap();
+        state.attach_language_server_manager(manager);
+        state
+            .commit_workspace_edit(staged.transaction_id, &staged.authorization)
+            .unwrap();
+        store.save(&state).unwrap();
+        assert_eq!(
+            state.editor_view_states()[0].path(),
+            "renamed/nested/main.rs"
+        );
+        drop(state);
+
+        let reopened_store = crate::persistence::StateStore::open(&database).unwrap();
+        let reopened_paths = crate::language_servers::LanguageServerPaths::new(
+            database_root.join("language-servers"),
+            database_root.join("language-server-cache"),
+        );
+        let restarted_manager = crate::language_servers::LanguageServerManager::open(
+            reopened_paths,
+            reopened_store.clone(),
+        )
+        .unwrap();
+        assert!(matches!(
+            restarted_manager.workspace_edit_status(staged.transaction_id, &staged.authorization),
+            Err(crate::language_servers::WorkspaceEditError::Invalid(_))
+        ));
+        let recovery = restarted_manager
+            .workspace_edit_recoveries()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            recovery.status.phase,
+            crate::language_servers::WorkspaceEditTransactionPhase::FinishedRolledBack
+        );
+        let recovered = reopened_store.load().unwrap();
+        assert_eq!(
+            recovered.editor_view_states()[0].path(),
+            "src/nested/main.rs"
+        );
+        assert_eq!(
+            recovered
+                .workspaces()
+                .workspace(workspace_id)
+                .unwrap()
+                .root()
+                .find_pane(PaneId::new(1))
+                .unwrap()
+                .active_tab()
+                .title(),
+            "main.rs"
+        );
+        assert!(root.join("src/nested/main.rs").is_file());
+        assert!(!root.join("renamed").exists());
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database_root);
+    }
+
+    #[test]
+    fn finished_workspace_edit_survives_unrelated_full_save_without_stale_editor_recovery() {
+        let root = test_directory("finished-editor-recovery-workspace");
+        let database_root = test_directory("finished-editor-recovery-database");
+        let database = database_root.join("state.sqlite3");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        let store = crate::persistence::StateStore::open(&database).unwrap();
+        let paths = crate::language_servers::LanguageServerPaths::new(
+            database_root.join("language-servers"),
+            database_root.join("language-server-cache"),
+        );
+        let manager =
+            crate::language_servers::LanguageServerManager::open(paths.clone(), store.clone())
+                .unwrap();
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/main.rs")
+            .unwrap();
+        let staged = manager
+            .stage_workspace_edit(
+                &serde_json::json!({ "documentChanges": [{
+                    "kind": "rename",
+                    "oldUri": format!("file://{}", root.join("src").display()),
+                    "newUri": format!("file://{}", root.join("renamed").display())
+                }]}),
+                &state.workspace_edit_roots().unwrap(),
+            )
+            .unwrap();
+        state.attach_language_server_manager(manager);
+        state
+            .commit_workspace_edit(staged.transaction_id, &staged.authorization)
+            .unwrap();
+        store.save(&state).unwrap();
+        state
+            .finish_workspace_edit(staged.transaction_id, &staged.authorization)
+            .unwrap();
+        assert_eq!(state.editor_view_states()[0].path(), "renamed/main.rs");
+
+        assert!(state.activate_workspace(workspace_id));
+        store.save(&state).unwrap();
+        drop(state);
+
+        let restarted_manager =
+            crate::language_servers::LanguageServerManager::open(paths, store.clone()).unwrap();
+        let restarted = store.load().unwrap();
+        assert_eq!(restarted.editor_view_states()[0].path(), "renamed/main.rs");
+        assert_eq!(restarted.workspace_edit_editor_recoveries().count(), 0);
+        assert!(root.join("renamed/main.rs").is_file());
+        assert!(!root.join("src").exists());
+        let recovery = restarted_manager
+            .workspace_edit_recoveries()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            recovery.status.phase,
+            crate::language_servers::WorkspaceEditTransactionPhase::FinishedCommitted
+        );
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database_root);
+    }
+
+    #[test]
+    fn workspace_resource_delete_persists_and_restores_editor_tabs() {
+        let root = test_directory("editor-resource-delete");
+        std::fs::write(root.join("open.rs"), "fn main() {}").unwrap();
+        let database = root.join("state.sqlite3");
+        let mut state = State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            PaneId::new(1),
+            TabId::new(1),
+            TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "open.rs")
+            .unwrap();
+        let operations = vec![StagedWorkspaceEditOperation::DeleteFile {
+            workspace_id,
+            path: "open.rs".to_owned(),
+            recursive: false,
+        }];
+        state.reconcile_workspace_edit_resources(9, &operations, false);
+        assert!(state.editor_view_states().is_empty());
+        let store = crate::persistence::StateStore::open(&database).unwrap();
+        store.save(&state).unwrap();
+        store.restore_workspace_edit_editor_recovery(9).unwrap();
+        let restored = store.load().unwrap();
+        assert_eq!(restored.editor_view_states()[0].path(), "open.rs");
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -18,8 +18,8 @@ use super::super::messages::language_servers::{
     ResolveLanguageServerCodeActionParams, ResolveLanguageServerCompletionParams,
     ResolveLanguageServerWorkspaceSymbolParams, SaveLanguageServerDocumentParams,
     StageLanguageServerCodeActionParams, StagedWorkspaceEditPayload,
-    TrustLanguageServerWorkspaceParams, WorkspaceEditTransactionParams,
-    WorkspaceEditTransactionStatusPayload,
+    TrustLanguageServerWorkspaceParams, WorkspaceEditRecoveryPayload,
+    WorkspaceEditTransactionParams, WorkspaceEditTransactionStatusPayload,
 };
 use super::{RouteDefinition, parse_params};
 
@@ -62,11 +62,17 @@ pub(super) fn resolve(action: &str) -> Option<RouteDefinition> {
         )),
         "stageCodeAction" => Some(RouteDefinition::language_server_feature(stage_code_action)),
         "executeCommand" => Some(RouteDefinition::language_server_feature(execute_command)),
-        "commitWorkspaceEdit" => Some(RouteDefinition::language_server(commit_workspace_edit)),
-        "rollbackWorkspaceEdit" => Some(RouteDefinition::language_server(rollback_workspace_edit)),
-        "finishWorkspaceEdit" => Some(RouteDefinition::language_server(finish_workspace_edit)),
-        "finalizeWorkspaceEdit" => Some(RouteDefinition::language_server(finalize_workspace_edit)),
-        "workspaceEditStatus" => Some(RouteDefinition::language_server(workspace_edit_status)),
+        "commitWorkspaceEdit" => Some(RouteDefinition::live_full(commit_workspace_edit)),
+        "rollbackWorkspaceEdit" => Some(RouteDefinition::live_full(rollback_workspace_edit)),
+        "finishWorkspaceEdit" => Some(RouteDefinition::live_full(finish_workspace_edit)),
+        "finalizeWorkspaceEdit" => Some(RouteDefinition::live_full(finalize_workspace_edit)),
+        "acknowledgeWorkspaceEditCompletion" => Some(RouteDefinition::live_full(
+            acknowledge_workspace_edit_completion,
+        )),
+        "workspaceEditStatus" => Some(RouteDefinition::live(workspace_edit_status)),
+        "listWorkspaceEditRecoveries" => {
+            Some(RouteDefinition::live(list_workspace_edit_recoveries))
+        }
         "trustWorkspace" => Some(RouteDefinition::language_server(trust_workspace)),
         _ => None,
     }
@@ -254,6 +260,21 @@ fn finish_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> 
     }
 }
 
+fn acknowledge_workspace_edit_completion(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match state.acknowledge_workspace_edit_completion(params.transaction_id, &params.authorization)
+    {
+        Ok(acknowledged) => ServerMessage::ok(request.id, acknowledged),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
 fn finalize_workspace_edit(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
     let params = match parse_params::<WorkspaceEditTransactionParams>(request) {
         Ok(params) => params,
@@ -277,6 +298,22 @@ fn workspace_edit_status(state: &mut core::State, request: &RequestEnvelope) -> 
         Ok(status) => ServerMessage::ok(
             request.id,
             WorkspaceEditTransactionStatusPayload::from_core(status),
+        ),
+        Err(error) => workspace_edit_error(request.id, error),
+    }
+}
+
+fn list_workspace_edit_recoveries(
+    state: &mut core::State,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    match state.workspace_edit_recoveries() {
+        Ok(recoveries) => ServerMessage::ok(
+            request.id,
+            recoveries
+                .into_iter()
+                .map(WorkspaceEditRecoveryPayload::from_core)
+                .collect::<Vec<_>>(),
         ),
         Err(error) => workspace_edit_error(request.id, error),
     }

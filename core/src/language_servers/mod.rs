@@ -15,9 +15,9 @@ use crate::tree::WorkspaceId;
 
 pub use catalog::{LanguageServerDefinition, language_server_catalog};
 pub use edits::{
-    StagedWorkspaceEdit, StagedWorkspaceEditDocument, WorkspaceEditError,
-    WorkspaceEditOpenDocument, WorkspaceEditRoot, WorkspaceEditTransactionPhase,
-    WorkspaceEditTransactionStatus,
+    StagedWorkspaceEdit, StagedWorkspaceEditDocument, StagedWorkspaceEditOperation,
+    WorkspaceEditError, WorkspaceEditOpenDocument, WorkspaceEditRecovery, WorkspaceEditRoot,
+    WorkspaceEditTransactionPhase, WorkspaceEditTransactionStatus,
 };
 pub use installation::LanguageServerPaths;
 pub use manager::LanguageServerManager;

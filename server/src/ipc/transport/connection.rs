@@ -128,7 +128,7 @@ fn dispatch_requests(
                     active.finish(request_id);
                 }
             }
-            ExecutionMode::Persistent(_) => {
+            ExecutionMode::LivePersistent(_) | ExecutionMode::Persistent(_) => {
                 wait_for_completions(&mut external_completions, &active);
 
                 if let Some(completed) = dispatcher.dispatch_cancellable(
@@ -451,6 +451,234 @@ mod tests {
     }
 
     #[test]
+    fn restarted_server_lists_freshly_authorized_workspace_edit_recoveries() {
+        let root = test_directory("workspace-edit-restart");
+        let database = root.join("state.sqlite3");
+        let workspace = root.join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace should be created");
+        std::fs::write(workspace.join("retry.txt"), "before-retry").unwrap();
+        std::fs::write(workspace.join("finalize.txt"), "before-finalize").unwrap();
+        std::fs::write(workspace.join("retried.txt"), "old-retry-target").unwrap();
+        std::fs::write(workspace.join("finalized.txt"), "old-finalize-target").unwrap();
+        let store = core::persistence::StateStore::open(&database).expect("store should open");
+        let paths = core::language_servers::LanguageServerPaths::new(
+            root.join("language-servers"),
+            root.join("language-server-cache"),
+        );
+        let manager = core::language_servers::LanguageServerManager::open(paths.clone(), store)
+            .expect("language server manager should open");
+        let mut state = core::State::new();
+        let workspace_id = state.open_workspace(&workspace);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            core::tree::PaneId::new(1),
+            core::tree::TabId::new(1),
+            core::tree::TabKind::FileTree,
+        ));
+        state
+            .open_editor_tab(Some(workspace_id), core::tree::TabId::new(1), "retry.txt")
+            .unwrap();
+        let retry = manager
+            .stage_workspace_edit(
+                &serde_json::json!({ "documentChanges": [{
+                    "kind": "rename",
+                    "oldUri": format!("file://{}", workspace.join("retry.txt").display()),
+                    "newUri": format!("file://{}", workspace.join("retried.txt").display()),
+                    "options": { "overwrite": true }
+                }]}),
+                &[core::language_servers::WorkspaceEditRoot {
+                    workspace_id,
+                    path: workspace.clone(),
+                }],
+            )
+            .expect("workspace edit should stage");
+        let finalize = manager
+            .stage_workspace_edit(
+                &serde_json::json!({ "documentChanges": [{
+                    "kind": "rename",
+                    "oldUri": format!("file://{}", workspace.join("finalize.txt").display()),
+                    "newUri": format!("file://{}", workspace.join("finalized.txt").display()),
+                    "options": { "overwrite": true }
+                }]}),
+                &[core::language_servers::WorkspaceEditRoot {
+                    workspace_id,
+                    path: workspace.clone(),
+                }],
+            )
+            .expect("second workspace edit should stage");
+        state.attach_language_server_manager(manager);
+        state
+            .commit_workspace_edit(retry.transaction_id, &retry.authorization)
+            .unwrap();
+        state
+            .commit_workspace_edit(finalize.transaction_id, &finalize.authorization)
+            .unwrap();
+        core::persistence::StateStore::open(&database)
+            .unwrap()
+            .save(&state)
+            .unwrap();
+        let retry_recovery =
+            workspace.join(format!(".kosmos-workspace-edit-{}", retry.authorization));
+        let finalize_recovery =
+            workspace.join(format!(".kosmos-workspace-edit-{}", finalize.authorization));
+        std::fs::set_permissions(&retry_recovery, std::fs::Permissions::from_mode(0o0)).unwrap();
+        std::fs::set_permissions(&finalize_recovery, std::fs::Permissions::from_mode(0o0)).unwrap();
+        assert!(
+            state
+                .finish_workspace_edit(finalize.transaction_id, &finalize.authorization)
+                .is_err()
+        );
+        drop(state);
+
+        let restarted_store =
+            core::persistence::StateStore::open(&database).expect("store should reopen");
+        let restarted_manager =
+            core::language_servers::LanguageServerManager::open(paths, restarted_store.clone())
+                .expect("manager should recover the journal");
+        let mut state = restarted_store.load().expect("state should load");
+        state.attach_language_server_manager(restarted_manager);
+        let dispatcher =
+            Dispatcher::new(state, restarted_store.clone()).expect("dispatcher should open");
+        let (server, client) = UnixStream::pair().expect("socket pair should open");
+        let connection = thread::spawn(move || handle(server, dispatcher));
+        let mut writer = BufWriter::new(client.try_clone().expect("client should clone"));
+        let mut reader = BufReader::new(client.try_clone().expect("client should clone"));
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout should be set");
+
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 1, "domain": "languageServers",
+                "action": "listWorkspaceEditRecoveries", "params": {}
+            }),
+        );
+        let listed = read_response(&mut reader, 1);
+        assert_eq!(listed["ok"], true, "unexpected recovery list: {listed}");
+        let listed = listed["result"].as_array().unwrap();
+        assert_eq!(listed.len(), 2);
+        let credentials = |transaction_id: u64, phase: &str, retry_rollback: bool| {
+            let recovery = listed
+                .iter()
+                .find(|recovery| recovery["transactionId"] == transaction_id)
+                .unwrap();
+            assert_eq!(recovery["phase"], phase);
+            assert_eq!(recovery["retryRollback"], retry_rollback);
+            assert_eq!(recovery["canFinalize"], true);
+            serde_json::json!({
+                "transactionId": transaction_id,
+                "authorization": recovery["authorization"].as_str().unwrap(),
+            })
+        };
+        let retry_params = credentials(retry.transaction_id, "recoveryRequired", true);
+        let finalize_params =
+            credentials(finalize.transaction_id, "committedCleanupRequired", false);
+        assert_ne!(retry_params["authorization"], retry.authorization);
+        assert_ne!(finalize_params["authorization"], finalize.authorization);
+
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 7, "domain": "languageServers",
+                "action": "workspaceEditStatus", "params": {
+                    "transactionId": retry.transaction_id,
+                    "authorization": retry.authorization,
+                }
+            }),
+        );
+        let rejected = read_response(&mut reader, 7);
+        assert_eq!(rejected["ok"], false);
+        assert_eq!(rejected["error"]["code"], "workspace_edit.invalid");
+
+        std::fs::set_permissions(&retry_recovery, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&finalize_recovery, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 2, "domain": "languageServers",
+                "action": "rollbackWorkspaceEdit", "params": retry_params
+            }),
+        );
+        let rolled_back = read_response(&mut reader, 2);
+        assert_eq!(
+            rolled_back["ok"], true,
+            "unexpected rollback response: {rolled_back}"
+        );
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 3, "domain": "languageServers",
+                "action": "finishWorkspaceEdit", "params": retry_params
+            }),
+        );
+        assert_eq!(read_response(&mut reader, 3)["ok"], true);
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 8, "domain": "languageServers",
+                "action": "acknowledgeWorkspaceEditCompletion", "params": retry_params
+            }),
+        );
+        assert_eq!(read_response(&mut reader, 8)["ok"], true);
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 4, "domain": "languageServers",
+                "action": "finalizeWorkspaceEdit", "params": finalize_params
+            }),
+        );
+        let finalized = read_response(&mut reader, 4);
+        assert_eq!(
+            finalized["ok"], true,
+            "unexpected finalize response: {finalized}"
+        );
+        assert_eq!(finalized["result"]["phase"], "finishedCommitted");
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 5, "domain": "languageServers",
+                "action": "acknowledgeWorkspaceEditCompletion", "params": finalize_params
+            }),
+        );
+        assert_eq!(read_response(&mut reader, 5)["ok"], true);
+        write_request(
+            &mut writer,
+            serde_json::json!({
+                "type": "request", "id": 6, "domain": "languageServers",
+                "action": "listWorkspaceEditRecoveries", "params": {}
+            }),
+        );
+        assert_eq!(
+            read_response(&mut reader, 6)["result"],
+            serde_json::json!([])
+        );
+
+        assert!(workspace.join("retry.txt").is_file());
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("retried.txt")).unwrap(),
+            "old-retry-target"
+        );
+        assert!(workspace.join("finalized.txt").is_file());
+        assert!(!workspace.join("finalize.txt").exists());
+        assert_eq!(
+            restarted_store.load().unwrap().editor_view_states()[0].path(),
+            "retry.txt"
+        );
+
+        drop(reader);
+        drop(writer);
+        drop(client);
+        connection
+            .join()
+            .expect("connection should not panic")
+            .expect("connection should close cleanly");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn live_requests_wait_for_prior_persistent_requests() {
         let _test_lock = ORDERING_TEST_LOCK.lock().expect("test lock should lock");
         let (store, path) = test_store("connection-ordering");
@@ -609,6 +837,15 @@ mod tests {
             .expect("server should respond before the timeout");
         assert!(!frame.is_empty(), "server closed before responding");
         serde_json::from_str(&frame).expect("server message should be valid JSON")
+    }
+
+    fn read_response(reader: &mut BufReader<UnixStream>, id: u64) -> serde_json::Value {
+        loop {
+            let message = read_message(reader);
+            if message["type"] == "response" && message["id"] == id {
+                return message;
+            }
+        }
     }
 
     fn write_test_rust_analyzer_installation(paths: &core::language_servers::LanguageServerPaths) {

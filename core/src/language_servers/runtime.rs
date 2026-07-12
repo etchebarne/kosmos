@@ -2636,8 +2636,8 @@ impl LanguageServerSession {
                         "applyEdit": true,
                         "workspaceEdit": {
                             "documentChanges": true,
-                            "resourceOperations": [],
-                            "failureHandling": "transactional",
+                            "resourceOperations": ["create", "rename", "delete"],
+                            "failureHandling": "undo",
                             "normalizesLineEndings": false
                         },
                         "configuration": true,
@@ -3987,7 +3987,13 @@ fn register_capabilities(
         let watch_pattern_count = registration.watch_patterns.as_ref().map_or(0, Vec::len);
         let watched_files = registration
             .watch_patterns
-            .map(|patterns| WatchedFilesRegistration::start(context.writer.clone(), patterns))
+            .map(|patterns| {
+                WatchedFilesRegistration::start(
+                    context.writer.clone(),
+                    patterns,
+                    Arc::clone(context.workspace_edits),
+                )
+            })
             .transpose()
             .map_err(|error| JsonRpcError {
                 code: -32603,
@@ -4253,7 +4259,11 @@ fn file_uri_path(uri: &str) -> Result<PathBuf, JsonRpcError> {
 }
 
 impl WatchedFilesRegistration {
-    fn start(writer: MessageWriter, patterns: Vec<WatchPattern>) -> notify::Result<Self> {
+    fn start(
+        writer: MessageWriter,
+        patterns: Vec<WatchPattern>,
+        workspace_edits: Arc<WorkspaceEditTransactions>,
+    ) -> notify::Result<Self> {
         let (events, received) = mpsc::sync_channel(WATCH_EVENT_QUEUE_CAPACITY);
         let dirty = Arc::new(AtomicBool::new(false));
         let callback_dirty = Arc::clone(&dirty);
@@ -4271,7 +4281,16 @@ impl WatchedFilesRegistration {
         let worker_stopped = Arc::clone(&stopped);
         let worker = thread::Builder::new()
             .name("kosmos-lsp-watched-files".to_owned())
-            .spawn(move || watched_file_worker(writer, patterns, received, worker_stopped, dirty))
+            .spawn(move || {
+                watched_file_worker(
+                    writer,
+                    patterns,
+                    received,
+                    worker_stopped,
+                    dirty,
+                    Some(workspace_edits),
+                )
+            })
             .map_err(notify::Error::io)?;
         Ok(Self {
             watcher: Some(watcher),
@@ -4300,10 +4319,38 @@ fn watched_file_worker(
     events: mpsc::Receiver<notify::Result<Event>>,
     stopped: Arc<AtomicBool>,
     dirty: Arc<AtomicBool>,
+    workspace_edits: Option<Arc<WorkspaceEditTransactions>>,
 ) {
-    let mut pending = BTreeMap::new();
+    let mut pending: BTreeMap<PathBuf, u8> = BTreeMap::new();
+    let mut deferred: BTreeMap<PathBuf, u8> = BTreeMap::new();
     let mut deadline = None;
     while !stopped.load(Ordering::Acquire) {
+        let deferred_paths = deferred.keys().cloned().collect::<Vec<_>>();
+        for path in deferred_paths {
+            let disposition = workspace_edits.as_ref().map_or(
+                super::edits::WorkspaceEditWatchDisposition::Committed,
+                |edits| edits.watch_disposition(&path),
+            );
+            match disposition {
+                super::edits::WorkspaceEditWatchDisposition::Active => {}
+                super::edits::WorkspaceEditWatchDisposition::RolledBack => {
+                    deferred.remove(&path);
+                    dirty.store(true, Ordering::Release);
+                }
+                super::edits::WorkspaceEditWatchDisposition::Committed
+                | super::edits::WorkspaceEditWatchDisposition::Unrelated => {
+                    if let Some(kind) = deferred.remove(&path) {
+                        pending
+                            .entry(path)
+                            .and_modify(|previous| {
+                                *previous = merge_watched_file_kinds(*previous, kind)
+                            })
+                            .or_insert(kind);
+                        deadline = Some(Instant::now() + WATCHED_FILE_DEBOUNCE);
+                    }
+                }
+            }
+        }
         if dirty.swap(false, Ordering::AcqRel) {
             for (path, kind) in watched_file_resync(&patterns) {
                 pending
@@ -4319,10 +4366,31 @@ fn watched_file_worker(
         match events.recv_timeout(wait) {
             Ok(Ok(event)) => {
                 for change in watched_file_changes(&event, &patterns) {
-                    pending
-                        .entry(change.path)
-                        .and_modify(|kind| *kind = merge_watched_file_kinds(*kind, change.kind))
-                        .or_insert(change.kind);
+                    match workspace_edits.as_ref().map_or(
+                        super::edits::WorkspaceEditWatchDisposition::Unrelated,
+                        |edits| edits.watch_disposition(&change.path),
+                    ) {
+                        super::edits::WorkspaceEditWatchDisposition::Active => {
+                            deferred
+                                .entry(change.path)
+                                .and_modify(|kind| {
+                                    *kind = merge_watched_file_kinds(*kind, change.kind)
+                                })
+                                .or_insert(change.kind);
+                        }
+                        super::edits::WorkspaceEditWatchDisposition::RolledBack => {
+                            dirty.store(true, Ordering::Release);
+                        }
+                        super::edits::WorkspaceEditWatchDisposition::Committed
+                        | super::edits::WorkspaceEditWatchDisposition::Unrelated => {
+                            pending
+                                .entry(change.path)
+                                .and_modify(|kind| {
+                                    *kind = merge_watched_file_kinds(*kind, change.kind)
+                                })
+                                .or_insert(change.kind);
+                        }
+                    }
                 }
                 if !pending.is_empty() && deadline.is_none() {
                     deadline = Some(Instant::now() + WATCHED_FILE_DEBOUNCE);
@@ -4361,6 +4429,9 @@ fn watched_file_resync(patterns: &[WatchPattern]) -> BTreeMap<PathBuf, u8> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            if is_internal_workspace_edit_path(&path) {
+                continue;
+            }
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
@@ -4389,6 +4460,9 @@ fn watched_file_changes(event: &Event, patterns: &[WatchPattern]) -> Vec<Watched
     event_path_kinds(event)
         .into_iter()
         .filter(|(path, kind)| {
+            if is_internal_workspace_edit_path(path) {
+                return false;
+            }
             patterns.iter().any(|pattern| {
                 pattern.kind & *kind != 0
                     && secure_relative_path(path, &pattern.root)
@@ -4400,6 +4474,15 @@ fn watched_file_changes(event: &Event, patterns: &[WatchPattern]) -> Vec<Watched
             kind,
         })
         .collect()
+}
+
+fn is_internal_workspace_edit_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .starts_with(super::secure_edit::TRANSACTION_PATH_PREFIX)
+    })
 }
 
 fn event_path_kinds(event: &Event) -> Vec<(&Path, u8)> {
@@ -5976,7 +6059,14 @@ mod tests {
         let dirty = Arc::new(AtomicBool::new(false));
         let worker_patterns = patterns.clone();
         let worker = thread::spawn(move || {
-            watched_file_worker(writer, worker_patterns, received, worker_stopped, dirty)
+            watched_file_worker(
+                writer,
+                worker_patterns,
+                received,
+                worker_stopped,
+                dirty,
+                None,
+            )
         });
 
         events
@@ -6022,6 +6112,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![4, 1]
         );
+        let internal = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(root.join(".kosmos-workspace-edit-token/backup.rs"));
+        assert!(watched_file_changes(&internal, &patterns).is_empty());
 
         stopped.store(true, Ordering::Release);
         drop(events);
@@ -6048,7 +6141,7 @@ mod tests {
         let dirty = Arc::new(AtomicBool::new(true));
         let worker_stopped = Arc::clone(&stopped);
         let worker = thread::spawn(move || {
-            watched_file_worker(writer, patterns, received, worker_stopped, dirty)
+            watched_file_worker(writer, patterns, received, worker_stopped, dirty, None)
         });
 
         let notification = receive_outbound(&outbound);

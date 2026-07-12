@@ -39,6 +39,19 @@ export function App() {
   );
 
   useEffect(() => {
+    const refresh = () => {
+      void useWorkspaceStore.getState().refreshWorkspaces();
+      const snapshot = useWorkspaceStore.getState().snapshot;
+      if (!snapshot) return;
+      for (const workspace of snapshot.workspaces) {
+        useGitStore.getState().bumpGitRevision(workspace.id);
+      }
+    };
+    window.addEventListener("kosmos:workspace-edit-applied", refresh);
+    return () => window.removeEventListener("kosmos:workspace-edit-applied", refresh);
+  }, []);
+
+  useEffect(() => {
     setLanguageLocationOpener((workspaceId, path, selection) =>
       useWorkspaceStore
         .getState()

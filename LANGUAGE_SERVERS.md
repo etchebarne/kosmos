@@ -13,11 +13,12 @@ The managed language-tooling architecture is implemented across `core/`, `server
 - Supervised server restart with bounded backoff, document replay, bounded logs, and typed push notifications.
 - Dynamic capability registration, workspace configuration/folders, work-done progress, and contained watched-file notifications.
 - Core-validated workspace-edit transactions used by rename, code actions, execute-command, and server-initiated `workspace/applyEdit`.
+- Ordered `CreateFile`, `RenameFile`, and `DeleteFile` resource operations with durable crash recovery and editor-tab reconciliation.
 - Feature-specific Monaco service suppression while healthy external providers are active.
 
 Current intentional limits:
 
-- Workspace-edit resource operations (`create`, `rename`, and `delete`) are rejected. Text edits target existing UTF-8 regular files only.
+- Destructive directory transactions above the bounded safety limits are rejected rather than processed without a complete rollback snapshot.
 - Managed tools are cataloged for supported Linux architectures; arbitrary remote plugins are not accepted.
 - Formatter and language-server selection is deterministic and user-controlled; installation never happens when opening a file.
 

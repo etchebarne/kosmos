@@ -290,11 +290,24 @@ export type StagedWorkspaceEdit = {
   transactionId: number;
   authorization: string;
   documents: StagedWorkspaceEditDocument[];
+  operations: StagedWorkspaceEditOperation[];
 };
+
+export type StagedWorkspaceEditOperation =
+  | { kind: "textDocument"; document: number }
+  | { kind: "createFile"; workspaceId: WorkspaceId; path: string }
+  | {
+      kind: "renameFile";
+      workspaceId: WorkspaceId;
+      oldPath: string;
+      newPath: string;
+    }
+  | { kind: "deleteFile"; workspaceId: WorkspaceId; path: string; recursive: boolean };
 
 export type StagedWorkspaceEditDocument = {
   workspaceId: WorkspaceId;
   path: string;
+  originalPath: string;
   originalText: string;
   newText: string;
   generation: number | null;
@@ -309,6 +322,8 @@ export type WorkspaceEditTransactionParams = {
 export type WorkspaceEditTransactionPhase =
   | "staged"
   | "committed"
+  | "finishingCommitted"
+  | "committedCleanupRequired"
   | "rolledBack"
   | "recoveryRequired"
   | "finishedCommitted"
@@ -320,6 +335,11 @@ export type WorkspaceEditTransactionStatus = {
   phase: WorkspaceEditTransactionPhase;
   retryRollback: boolean;
   canFinalize: boolean;
+  requiresAcknowledgement?: boolean;
+};
+
+export type WorkspaceEditRecovery = WorkspaceEditTransactionStatus & {
+  authorization: string;
 };
 
 export type LanguageServerColor = {

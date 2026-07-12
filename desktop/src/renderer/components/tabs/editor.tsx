@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { getEditorDocument, getEditorGitLineHunks, saveEditorDocument } from "@/renderer/ipc";
 import {
   getOrCreateEditorBuffer,
+  assertEditorBufferEditable,
+  isEditorBufferLocked,
   reconcileEditorBuffer,
+  subscribeEditorBufferLock,
+  subscribeEditorBufferModel,
   type EditorBuffer,
 } from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
@@ -269,40 +273,81 @@ function LoadedEditor({
       smoothScrolling: true,
       theme: "kosmos",
       wordWrap: initialSettings.softWrap ? "on" : "off",
+      readOnly: isEditorBufferLocked(buffer),
     });
     editorRef.current = editor;
-    decorationsRef.current = editor.createDecorationsCollection(
-      editorGitDecorations(gitLineHunks, model.getLineCount()),
-    );
+    decorationsRef.current = editor.createDecorationsCollection();
     const updateDirtyState = () => {
-      const isDirty = model.getValue() !== buffer.savedContent;
+      const isDirty = buffer.model.getValue() !== buffer.savedContent;
 
       setTabDirty(workspaceId, tabId, isDirty);
       setSaveState(isDirty ? { status: "dirty" } : { status: "clean" });
     };
-
-    updateDirtyState();
-
-    const contentSubscription = model.onDidChangeContent(() => {
+    const operationCancellations = new Set<monaco.CancellationTokenSource>();
+    const beginOperation = () => {
+      const cancellation = new monaco.CancellationTokenSource();
+      operationCancellations.add(cancellation);
+      return cancellation;
+    };
+    const finishOperation = (cancellation: monaco.CancellationTokenSource) => {
+      operationCancellations.delete(cancellation);
+      cancellation.dispose();
+    };
+    const cancelOperations = () => {
+      for (const cancellation of operationCancellations) cancellation.cancel();
+    };
+    let contentSubscription: monaco.IDisposable | null = null;
+    const bindModel = (nextModel: monaco.editor.ITextModel) => {
+      const viewState = editor.getModel() ? editor.saveViewState() : null;
+      if (editor.getModel() !== nextModel) {
+        editor.setModel(nextModel);
+        if (viewState) {
+          editor.restoreViewState(viewState);
+        }
+      }
+      contentSubscription?.dispose();
+      contentSubscription = nextModel.onDidChangeContent(updateDirtyState);
+      decorationsRef.current?.set(
+        editorGitDecorations(gitLineHunks, nextModel.getLineCount()),
+      );
       updateDirtyState();
+    };
+    bindModel(model);
+    const unsubscribeModel = subscribeEditorBufferModel(buffer, bindModel);
+    const unsubscribeLock = subscribeEditorBufferLock(buffer, (locked) => {
+      if (locked) {
+        saveCoordinatorRef.current.invalidate();
+        cancelOperations();
+      }
+      editor.updateOptions({ readOnly: locked });
     });
     const save = async () => {
+      let model: monaco.editor.ITextModel;
+      try {
+        assertEditorBufferEditable(buffer);
+        model = buffer.model;
+      } catch (caughtError: unknown) {
+        setSaveState({ status: "error", message: errorMessage(caughtError) });
+        return;
+      }
       setSaveState({ status: "saving" });
       const initialContent = model.getValue();
+      const cancellation = beginOperation();
       const coordinatedSave = saveCoordinatorRef.current.begin(() =>
         saveEditorDocument({
           workspaceId,
           tabId,
           content: initialContent,
-        }),
+        }, cancellation.token),
       );
       try {
         await coordinatedSave.run(async (isCurrent) => {
+          assertEditorBufferEditable(buffer);
           let content = initialContent;
           let formatted = false;
           if (editorSettings(useSettingsStore.getState().snapshot).formatOnSave) {
             try {
-              formatted = await formatLanguageDocument(editor);
+              formatted = await formatLanguageDocument(editor, cancellation.token);
               setFormatError(null);
             } catch (caughtError: unknown) {
               const message = errorMessage(caughtError);
@@ -313,13 +358,18 @@ function LoadedEditor({
             return;
           }
           if (formatted) {
-            const formattedContent = model.getValue();
+            const formattedModel = buffer.model;
+            const formattedContent = formattedModel.getValue();
             if (formattedContent !== initialContent) {
-              await saveEditorDocument({ workspaceId, tabId, content: formattedContent });
+              await saveEditorDocument(
+                { workspaceId, tabId, content: formattedContent },
+                cancellation.token,
+              );
             }
             content = formattedContent;
           }
-          void notifyLanguageDocumentSaved(model, content).catch(() => {});
+          const savedModel = buffer.model;
+          void notifyLanguageDocumentSaved(savedModel, content).catch(() => {});
           if (!isCurrent()) {
             return;
           }
@@ -332,6 +382,8 @@ function LoadedEditor({
           setTabDirty(workspaceId, tabId, true);
           setSaveState({ status: "error", message: errorMessage(caughtError) });
         }
+      } finally {
+        finishOperation(cancellation);
       }
     };
     const saveAction = editor.addAction({
@@ -347,19 +399,26 @@ function LoadedEditor({
       label: "Format Document",
       keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
       run: async () => {
+        const cancellation = beginOperation();
         try {
-          await formatLanguageDocument(editor);
+          assertEditorBufferEditable(buffer);
+          await formatLanguageDocument(editor, cancellation.token);
           setFormatError(null);
         } catch (caughtError: unknown) {
           const message = errorMessage(caughtError);
           setFormatError((current) => (current === message ? current : message));
+        } finally {
+          finishOperation(cancellation);
         }
       },
     });
 
     return () => {
       saveCoordinatorRef.current.invalidate();
-      contentSubscription.dispose();
+      cancelOperations();
+      unsubscribeModel();
+      unsubscribeLock();
+      contentSubscription?.dispose();
       saveAction.dispose();
       formatAction.dispose();
       decorationsRef.current?.clear();

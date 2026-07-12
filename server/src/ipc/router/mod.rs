@@ -56,6 +56,10 @@ impl PreparedRoute {
         self.request.id
     }
 
+    pub(crate) fn action(&self) -> &str {
+        &self.request.action
+    }
+
     pub(crate) fn mode(&self) -> ExecutionMode {
         self.definition.mode
     }
@@ -68,6 +72,7 @@ impl PreparedRoute {
                     | "rollbackWorkspaceEdit"
                     | "finishWorkspaceEdit"
                     | "finalizeWorkspaceEdit"
+                    | "acknowledgeWorkspaceEditCompletion"
                     | "workspaceEditStatus"
             )
         {
@@ -154,6 +159,13 @@ impl RouteDefinition {
         Self::new(handler, ExecutionMode::Persistent(PersistenceMode::Full))
     }
 
+    pub(super) const fn live_full(handler: RouteHandler) -> Self {
+        Self::new(
+            handler,
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        )
+    }
+
     pub(super) const fn settings(handler: RouteHandler) -> Self {
         Self::new(
             handler,
@@ -184,6 +196,7 @@ pub(crate) enum ExecutionMode {
     Live,
     LanguageServer,
     LanguageServerFeature,
+    LivePersistent(PersistenceMode),
     Persistent(PersistenceMode),
 }
 
@@ -362,6 +375,25 @@ mod tests {
                 "restart",
             ],
             ExecutionMode::LanguageServer,
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &["commitWorkspaceEdit", "rollbackWorkspaceEdit"],
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &[
+                "finishWorkspaceEdit",
+                "finalizeWorkspaceEdit",
+                "acknowledgeWorkspaceEditCompletion",
+            ],
+            ExecutionMode::LivePersistent(PersistenceMode::Full),
+        );
+        assert_modes(
+            Domain::LanguageServers,
+            &["workspaceEditStatus", "listWorkspaceEditRecoveries"],
+            ExecutionMode::Live,
         );
         assert_modes(
             Domain::LanguageServers,

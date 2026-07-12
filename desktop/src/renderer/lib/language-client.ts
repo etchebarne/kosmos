@@ -1,4 +1,5 @@
 import {
+  acknowledgeWorkspaceEditCompletion,
   changeLanguageServerDocument,
   closeLanguageServerDocument,
   requestLanguageServerFormatting,
@@ -20,6 +21,7 @@ import {
   isRequestCancelledError,
   listFormatters,
   listLanguageServers,
+  listWorkspaceEditRecoveries,
   openLanguageServerDocument,
   resolveLanguageServerCompletion,
   trustLanguageServerWorkspace,
@@ -47,6 +49,7 @@ import type {
   LanguageServerCodeAction,
   KosmosServerNotification,
   StagedWorkspaceEdit,
+  WorkspaceEditRecovery,
 } from "@/shared/ipc";
 import {
   css as monacoCss,
@@ -69,9 +72,30 @@ import { isCurrentLanguageResult } from "./language-feature-adapters";
 import { monaco } from "./monaco";
 import { createQueuedRefresh } from "./queued-refresh";
 import {
+  beginEditorBufferOperation,
+  captureEditorBufferState,
+  detachEditorBuffer,
+  editorBufferForModel,
+  editorBuffersForPath,
+  isEditorBufferStateCurrent,
+  lockEditorBuffer,
+  pathDerivedModelLanguage,
+  restoreDetachedEditorBuffer,
+  setLanguageDocumentAttacher,
+  type EditorBuffer,
+} from "./editor-buffers";
+import {
+  planWorkspaceEditModelLineages,
+  type WorkspaceEditModelOutcome,
+} from "./workspace-edit-model-lineages";
+import {
   applyWorkspaceEditTransaction,
+  registerPersistedWorkspaceEditRecoveries,
+  retryWorkspaceEditRecoveries,
   replaceWorkspaceEditModel,
+  type OpenWorkspaceEditTarget,
 } from "./workspace-edit-transaction";
+import { useWorkspaceStore } from "@/renderer/stores/workspace-store";
 
 export type LanguageDocumentHandle = {
   dispose(): void;
@@ -195,6 +219,7 @@ export function setLanguageLocationOpener(
 }
 
 export function initializeLanguageClient(): void {
+  setLanguageDocumentAttacher(attachLanguageDocument);
   if (initialized) {
     return;
   }
@@ -220,9 +245,16 @@ export function initializeLanguageClient(): void {
   void window.kosmos.pendingServerApplyEdits().then((pending) => {
     pending.forEach(handleServerWorkspaceEdit);
   }).catch(() => {});
+  void refreshPersistedWorkspaceEditRecoveries().then(retryWorkspaceEditRecoveries).catch(() => {});
   window.kosmos.onServerReconnected(() => {
     void refreshLanguageClientCatalog();
     void refreshDiagnosticsAfterReconnect();
+    void refreshPersistedWorkspaceEditRecoveries()
+      .then(retryWorkspaceEditRecoveries)
+      .then(() => {
+        window.dispatchEvent(new CustomEvent("kosmos:workspace-edit-applied"));
+      })
+      .catch(() => {});
   });
   monaco.editor.registerEditorOpener({
     async openCodeEditor(_source, resource, selectionOrPosition) {
@@ -253,6 +285,64 @@ export function initializeLanguageClient(): void {
   void refreshLanguageClientCatalog();
 }
 
+async function refreshPersistedWorkspaceEditRecoveries(): Promise<void> {
+  const recoveries = await listWorkspaceEditRecoveries();
+  registerPersistedWorkspaceEditRecoveries(recoveries, persistedWorkspaceEditAdapter);
+}
+
+function persistedWorkspaceEditAdapter(recovery: WorkspaceEditRecovery) {
+  const params = {
+    transactionId: recovery.transactionId,
+    authorization: recovery.authorization,
+  };
+  return {
+    validate() {},
+    preflight() {
+      return null;
+    },
+    async commitClosed() {
+      throw new Error("A recovered workspace edit cannot be committed again.");
+    },
+    async rollbackClosed() {
+      await rollbackWorkspaceEdit(params);
+    },
+    async finish() {
+      await finishWorkspaceEdit(params);
+    },
+    async acknowledge() {
+      await acknowledgeWorkspaceEditCompletion(params);
+    },
+    finalize() {
+      return finalizeWorkspaceEdit(params);
+    },
+    status() {
+      return getWorkspaceEditStatus(params);
+    },
+    isRecoveryRequired: workspaceEditRecoveryRequired,
+    isUnknownTransaction: workspaceEditUnknown,
+    async reconcileUnknown() {
+      await reconcileWorkspaceEditState();
+    },
+    async reconcileCompletion() {
+      await reconcileWorkspaceEditState();
+    },
+  };
+}
+
+function workspaceEditRecoveryRequired(error: unknown): boolean {
+  return ipcErrorHasCode(error, "workspace_edit.recovery_required");
+}
+
+function workspaceEditUnknown(error: unknown): boolean {
+  return ipcErrorHasCode(error, "workspace_edit.expired") ||
+    ipcErrorHasCode(error, "workspace_edit.invalid");
+}
+
+function ipcErrorHasCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code) ||
+    (error instanceof Error && error.message.includes(code));
+}
+
 function handleServerWorkspaceEdit(
   notification: Extract<KosmosServerNotification, { event: "languageServerApplyEdit" }>,
 ): void {
@@ -261,7 +351,7 @@ function handleServerWorkspaceEdit(
   }
   const cancellation = new AbortController();
   activeServerWorkspaceEdits.set(notification.token, cancellation);
-  void applyStagedWorkspaceEdit(notification.edit, cancellation.signal)
+  void applyStagedWorkspaceEdit(notification.edit, cancellation.signal, true)
     .then(
       () =>
         window.kosmos.acknowledgeServerApplyEdit(
@@ -829,9 +919,14 @@ async function resolveCodeActionMetadata(
 export async function applyStagedWorkspaceEdit(
   edit: StagedWorkspaceEdit,
   signal?: AbortSignal,
+  deferCompletionAcknowledgement = false,
 ): Promise<void> {
-  const validateDocument = (document: StagedWorkspaceEdit["documents"][number]): void => {
-    const uri = locationUri(document);
+  const validateDocument = (
+    document: StagedWorkspaceEdit["documents"][number],
+    path = document.path,
+    strictGeneration = true,
+  ): void => {
+    const uri = locationUri({ ...document, path });
     const model = monaco.editor.getModel(uri);
     if (document.generation === null || document.version === null) {
       if (model) {
@@ -844,8 +939,9 @@ export async function applyStagedWorkspaceEdit(
       !model ||
       !languageDocument ||
       languageDocument.disposed ||
-      languageDocument.generation !== document.generation ||
-      model.getVersionId() !== document.version ||
+      (strictGeneration &&
+        (languageDocument.generation !== document.generation ||
+          model.getVersionId() !== document.version)) ||
       model.getValue() !== document.originalText
     ) {
       throw new Error(`Workspace edit target ${document.path} changed before it could be applied.`);
@@ -853,44 +949,11 @@ export async function applyStagedWorkspaceEdit(
   };
   await applyWorkspaceEditTransaction(edit, {
     validate: validateDocument,
-    preflight(document) {
-      const uri = locationUri(document);
-      const model = monaco.editor.getModel(uri);
-      validateDocument(document);
-      if (document.generation === null || document.version === null) {
-        return null;
-      }
-      const languageDocument = documents.get(uri.toString());
-      if (!model || !languageDocument) {
-        throw new Error(`Workspace edit target ${document.path} is not available.`);
-      }
-      let appliedVersion: number | null = null;
-      return {
-        document,
-        validate() {
-          validateDocument(document);
-        },
-        apply() {
-          // setValue intentionally clears Monaco's per-model undo stack. A workspace-wide edit
-          // must not be partially undone through one model's ordinary undo command.
-          replaceWorkspaceEditModel(model, document.newText);
-          appliedVersion = model.getVersionId();
-        },
-        undo() {
-          if (
-            appliedVersion === null ||
-            languageDocument.disposed ||
-            languageDocument.generation !== document.generation ||
-            model.getVersionId() !== appliedVersion ||
-            model.getValue() !== document.newText
-          ) {
-            throw new Error(
-              `Monaco target ${document.path} changed after application; recovery will not overwrite it.`,
-            );
-          }
-          replaceWorkspaceEditModel(model, document.originalText);
-        },
-      };
+    preflight() {
+      return null;
+    },
+    preflightTargets() {
+      return preflightWorkspaceEditModelTargets(edit, validateDocument);
     },
     async commitClosed(transactionId) {
       await commitWorkspaceEdit({ transactionId, authorization: edit.authorization });
@@ -901,21 +964,261 @@ export async function applyStagedWorkspaceEdit(
     async finish(transactionId) {
       await finishWorkspaceEdit({ transactionId, authorization: edit.authorization });
     },
+    async acknowledge(transactionId) {
+      await acknowledgeWorkspaceEditCompletion({
+        transactionId,
+        authorization: edit.authorization,
+      });
+    },
     async finalize(transactionId) {
-      await finalizeWorkspaceEdit({ transactionId, authorization: edit.authorization });
+      return finalizeWorkspaceEdit({ transactionId, authorization: edit.authorization });
     },
     status(transactionId) {
       return getWorkspaceEditStatus({ transactionId, authorization: edit.authorization });
     },
-    isRecoveryRequired(error) {
-      return Boolean(
-        error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "workspace_edit.recovery_required",
-      ) || (error instanceof Error && error.message.includes("workspace_edit.recovery_required"));
+    isRecoveryRequired: workspaceEditRecoveryRequired,
+    isUnknownTransaction: workspaceEditUnknown,
+    async reconcileUnknown() {
+      await reconcileWorkspaceEditState();
     },
-  }, signal);
+    async reconcileCompletion() {
+      await reconcileWorkspaceEditState();
+    },
+  }, signal, deferCompletionAcknowledgement);
+  window.dispatchEvent(new CustomEvent("kosmos:workspace-edit-applied"));
+}
+
+type WorkspaceEditBufferOutcome = WorkspaceEditModelOutcome<EditorBuffer>;
+
+type PreparedWorkspaceEditBuffer = {
+  outcome: WorkspaceEditBufferOutcome;
+  state: ReturnType<typeof captureEditorBufferState>;
+  languageDocument: LanguageDocument | null;
+  generation: number | null;
+  editors: Array<{
+    editor: monaco.editor.ICodeEditor;
+    viewState: monaco.editor.ICodeEditorViewState | null;
+  }>;
+  detached: boolean;
+  bound: boolean;
+  installedModel: monaco.editor.ITextModel | null;
+  originalModel: monaco.editor.ITextModel;
+};
+
+function preflightWorkspaceEditModelTargets(
+  edit: StagedWorkspaceEdit,
+  validateDocument: (
+    document: StagedWorkspaceEdit["documents"][number],
+    path?: string,
+    strictGeneration?: boolean,
+  ) => void,
+): OpenWorkspaceEditTarget[] {
+  const buffers = collectWorkspaceEditBuffers(edit);
+  for (const operation of edit.operations) {
+    if (operation.kind !== "textDocument") continue;
+    const document = edit.documents[operation.document];
+    if (document && document.generation !== null && document.version !== null) {
+      validateDocument(document, document.originalPath);
+    }
+  }
+  const outcomes = planWorkspaceEditModelLineages(
+    edit,
+    [...buffers].map((buffer) => ({
+      workspaceId: buffer.workspaceId,
+      path: buffer.path,
+      content: buffer.model.getValue(),
+      savedContent: buffer.savedContent,
+      value: buffer,
+    })),
+  );
+  if (outcomes.length === 0) return [];
+
+  const prepared = outcomes.map<PreparedWorkspaceEditBuffer>((outcome) => {
+    const state = captureEditorBufferState(outcome.value);
+    const languageDocument = documents.get(state.model.uri.toString()) ?? null;
+    return {
+      outcome,
+      state,
+      languageDocument,
+      generation: languageDocument?.generation ?? null,
+      editors: [],
+      detached: false,
+      bound: false,
+      installedModel: null,
+      originalModel: state.model,
+    };
+  });
+  const releases = prepared.map(({ outcome }) =>
+    lockEditorBuffer(outcome.value, edit.transactionId)
+  );
+  return [workspaceEditModelTarget(prepared, releases)];
+}
+
+function collectWorkspaceEditBuffers(edit: StagedWorkspaceEdit): Set<EditorBuffer> {
+  const buffers = new Set<EditorBuffer>();
+  const addPath = (workspaceId: number, path: string) => {
+    for (const buffer of editorBuffersForPath(workspaceId, path)) buffers.add(buffer);
+  };
+  for (const operation of edit.operations) {
+    if (operation.kind === "textDocument") {
+      const document = edit.documents[operation.document];
+      if (document && document.generation !== null && document.version !== null) {
+        addPath(document.workspaceId, document.originalPath);
+      }
+    } else if (operation.kind === "renameFile") {
+      addPath(operation.workspaceId, operation.oldPath);
+      addPath(operation.workspaceId, operation.newPath);
+    } else {
+      addPath(operation.workspaceId, operation.path);
+    }
+  }
+  return buffers;
+}
+
+function workspaceEditModelTarget(
+  prepared: PreparedWorkspaceEditBuffer[],
+  releases: Array<() => void>,
+): OpenWorkspaceEditTarget {
+  let completed = false;
+  return {
+    validate() {
+      for (const current of prepared) {
+        const languageDocument = documents.get(current.state.model.uri.toString()) ?? null;
+        if (
+          !isEditorBufferStateCurrent(current.state) ||
+          languageDocument !== current.languageDocument ||
+          (languageDocument?.generation ?? null) !== current.generation ||
+          languageDocument?.disposed === true
+        ) {
+          throw new Error(
+            `Open workspace edit target ${current.state.path} changed before application.`,
+          );
+        }
+      }
+    },
+    apply() {
+      prepareWorkspaceEditViews(prepared);
+      for (const current of prepared) {
+        detachEditorBuffer(current.outcome.value);
+        current.detached = true;
+      }
+      disposeConflictingOriginalModels(prepared);
+      for (const current of prepared) installWorkspaceEditOutcome(current);
+    },
+    undo() {
+      if (completed) return;
+      validateAppliedWorkspaceEditModels(prepared);
+      for (const current of prepared) {
+        if (!current.detached) continue;
+        if (current.bound) {
+          detachEditorBuffer(current.outcome.value);
+          current.bound = false;
+        }
+        current.installedModel?.dispose();
+        current.installedModel = null;
+      }
+      for (const current of prepared) restoreWorkspaceEditBuffer(current);
+    },
+    complete() {
+      completed = true;
+      for (const current of prepared) {
+        if (current.outcome.finalPath === null || current.installedModel !== null) {
+          current.originalModel.dispose();
+        }
+      }
+    },
+    release() {
+      for (const release of releases) release();
+    },
+  };
+}
+
+function prepareWorkspaceEditViews(prepared: PreparedWorkspaceEditBuffer[]): void {
+  for (const current of prepared) {
+    current.editors = monaco.editor
+      .getEditors()
+      .filter((editor) => editor.getModel() === current.originalModel)
+      .map((editor) => ({ editor, viewState: editor.saveViewState() }));
+    for (const editor of current.editors) editor.editor.setModel(null);
+  }
+}
+
+function disposeConflictingOriginalModels(prepared: PreparedWorkspaceEditBuffer[]): void {
+  const finalOwners = new Map(
+    prepared
+      .filter(({ outcome }) => outcome.finalPath !== null)
+      .map((current) => [
+        `${current.outcome.workspaceId}:${current.outcome.finalPath}`,
+        current,
+      ]),
+  );
+  for (const current of prepared) {
+    const owner = finalOwners.get(`${current.outcome.workspaceId}:${current.state.path}`);
+    if (owner && owner !== current) current.originalModel.dispose();
+  }
+}
+
+function installWorkspaceEditOutcome(current: PreparedWorkspaceEditBuffer): void {
+  const { outcome } = current;
+  if (outcome.finalPath === null) return;
+  let model = current.originalModel;
+  if (outcome.finalPath !== current.state.path || model.isDisposed()) {
+    model = monaco.editor.createModel(
+      outcome.finalContent,
+      pathDerivedModelLanguage(),
+      locationUri({ workspaceId: outcome.workspaceId, path: outcome.finalPath }),
+    );
+    current.installedModel = model;
+  } else if (model.getValue() !== outcome.finalContent) {
+    // setValue intentionally clears per-model undo. One model cannot undo part of a transaction.
+    replaceWorkspaceEditModel(model, outcome.finalContent);
+  }
+  restoreDetachedEditorBuffer(outcome.value, outcome.finalPath, model);
+  current.bound = true;
+  for (const editor of current.editors) {
+    editor.editor.setModel(model);
+    if (editor.viewState) editor.editor.restoreViewState(editor.viewState);
+  }
+}
+
+function validateAppliedWorkspaceEditModels(prepared: PreparedWorkspaceEditBuffer[]): void {
+  for (const current of prepared) {
+    if (!current.bound) continue;
+    const model = current.installedModel ?? current.originalModel;
+    if (model.isDisposed() || model.getValue() !== current.outcome.finalContent) {
+      throw new Error(
+        `Monaco target ${current.outcome.finalPath} changed after application; recovery will not overwrite it.`,
+      );
+    }
+  }
+}
+
+function restoreWorkspaceEditBuffer(current: PreparedWorkspaceEditBuffer): void {
+  if (!current.detached) return;
+  let model = current.originalModel;
+  if (model.isDisposed()) {
+    model = monaco.editor.createModel(
+      current.state.content,
+      pathDerivedModelLanguage(),
+      locationUri({
+        workspaceId: current.outcome.workspaceId,
+        path: current.state.path,
+      }),
+    );
+  } else if (model.getValue() !== current.state.content) {
+    replaceWorkspaceEditModel(model, current.state.content);
+  }
+  restoreDetachedEditorBuffer(current.outcome.value, current.state.path, model);
+  for (const editor of current.editors) {
+    editor.editor.setModel(model);
+    if (editor.viewState) editor.editor.restoreViewState(editor.viewState);
+  }
+  current.detached = false;
+}
+
+async function reconcileWorkspaceEditState(): Promise<void> {
+  await useWorkspaceStore.getState().refreshWorkspaces();
+  window.dispatchEvent(new CustomEvent("kosmos:workspace-edit-applied"));
 }
 
 function renamePreparationKey(model: monaco.editor.ITextModel, position: monaco.Position): string {
@@ -1187,6 +1490,8 @@ export async function formatLanguageDocument(
   if (!document || document.disposed) {
     throw new Error("No formatter or language server is available for this document.");
   }
+  const buffer = editorBufferForModel(model);
+  const operation = buffer ? beginEditorBufferOperation(buffer, model) : null;
   let result;
   try {
     result = await afterPendingChanges(document, async () => {
@@ -1221,7 +1526,8 @@ export async function formatLanguageDocument(
     cancellation?.isCancellationRequested ||
     document.disposed ||
     document.generation !== result.generation ||
-    model.getVersionId() !== result.version
+    model.getVersionId() !== result.version ||
+    operation?.isCurrent() === false
   ) {
     return false;
   }
