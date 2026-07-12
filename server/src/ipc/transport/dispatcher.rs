@@ -579,7 +579,7 @@ fn execute_persistent(
         },
         Err(_) => return state_unavailable(route.request_id()),
     };
-    let response = execute_handler(route, operation.state_mut(), cancellation);
+    let response = execute_persistent_handler(route, &mut operation, cancellation);
 
     if !response.is_ok() {
         abandon_persistent_operation(application);
@@ -683,6 +683,17 @@ fn execute_handler(
 ) -> ServerMessage {
     catch_unwind(AssertUnwindSafe(|| route.execute(state, cancellation)))
         .unwrap_or_else(|_| handler_panicked(route.request_id()))
+}
+
+fn execute_persistent_handler(
+    route: &PreparedRoute,
+    operation: &mut core::PreparedPersistentOperation,
+    cancellation: &core::language_servers::LanguageServerRequestCancellation,
+) -> ServerMessage {
+    catch_unwind(AssertUnwindSafe(|| {
+        route.execute_persistent(operation, cancellation)
+    }))
+    .unwrap_or_else(|_| handler_panicked(route.request_id()))
 }
 
 fn request_cancelled(request_id: u64) -> ServerMessage {

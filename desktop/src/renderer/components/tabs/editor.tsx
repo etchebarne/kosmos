@@ -451,6 +451,7 @@ function LoadedEditor({
       !model ||
       !isActive ||
       !pendingSelection ||
+      pendingSelection.tabId !== tabId ||
       pendingSelection.workspaceId !== workspaceId ||
       pendingSelection.path !== document.path ||
       !consumePendingEditorSelection(pendingSelection.generation)

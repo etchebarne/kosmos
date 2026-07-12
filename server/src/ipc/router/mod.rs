@@ -20,6 +20,8 @@ use super::messages::workspace::WorkspaceListSnapshot;
 
 type RouteHandler = fn(&mut core::State, &RequestEnvelope) -> ServerMessage;
 type ApplicationRouteHandler = fn(&mut core::Application, &RequestEnvelope) -> ServerMessage;
+type PersistentApplicationRouteHandler =
+    fn(&mut core::PreparedPersistentOperation, &RequestEnvelope) -> ServerMessage;
 type CancellableRouteHandler = fn(
     &mut core::State,
     &RequestEnvelope,
@@ -146,7 +148,7 @@ impl PreparedRoute {
         match self.definition.handler {
             RouteHandlerKind::Standard(handler) => handler(state, &self.request),
             RouteHandlerKind::Cancellable(handler) => handler(state, &self.request, cancellation),
-            RouteHandlerKind::Application(_) => {
+            RouteHandlerKind::Application(_) | RouteHandlerKind::PersistentApplication(_) => {
                 unreachable!("application routes must execute against the live application")
             }
         }
@@ -163,6 +165,26 @@ impl PreparedRoute {
                 handler(application.state_mut(), &self.request, cancellation)
             }
             RouteHandlerKind::Application(handler) => handler(application, &self.request),
+            RouteHandlerKind::PersistentApplication(_) => {
+                unreachable!("persistent application routes require a prepared operation")
+            }
+        }
+    }
+
+    pub(crate) fn execute_persistent(
+        &self,
+        operation: &mut core::PreparedPersistentOperation,
+        cancellation: &core::language_servers::LanguageServerRequestCancellation,
+    ) -> ServerMessage {
+        match self.definition.handler {
+            RouteHandlerKind::Standard(handler) => handler(operation.state_mut(), &self.request),
+            RouteHandlerKind::Cancellable(handler) => {
+                handler(operation.state_mut(), &self.request, cancellation)
+            }
+            RouteHandlerKind::PersistentApplication(handler) => handler(operation, &self.request),
+            RouteHandlerKind::Application(_) => {
+                unreachable!("live application routes cannot execute against a prepared operation")
+            }
         }
     }
 
@@ -237,6 +259,7 @@ enum RouteHandlerKind {
     Standard(RouteHandler),
     Cancellable(CancellableRouteHandler),
     Application(ApplicationRouteHandler),
+    PersistentApplication(PersistentApplicationRouteHandler),
 }
 
 impl RouteDefinition {
@@ -291,6 +314,13 @@ impl RouteDefinition {
         Self {
             handler: RouteHandlerKind::Application(handler),
             mode: SchedulingMode::Application,
+        }
+    }
+
+    pub(super) const fn persistent_application(handler: PersistentApplicationRouteHandler) -> Self {
+        Self {
+            handler: RouteHandlerKind::PersistentApplication(handler),
+            mode: SchedulingMode::SerialMutation,
         }
     }
 

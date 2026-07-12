@@ -12,7 +12,6 @@ import {
 } from "@/renderer/lib/editor-buffers";
 import {
   activeWorkspaceFrom,
-  editorSourceTabId,
   mergeLocalSplitRatios,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
@@ -26,6 +25,7 @@ import {
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
   moveTab as moveTabIpc,
+  openEditorLocation as openEditorLocationIpc,
   openEditorTab as openEditorTabIpc,
   openGitDiffTab as openGitDiffTabIpc,
   openTab as openTabIpc,
@@ -86,6 +86,7 @@ type WorkspaceStore = {
   switchRequestId: number;
   pendingEditorSelection: {
     generation: number;
+    tabId: TabId | null;
     workspaceId: WorkspaceId;
     path: string;
     lineNumber: number;
@@ -443,21 +444,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       endLineNumber = lineNumber,
       endColumn = column,
     ) {
-      const workspace = get().snapshot?.workspaces.find((candidate) => candidate.id === workspaceId);
-      if (!workspace) {
-        set({ error: "The requested workspace is not open." });
-        return false;
-      }
-      const sourceTabId = editorSourceTabId(workspace.root);
-      if (sourceTabId === null) {
-        set({ error: "Open a File Tree or Search tab before navigating to a language location." });
-        return false;
-      }
       const generation = navigationRequests.issue();
       set({
         error: null,
         pendingEditorSelection: {
           generation,
+          tabId: null,
           workspaceId,
           path,
           lineNumber,
@@ -473,16 +465,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           return;
         }
         try {
-          const activeSnapshot = await activateWorkspace(workspaceId);
+          const result = await openEditorLocationIpc({ workspaceId, path });
           if (!navigationRequests.isCurrent(generation)) {
             return;
           }
-          set({ snapshot: activeSnapshot });
-          const snapshot = await openEditorTabIpc({ workspaceId, tabId: sourceTabId, path });
-          if (!navigationRequests.isCurrent(generation)) {
-            return;
-          }
-          set({ snapshot });
+          set((state) => ({
+            snapshot: result.snapshot,
+            pendingEditorSelection:
+              state.pendingEditorSelection?.generation === generation
+                ? {
+                    ...state.pendingEditorSelection,
+                    tabId: result.target.tabId,
+                    workspaceId: result.target.workspaceId,
+                    path: result.target.path,
+                  }
+                : state.pendingEditorSelection,
+          }));
           succeeded = true;
         } catch (caughtError) {
           if (navigationRequests.isCurrent(generation)) {

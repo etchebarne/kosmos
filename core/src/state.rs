@@ -65,6 +65,37 @@ pub struct State {
     tooling_capabilities: crate::events::ToolingCapabilities,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenEditorLocation {
+    workspaces: WorkspaceList,
+    source_tab_id: TabId,
+    workspace_id: WorkspaceId,
+    tab_id: TabId,
+    path: String,
+}
+
+impl OpenEditorLocation {
+    pub fn workspaces(&self) -> &WorkspaceList {
+        &self.workspaces
+    }
+
+    pub fn source_tab_id(&self) -> TabId {
+        self.source_tab_id
+    }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub fn tab_id(&self) -> TabId {
+        self.tab_id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct WorkspaceEditEditorRecovery {
     original: EditorViewState,
@@ -1757,6 +1788,66 @@ impl State {
         Ok(())
     }
 
+    pub fn open_editor_location(
+        &mut self,
+        workspace_id: WorkspaceId,
+        path: &str,
+    ) -> Result<OpenEditorLocation, EditorError> {
+        let path = normalize_editor_path(path)?;
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(EditorError::WorkspaceNotFound)?;
+        let source_tab_id = self
+            .editor_source_tab_id(workspace_id)
+            .ok_or(EditorError::SourceTabNotFound)?;
+        let document = EditorDocument::read(workspace.directory(), &path)?;
+        let path = document.path().to_owned();
+        let existing_tab = self.editor_tab(workspace_id, &path);
+        let target_pane_id = workspace.root().largest_pane_id();
+
+        self.mark_persistent_change();
+
+        let tab_id = if let Some((pane_id, tab_id)) = existing_tab {
+            if !self.activate_tab(Some(workspace_id), pane_id, tab_id) {
+                return Err(EditorError::TabNotFound);
+            }
+            tab_id
+        } else {
+            let title = path
+                .rsplit('/')
+                .next()
+                .expect("normalized editor paths have a file name")
+                .to_owned();
+            let tab = self.next_tab(TabKind::Editor, Some(title));
+            let tab_id = tab.id();
+            let view_state = EditorViewState::new(workspace_id, tab_id, path.clone());
+            let workspace = self
+                .workspace_mut(workspace_id)
+                .ok_or(EditorError::WorkspaceNotFound)?;
+
+            if !workspace.add_tab_to_pane(target_pane_id, tab) {
+                return Err(EditorError::TabNotFound);
+            }
+
+            workspace.activate_tab(target_pane_id, tab_id);
+            self.editor_view_states.push(view_state);
+            tab_id
+        };
+
+        if !self.workspaces.activate_workspace(workspace_id) {
+            return Err(EditorError::WorkspaceNotFound);
+        }
+
+        Ok(OpenEditorLocation {
+            workspaces: self.workspaces.clone(),
+            source_tab_id,
+            workspace_id,
+            tab_id,
+            path,
+        })
+    }
+
     pub fn search_workspace(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -2838,6 +2929,13 @@ impl State {
 
     fn is_editor_source_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.is_file_tree_tab(workspace_id, tab_id) || self.is_search_tab(workspace_id, tab_id)
+    }
+
+    fn editor_source_tab_id(&self, workspace_id: WorkspaceId) -> Option<TabId> {
+        self.workspaces
+            .workspace(workspace_id)?
+            .root()
+            .first_tab_id_matching(&|tab| matches!(tab.kind(), TabKind::FileTree | TabKind::Search))
     }
 
     fn is_terminal_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
@@ -4198,6 +4296,193 @@ mod tests {
     }
 
     #[test]
+    fn open_editor_location_uses_depth_first_source_tab_selection() {
+        let root = test_directory("editor-location-source-order");
+        let workspace_id = WorkspaceId::new(1);
+        let first = pane_with_tabs(
+            1,
+            vec![
+                Tab::new(TabId::new(1), "Blank", TabKind::Blank),
+                Tab::new(TabId::new(2), "Search", TabKind::Search),
+                Tab::new(TabId::new(3), "Files", TabKind::FileTree),
+            ],
+        );
+        let second = pane_with_tabs(2, vec![Tab::new(TabId::new(4), "Files", TabKind::FileTree)]);
+        let workspace = Workspace::from_root(
+            workspace_id,
+            &root,
+            PaneNode::split(
+                SplitPaneId::new(1),
+                SplitAxis::Horizontal,
+                0.5,
+                PaneNode::leaf(first),
+                PaneNode::leaf(second),
+            ),
+            PaneId::new(1),
+        )
+        .unwrap();
+        let state = State::from_workspaces(vec![workspace], Some(workspace_id)).unwrap();
+
+        assert_eq!(
+            state.editor_source_tab_id(workspace_id),
+            Some(TabId::new(2))
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn open_editor_location_activates_an_inactive_workspace_and_opens_a_new_tab() {
+        let active_root = test_directory("editor-location-active");
+        let target_root = test_directory("editor-location-target");
+        std::fs::write(target_root.join("document.txt"), "target").unwrap();
+        let active_workspace_id = WorkspaceId::new(1);
+        let target_workspace_id = WorkspaceId::new(2);
+        let active_workspace = Workspace::new(
+            active_workspace_id,
+            &active_root,
+            pane_with_tabs(1, vec![Tab::new(TabId::new(1), "Blank", TabKind::Blank)]),
+        );
+        let target_workspace = Workspace::new(
+            target_workspace_id,
+            &target_root,
+            pane_with_tabs(2, vec![Tab::new(TabId::new(2), "Files", TabKind::FileTree)]),
+        );
+        let mut state = State::from_workspaces(
+            vec![active_workspace, target_workspace],
+            Some(active_workspace_id),
+        )
+        .unwrap();
+
+        let result = state
+            .open_editor_location(target_workspace_id, "document.txt")
+            .unwrap();
+
+        assert_eq!(result.source_tab_id(), TabId::new(2));
+        assert_eq!(result.workspace_id(), target_workspace_id);
+        assert_eq!(result.tab_id(), TabId::new(3));
+        assert_eq!(result.path(), "document.txt");
+        assert_eq!(
+            result.workspaces().active_workspace_id(),
+            Some(target_workspace_id)
+        );
+        assert_eq!(
+            state.workspaces().active_workspace_id(),
+            Some(target_workspace_id)
+        );
+        assert_eq!(
+            state
+                .workspaces()
+                .workspace(target_workspace_id)
+                .unwrap()
+                .active_pane()
+                .unwrap()
+                .active_tab_id(),
+            TabId::new(3)
+        );
+
+        let _ = std::fs::remove_dir_all(active_root);
+        let _ = std::fs::remove_dir_all(target_root);
+    }
+
+    #[test]
+    fn open_editor_location_reuses_an_existing_editor_tab() {
+        let root = test_directory("editor-location-existing");
+        std::fs::write(root.join("document.txt"), "target").unwrap();
+        let workspace_id = WorkspaceId::new(1);
+        let workspace = Workspace::new(
+            workspace_id,
+            &root,
+            pane_with_tabs(
+                1,
+                vec![
+                    Tab::new(TabId::new(1), "Files", TabKind::FileTree),
+                    Tab::new(TabId::new(2), "document.txt", TabKind::Editor),
+                ],
+            ),
+        );
+        let mut state = State::from_workspaces_with_all_view_states(
+            vec![workspace],
+            Some(workspace_id),
+            Vec::new(),
+            Vec::new(),
+            vec![EditorViewState::new(
+                workspace_id,
+                TabId::new(2),
+                "document.txt",
+            )],
+        )
+        .unwrap();
+
+        let result = state
+            .open_editor_location(workspace_id, "document.txt")
+            .unwrap();
+
+        assert_eq!(result.tab_id(), TabId::new(2));
+        assert_eq!(
+            state
+                .workspaces()
+                .workspace(workspace_id)
+                .unwrap()
+                .active_pane()
+                .unwrap()
+                .tabs()
+                .len(),
+            2
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn open_editor_location_missing_file_is_atomic() {
+        let (mut state, active_workspace_id, target_workspace_id, active_root, target_root) =
+            location_state("editor-location-missing-file", true);
+        let before = location_state_snapshot(&state);
+
+        assert!(matches!(
+            state.open_editor_location(target_workspace_id, "missing.txt"),
+            Err(EditorError::FileNotFound(_))
+        ));
+        assert_location_state_unchanged(&state, &before, active_workspace_id);
+
+        let _ = std::fs::remove_dir_all(active_root);
+        let _ = std::fs::remove_dir_all(target_root);
+    }
+
+    #[test]
+    fn open_editor_location_missing_workspace_is_atomic() {
+        let (mut state, active_workspace_id, _, active_root, target_root) =
+            location_state("editor-location-missing-workspace", true);
+        let before = location_state_snapshot(&state);
+
+        assert!(matches!(
+            state.open_editor_location(WorkspaceId::new(99), "missing.txt"),
+            Err(EditorError::WorkspaceNotFound)
+        ));
+        assert_location_state_unchanged(&state, &before, active_workspace_id);
+
+        let _ = std::fs::remove_dir_all(active_root);
+        let _ = std::fs::remove_dir_all(target_root);
+    }
+
+    #[test]
+    fn open_editor_location_without_source_tab_is_atomic() {
+        let (mut state, active_workspace_id, target_workspace_id, active_root, target_root) =
+            location_state("editor-location-missing-source", false);
+        let before = location_state_snapshot(&state);
+
+        assert!(matches!(
+            state.open_editor_location(target_workspace_id, "missing.txt"),
+            Err(EditorError::SourceTabNotFound)
+        ));
+        assert_location_state_unchanged(&state, &before, active_workspace_id);
+
+        let _ = std::fs::remove_dir_all(active_root);
+        let _ = std::fs::remove_dir_all(target_root);
+    }
+
+    #[test]
     fn search_tabs_query_preview_and_open_editor_results() {
         let root = test_directory("search-tab");
         std::fs::write(root.join("notes.txt"), "first\nSearch target\n").unwrap();
@@ -4630,6 +4915,91 @@ mod tests {
         );
 
         assert!(state.file_tree_view_states().is_empty());
+    }
+
+    type LocationStateSnapshot = (
+        WorkspaceList,
+        Vec<FileTreeViewState>,
+        Vec<GitDiffViewState>,
+        Vec<EditorViewState>,
+        u64,
+        PersistenceScope,
+    );
+
+    fn pane_with_tabs(id: u64, tabs: Vec<Tab>) -> Pane {
+        let mut tabs = tabs.into_iter();
+        let mut pane = Pane::new(PaneId::new(id), tabs.next().expect("pane requires a tab"));
+        for tab in tabs {
+            pane.add_tab(tab);
+        }
+        pane
+    }
+
+    fn location_state(
+        name: &str,
+        target_has_source_tab: bool,
+    ) -> (State, WorkspaceId, WorkspaceId, PathBuf, PathBuf) {
+        let active_root = test_directory(&format!("{name}-active"));
+        let target_root = test_directory(&format!("{name}-target"));
+        let active_workspace_id = WorkspaceId::new(1);
+        let target_workspace_id = WorkspaceId::new(2);
+        let active_workspace = Workspace::new(
+            active_workspace_id,
+            &active_root,
+            pane_with_tabs(1, vec![Tab::new(TabId::new(1), "Blank", TabKind::Blank)]),
+        );
+        let target_kind = if target_has_source_tab {
+            TabKind::FileTree
+        } else {
+            TabKind::Blank
+        };
+        let target_workspace = Workspace::new(
+            target_workspace_id,
+            &target_root,
+            pane_with_tabs(2, vec![Tab::new(TabId::new(2), "Target", target_kind)]),
+        );
+        let state = State::from_workspaces(
+            vec![active_workspace, target_workspace],
+            Some(active_workspace_id),
+        )
+        .unwrap();
+
+        (
+            state,
+            active_workspace_id,
+            target_workspace_id,
+            active_root,
+            target_root,
+        )
+    }
+
+    fn location_state_snapshot(state: &State) -> LocationStateSnapshot {
+        (
+            state.workspaces.clone(),
+            state.file_tree_view_states.clone(),
+            state.git_diff_view_states.clone(),
+            state.editor_view_states.clone(),
+            state.next_tab_id,
+            state.persistence_scope,
+        )
+    }
+
+    fn assert_location_state_unchanged(
+        state: &State,
+        before: &LocationStateSnapshot,
+        active_workspace_id: WorkspaceId,
+    ) {
+        assert_eq!(state.workspaces, before.0);
+        assert_eq!(state.file_tree_view_states, before.1);
+        assert_eq!(state.git_diff_view_states, before.2);
+        assert_eq!(state.editor_view_states, before.3);
+        assert_eq!(state.next_tab_id, before.4);
+        assert_eq!(state.persistence_scope, before.5);
+        assert_eq!(state.persistence_scope, PersistenceScope::Clean);
+        assert_eq!(
+            state.workspaces.active_workspace_id(),
+            Some(active_workspace_id)
+        );
     }
 
     fn test_directory(name: &str) -> PathBuf {

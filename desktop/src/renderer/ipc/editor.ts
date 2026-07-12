@@ -3,6 +3,8 @@ import type {
   EditorGitLineHunks,
   EditorTabParams,
   ChangeEditorSessionParams,
+  OpenEditorLocationParams,
+  OpenEditorLocationPayload,
   OpenEditorSessionParams,
   OpenEditorTabParams,
   SaveEditorDocumentParams,
@@ -16,6 +18,12 @@ const DOMAIN = "editor";
 
 export function openEditorTab(params: OpenEditorTabParams): Promise<WorkspaceListSnapshot> {
   return requestServer(DOMAIN, "openTab", params);
+}
+
+export function openEditorLocation(
+  params: OpenEditorLocationParams,
+): Promise<OpenEditorLocationPayload> {
+  return requestServer(DOMAIN, "openLocation", params);
 }
 
 export function getEditorDocument(params: EditorTabParams): Promise<EditorDocument> {

@@ -357,6 +357,8 @@ export interface KosmosIpcTypes {
   EditorDocumentPayload?: EditorDocumentPayload;
   EditorDocumentParams?: EditorDocumentParams;
   EditorGitLineHunksPayload?: EditorGitLineHunksPayload;
+  OpenEditorLocationParams?: OpenEditorLocationParams;
+  OpenEditorLocationPayload?: OpenEditorLocationPayload;
   OpenEditorSessionParams?: OpenEditorSessionParams;
   OpenEditorTabParams?: OpenEditorTabParams;
   WorkspaceListSnapshot?: WorkspaceListSnapshot;
@@ -532,23 +534,19 @@ export interface EditorGitLineHunkPayload {
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "OpenEditorSessionParams".
+ * via the `definition` "OpenEditorLocationParams".
  */
-export interface OpenEditorSessionParams {
-  content: string;
+export interface OpenEditorLocationParams {
   path: string;
-  revision: number;
-  tabId: TabIdParam;
-  workspaceId?: WorkspaceIdParam | null;
+  workspaceId: WorkspaceIdParam;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "OpenEditorTabParams".
+ * via the `definition` "OpenEditorLocationPayload".
  */
-export interface OpenEditorTabParams {
-  path: string;
-  tabId: TabIdParam;
-  workspaceId?: WorkspaceIdParam | null;
+export interface OpenEditorLocationPayload {
+  snapshot: WorkspaceListSnapshot;
+  target: EditorLocationTargetPayload;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -587,6 +585,35 @@ export interface TabSnapshot {
   kind: TabKindPayload;
   lifecycle: TabLifecyclePayload;
   title: string;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorLocationTargetPayload".
+ */
+export interface EditorLocationTargetPayload {
+  path: string;
+  tabId: number;
+  workspaceId: number;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "OpenEditorSessionParams".
+ */
+export interface OpenEditorSessionParams {
+  content: string;
+  path: string;
+  revision: number;
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "OpenEditorTabParams".
+ */
+export interface OpenEditorTabParams {
+  path: string;
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

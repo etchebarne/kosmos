@@ -243,6 +243,273 @@
           "type": "object"
         }
       },
+      "openLocation": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "$ref": "#/definitions/WorkspaceIdParam"
+            }
+          },
+          "required": [
+            "path",
+            "workspaceId"
+          ],
+          "title": "OpenEditorLocationParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "EditorLocationTargetPayload": {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "tabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "workspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "tabId",
+                "workspaceId"
+              ],
+              "type": "object"
+            },
+            "PaneNodeSnapshot": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "pane": {
+                      "$ref": "#/definitions/PaneSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "leaf"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pane",
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "axis": {
+                      "$ref": "#/definitions/SplitAxisPayload"
+                    },
+                    "first": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "id": {
+                      "format": "uint64",
+                      "minimum": 0.0,
+                      "type": "integer"
+                    },
+                    "ratio": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "second": {
+                      "$ref": "#/definitions/PaneNodeSnapshot"
+                    },
+                    "type": {
+                      "enum": [
+                        "split"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "first",
+                    "id",
+                    "ratio",
+                    "second",
+                    "type"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "PaneSnapshot": {
+              "properties": {
+                "activeTabId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "tabs": {
+                  "items": {
+                    "$ref": "#/definitions/TabSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "activeTabId",
+                "id",
+                "tabs"
+              ],
+              "type": "object"
+            },
+            "SplitAxisPayload": {
+              "enum": [
+                "horizontal",
+                "vertical"
+              ],
+              "type": "string"
+            },
+            "TabKindPayload": {
+              "enum": [
+                "blank",
+                "diff",
+                "fileTree",
+                "editor",
+                "git",
+                "search",
+                "terminal"
+              ],
+              "type": "string"
+            },
+            "TabLifecyclePayload": {
+              "enum": [
+                "ephemeral",
+                "keepAlive"
+              ],
+              "type": "string"
+            },
+            "TabSnapshot": {
+              "properties": {
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/definitions/TabKindPayload"
+                },
+                "lifecycle": {
+                  "$ref": "#/definitions/TabLifecyclePayload"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "lifecycle",
+                "title"
+              ],
+              "type": "object"
+            },
+            "WorkspaceListSnapshot": {
+              "properties": {
+                "activeWorkspaceId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "workspaces": {
+                  "items": {
+                    "$ref": "#/definitions/WorkspaceSnapshot"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "workspaces",
+                "activeWorkspaceId"
+              ],
+              "type": "object"
+            },
+            "WorkspaceSnapshot": {
+              "properties": {
+                "activePaneId": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "directory": {
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "root": {
+                  "$ref": "#/definitions/PaneNodeSnapshot"
+                }
+              },
+              "required": [
+                "activePaneId",
+                "directory",
+                "id",
+                "name",
+                "root"
+              ],
+              "type": "object"
+            }
+          },
+          "properties": {
+            "snapshot": {
+              "$ref": "#/definitions/WorkspaceListSnapshot"
+            },
+            "target": {
+              "$ref": "#/definitions/EditorLocationTargetPayload"
+            }
+          },
+          "required": [
+            "snapshot",
+            "target"
+          ],
+          "title": "OpenEditorLocationPayload",
+          "type": "object"
+        }
+      },
       "openSession": {
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",

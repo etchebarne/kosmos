@@ -3,8 +3,8 @@ use core::tabs::git::GitError;
 
 use super::super::messages::editor::{
     ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
-    EditorGitLineHunksPayload, OpenEditorSessionParams, OpenEditorTabParams,
-    SaveEditorDocumentParams,
+    EditorGitLineHunksPayload, OpenEditorLocationParams, OpenEditorLocationPayload,
+    OpenEditorSessionParams, OpenEditorTabParams, SaveEditorDocumentParams,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::WorkspaceListSnapshot;
@@ -14,6 +14,10 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<OpenEditorTabParams, WorkspaceListSnapshot>(
         "openTab",
         RouteDefinition::full(open_tab),
+    ),
+    Route::new::<OpenEditorLocationParams, OpenEditorLocationPayload>(
+        "openLocation",
+        RouteDefinition::persistent_application(open_location),
     ),
     Route::new::<EditorDocumentParams, EditorDocumentPayload>(
         "document",
@@ -72,6 +76,23 @@ fn open_tab(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage
             Ok(()) => workspace_list_response(request.id, state),
             Err(error) => editor_error(request.id, error),
         },
+        Err(response) => response,
+    }
+}
+
+fn open_location(
+    operation: &mut core::PreparedPersistentOperation,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    match parse_params::<OpenEditorLocationParams>(request) {
+        Ok(params) => {
+            match operation.open_editor_location(params.workspace_id.into(), &params.path) {
+                Ok(location) => {
+                    ServerMessage::ok(request.id, OpenEditorLocationPayload::from_core(location))
+                }
+                Err(error) => application_error(request.id, error),
+            }
+        }
         Err(response) => response,
     }
 }
@@ -186,5 +207,89 @@ fn editor_error_code(error: &EditorError) -> &'static str {
         EditorError::ContentTooLarge { .. } => "editor.content_too_large",
         EditorError::InvalidUtf8(_) => "editor.invalid_utf8",
         EditorError::Io { .. } => "editor.access_failed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::messages::envelope::Domain;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn open_location_maps_one_core_snapshot_and_preserves_state_on_failure() {
+        let (mut application, root, database, workspace_id) = application();
+        let mut success = application.prepare_persistent_operation().unwrap();
+
+        let response = open_location(&mut success, &request(1, workspace_id, "document.txt"));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(
+            response["result"]["snapshot"]["activeWorkspaceId"],
+            workspace_id.value()
+        );
+        assert_eq!(
+            response["result"]["target"]["workspaceId"],
+            workspace_id.value()
+        );
+        assert_eq!(response["result"]["target"]["tabId"], 2);
+        assert_eq!(response["result"]["target"]["path"], "document.txt");
+        success.persist().unwrap();
+        application.complete_persistent_operation(success).unwrap();
+
+        let before = application.state().workspaces().clone();
+        let mut failed = application.prepare_persistent_operation().unwrap();
+        let response = open_location(&mut failed, &request(2, workspace_id, "missing.txt"));
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["error"]["code"], "editor.file_not_found");
+        assert_eq!(failed.state().workspaces(), &before);
+        assert_eq!(application.state().workspaces(), &before);
+        application.abandon_persistent_operation();
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    fn application() -> (
+        core::Application,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        core::tree::WorkspaceId,
+    ) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("kosmos-server-editor-location-{nonce}"));
+        let database = root.join("state.sqlite3");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("document.txt"), "before").unwrap();
+        let store = core::DurableStore::open(&database).unwrap();
+        let mut state = core::State::new();
+        let workspace_id = state.open_workspace(&root);
+        assert!(state.set_tab_kind(
+            Some(workspace_id),
+            core::tree::PaneId::new(1),
+            core::tree::TabId::new(1),
+            core::tree::TabKind::FileTree,
+        ));
+
+        (
+            core::Application::new(state, store),
+            root,
+            database,
+            workspace_id,
+        )
+    }
+
+    fn request(id: u64, workspace_id: core::tree::WorkspaceId, path: &str) -> RequestEnvelope {
+        RequestEnvelope {
+            id,
+            domain: Domain::Editor,
+            action: "openLocation".to_owned(),
+            params: serde_json::json!({
+                "workspaceId": workspace_id.value(),
+                "path": path,
+            }),
+        }
     }
 }

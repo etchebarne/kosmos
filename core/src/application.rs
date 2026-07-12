@@ -16,7 +16,7 @@ use crate::language_servers::{
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{SettingValue, SettingsError};
-use crate::state::PersistentStateCandidate;
+use crate::state::{OpenEditorLocation, PersistentStateCandidate};
 use crate::tabs::editor::EditorError;
 use crate::tree::{PaneId, TabId, WorkspaceId};
 use crate::window::WindowState;
@@ -605,6 +605,16 @@ impl PreparedPersistentOperation {
         self.candidate
             .persistence_scope()
             .save(&self.store, self.candidate.state())
+            .map_err(ApplicationError::from)
+    }
+
+    pub fn open_editor_location(
+        &mut self,
+        workspace_id: WorkspaceId,
+        path: &str,
+    ) -> Result<OpenEditorLocation, ApplicationError> {
+        self.state_mut()
+            .open_editor_location(workspace_id, path)
             .map_err(ApplicationError::from)
     }
 }

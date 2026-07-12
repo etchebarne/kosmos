@@ -94,6 +94,16 @@ impl PaneNode {
         self.largest_pane(1.0).0
     }
 
+    pub(crate) fn first_tab_id_matching(&self, predicate: &impl Fn(&Tab) -> bool) -> Option<TabId> {
+        match self {
+            Self::Leaf(pane) => pane.tabs().iter().find(|tab| predicate(tab)).map(Tab::id),
+            Self::Split(split) => split
+                .first()
+                .first_tab_id_matching(predicate)
+                .or_else(|| split.second().first_tab_id_matching(predicate)),
+        }
+    }
+
     pub fn split_pane(
         &mut self,
         split_id: SplitPaneId,

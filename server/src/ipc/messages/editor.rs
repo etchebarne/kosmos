@@ -5,12 +5,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{TabIdParam, WorkspaceIdParam};
+use super::workspace::WorkspaceListSnapshot;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenEditorTabParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenEditorLocationParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
     pub(crate) path: String,
 }
 
@@ -60,6 +68,21 @@ pub(crate) struct EditorDocumentPayload {
 
 #[derive(Debug, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct OpenEditorLocationPayload {
+    snapshot: WorkspaceListSnapshot,
+    target: EditorLocationTargetPayload,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorLocationTargetPayload {
+    workspace_id: u64,
+    tab_id: u64,
+    path: String,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct EditorGitLineHunksPayload {
     hunks: Vec<EditorGitLineHunkPayload>,
 }
@@ -91,6 +114,19 @@ impl EditorDocumentPayload {
             saved_content: session.saved_content,
             revision: session.revision,
             accepted,
+        }
+    }
+}
+
+impl OpenEditorLocationPayload {
+    pub(crate) fn from_core(location: core::OpenEditorLocation) -> Self {
+        Self {
+            snapshot: WorkspaceListSnapshot::from_list(location.workspaces()),
+            target: EditorLocationTargetPayload {
+                workspace_id: location.workspace_id().value(),
+                tab_id: location.tab_id().value(),
+                path: location.path().to_owned(),
+            },
         }
     }
 }

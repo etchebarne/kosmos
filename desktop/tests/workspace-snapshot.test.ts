@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   activeWorkspaceFrom,
   closeWorkspaceLocally,
-  editorSourceTabId,
   mergeLocalSplitRatios,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
@@ -120,14 +119,4 @@ describe("workspace snapshot state", () => {
     expect(mergeLocalSplitRatios(serverSnapshot, null)).toBe(serverSnapshot);
   });
 
-  test("finds only safe editor source tabs", () => {
-    const fileTree = leaf(1);
-    if (fileTree.type === "leaf") {
-      fileTree.pane.tabs = [
-        { id: 8, title: "Files", kind: "fileTree", lifecycle: "keepAlive" },
-      ];
-    }
-    expect(editorSourceTabId(fileTree)).toBe(8);
-    expect(editorSourceTabId(leaf(2))).toBeNull();
-  });
 });

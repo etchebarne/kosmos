@@ -1,7 +1,6 @@
 import type {
   PaneNodeSnapshot,
   SplitPaneId,
-  TabId,
   WorkspaceId,
   WorkspaceListSnapshot,
   WorkspaceSnapshot,
@@ -17,14 +16,6 @@ export function activeWorkspaceFrom(
   return (
     snapshot.workspaces.find((workspace) => workspace.id === snapshot.activeWorkspaceId) ?? null
   );
-}
-
-export function editorSourceTabId(root: PaneNodeSnapshot): TabId | null {
-  if (root.type === "leaf") {
-    return root.pane.tabs.find((tab) => tab.kind === "fileTree" || tab.kind === "search")?.id
-      ?? null;
-  }
-  return editorSourceTabId(root.first) ?? editorSourceTabId(root.second);
 }
 
 export function closeWorkspaceLocally(
