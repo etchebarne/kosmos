@@ -6,6 +6,7 @@ import { WorkspaceSymbolPicker } from "@/renderer/components/internal/workspace-
 import { WorkspaceEditRecovery } from "@/renderer/components/internal/workspace-edit-recovery";
 import { WorkspaceTrustDialog } from "@/renderer/components/internal/workspace-trust-dialog";
 import { UnsavedChangesDialog } from "@/renderer/components/internal/unsaved-changes-dialog";
+import { installEditorMiddleClickPasteGuard } from "@/renderer/lib/editor-input";
 import { setLanguageLocationOpener } from "@/renderer/lib/language-client";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 
@@ -20,6 +21,8 @@ export function App() {
   useEffect(() => {
     void initializeSettings();
   }, [initializeSettings]);
+
+  useEffect(() => installEditorMiddleClickPasteGuard(document), []);
 
   useEffect(
     () =>

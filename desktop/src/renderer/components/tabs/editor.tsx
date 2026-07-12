@@ -485,7 +485,7 @@ function LoadedEditor({
   }, [isActive]);
 
   return (
-    <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
+    <div data-kosmos-editor="" className="relative h-full min-h-0 min-w-0 overflow-hidden">
       <div ref={containerRef} className="h-full min-h-0 min-w-0" />
       <SaveStatus state={saveState} warnings={saveWarnings} />
     </div>
