@@ -82,6 +82,33 @@ pub enum EditorSessionError {
 }
 
 impl EditorSessionRegistry {
+    pub fn restore(
+        &mut self,
+        id: EditorSessionId,
+        path: &str,
+        content: String,
+        saved_content: String,
+        revision: u64,
+    ) -> Result<EditorSessionUpdate, EditorSessionError> {
+        if self.sessions.contains_key(&id) {
+            return self.open(id, path, content, revision);
+        }
+
+        let path = normalized_path(path)?;
+        bounded_content(&content)?;
+        bounded_content(&saved_content)?;
+        let snapshot = EditorSessionSnapshot {
+            id,
+            path,
+            content,
+            saved_content,
+            revision,
+        };
+        self.sessions.insert(id, snapshot.clone());
+        self.save_gates.entry(id).or_default();
+        Ok(EditorSessionUpdate::Applied(snapshot))
+    }
+
     pub fn open(
         &mut self,
         id: EditorSessionId,
@@ -470,6 +497,25 @@ mod tests {
         assert!(sessions.snapshot(id()).unwrap().is_dirty());
         sessions.mark_saved(id(), 2).unwrap();
         assert!(!sessions.snapshot(id()).unwrap().is_dirty());
+    }
+
+    #[test]
+    fn restored_session_preserves_unsaved_content() {
+        let mut sessions = EditorSessionRegistry::default();
+        sessions
+            .restore(
+                id(),
+                "src/main.rs",
+                "unsaved".to_owned(),
+                "saved".to_owned(),
+                3,
+            )
+            .unwrap();
+
+        let restored = sessions.snapshot(id()).unwrap();
+        assert_eq!(restored.content, "unsaved");
+        assert_eq!(restored.saved_content, "saved");
+        assert!(restored.is_dirty());
     }
 
     #[test]

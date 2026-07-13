@@ -144,6 +144,7 @@ export type KosmosApi = {
     applied: boolean,
     failureReason?: string,
   ): void;
+  completeServerRecovery(generation: number, error?: string): void;
   pendingServerApplyEdits(): Promise<
     Array<Extract<KosmosServerNotification, { event: "languageServerApplyEdit" }>>
   >;
@@ -158,5 +159,5 @@ export type KosmosApi = {
   onSettingsSnapshot(callback: (snapshot: SettingsSnapshot) => void): () => void;
   onWorkspaceChanged(callback: (workspaceIds: WorkspaceId[]) => void): () => void;
   onServerNotification(callback: (notification: KosmosServerNotification) => void): () => void;
-  onServerReconnected(callback: () => void): () => void;
+  onServerReconnected(callback: (generation: number) => void): () => void;
 };

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, type Rectangle } from "electron";
+import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -10,6 +10,7 @@ import {
   windowZoomPolicy,
 } from "./shortcuts";
 import { isSettingsSnapshot } from "../settings-snapshot";
+import { isSafeExternalUrl, isTrustedRendererUrl } from "./security";
 
 const DEFAULT_WINDOW_BOUNDS = { width: 1280, height: 800 };
 const WINDOW_STATE_SAVE_DELAY_MS = 250;
@@ -17,9 +18,11 @@ const WINDOW_STATE_SAVE_DELAY_MS = 250;
 export async function createMainWindow(
   serverClient: KosmosServerClient,
   settings: SettingsSnapshot,
+  onCreated: (window: BrowserWindow) => void,
   onSettingsSnapshot: (window: BrowserWindow, snapshot: SettingsSnapshot) => void,
 ): Promise<BrowserWindow> {
   const runtimeDirectory = getRuntimeDirectory();
+  const rendererEntryPath = getRendererEntryPath(runtimeDirectory);
   const appIconPath = getAppIconPath();
   const state = await loadWindowState(serverClient);
   const window = new BrowserWindow({
@@ -38,10 +41,15 @@ export async function createMainWindow(
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(runtimeDirectory, "preload.cjs"),
-      sandbox: false,
+      sandbox: true,
     },
   });
 
+  window.webContents.session.setPermissionCheckHandler(() => false);
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  registerNavigationSecurity(window, rendererEntryPath);
   registerWindowShortcuts(window, settings, (zoomLevel) => {
     void persistShortcutZoom(serverClient, window, zoomLevel, onSettingsSnapshot);
   });
@@ -55,9 +63,34 @@ export async function createMainWindow(
     window.setFullScreen(true);
   }
 
-  void window.loadFile(path.join(runtimeDirectory, "renderer", "index.html"));
+  onCreated(window);
+  try {
+    await window.loadFile(rendererEntryPath);
+  } catch (error) {
+    window.destroy();
+    throw error;
+  }
 
   return window;
+}
+
+function registerNavigationSecurity(window: BrowserWindow, rendererEntryPath: string): void {
+  window.webContents.on("will-navigate", (event, url) => {
+    if (isTrustedRendererUrl(url, rendererEntryPath)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    }
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    }
+    return { action: "deny" };
+  });
 }
 
 async function persistShortcutZoom(
@@ -187,4 +220,8 @@ function getRuntimeDirectory(): string {
   }
 
   return path.dirname(path.resolve(app.getAppPath(), packageJson.main));
+}
+
+export function getRendererEntryPath(runtimeDirectory = getRuntimeDirectory()): string {
+  return path.join(runtimeDirectory, "renderer", "index.html");
 }

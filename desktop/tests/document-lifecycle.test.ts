@@ -4,6 +4,7 @@ import {
   disposeEditorBuffer,
   flushEditorBuffer,
   getOrCreateEditorBuffer,
+  initializeEditorBufferRecovery,
   queueEditorBufferSynchronization,
   setLanguageDocumentAttacher,
 } from "@/renderer/lib/editor-buffers";
@@ -86,9 +87,128 @@ describe("document lifecycle", () => {
     expect(buffer.session.synchronization).not.toBeNull();
     disposeEditorBuffer(903, 1);
   });
+
+  test("sidecar recovery preserves current text and the saved baseline", async () => {
+    const requests: KosmosIpcRequest[] = [];
+    let reconnect: ((generation: number) => void) | undefined;
+    installApi(
+      (request) => {
+        requests.push(request);
+        const params = request.params as { content: string; revision: number; savedContent: string };
+        return sessionResult(params.content, params.revision, true, params.savedContent);
+      },
+      (listener) => {
+        reconnect = listener;
+      },
+    );
+    initializeEditorBufferRecovery();
+    const model = mockModel("saved");
+    const buffer = getOrCreateEditorBuffer(904, 1, "document.txt", "saved", () => model as never);
+    model.setValue("unsaved");
+
+    reconnect?.(1);
+    await flushEditorBuffer(buffer);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.action).toBe("restoreSession");
+    expect(requests[0]?.params).toMatchObject({
+      content: "unsaved",
+      savedContent: "saved",
+    });
+    expect(buffer.savedContent).toBe("saved");
+    expect(buffer.model.getValue()).toBe("unsaved");
+    disposeEditorBuffer(904, 1);
+  });
+
+  test("sidecar recovery advances beyond a stale server session", async () => {
+    const requests: KosmosIpcRequest[] = [];
+    let reconnect: ((generation: number) => void) | undefined;
+    let recovered: (() => void) | undefined;
+    installApi(
+      (request) => {
+        requests.push(request);
+        const params = request.params as { content: string; revision: number; savedContent: string };
+        return requests.length === 1
+          ? sessionResult("server text", params.revision + 2, false, params.savedContent)
+          : sessionResult(params.content, params.revision, true, params.savedContent);
+      },
+      (listener) => {
+        reconnect = listener;
+      },
+      () => recovered?.(),
+    );
+    const recoveredPromise = new Promise<void>((resolve) => {
+      recovered = resolve;
+    });
+    initializeEditorBufferRecovery();
+    const model = mockModel("saved");
+    const buffer = getOrCreateEditorBuffer(905, 1, "document.txt", "saved", () => model as never);
+    model.setValue("local text");
+
+    reconnect?.(1);
+    await recoveredPromise;
+
+    expect(requests).toHaveLength(2);
+    expect((requests[1]?.params as { revision: number }).revision).toBeGreaterThan(
+      (requests[0]?.params as { revision: number }).revision,
+    );
+    expect(buffer.model.getValue()).toBe("local text");
+    expect(buffer.savedContent).toBe("saved");
+    disposeEditorBuffer(905, 1);
+  });
+
+  test("sidecar recovery includes edits made while restoration is in flight", async () => {
+    const requests: KosmosIpcRequest[] = [];
+    let reconnect: ((generation: number) => void) | undefined;
+    let resolveFirst: (() => void) | undefined;
+    let recovered: (() => void) | undefined;
+    installApi(
+      (request) => {
+        requests.push(request);
+        const params = request.params as { content: string; revision: number; savedContent: string };
+        if (requests.length === 1) {
+          return new Promise((resolve) => {
+            resolveFirst = () =>
+              resolve(sessionResult(params.content, params.revision, true, params.savedContent));
+          });
+        }
+        return sessionResult(params.content, params.revision, true, params.savedContent);
+      },
+      (listener) => {
+        reconnect = listener;
+      },
+      () => recovered?.(),
+    );
+    const recoveredPromise = new Promise<void>((resolve) => {
+      recovered = resolve;
+    });
+    initializeEditorBufferRecovery();
+    const model = mockModel("saved");
+    const buffer = getOrCreateEditorBuffer(906, 1, "document.txt", "saved", () => model as never);
+    model.setValue("first edit");
+
+    reconnect?.(1);
+    while (!resolveFirst) {
+      await Promise.resolve();
+    }
+    model.setValue("edit during recovery");
+    queueEditorBufferSynchronization(buffer);
+    resolveFirst?.();
+    await recoveredPromise;
+
+    expect(requests).toHaveLength(2);
+    expect((requests[1]?.params as { content: string }).content).toBe("edit during recovery");
+    expect(buffer.model.getValue()).toBe("edit during recovery");
+    expect(buffer.savedContent).toBe("saved");
+    disposeEditorBuffer(906, 1);
+  });
 });
 
-function installApi(request: (request: KosmosIpcRequest) => Promise<unknown> | unknown): void {
+function installApi(
+  request: (request: KosmosIpcRequest) => Promise<unknown> | unknown,
+  onReconnect?: (listener: (generation: number) => void) => void,
+  onRecoveryComplete?: (error?: string) => void,
+): void {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
@@ -97,6 +217,13 @@ function installApi(request: (request: KosmosIpcRequest) => Promise<unknown> | u
           ok: true,
           result: await request(message),
         }) as Awaited<ReturnType<KosmosApi["request"]>> as T,
+        onServerReconnected(listener: (generation: number) => void) {
+          onReconnect?.(listener);
+          return () => {};
+        },
+        completeServerRecovery(_generation: number, error?: string) {
+          onRecoveryComplete?.(error);
+        },
       },
     } as Window,
   });

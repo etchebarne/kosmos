@@ -3,6 +3,7 @@ import type { editor } from "monaco-editor";
 import {
   changeEditorSession,
   openEditorSession,
+  restoreEditorSession,
 } from "@/renderer/ipc";
 import type { EditorDocument, EditorSave, EditorSaveWarning } from "@/shared/ipc";
 
@@ -29,9 +30,33 @@ type EditorSessionState = {
 };
 
 let attachLanguageDocument: LanguageDocumentAttacher | null = null;
+let sessionRecovery: Promise<void> | null = null;
 
 export function setLanguageDocumentAttacher(attacher: LanguageDocumentAttacher): void {
   attachLanguageDocument = attacher;
+}
+
+export function initializeEditorBufferRecovery(): void {
+  window.kosmos.onServerReconnected((generation) => {
+    if (generation === 0) {
+      return;
+    }
+    const recovery = restoreEditorBufferSessions();
+    sessionRecovery = recovery;
+    void recovery
+      .then(() => {
+        if (sessionRecovery === recovery) {
+          sessionRecovery = null;
+        }
+        window.kosmos.completeServerRecovery(generation);
+      })
+      .catch((error: unknown) => {
+        window.kosmos.completeServerRecovery(
+          generation,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+  });
 }
 
 function attachDocument(
@@ -167,6 +192,9 @@ export function queueEditorBufferSynchronization(buffer: EditorBuffer): void {
   buffer.session.revision = Math.max(buffer.session.revision + 1, buffer.model.getVersionId());
   buffer.session.queuedRevision = buffer.session.revision;
   buffer.session.queuedContent = buffer.model.getValue();
+  if (sessionRecovery) {
+    return;
+  }
   if (buffer.session.synchronization) {
     return;
   }
@@ -175,7 +203,11 @@ export function queueEditorBufferSynchronization(buffer: EditorBuffer): void {
 }
 
 export async function flushEditorBuffer(buffer: EditorBuffer): Promise<void> {
+  await sessionRecovery;
   await buffer.session.opening;
+  if (buffer.session.lastError) {
+    throw buffer.session.lastError;
+  }
   if (buffer.session.queuedContent === null && !buffer.session.synchronization) {
     return;
   }
@@ -186,6 +218,54 @@ export async function flushEditorBuffer(buffer: EditorBuffer): Promise<void> {
   if (buffer.session.lastError) {
     throw buffer.session.lastError;
   }
+}
+
+async function restoreEditorBufferSessions(): Promise<void> {
+  await Promise.all(
+    [...buffers.values()].map(async (buffer) => {
+      await buffer.session.opening?.catch(() => undefined);
+      await buffer.session.synchronization?.catch(() => undefined);
+      if (buffer.model.isDisposed()) {
+        return;
+      }
+
+      let minimumRevision = buffer.session.revision;
+      while (!buffer.model.isDisposed()) {
+        const content = buffer.model.getValue();
+        const revision = Math.max(minimumRevision, buffer.model.getVersionId());
+        let session = await restoreEditorSession({
+          workspaceId: buffer.workspaceId,
+          tabId: buffer.tabId,
+          path: buffer.path,
+          content,
+          savedContent: buffer.savedContent,
+          revision,
+        });
+        if (!session.accepted) {
+          session = await restoreEditorSession({
+            workspaceId: buffer.workspaceId,
+            tabId: buffer.tabId,
+            path: buffer.path,
+            content,
+            savedContent: buffer.savedContent,
+            revision: Math.max(revision, session.revision) + 1,
+          });
+        }
+        if (!session.accepted || session.content !== content) {
+          throw new Error(`Could not restore editor session ${buffer.path}`);
+        }
+        buffer.session.acknowledgedRevision = session.revision;
+        buffer.session.revision = session.revision;
+        buffer.session.lastError = null;
+        buffer.session.queuedContent = null;
+        buffer.session.queuedRevision = null;
+        if (buffer.model.getValue() === content) {
+          return;
+        }
+        minimumRevision = session.revision + 1;
+      }
+    }),
+  );
 }
 
 export async function flushEditorBuffers(): Promise<void> {

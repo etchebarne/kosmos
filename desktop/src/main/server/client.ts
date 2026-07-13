@@ -121,6 +121,10 @@ export class KosmosServerClient {
     return () => this.reconnectedListeners.delete(listener);
   }
 
+  async reconnect(): Promise<void> {
+    await this.connect();
+  }
+
   private async sendRequest<T = unknown>(
     domain: KosmosIpcDomain,
     action: string,
@@ -364,7 +368,7 @@ export function defaultSocketPath(): string {
   }
 
   const runtimeDir = process.env.XDG_RUNTIME_DIR || os.tmpdir();
-  return path.join(runtimeDir, "kosmos", "server.sock");
+  return path.join(runtimeDir, "kosmos", `desktop-${process.pid}.sock`);
 }
 
 function parseServerMessage(frame: string): KosmosServerMessage {

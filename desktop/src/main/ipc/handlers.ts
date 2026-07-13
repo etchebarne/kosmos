@@ -1,4 +1,11 @@
-import { BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
+import {
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  type WebContents,
+  type WebFrameMain,
+} from "electron";
 
 import type {
   KosmosIpcDomain,
@@ -10,6 +17,7 @@ import type {
 import type { KosmosServerClient } from "../server/client";
 import { isSettingsSnapshot } from "../settings-snapshot";
 import { setWindowZoomLevel, updateWindowZoomPolicy } from "../window/shortcuts";
+import { isTrustedRendererUrl } from "../window/security";
 import { ipcRequestFailure } from "./request-result";
 
 export type ApplyEditOwner = {
@@ -17,6 +25,11 @@ export type ApplyEditOwner = {
   webContentsId: number;
   notification: Extract<KosmosServerNotification, { event: "languageServerApplyEdit" }>;
   cleanup(): void;
+};
+
+export type ServerRecoveryState = {
+  active: boolean;
+  generation: number;
 };
 
 const validDomains = new Set<KosmosIpcDomain>([
@@ -38,17 +51,69 @@ export function registerIpcHandlers(
   serverClient: KosmosServerClient,
   applyEditOwners: Map<string, ApplyEditOwner>,
   settingsSnapshots: Map<number, SettingsSnapshot>,
+  rendererEntryPath: string,
+  readyRenderers: Set<number>,
+  serverRecovery: ServerRecoveryState,
 ): void {
   const rendererRequests = new Map<number, Map<string, AbortController>>();
   const watchedRenderers = new Set<number>();
+  const watchedReadyRenderers = new Set<number>();
+
+  ipcMain.on("kosmos:rendererReady", (event) => {
+    if (!isTrustedIpcSender(event, rendererEntryPath)) {
+      return;
+    }
+    readyRenderers.add(event.sender.id);
+    if (!watchedReadyRenderers.has(event.sender.id)) {
+      watchedReadyRenderers.add(event.sender.id);
+      const clearReady = () => readyRenderers.delete(event.sender.id);
+      event.sender.once("destroyed", () => {
+        clearReady();
+        watchedReadyRenderers.delete(event.sender.id);
+      });
+      event.sender.on("render-process-gone", clearReady);
+      event.sender.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+        if (isMainFrame) {
+          clearReady();
+        }
+      });
+    }
+  });
+  ipcMain.on("kosmos:serverRecoveryComplete", (event, result: unknown) => {
+    if (!isTrustedIpcSender(event, rendererEntryPath)) {
+      return;
+    }
+    if (
+      !result ||
+      typeof result !== "object" ||
+      !("generation" in result) ||
+      typeof result.generation !== "number" ||
+      !Number.isSafeInteger(result.generation) ||
+      result.generation !== serverRecovery.generation
+    ) {
+      return;
+    }
+    const error = "error" in result ? result.error : undefined;
+    if (typeof error === "string" && error.length > 0) {
+      dialog.showErrorBox("Kosmos server recovery failed", error.slice(0, 4_096));
+      return;
+    }
+    serverRecovery.active = false;
+  });
 
   ipcMain.on("kosmos:cancelRequest", (event, requestKey: unknown) => {
+    if (!isTrustedIpcSender(event, rendererEntryPath)) {
+      return;
+    }
     if (typeof requestKey !== "string") {
       return;
     }
     rendererRequests.get(event.sender.id)?.get(requestKey)?.abort();
   });
   ipcMain.on("kosmos:serverApplyEditAck", (event, acknowledgement: unknown) => {
+    if (!isTrustedIpcSender(event, rendererEntryPath)) {
+      return;
+    }
     if (
       !acknowledgement ||
       typeof acknowledgement !== "object" ||
@@ -84,7 +149,9 @@ export function registerIpcHandlers(
   ipcMain.handle("kosmos:request", async (event, request: KosmosIpcRequest): Promise<KosmosIpcRequestResult> => {
     let cancellation: AbortController | undefined;
     try {
+      assertTrustedIpcSender(event, rendererEntryPath);
       validateRequest(request);
+      assertRequestAllowedDuringRecovery(request, serverRecovery);
       cancellation = beginRendererRequest(
         rendererRequests,
         watchedRenderers,
@@ -112,12 +179,14 @@ export function registerIpcHandlers(
       }
     }
   });
-  ipcMain.handle("kosmos:pendingServerApplyEdits", (event) =>
-    [...applyEditOwners.values()]
+  ipcMain.handle("kosmos:pendingServerApplyEdits", (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
+    return [...applyEditOwners.values()]
       .filter((owner) => owner.webContentsId === event.sender.id)
-      .map((owner) => owner.notification),
-  );
+      .map((owner) => owner.notification);
+  });
   ipcMain.handle("kosmos:bootstrapSettings", (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     const snapshot = settingsSnapshots.get(event.sender.id);
     if (!snapshot) {
       throw new Error("Bootstrap settings are unavailable for this window");
@@ -126,7 +195,8 @@ export function registerIpcHandlers(
     return snapshot;
   });
 
-  ipcMain.handle("kosmos:selectWorkspaceDirectory", async () => {
+  ipcMain.handle("kosmos:selectWorkspaceDirectory", async (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"],
       title: "Open Workspace",
@@ -136,10 +206,12 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle("kosmos:window:minimize", (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     BrowserWindow.fromWebContents(event.sender)?.minimize();
   });
 
   ipcMain.handle("kosmos:window:toggleMaximize", (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     const window = BrowserWindow.fromWebContents(event.sender);
 
     if (!window) {
@@ -154,16 +226,58 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle("kosmos:window:close", (event) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
 
-  ipcMain.handle("kosmos:revealPath", (_event, targetPath: unknown) => {
+  ipcMain.handle("kosmos:revealPath", (event, targetPath: unknown) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
     if (typeof targetPath !== "string" || targetPath.length === 0) {
       throw new Error("Reveal path must be a non-empty string");
     }
 
     shell.showItemInFolder(targetPath);
   });
+}
+
+function assertRequestAllowedDuringRecovery(
+  request: KosmosIpcRequest,
+  serverRecovery: ServerRecoveryState,
+): void {
+  if (!serverRecovery.active) {
+    return;
+  }
+  if (request.domain === "editor" && request.action === "restoreSession") {
+    return;
+  }
+  if (
+    request.domain === "editor" ||
+    (request.domain === "tab" && (request.action === "close" || request.action === "resolveClose")) ||
+    (request.domain === "workspace" &&
+      (request.action === "close" ||
+        request.action === "resolveClose" ||
+        request.action === "closeApplication"))
+  ) {
+    throw new Error("Kosmos is restoring editor sessions after restarting its server");
+  }
+}
+
+type IpcSender = {
+  sender: WebContents;
+  senderFrame: WebFrameMain | null;
+};
+
+export function isTrustedIpcSender(event: IpcSender, rendererEntryPath: string): boolean {
+  return (
+    event.senderFrame === event.sender.mainFrame &&
+    isTrustedRendererUrl(event.senderFrame?.url ?? "", rendererEntryPath)
+  );
+}
+
+function assertTrustedIpcSender(event: IpcSender, rendererEntryPath: string): void {
+  if (!isTrustedIpcSender(event, rendererEntryPath)) {
+    throw new Error("IPC request did not originate from the Kosmos renderer");
+  }
 }
 
 function updateWindowSettingsPolicy(

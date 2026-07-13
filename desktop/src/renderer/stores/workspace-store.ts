@@ -103,6 +103,7 @@ type WorkspaceStore = {
   flushPendingState(): Promise<void>;
   initializeWorkspaces(): Promise<void>;
   refreshWorkspaces(): Promise<void>;
+  resetPendingCloseAfterServerRestart(): void;
   requestApplicationClose(): Promise<boolean>;
   resolvePendingClose(resolution: CloseResolution): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
@@ -337,6 +338,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       } catch (caughtError) {
         set({ error: errorMessage(caughtError) });
       }
+    },
+    resetPendingCloseAfterServerRestart() {
+      if (!get().pendingClose) {
+        return;
+      }
+      applicationCloseResolver?.(false);
+      applicationCloseResolver = null;
+      set({
+        pendingClose: null,
+        error: "The Kosmos server restarted. Review unsaved changes and try closing again.",
+      });
     },
     async requestApplicationClose() {
       try {

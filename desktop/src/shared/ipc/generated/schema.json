@@ -839,6 +839,96 @@
           "type": "object"
         }
       },
+      "restoreSession": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
+            },
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "content",
+            "path",
+            "revision",
+            "savedContent",
+            "tabId"
+          ],
+          "title": "RestoreEditorSessionParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "accepted": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "savedContent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accepted",
+            "content",
+            "path",
+            "revision",
+            "savedContent"
+          ],
+          "title": "EditorDocumentPayload",
+          "type": "object"
+        }
+      },
       "save": {
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",

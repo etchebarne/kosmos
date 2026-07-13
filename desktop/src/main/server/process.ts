@@ -10,25 +10,50 @@ const SOCKET_CONNECT_TIMEOUT_MS = 100;
 
 export class KosmosServerProcess {
   private child: ChildProcess | undefined;
+  private ready = false;
+  private stopping = false;
 
-  constructor(private readonly socketPath: string) {}
+  constructor(
+    private readonly socketPath: string,
+    private readonly onUnexpectedExit: () => void,
+  ) {}
 
   async start(): Promise<void> {
-    if (await canConnectToSocket(this.socketPath)) {
+    if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
       return;
     }
 
+    this.stopping = false;
+    this.ready = false;
     const child = this.spawn();
-    await waitForServerSocket(child, this.socketPath);
+    try {
+      await waitForServerSocket(child, this.socketPath);
+      if (this.child === child) {
+        this.ready = true;
+      }
+    } catch (error) {
+      if (this.child === child) {
+        this.child = undefined;
+        child.kill();
+      }
+      throw error;
+    }
   }
 
   stop(): void {
+    this.stopping = true;
+    this.ready = false;
     if (!this.child || this.child.killed) {
       return;
     }
 
     this.child.kill();
     this.child = undefined;
+    try {
+      fs.rmSync(this.socketPath, { force: true });
+    } catch {
+      // The sidecar is already stopping; stale socket cleanup is best effort.
+    }
   }
 
   private spawn(): ChildProcess {
@@ -41,6 +66,7 @@ export class KosmosServerProcess {
       env: {
         ...process.env,
         KOSMOS_SOCKET: this.socketPath,
+        KOSMOS_PARENT_PID: String(process.pid),
       },
       stdio: "ignore",
     });
@@ -49,6 +75,11 @@ export class KosmosServerProcess {
     child.once("exit", () => {
       if (this.child === child) {
         this.child = undefined;
+        const unexpected = this.ready && !this.stopping;
+        this.ready = false;
+        if (unexpected) {
+          this.onUnexpectedExit();
+        }
       }
     });
 

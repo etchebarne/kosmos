@@ -367,6 +367,7 @@ export interface KosmosIpcTypes {
   OpenEditorSessionParams?: OpenEditorSessionParams;
   OpenEditorTabParams?: OpenEditorTabParams;
   WorkspaceListSnapshot?: WorkspaceListSnapshot;
+  RestoreEditorSessionParams?: RestoreEditorSessionParams;
   SaveEditorDocumentParams?: SaveEditorDocumentParams;
   SaveEditorDocumentPayload?: SaveEditorDocumentPayload;
   TransferFileTreeEntriesParams?: TransferFileTreeEntriesParams;
@@ -617,6 +618,18 @@ export interface OpenEditorSessionParams {
  */
 export interface OpenEditorTabParams {
   path: string;
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "RestoreEditorSessionParams".
+ */
+export interface RestoreEditorSessionParams {
+  content: string;
+  path: string;
+  revision: number;
+  savedContent: string;
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
 }

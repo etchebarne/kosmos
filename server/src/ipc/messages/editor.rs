@@ -49,6 +49,17 @@ pub(crate) struct OpenEditorSessionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RestoreEditorSessionParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) tab_id: TabIdParam,
+    pub(crate) path: String,
+    pub(crate) content: String,
+    pub(crate) saved_content: String,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ChangeEditorSessionParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
     pub(crate) tab_id: TabIdParam,

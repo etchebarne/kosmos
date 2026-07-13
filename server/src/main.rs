@@ -2,6 +2,7 @@ use std::io;
 use std::path::PathBuf;
 
 fn main() -> io::Result<()> {
+    terminate_with_parent()?;
     let store = core::persistence::StateStore::open(database_path()?).map_err(io::Error::other)?;
     let language_server_manager = language_server_paths().and_then(|paths| {
         core::language_servers::LanguageServerManager::open(paths, store.clone())
@@ -20,6 +21,29 @@ fn main() -> io::Result<()> {
     }
 
     kosmos_server::ipc::run(socket_path(), core::Application::new(state, store))
+}
+
+fn terminate_with_parent() -> io::Result<()> {
+    let Some(parent_pid) = std::env::var_os("KOSMOS_PARENT_PID") else {
+        return Ok(());
+    };
+    let parent_pid = parent_pid
+        .to_string_lossy()
+        .parse::<libc::pid_t>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid KOSMOS_PARENT_PID"))?;
+
+    // The parent can exit before the death signal is installed, so verify it again afterwards.
+    if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::getppid() } != parent_pid {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "Kosmos desktop exited before the server started",
+        ));
+    }
+
+    Ok(())
 }
 
 fn socket_path() -> PathBuf {

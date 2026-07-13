@@ -275,6 +275,35 @@ impl Application {
             .map_err(ApplicationError::from)
     }
 
+    pub fn restore_editor_session(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: &str,
+        content: String,
+        saved_content: String,
+        revision: u64,
+    ) -> Result<EditorSessionUpdate, ApplicationError> {
+        let (workspace_id, expected_path) =
+            self.state.editor_session_target(workspace_id, tab_id)?;
+        if expected_path != path {
+            return Err(EditorSessionError::PathMismatch {
+                expected: expected_path,
+                received: path.to_owned(),
+            }
+            .into());
+        }
+        self.editor_sessions
+            .restore(
+                EditorSessionId::new(workspace_id, tab_id),
+                path,
+                content,
+                saved_content,
+                revision,
+            )
+            .map_err(ApplicationError::from)
+    }
+
     pub fn change_editor_session(
         &mut self,
         workspace_id: Option<WorkspaceId>,

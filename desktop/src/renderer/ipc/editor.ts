@@ -7,6 +7,7 @@ import type {
   OpenEditorLocationParams,
   OpenEditorLocationPayload,
   OpenEditorSessionParams,
+  RestoreEditorSessionParams,
   OpenEditorTabParams,
   SaveEditorDocumentParams,
   WorkspaceListSnapshot,
@@ -44,6 +45,10 @@ export function saveEditorDocument(
 
 export function openEditorSession(params: OpenEditorSessionParams): Promise<EditorDocument> {
   return requestServer(DOMAIN, "openSession", params);
+}
+
+export function restoreEditorSession(params: RestoreEditorSessionParams): Promise<EditorDocument> {
+  return requestServer(DOMAIN, "restoreSession", params);
 }
 
 export function changeEditorSession(params: ChangeEditorSessionParams): Promise<EditorDocument> {

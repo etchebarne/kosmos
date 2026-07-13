@@ -10,6 +10,28 @@ import type {
 } from "../shared/ipc";
 import { reconstructIpcRequestResult } from "./request-result";
 
+let shutdownCallback: (() => Promise<boolean>) | undefined;
+let shutdownPending = false;
+
+function dispatchShutdownRequest(): void {
+  if (!shutdownCallback) {
+    shutdownPending = true;
+    return;
+  }
+
+  shutdownPending = false;
+  void shutdownCallback()
+    .then((approved) => ipcRenderer.send("kosmos:shutdownResolved", { approved }))
+    .catch((error: unknown) =>
+      ipcRenderer.send("kosmos:shutdownResolved", {
+        approved: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+}
+
+ipcRenderer.on("kosmos:prepareShutdown", dispatchShutdownRequest);
+
 const kosmos: KosmosApi = {
   async request<T = unknown>(request: KosmosIpcRequest): Promise<KosmosIpcRequestResult<T>> {
     const response = (await ipcRenderer.invoke("kosmos:request", request)) as KosmosIpcRequestResult<T>;
@@ -25,6 +47,9 @@ const kosmos: KosmosApi = {
     failureReason?: string,
   ): void {
     ipcRenderer.send("kosmos:serverApplyEditAck", { id, token, applied, failureReason });
+  },
+  completeServerRecovery(generation: number, error?: string): void {
+    ipcRenderer.send("kosmos:serverRecoveryComplete", { generation, error });
   },
   pendingServerApplyEdits() {
     return ipcRenderer.invoke("kosmos:pendingServerApplyEdits") as ReturnType<
@@ -58,18 +83,16 @@ const kosmos: KosmosApi = {
     return () => ipcRenderer.off("kosmos:flushState", listener);
   },
   onShutdownRequest(callback: () => Promise<boolean>): () => void {
-    const listener = () => {
-      void callback()
-        .then((approved) => ipcRenderer.send("kosmos:shutdownResolved", { approved }))
-        .catch((error: unknown) =>
-          ipcRenderer.send("kosmos:shutdownResolved", {
-            approved: false,
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        );
+    shutdownCallback = callback;
+    ipcRenderer.send("kosmos:rendererReady");
+    if (shutdownPending) {
+      dispatchShutdownRequest();
+    }
+    return () => {
+      if (shutdownCallback === callback) {
+        shutdownCallback = undefined;
+      }
     };
-    ipcRenderer.on("kosmos:prepareShutdown", listener);
-    return () => ipcRenderer.off("kosmos:prepareShutdown", listener);
   },
   onSettingsSnapshot(callback: (snapshot: SettingsSnapshot) => void): () => void {
     const listener = (_event: IpcRendererEvent, snapshot: SettingsSnapshot) => {
@@ -94,8 +117,8 @@ const kosmos: KosmosApi = {
     ipcRenderer.on("kosmos:serverNotification", listener);
     return () => ipcRenderer.off("kosmos:serverNotification", listener);
   },
-  onServerReconnected(callback: () => void): () => void {
-    const listener = () => callback();
+  onServerReconnected(callback: (generation: number) => void): () => void {
+    const listener = (_event: IpcRendererEvent, generation: number) => callback(generation);
     ipcRenderer.on("kosmos:serverReconnected", listener);
     return () => ipcRenderer.off("kosmos:serverReconnected", listener);
   },

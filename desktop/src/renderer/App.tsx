@@ -34,6 +34,14 @@ export function App() {
 
   useEffect(
     () =>
+      window.kosmos.onServerReconnected(() => {
+        useWorkspaceStore.getState().resetPendingCloseAfterServerRestart();
+      }),
+    [],
+  );
+
+  useEffect(
+    () =>
       window.kosmos.onShutdownRequest(() =>
         useWorkspaceStore.getState().requestApplicationClose(),
       ),

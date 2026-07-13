@@ -3,8 +3,8 @@ use core::tabs::editor::EditorError;
 use super::super::messages::editor::{
     ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
     EditorGitLineHunksPayload, OpenEditorLocationParams, OpenEditorLocationPayload,
-    OpenEditorSessionParams, OpenEditorTabParams, SaveEditorDocumentParams,
-    SaveEditorDocumentPayload,
+    OpenEditorSessionParams, OpenEditorTabParams, RestoreEditorSessionParams,
+    SaveEditorDocumentParams, SaveEditorDocumentPayload,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::WorkspaceListSnapshot;
@@ -30,6 +30,10 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<OpenEditorSessionParams, EditorDocumentPayload>(
         "openSession",
         RouteDefinition::application(open_session),
+    ),
+    Route::new::<RestoreEditorSessionParams, EditorDocumentPayload>(
+        "restoreSession",
+        RouteDefinition::application(restore_session),
     ),
     Route::new::<ChangeEditorSessionParams, EditorDocumentPayload>(
         "changeSession",
@@ -118,6 +122,26 @@ fn open_session(application: &mut core::Application, request: &RequestEnvelope) 
             params.tab_id.into(),
             &params.path,
             params.content,
+            params.revision,
+        ) {
+            Ok(update) => ServerMessage::ok(request.id, session_update_payload(update)),
+            Err(error) => application_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
+fn restore_session(
+    application: &mut core::Application,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    match parse_params::<RestoreEditorSessionParams>(request) {
+        Ok(params) => match application.restore_editor_session(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+            &params.path,
+            params.content,
+            params.saved_content,
             params.revision,
         ) {
             Ok(update) => ServerMessage::ok(request.id, session_update_payload(update)),
