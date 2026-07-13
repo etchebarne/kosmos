@@ -1,7 +1,0 @@
-[package]
-name = "storage"
-version = "0.4.9"
-edition = "2024"
-
-[dependencies]
-rusqlite = { workspace = true }

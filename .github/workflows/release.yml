@@ -7,92 +7,129 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build and release (e.g. v0.1.0)"
+        description: "Tag to build and release (for example, v0.1.0)"
         required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Resolve tag
-        id: tag
-        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@v2
 
-      - name: Install build dependencies
+      - name: Validate release version
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have the form vX.Y.Z: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          version="${RELEASE_TAG#v}"
+          desktop_version="$(bun -e 'console.log(require("./desktop/package.json").version)')"
+          core_version="$(awk -F '"' '/^version = "/ { print $2; exit }' core/Cargo.toml)"
+          server_version="$(awk -F '"' '/^version = "/ { print $2; exit }' server/Cargo.toml)"
+
+          for package_version in "$desktop_version" "$core_version" "$server_version"; do
+            if [[ "$package_version" != "$version" ]]; then
+              echo "Tag $RELEASE_TAG does not match package version $package_version" >&2
+              exit 1
+            fi
+          done
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config gettext-base llvm clang libclang-dev curl rpm desktop-file-utils \
-            libssl-dev libfontconfig-dev libxkbcommon-dev \
-            libxcb1-dev libxkbcommon-x11-dev \
-            libwayland-dev libvulkan-dev
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
-      - name: Install AppImage tooling
-        run: |
-          curl -fsSL \
-            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
-            -o /tmp/appimagetool
-          chmod +x /tmp/appimagetool
-          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+          sudo apt-get install -y rpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - uses: swatinem/rust-cache@v2
 
-      - name: Bundle
+      - name: Install desktop dependencies
+        run: bun install --cwd desktop --frozen-lockfile
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Typecheck desktop
+        run: bun run --cwd desktop typecheck
+
+      - name: Test desktop
+        run: bun run --cwd desktop test
+
+      - name: Build Linux packages
         run: ./scripts/bundle-linux.sh
 
-      - name: Package deb and rpm
-        run: ./scripts/package-linux-deb-rpm.sh
-
-      - name: Package AppImage
-        run: ./scripts/package-linux-appimage.sh
-
-      - name: Create GitHub release
+      - name: Verify release artifacts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          tag="${{ steps.tag.outputs.tag }}"
-          version="${tag#v}"
-          arch="$(uname -m)"
-          case "$arch" in
-            x86_64|amd64)
-              bundle_arch="x86_64"
-              deb_arch="amd64"
-              rpm_arch="x86_64"
-              appimage_arch="x86_64"
-              ;;
-            *)
-              echo "Unsupported release architecture: $arch" >&2
-              exit 1
-              ;;
-          esac
           artifacts=(
-            "target/release/kosmos-linux-${bundle_arch}.tar.gz"
-            "target/release/kosmos_${version}_${deb_arch}.deb"
-            "target/release/kosmos-${version}-1.${rpm_arch}.rpm"
-            "target/release/Kosmos-${version}-${appimage_arch}.AppImage"
-            scripts/install.sh
-            scripts/uninstall.sh
+            "desktop/release/Kosmos-${VERSION}-x86_64.AppImage"
+            "desktop/release/Kosmos-${VERSION}-amd64.deb"
+            "desktop/release/Kosmos-${VERSION}-x86_64.rpm"
           )
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${artifacts[@]}" --clobber
+          for artifact in "${artifacts[@]}"; do
+            test -f "$artifact" || {
+              echo "Missing release artifact: $artifact" >&2
+              exit 1
+            }
+          done
+
+          (
+            cd desktop/release
+            sha256sum \
+              "Kosmos-${VERSION}-x86_64.AppImage" \
+              "Kosmos-${VERSION}-amd64.deb" \
+              "Kosmos-${VERSION}-x86_64.rpm" \
+              > SHA256SUMS
+          )
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          artifacts=(
+            "desktop/release/Kosmos-${VERSION}-x86_64.AppImage"
+            "desktop/release/Kosmos-${VERSION}-amd64.deb"
+            "desktop/release/Kosmos-${VERSION}-x86_64.rpm"
+            "desktop/release/SHA256SUMS"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${artifacts[@]}" --clobber
           else
-            gh release create "$tag" \
-              --title "Kosmos $tag" \
+            gh release create "$RELEASE_TAG" \
+              --title "Kosmos $RELEASE_TAG" \
               --draft \
               --generate-notes \
+              --verify-tag \
               "${artifacts[@]}"
           fi

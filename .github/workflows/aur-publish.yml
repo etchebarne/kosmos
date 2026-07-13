@@ -4,39 +4,75 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: aur-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
-  aur-publish-bin:
+  aur-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Get version from tag
-        id: version
-        run: echo "pkgver=${GITHUB_EVENT_RELEASE_TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Resolve release version
+        id: release
         env:
-          GITHUB_EVENT_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
-
-      - name: Get tarball checksum
-        id: checksum
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/kosmos-linux-x86_64.tar.gz" -o kosmos.tar.gz
-          echo "sha256=$(sha256sum kosmos.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have the form vX.Y.Z: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate package checksums
+        id: checksums
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/Kosmos-${VERSION}-x86_64.AppImage" \
+            --output Kosmos.AppImage
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/${{ github.repository }}/${RELEASE_TAG}/desktop/assets/icon/icon-512.png" \
+            --output kosmos-512.png
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/${{ github.repository }}/${RELEASE_TAG}/LICENSE" \
+            --output LICENSE
+
+          {
+            echo "appimage=$(sha256sum Kosmos.AppImage | cut -d ' ' -f 1)"
+            echo "icon=$(sha256sum kosmos-512.png | cut -d ' ' -f 1)"
+            echo "license=$(sha256sum LICENSE | cut -d ' ' -f 1)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Update PKGBUILD
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          APPIMAGE_SHA256: ${{ steps.checksums.outputs.appimage }}
+          ICON_SHA256: ${{ steps.checksums.outputs.icon }}
+          LICENSE_SHA256: ${{ steps.checksums.outputs.license }}
         run: |
-          cd aur/kosmos-bin
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-          sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksum.outputs.sha256 }}')/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" aur/kosmos-bin/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" aur/kosmos-bin/PKGBUILD
+          sed -i \
+            "s/^sha256sums=.*/sha256sums=('${APPIMAGE_SHA256}' '${ICON_SHA256}' '${LICENSE_SHA256}')/" \
+            aur/kosmos-bin/PKGBUILD
 
       - name: Publish to AUR
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           mkdir -p ~/.ssh
-          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
           ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
           cat >> ~/.ssh/config <<'SSH'
@@ -48,58 +84,21 @@ jobs:
           git clone ssh://aur@aur.archlinux.org/kosmos-bin.git aur-repo
           cp aur/kosmos-bin/PKGBUILD aur-repo/PKGBUILD
 
-          cd aur-repo
-          docker run --rm -v "$PWD:/pkg" -e HOST_UID="$(id -u)" archlinux:base bash -c \
-            'pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && runuser -u builder -- bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO" && chown -R $HOST_UID /pkg'
+          docker run --rm \
+            -v "$PWD/aur-repo:/pkg" \
+            -e HOST_UID="$(id -u)" \
+            archlinux:base \
+            bash -c 'pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && runuser -u builder -- bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO" && chown -R "$HOST_UID" /pkg'
 
+          cd aur-repo
           git config user.name "Martin Etchebarne"
           git config user.email "martin@etchebarne.net"
           git add PKGBUILD .SRCINFO
-          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Update to ${{ steps.version.outputs.pkgver }}"
-          git push
 
-  aur-publish-src:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name }}
+          if git diff --cached --quiet; then
+            echo "AUR package is already up to date"
+            exit 0
+          fi
 
-      - name: Get version from tag
-        id: version
-        run: echo "pkgver=${GITHUB_EVENT_RELEASE_TAG_NAME#v}" >> "$GITHUB_OUTPUT"
-        env:
-          GITHUB_EVENT_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
-
-      - name: Update PKGBUILD
-        run: |
-          cd aur/kosmos
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-
-      - name: Publish to AUR
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
-          cat >> ~/.ssh/config <<'SSH'
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
-            User aur
-          SSH
-
-          git clone ssh://aur@aur.archlinux.org/kosmos.git aur-repo
-          cp aur/kosmos/PKGBUILD aur-repo/PKGBUILD
-
-          cd aur-repo
-          docker run --rm -v "$PWD:/pkg" -e HOST_UID="$(id -u)" archlinux:base bash -c \
-            'pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && runuser -u builder -- bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO" && chown -R $HOST_UID /pkg'
-
-          git config user.name "Martin Etchebarne"
-          git config user.email "martin@etchebarne.net"
-          git add PKGBUILD .SRCINFO
-          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Update to ${{ steps.version.outputs.pkgver }}"
+          git commit -m "Update to ${VERSION}"
           git push

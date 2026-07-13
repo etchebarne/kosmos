@@ -1,0 +1,115 @@
+use core::tree::{Pane, PaneNode, SplitAxis};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::ids::{PaneIdParam, SplitPaneIdParam, WorkspaceIdParam};
+use super::tab::TabSnapshot;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SplitPaneParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: Option<PaneIdParam>,
+    pub(crate) axis: SplitAxisPayload,
+    pub(crate) new_pane_first: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivatePaneParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MovePaneParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) pane_id: PaneIdParam,
+    pub(crate) target_pane_id: PaneIdParam,
+    pub(crate) axis: SplitAxisPayload,
+    pub(crate) new_pane_first: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResizeSplitParams {
+    pub(crate) workspace_id: Option<WorkspaceIdParam>,
+    pub(crate) split_id: SplitPaneIdParam,
+    pub(crate) ratio: f32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SplitAxisPayload {
+    Horizontal,
+    Vertical,
+}
+
+impl From<SplitAxisPayload> for SplitAxis {
+    fn from(value: SplitAxisPayload) -> Self {
+        match value {
+            SplitAxisPayload::Horizontal => Self::Horizontal,
+            SplitAxisPayload::Vertical => Self::Vertical,
+        }
+    }
+}
+
+impl From<SplitAxis> for SplitAxisPayload {
+    fn from(value: SplitAxis) -> Self {
+        match value {
+            SplitAxis::Horizontal => Self::Horizontal,
+            SplitAxis::Vertical => Self::Vertical,
+        }
+    }
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub(crate) enum PaneNodeSnapshot {
+    Leaf {
+        pane: PaneSnapshot,
+    },
+    Split {
+        id: u64,
+        axis: SplitAxisPayload,
+        ratio: f32,
+        first: Box<PaneNodeSnapshot>,
+        second: Box<PaneNodeSnapshot>,
+    },
+}
+
+impl PaneNodeSnapshot {
+    pub(crate) fn from_node(node: &PaneNode) -> Self {
+        match node {
+            PaneNode::Leaf(pane) => Self::Leaf {
+                pane: PaneSnapshot::from_pane(pane),
+            },
+            PaneNode::Split(split) => Self::Split {
+                id: split.id().value(),
+                axis: split.axis().into(),
+                ratio: split.ratio(),
+                first: Box::new(Self::from_node(split.first())),
+                second: Box::new(Self::from_node(split.second())),
+            },
+        }
+    }
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PaneSnapshot {
+    id: u64,
+    active_tab_id: u64,
+    tabs: Vec<TabSnapshot>,
+}
+
+impl PaneSnapshot {
+    fn from_pane(pane: &Pane) -> Self {
+        Self {
+            id: pane.id().value(),
+            active_tab_id: pane.active_tab_id().value(),
+            tabs: pane.tabs().iter().map(TabSnapshot::from_tab).collect(),
+        }
+    }
+}

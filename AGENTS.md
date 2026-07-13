@@ -1,0 +1,8 @@
+- When executing Rust actions like making a new crate, formatting or any other, use cargo commands instead of doing it manually.
+- Keep separation of concerns between crates as clean as possible, don't leak unwanted logic into other crates, this helps keep the app's logic untangled, modular and maintainable.
+- When writing functions, keep them minimal, they must do one thing and do it flawlessly, avoid writing big functions, instead, divide the problem in smaller pieces, and then consume those small functions in the final solution.
+- Avoid code duplication, check if there's an existing piece of logic you can reuse instead of rewriting it again.
+- Leave the code better than you found it, if you see something looks off while you're working on this, address it immediately.
+- All Kosmos state lives in server/ which consumes the core/ create which has all of the app's logic, keep everything in core/ and then make desktop/ just communicate through IPC to consume it and interact with it.
+- NEVER write core logic on desktop/ or server/, keep it strictly on core/, this allows us to keep a clean separation of concerns and reusability.
+- Keep client-server UI communication responsive: lightweight interactions must update optimistically or asynchronously where appropriate, never block on full synchronous persistence or slow round trips, and avoid temporary label/disabled-state changes that cause visible layout churn.

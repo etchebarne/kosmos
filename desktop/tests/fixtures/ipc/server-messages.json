@@ -1,0 +1,61 @@
+{
+  "clientMessages": [
+    { "type": "request", "id": 1, "domain": "workspace", "action": "list", "params": {} },
+    { "type": "cancel", "id": 1 },
+    { "type": "applyEditAck", "id": 1, "token": "token", "applied": true, "failureReason": null }
+  ],
+  "responses": {
+    "success": {
+      "type": "response",
+      "id": 1,
+      "ok": true,
+      "result": { "activeWorkspaceId": null, "workspaces": [] }
+    },
+    "error": {
+      "type": "response",
+      "id": 1,
+      "ok": false,
+      "error": { "code": "ipc.invalid_params", "message": "synthetic fixture" }
+    }
+  },
+  "notifications": [
+    { "type": "notification", "event": "workspaceChanged", "workspaceIds": [1] },
+    {
+      "type": "notification",
+      "event": "languageServerDiagnosticsChanged",
+      "workspaceId": 1,
+      "path": "src/main.rs",
+      "serverId": "rust-analyzer",
+      "generation": 1,
+      "version": 1,
+      "diagnostics": [
+        {
+          "range": {
+            "start": { "line": 0, "character": 0 },
+            "end": { "line": 0, "character": 1 }
+          },
+          "severity": null,
+          "message": "warning",
+          "source": null,
+          "code": null
+        }
+      ]
+    },
+    { "type": "notification", "event": "languageServerDiagnosticsResync" },
+    { "type": "notification", "event": "languageServerStatusChanged", "serverId": "rust-analyzer" },
+    { "type": "notification", "event": "languageServerLogAvailable", "serverId": "rust-analyzer" },
+    {
+      "type": "notification",
+      "event": "languageServerApplyEdit",
+      "id": 1,
+      "token": "token",
+      "edit": {
+        "transactionId": 1,
+        "authorization": "token",
+        "documents": [],
+        "operations": [{ "kind": "textDocument", "document": 0 }]
+      }
+    },
+    { "type": "notification", "event": "languageServerApplyEditCancelled", "id": 1, "token": "token" }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "name": "kosmos-desktop",
+  "version": "0.1.0",
+  "description": "A code editor where every view is a tab you can place anywhere.",
+  "author": {
+    "name": "Martin Etchebarne",
+    "email": "martin@etchebarne.net"
+  },
+  "homepage": "https://github.com/etchebarne/kosmos",
+  "license": "MIT",
+  "desktopName": "kosmos.desktop",
+  "main": "dist/main.cjs",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun run clean && bun run build:main && bun run build:preload && bun run build:renderer",
+    "build:main": "bun build src/main/main.ts --target=node --format=cjs --external electron --outfile dist/main.cjs",
+    "build:preload": "bun build src/preload/preload.ts --target=node --format=cjs --external electron --outfile dist/preload.cjs",
+    "build:renderer": "vite build",
+    "check:ipc": "bun run scripts/check-ipc.ts",
+    "clean": "rm -rf dist",
+    "dev": "bun run build && electron .",
+    "generate:ipc": "bun run scripts/generate-ipc.ts",
+    "package:linux": "electron-builder --linux",
+    "start": "electron .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/bun": "latest",
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "ajv": "8.17.1",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "json-schema-to-typescript": "15.0.4",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.3"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist": "^5.2.9",
+    "@pierre/trees": "^1.0.0-beta.5",
+    "@xterm/addon-canvas": "^0.7.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "5.5.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.23.0",
+    "monaco-editor": "^0.55.1",
+    "react-resizable-panels": "^4.12.0",
+    "shadcn": "^4.12.0",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0",
+    "zustand": "^5.0.14"
+  },
+  "build": {
+    "appId": "net.etchebarne.kosmos",
+    "productName": "Kosmos",
+    "artifactName": "Kosmos-${version}-${arch}.${ext}",
+    "asar": true,
+    "icon": "assets/icon/icon-512.png",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      },
+      {
+        "from": "../target/release/kosmos-server",
+        "to": "bin/kosmos-server"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development;IDE;TextEditor",
+      "executableName": "kosmos",
+      "synopsis": "A code editor where every view is a tab you can place anywhere.",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "packageName": "kosmos"
+    },
+    "rpm": {
+      "packageName": "kosmos"
+    }
+  }
+}

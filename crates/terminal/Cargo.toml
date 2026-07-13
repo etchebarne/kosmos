@@ -1,9 +1,0 @@
-[package]
-name = "terminal"
-version = "0.4.9"
-edition = "2024"
-
-[dependencies]
-alacritty_terminal = "0.26.0"
-gpui = { workspace = true }
-portable-pty = "0.9.0"

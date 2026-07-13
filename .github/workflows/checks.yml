@@ -1,0 +1,56 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install desktop dependencies
+        run: bun install --cwd desktop --frozen-lockfile
+
+      - name: Check layer boundaries
+        run: bash scripts/check-boundaries.sh
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Check IPC contract generation
+        run: bun run --cwd desktop check:ipc
+
+      - name: Typecheck desktop
+        run: bun run --cwd desktop typecheck
+
+      - name: Test desktop
+        run: bun run --cwd desktop test
+
+      - name: Build desktop
+        run: bun run --cwd desktop build
