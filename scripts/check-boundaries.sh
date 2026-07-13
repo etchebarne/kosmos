@@ -5,6 +5,11 @@ set -euo pipefail
 repository_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)"
 cd "$repository_root"
 
+if ! command -v rg >/dev/null 2>&1; then
+  printf 'Boundary checks require ripgrep (rg).\n' >&2
+  exit 127
+fi
+
 failed=0
 
 check_imports() {
