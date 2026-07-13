@@ -18,7 +18,7 @@ check_imports() {
   local pattern="$3"
   local matches
 
-  matches="$(rg -n --pcre2 "$pattern" "$directory" || true)"
+  matches="$(rg -n "$pattern" "$directory" || true)"
   if [[ -n "$matches" ]]; then
     printf 'Boundary violation (%s):\n%s\n' "$description" "$matches" >&2
     failed=1
@@ -39,8 +39,8 @@ check_imports \
   "(?:from\\s*|import\\s*(?:\\(\\s*)?)['\\\"](?:@/renderer|(?:\\.\\./)+renderer)(?:/|['\\\"])"
 
 metadata="$(cargo metadata --no-deps --format-version 1)"
-server_package="$(printf '%s' "$metadata" | rg -oP '"name":"kosmos-server","version":.*?,"dependencies":\[.*?\],"targets":' || true)"
-core_package="$(printf '%s' "$metadata" | rg -oP '"name":"core","version":.*?,"dependencies":\[.*?\],"targets":' || true)"
+server_package="$(printf '%s' "$metadata" | rg -o '"name":"kosmos-server","version":.*?,"dependencies":\[.*?\],"targets":' || true)"
+core_package="$(printf '%s' "$metadata" | rg -o '"name":"core","version":.*?,"dependencies":\[.*?\],"targets":' || true)"
 
 if ! printf '%s' "$server_package" | rg -q '"name":"core"'; then
   printf 'Boundary violation: kosmos-server must depend on core according to cargo metadata.\n' >&2
