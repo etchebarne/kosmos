@@ -35,6 +35,7 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 ## Development
 
 - Run the app with `./scripts/run.sh`.
+- Development builds use an isolated app identity and state database, so they can run alongside an installed Kosmos instance.
 - Install desktop dependencies with `bun install --cwd desktop --frozen-lockfile`.
 - Run the full local verification sequence from the repository root:
 
@@ -54,7 +55,7 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 - The AppImage-based AUR package template lives in `aur/kosmos-bin/`.
 - Bump release metadata with `./scripts/bump-version.sh patch|minor|major|x.y.z`.
 
-The Electron main process launches the Rust server as a sidecar process. They communicate over a Unix socket, while the renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
+The Electron main process launches the Rust server as a sidecar process. They communicate over a per-process Unix socket under `$XDG_RUNTIME_DIR/kosmos/`, while the renderer communicates with Electron main through Electron IPC only. Set `KOSMOS_SOCKET` to override the socket path.
 
 The Rust server owns the IPC contract. Update generated desktop schema, declaration, and validation artifacts with `bun run --cwd desktop generate:ipc`; use `bun run --cwd desktop check:ipc` to verify they are current.
 

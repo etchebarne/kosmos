@@ -4,7 +4,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,9 +21,44 @@ const MAX_PENDING_INPUTS: usize = 64;
 const EXIT_OUTPUT_GRACE_PERIOD: Duration = Duration::from_millis(100);
 const SHELLS_FILE: &str = "/etc/shells";
 const FALLBACK_SHELLS: &[&str] = &["/bin/bash", "/bin/zsh", "/bin/fish"];
+const SIDECAR_ENVIRONMENT_VARIABLES: &[&str] =
+    &["KOSMOS_DATABASE", "KOSMOS_PARENT_PID", "KOSMOS_SOCKET"];
 const INTERACTIVE_SHELLS: &[&str] = &[
     "bash", "zsh", "fish", "nu", "ksh", "mksh", "tcsh", "csh", "xonsh", "elvish", "pwsh",
 ];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalViewState {
+    workspace_id: WorkspaceId,
+    tab_id: TabId,
+    directory: PathBuf,
+}
+
+impl TerminalViewState {
+    pub fn new(workspace_id: WorkspaceId, tab_id: TabId, directory: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace_id,
+            tab_id,
+            directory: directory.into(),
+        }
+    }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub fn tab_id(&self) -> TabId {
+        self.tab_id
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub(crate) fn set_directory(&mut self, directory: impl Into<PathBuf>) {
+        self.directory = directory.into();
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalShell {
@@ -270,6 +305,27 @@ impl TerminalSessions {
             .retain(|key, _| key.workspace_id != workspace_id);
     }
 
+    pub(crate) fn working_directory(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Option<PathBuf> {
+        self.sessions
+            .get(&TerminalSessionKey::new(workspace_id, tab_id))?
+            .working_directory()
+    }
+
+    pub(crate) fn working_directories(&self) -> Vec<(WorkspaceId, TabId, PathBuf)> {
+        self.sessions
+            .iter()
+            .filter_map(|(key, session)| {
+                session
+                    .working_directory()
+                    .map(|directory| (key.workspace_id, key.tab_id, directory))
+            })
+            .collect()
+    }
+
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(WorkspaceId, TabId) -> bool) {
         self.sessions
             .retain(|key, _| keep(key.workspace_id, key.tab_id));
@@ -331,14 +387,11 @@ impl TerminalSession {
             .openpty(size.pty_size())
             .map_err(TerminalError::pty)?;
         let portable_pty::PtyPair { master, slave } = pair;
-        let mut command = match shell {
+        let command = match shell {
             Some(shell) => CommandBuilder::new(shell.as_os_str()),
             None => CommandBuilder::new_default_prog(),
         };
-
-        command.cwd(cwd.as_os_str());
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        let command = terminal_command(command, cwd);
 
         let child = slave.spawn_command(command).map_err(TerminalError::pty)?;
         drop(slave);
@@ -387,6 +440,12 @@ impl TerminalSession {
             .map_err(TerminalError::pty)
     }
 
+    fn working_directory(&self) -> Option<PathBuf> {
+        let process_id = self.child.process_id()?;
+
+        fs::read_link(format!("/proc/{process_id}/cwd")).ok()
+    }
+
     fn drain_output(&self, flush_incomplete: bool) -> Result<(String, bool, bool)> {
         let (bytes, truncated, reader_finished) = {
             let mut output = self
@@ -414,6 +473,16 @@ impl TerminalSession {
 
         Ok(self.exit_status.clone())
     }
+}
+
+fn terminal_command(mut command: CommandBuilder, cwd: &Path) -> CommandBuilder {
+    command.cwd(cwd.as_os_str());
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    for variable in SIDECAR_ENVIRONMENT_VARIABLES {
+        command.env_remove(variable);
+    }
+    command
 }
 
 fn terminal_input(input: &str) -> Result<Vec<u8>> {
@@ -713,6 +782,24 @@ mod tests {
             TerminalError::InputTooLarge { size, limit }
                 if size == MAX_INPUT_BYTES + 1 && limit == MAX_INPUT_BYTES
         ));
+    }
+
+    #[test]
+    fn terminal_commands_do_not_expose_sidecar_environment() {
+        let mut command = CommandBuilder::new("/bin/sh");
+        for variable in SIDECAR_ENVIRONMENT_VARIABLES {
+            command.env(variable, "private");
+        }
+
+        let command = terminal_command(command, Path::new("/workspace"));
+
+        for variable in SIDECAR_ENVIRONMENT_VARIABLES {
+            assert!(command.get_env(variable).is_none());
+        }
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ bun run build
 bun run start
 ```
 
-From the repository root, `./scripts/run.sh` builds the Rust server, starts it, builds the Electron frontend, and launches Electron.
+From the repository root, `./scripts/run.sh` builds the Rust server, starts it, builds the Electron frontend, and launches Electron. Unpackaged builds use a separate `Kosmos Development` instance lock, user-data directory, and state database, so an installed Kosmos instance can remain open.
 
 ## Structure
 
@@ -46,7 +46,7 @@ const workspaces = await listWorkspaces();
 await openWorkspace("/path/to/project");
 ```
 
-The socket path matches the Rust server lookup order: `$KOSMOS_SOCKET`, then `$XDG_RUNTIME_DIR/kosmos/server.sock`, then `/tmp/kosmos/server.sock`.
+The desktop uses `$KOSMOS_SOCKET` when set. Otherwise, it creates a per-process socket under `$XDG_RUNTIME_DIR/kosmos/` or the system temporary directory.
 
 ## Scripts
 

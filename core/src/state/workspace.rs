@@ -49,6 +49,7 @@ impl State {
             self.remove_workspace_file_tree_view_states(workspace.id());
             self.remove_workspace_git_diff_view_states(workspace.id());
             self.remove_workspace_editor_view_states(workspace.id());
+            self.remove_workspace_terminal_view_states(workspace.id());
             self.terminal_sessions.close_workspace(workspace.id());
         }
 
@@ -200,6 +201,9 @@ impl State {
         if updated {
             self.remove_git_diff_view_state(workspace_id, tab_id);
             self.remove_editor_view_state(workspace_id, tab_id);
+            if !keep_terminal_session {
+                self.remove_terminal_view_state(workspace_id, tab_id);
+            }
         }
 
         if updated && close_terminal_session {
@@ -284,6 +288,7 @@ impl State {
             self.remove_file_tree_view_state(workspace_id, tab_id);
             self.remove_git_diff_view_state(workspace_id, tab_id);
             self.remove_editor_view_state(workspace_id, tab_id);
+            self.remove_terminal_view_state(workspace_id, tab_id);
         }
 
         if removed_tab

@@ -14,6 +14,9 @@ import { startWithFatalHandler } from "./startup";
 import { createMainWindow, getRendererEntryPath } from "./window/main-window";
 import { setWindowZoomLevel, updateWindowZoomPolicy } from "./window/shortcuts";
 import type { SettingsSnapshot } from "../shared/ipc";
+import { configureDevelopmentInstance } from "./development-instance";
+
+configureDevelopmentInstance(app);
 
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath, handleUnexpectedServerExit);
@@ -314,7 +317,7 @@ function focusMainWindow(): void {
   window.focus();
 }
 
-function handleUnexpectedServerExit(): void {
+function handleUnexpectedServerExit(exitError: Error): void {
   if (bypassShutdown || shutdownAttempt.complete || sidecarRestart) {
     return;
   }
@@ -329,7 +332,7 @@ function handleUnexpectedServerExit(): void {
   if (sidecarRestartTimes.length >= MAX_SIDECAR_RESTARTS) {
     dialog.showErrorBox(
       "Kosmos server stopped",
-      "The Kosmos server repeatedly stopped and the application must close.",
+      `The Kosmos server repeatedly stopped and the application must close.\n\n${exitError.message}`,
     );
     quitImmediately(1);
     return;

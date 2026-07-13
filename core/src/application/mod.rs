@@ -959,7 +959,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn persistence_failure_does_not_publish_candidate() {
@@ -1087,6 +1087,95 @@ mod tests {
 
         assert_eq!(application.state().workspaces().workspaces().len(), 2);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn application_close_persists_terminal_working_directory() {
+        let (mut application, database) = test_application("terminal-directory");
+        let root = std::env::temp_dir().join(format!(
+            "kosmos-application-terminal-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let workspace_id = application.state_mut().open_workspace(&root);
+        let tab_id = crate::tree::TabId::new(1);
+        assert!(application.state_mut().set_tab_kind(
+            Some(workspace_id),
+            crate::tree::PaneId::new(1),
+            tab_id,
+            crate::tree::TabKind::Terminal,
+        ));
+        application
+            .state_mut()
+            .open_terminal(Some(workspace_id), tab_id, 80, 24)
+            .unwrap();
+        let bash = crate::tabs::terminal::available_shells()
+            .into_iter()
+            .find(|shell| shell.name() == "bash")
+            .expect("bash should be available for the terminal test");
+        application
+            .state_mut()
+            .restart_terminal(Some(workspace_id), tab_id, 80, 24, bash.path())
+            .unwrap();
+        application
+            .state_mut()
+            .write_terminal_input(
+                Some(workspace_id),
+                tab_id,
+                &format!("cd {}\r", nested.display()),
+            )
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut terminal_output = String::new();
+        loop {
+            let output = application
+                .state_mut()
+                .read_terminal_output(Some(workspace_id), tab_id)
+                .unwrap();
+            terminal_output.push_str(output.output());
+            if application
+                .state()
+                .terminal_view_states()
+                .iter()
+                .any(|state| state.tab_id() == tab_id && state.directory() == nested)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "terminal did not change directory; output: {terminal_output:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(matches!(
+            application
+                .begin_close(CloseIntent {
+                    target: CloseTarget::Application,
+                })
+                .unwrap(),
+            CloseIntentResult::Completed
+        ));
+
+        drop(application);
+
+        let mut loaded = StateStore::open(&database).unwrap().load().unwrap();
+        assert_eq!(loaded.terminal_view_states().len(), 1);
+        assert_eq!(loaded.terminal_view_states()[0].directory(), nested);
+        loaded
+            .open_terminal(Some(workspace_id), tab_id, 80, 24)
+            .unwrap();
+        assert_eq!(loaded.terminal_view_states()[0].directory(), nested);
+
+        drop(loaded);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
     }
 
     #[test]

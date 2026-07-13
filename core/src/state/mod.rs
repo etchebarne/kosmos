@@ -20,7 +20,7 @@ use crate::tabs::editor::{EditorViewState, normalize_path as normalize_editor_pa
 use crate::tabs::file_tree::{FileTreeError, FileTreeViewState};
 use crate::tabs::git::{GitDiffViewState, GitError};
 use crate::tabs::search::SearchError;
-use crate::tabs::terminal::{TerminalError, TerminalSessions};
+use crate::tabs::terminal::{TerminalError, TerminalSessions, TerminalViewState};
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId, WorkspaceList,
 };
@@ -34,6 +34,7 @@ pub struct State {
     file_tree_view_states: Vec<FileTreeViewState>,
     git_diff_view_states: Vec<GitDiffViewState>,
     editor_view_states: Vec<EditorViewState>,
+    terminal_view_states: Vec<TerminalViewState>,
     workspace_edit_editor_recovery: HashMap<u64, Vec<WorkspaceEditEditorRecovery>>,
     terminal_sessions: TerminalSessions,
     language_server_manager: Option<LanguageServerManager>,
@@ -367,6 +368,24 @@ impl State {
         &self.editor_view_states
     }
 
+    pub fn terminal_view_states(&self) -> &[TerminalViewState] {
+        &self.terminal_view_states
+    }
+
+    pub(crate) fn add_terminal_view_state(&mut self, view_state: TerminalViewState) -> bool {
+        if !view_state.directory().is_absolute()
+            || !self.is_terminal_tab(view_state.workspace_id(), view_state.tab_id())
+            || self
+                .terminal_view_state(view_state.workspace_id(), view_state.tab_id())
+                .is_some()
+        {
+            return false;
+        }
+
+        self.terminal_view_states.push(view_state);
+        true
+    }
+
     pub(crate) fn workspace_edit_editor_recoveries(
         &self,
     ) -> impl Iterator<Item = (u64, &WorkspaceEditEditorRecovery)> {
@@ -398,6 +417,8 @@ impl State {
     }
 
     pub(crate) fn persistent_candidate(&self) -> PersistentStateCandidate {
+        let terminal_view_states = self.refreshed_terminal_view_states();
+
         PersistentStateCandidate {
             state: Self {
                 settings: self.settings.clone(),
@@ -406,6 +427,7 @@ impl State {
                 file_tree_view_states: self.file_tree_view_states.clone(),
                 git_diff_view_states: self.git_diff_view_states.clone(),
                 editor_view_states: self.editor_view_states.clone(),
+                terminal_view_states,
                 workspace_edit_editor_recovery: self.workspace_edit_editor_recovery.clone(),
                 terminal_sessions: TerminalSessions::default(),
                 language_server_manager: self.language_server_manager.clone(),
@@ -448,6 +470,7 @@ impl State {
         self.file_tree_view_states = candidate.file_tree_view_states;
         self.git_diff_view_states = candidate.git_diff_view_states;
         self.editor_view_states = candidate.editor_view_states;
+        self.terminal_view_states = candidate.terminal_view_states;
         self.workspace_edit_editor_recovery = candidate.workspace_edit_editor_recovery;
         self.next_workspace_id = candidate.next_workspace_id;
         self.next_pane_id = candidate.next_pane_id;
@@ -632,6 +655,68 @@ impl State {
             .retain(|state| state.workspace_id() != workspace_id);
     }
 
+    fn terminal_view_state(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Option<&TerminalViewState> {
+        self.terminal_view_states
+            .iter()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+    }
+
+    fn update_terminal_view_state(
+        &mut self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+        directory: impl Into<std::path::PathBuf>,
+    ) {
+        let directory = directory.into();
+
+        if let Some(state) = self
+            .terminal_view_states
+            .iter_mut()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+        {
+            state.set_directory(directory);
+        } else {
+            self.terminal_view_states
+                .push(TerminalViewState::new(workspace_id, tab_id, directory));
+        }
+    }
+
+    fn remove_terminal_view_state(&mut self, workspace_id: WorkspaceId, tab_id: TabId) {
+        self.terminal_view_states
+            .retain(|state| state.workspace_id() != workspace_id || state.tab_id() != tab_id);
+    }
+
+    fn remove_workspace_terminal_view_states(&mut self, workspace_id: WorkspaceId) {
+        self.terminal_view_states
+            .retain(|state| state.workspace_id() != workspace_id);
+    }
+
+    fn refreshed_terminal_view_states(&self) -> Vec<TerminalViewState> {
+        let mut view_states = self.terminal_view_states.clone();
+        view_states.retain(|state| self.is_terminal_tab(state.workspace_id(), state.tab_id()));
+
+        for (workspace_id, tab_id, directory) in self.terminal_sessions.working_directories() {
+            if !self.is_terminal_tab(workspace_id, tab_id) {
+                continue;
+            }
+
+            if let Some(state) = view_states
+                .iter_mut()
+                .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+            {
+                state.set_directory(directory);
+            } else {
+                view_states.push(TerminalViewState::new(workspace_id, tab_id, directory));
+            }
+        }
+
+        view_states
+    }
+
     fn is_file_tree_tab(&self, workspace_id: WorkspaceId, tab_id: TabId) -> bool {
         self.tab_kind(workspace_id, tab_id) == Some(&TabKind::FileTree)
     }
@@ -794,6 +879,7 @@ impl State {
             file_tree_view_states,
             git_diff_view_states,
             editor_view_states,
+            terminal_view_states: Vec::new(),
             workspace_edit_editor_recovery: HashMap::new(),
             terminal_sessions: TerminalSessions::default(),
             language_server_manager: None,
@@ -1018,6 +1104,7 @@ impl Default for State {
             file_tree_view_states: Vec::new(),
             git_diff_view_states: Vec::new(),
             editor_view_states: Vec::new(),
+            terminal_view_states: Vec::new(),
             workspace_edit_editor_recovery: HashMap::new(),
             terminal_sessions: TerminalSessions::default(),
             language_server_manager: None,

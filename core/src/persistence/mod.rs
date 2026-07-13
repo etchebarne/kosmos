@@ -11,6 +11,7 @@ use crate::settings::{SettingValue, Settings, SettingsError};
 use crate::tabs::editor::EditorViewState;
 use crate::tabs::file_tree::FileTreeViewState;
 use crate::tabs::git::GitDiffViewState;
+use crate::tabs::terminal::TerminalViewState;
 use crate::tree::{
     Pane, PaneId, PaneNode, SplitAxis, SplitPaneId, Tab, TabId, TabKind, Workspace, WorkspaceId,
 };
@@ -580,6 +581,14 @@ fn migrate(connection: &Connection) -> Result<()> {
             FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS terminal_tabs (
+            workspace_id INTEGER NOT NULL,
+            tab_id INTEGER NOT NULL,
+            directory TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, tab_id),
+            FOREIGN KEY (workspace_id, tab_id) REFERENCES tabs(workspace_id, id) ON DELETE CASCADE
+        );
+
         UPDATE tabs
         SET kind = 'blank'
         WHERE kind NOT IN ('blank', 'diff', 'file_tree', 'editor', 'git', 'search', 'terminal');
@@ -629,6 +638,7 @@ fn clear_state(transaction: &Transaction<'_>) -> Result<()> {
     transaction.execute("DELETE FROM file_tree_expanded_paths", [])?;
     transaction.execute("DELETE FROM git_diff_tabs", [])?;
     transaction.execute("DELETE FROM editor_tabs", [])?;
+    transaction.execute("DELETE FROM terminal_tabs", [])?;
     transaction.execute("DELETE FROM tabs", [])?;
     transaction.execute("DELETE FROM panes", [])?;
     transaction.execute("DELETE FROM pane_nodes", [])?;
@@ -667,6 +677,7 @@ fn save_state(transaction: &Transaction<'_>, state: &State) -> Result<()> {
     save_file_tree_view_states(transaction, state)?;
     save_git_diff_view_states(transaction, state)?;
     save_editor_view_states(transaction, state)?;
+    save_terminal_view_states(transaction, state)?;
     save_workspace_edit_editor_recovery(transaction, state)?;
 
     Ok(())
@@ -926,6 +937,24 @@ fn save_editor_view_states(transaction: &Transaction<'_>, state: &State) -> Resu
     Ok(())
 }
 
+fn save_terminal_view_states(transaction: &Transaction<'_>, state: &State) -> Result<()> {
+    for view_state in state.terminal_view_states() {
+        transaction.execute(
+            "
+            INSERT INTO terminal_tabs (workspace_id, tab_id, directory)
+            VALUES (?1, ?2, ?3)
+            ",
+            params![
+                to_i64(view_state.workspace_id().value(), "workspace id")?,
+                to_i64(view_state.tab_id().value(), "tab id")?,
+                view_state.directory().to_string_lossy(),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn load_state(connection: &Connection) -> Result<State> {
     let active_workspace_id = load_active_workspace_id(connection)?;
     let workspace_rows = load_workspace_rows(connection)?;
@@ -961,6 +990,7 @@ fn load_state(connection: &Connection) -> Result<State> {
         window_state,
     )
     .ok_or_else(|| invalid_state("persisted workspaces are not internally consistent"))?;
+    load_terminal_view_states(connection, &mut state)?;
     load_workspace_edit_editor_recovery(connection, &mut state)?;
     Ok(state)
 }
@@ -999,6 +1029,34 @@ fn load_workspace_edit_editor_recovery(connection: &Connection, state: &mut Stat
             applied_path,
         );
     }
+    Ok(())
+}
+
+fn load_terminal_view_states(connection: &Connection, state: &mut State) -> Result<()> {
+    let mut statement = connection.prepare(
+        "SELECT workspace_id, tab_id, directory FROM terminal_tabs ORDER BY workspace_id, tab_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (workspace_id, tab_id, directory) = row?;
+        if !state.add_terminal_view_state(TerminalViewState::new(
+            WorkspaceId::new(to_u64(workspace_id, "workspace id")?),
+            TabId::new(to_u64(tab_id, "tab id")?),
+            directory,
+        )) {
+            return Err(invalid_state(
+                "terminal directory does not belong to a terminal tab",
+            ));
+        }
+    }
+
     Ok(())
 }
 
