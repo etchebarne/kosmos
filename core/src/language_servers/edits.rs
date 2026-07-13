@@ -6663,6 +6663,7 @@ mod tests {
         manager
             .commit_closed(staged.transaction_id, &staged.authorization, &[])
             .unwrap();
+        let _created_file = fs::File::open(root.join("created.txt")).unwrap();
         fs::remove_file(root.join("created.txt")).unwrap();
         fs::write(root.join("created.txt"), "").unwrap();
 
@@ -6703,6 +6704,7 @@ mod tests {
                 ..
             }
         ));
+        let _created_file = fs::File::open(root.join("created.txt")).unwrap();
         fs::remove_file(root.join("created.txt")).unwrap();
         fs::write(root.join("created.txt"), "").unwrap();
         drop(manager);

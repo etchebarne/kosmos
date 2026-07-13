@@ -2194,7 +2194,20 @@ mod tests {
         GitRepository::stage_paths(&root, &["conflict.txt".to_owned()])
             .expect("file should be staged");
         commit(&root, "Current");
-        assert!(git(&root, ["merge", "incoming"]).is_err());
+        assert!(
+            git(
+                &root,
+                [
+                    "-c",
+                    "user.name=Kosmos Test",
+                    "-c",
+                    "user.email=kosmos@example.com",
+                    "merge",
+                    "incoming",
+                ],
+            )
+            .is_err()
+        );
 
         let diff = GitRepository::diff(&root, "conflict.txt").expect("diff should load");
         let file = &diff.files()[0];
