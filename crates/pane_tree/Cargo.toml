@@ -1,8 +1,0 @@
-[package]
-name = "pane_tree"
-version = "0.4.9"
-edition = "2024"
-
-[dependencies]
-panes = { path = "../panes" }
-tabs = { path = "../tabs" }

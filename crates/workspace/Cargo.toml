@@ -1,7 +1,0 @@
-[package]
-name = "workspace"
-version = "0.4.9"
-edition = "2024"
-
-[dependencies]
-pane_tree = { path = "../pane_tree" }

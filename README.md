@@ -21,151 +21,54 @@ Kosmos only runs on Linux. Windows and macOS are not supported, and support for 
 
 ## Installation
 
-Choose the install method that matches your Linux distribution or workflow.
+- Debian, Ubuntu, Linux Mint, and Pop!_OS: install the `.deb` package from the [latest release](https://github.com/etchebarne/kosmos/releases/latest).
+- Fedora and openSUSE: install the `.rpm` package from the [latest release](https://github.com/etchebarne/kosmos/releases/latest).
+- Arch Linux and derivatives: install [`kosmos-bin`](https://aur.archlinux.org/packages/kosmos-bin) from the AUR, for example with `yay -S kosmos-bin`.
+- Other distributions: download the AppImage from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), make it executable, and run it.
 
-### Quick Install
+## Project layout
 
-Use the install script for a distro-agnostic setup:
+- `core/` owns application policy, state transitions, and persistence decisions.
+- `server/` translates IPC and schedules core commands; it owns the Unix-socket transport.
+- `desktop/` renders the UI and adapts Electron, Monaco, and other UI libraries through IPC.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh | sh
-```
+## Development
 
-The script:
+- Run the app with `./scripts/run.sh`.
+- Install desktop dependencies with `bun install --cwd desktop --frozen-lockfile`.
+- Run the full local verification sequence from the repository root:
 
-- Downloads the latest release tarball
-- Installs Kosmos under `~/.local/Kosmos.app/`
-- Symlinks `kosmos` into `~/.local/bin`
-- Registers a desktop entry so Kosmos appears in your launcher
+  ```bash
+  bash scripts/check-boundaries.sh
+  cargo fmt --all -- --check
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace
+   bun run --cwd desktop check:ipc
+   bun run --cwd desktop typecheck
+  bun run --cwd desktop test
+  bun run --cwd desktop build
+  ```
 
-### Manual Tarball Install
+- Build production Linux AppImage, deb, and rpm packages with `./scripts/bundle-linux.sh`. Artifacts are written to `desktop/release/`.
+- Building the rpm locally requires `rpmbuild`; install it with `sudo pacman -S rpm-tools` on Arch Linux, `sudo apt-get install rpm` on Debian-based systems, or `sudo dnf install rpm-build` on Fedora.
+- The AppImage-based AUR package template lives in `aur/kosmos-bin/`.
+- Bump release metadata with `./scripts/bump-version.sh patch|minor|major|x.y.z`.
 
-Use this if you already downloaded the release bundle.
+The Electron main process launches the Rust server as a sidecar process. They communicate over a Unix socket, while the renderer communicates with Electron main through Electron IPC only. By default, both use `$XDG_RUNTIME_DIR/kosmos/server.sock`; set `KOSMOS_SOCKET` to override it.
 
-Download `kosmos-linux-x86_64.tar.gz` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then run:
+The Rust server owns the IPC contract. Update generated desktop schema, declaration, and validation artifacts with `bun run --cwd desktop generate:ipc`; use `bun run --cwd desktop check:ipc` to verify they are current.
 
-```bash
-KOSMOS_BUNDLE_PATH=./kosmos-linux-x86_64.tar.gz \
-    sh <(curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/install.sh)
-```
+## Language tooling
 
-### Debian / Ubuntu
+Kosmos manages reviewed, version-pinned language servers and formatters from Settings. Installed standalone formatters take precedence over language-server formatting according to the configured formatter priority; language-server formatting remains the fallback.
 
-Download `kosmos_<version>_amd64.deb` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
+- `Shift+Alt+F` formats the active document.
+- `Ctrl+T` searches workspace symbols.
+- Language features include diagnostics, completion, hover, signature help, navigation, references, symbols, colors, rename, and code actions.
+- Managed formatters include Prettier, Ruff, and shfmt. Prettier installation requires Node.js 22.6 or newer and npm; Ruff and shfmt use verified native artifacts.
+- Format on save is available under Editor settings and defaults to off.
 
-```bash
-sudo apt install ./kosmos_<version>_amd64.deb
-```
-
-### Fedora / RPM Distros
-
-Download `kosmos-<version>-1.x86_64.rpm` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
-
-```bash
-sudo dnf install ./kosmos-<version>-1.x86_64.rpm
-```
-
-### AppImage
-
-Download `Kosmos-<version>-x86_64.AppImage` from the [latest release](https://github.com/etchebarne/kosmos/releases/latest), then:
-
-```bash
-chmod +x ./Kosmos-<version>-x86_64.AppImage
-./Kosmos-<version>-x86_64.AppImage
-```
-
-### Arch Linux (AUR)
-
-Install the pre-built binary:
-
-```bash
-yay -S kosmos-bin
-```
-
-Or build from source:
-
-```bash
-yay -S kosmos
-```
-
-## Uninstall
-
-Use the uninstall method that matches how you installed Kosmos.
-
-### Install Script
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/etchebarne/kosmos/main/scripts/uninstall.sh | sh
-```
-
-### Arch Linux (AUR)
-
-Remove the pre-built package:
-
-```bash
-sudo pacman -R kosmos-bin
-```
-
-Or remove the source-built package:
-
-```bash
-sudo pacman -R kosmos
-```
-
-### AppImage
-
-Remove the AppImage desktop entry and icon:
-
-```bash
-./Kosmos-<version>-x86_64.AppImage --uninstall
-```
-
-Then delete the AppImage file itself.
-
-## Building from source
-
-Install [Rust](https://www.rust-lang.org/tools/install) stable and the GPUI system dependencies for your distro.
-
-### System Dependencies
-
-<details>
-<summary>Arch Linux</summary>
-
-```bash
-sudo pacman -S --needed base-devel pkgconf openssl fontconfig \
-    libxcb libxkbcommon libxkbcommon-x11 wayland \
-    vulkan-icd-loader vulkan-headers
-```
-
-</details>
-
-<details>
-<summary>Debian / Ubuntu</summary>
-
-```bash
-sudo apt install build-essential pkg-config libssl-dev libfontconfig-dev \
-    libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
-    libwayland-dev libvulkan-dev
-```
-
-</details>
-
-<details>
-<summary>Fedora</summary>
-
-```bash
-sudo dnf install gcc pkgconf openssl-devel fontconfig-devel \
-    libxcb-devel libxkbcommon-devel libxkbcommon-x11-devel \
-    wayland-devel vulkan-loader-devel
-```
-
-</details>
-
-### Run From Source
-
-```bash
-cargo run --release
-```
+Language tools run with the permissions of the opened workspace. Managed installations live under the Kosmos XDG data directory.
 
 ## License
 
