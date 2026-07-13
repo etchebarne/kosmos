@@ -3,11 +3,15 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use crate::State;
-use crate::editor_sessions::{
-    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSavePermit,
-    EditorSessionSaveTicket, EditorSessionSnapshot, EditorSessionUpdate,
+mod editor_sessions;
+
+pub use editor_sessions::{
+    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,
+    EditorSessionUpdate,
 };
+use editor_sessions::{EditorSessionSavePermit, EditorSessionSaveTicket};
+
+use crate::State;
 use crate::events::CoreEventSink;
 use crate::formatters::FormattingError;
 use crate::language_servers::{

@@ -1,5 +1,4 @@
 mod application;
-mod editor_sessions;
 mod state;
 mod workspace_changes;
 
@@ -10,14 +9,11 @@ pub mod persistence;
 pub mod settings;
 pub use application::{
     Application, ApplicationError, CloseDecision, CloseDocumentDecision,
-    CloseDocumentDecisionRequest, CloseIntent, CloseIntentResult, CloseTarget,
-    EditorSessionSaveResult, EditorSessionSaveWarning, EditorSessionSaveWarningKind,
+    CloseDocumentDecisionRequest, CloseIntent, CloseIntentResult, CloseTarget, EditorSessionError,
+    EditorSessionId, EditorSessionRegistry, EditorSessionSaveResult, EditorSessionSaveWarning,
+    EditorSessionSaveWarningKind, EditorSessionSnapshot, EditorSessionUpdate,
     ExecutedEditorSessionSave, PreparedEditorSessionSave, PreparedExternalOperation,
     PreparedPersistentOperation,
-};
-pub use editor_sessions::{
-    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,
-    EditorSessionUpdate,
 };
 pub use persistence::StateStore as DurableStore;
 pub use state::{FileTreeGitDecorationsError, OpenEditorLocation, State};
