@@ -41,6 +41,33 @@ export function closeWorkspaceLocally(
   return { ...snapshot, activeWorkspaceId, workspaces };
 }
 
+export function moveWorkspaceLocally(
+  snapshot: WorkspaceListSnapshot | null,
+  workspaceId: WorkspaceId,
+  targetIndex: number,
+): WorkspaceListSnapshot | null {
+  if (!snapshot || !Number.isSafeInteger(targetIndex) || targetIndex < 0) {
+    return snapshot;
+  }
+
+  const currentIndex = snapshot.workspaces.findIndex((workspace) => workspace.id === workspaceId);
+  if (currentIndex === -1) {
+    return snapshot;
+  }
+
+  const insertionIndex = Math.min(targetIndex, snapshot.workspaces.length);
+  const nextIndex = insertionIndex > currentIndex ? insertionIndex - 1 : insertionIndex;
+  if (nextIndex === currentIndex) {
+    return snapshot;
+  }
+
+  const workspaces = [...snapshot.workspaces];
+  const workspace = workspaces.splice(currentIndex, 1)[0]!;
+  workspaces.splice(nextIndex, 0, workspace);
+
+  return { ...snapshot, workspaces };
+}
+
 export function resizeSplitLocally(
   snapshot: WorkspaceListSnapshot | null,
   workspaceId: WorkspaceId,

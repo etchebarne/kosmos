@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::tab::{CloseDecisionPayload, CloseResultPayload, ResolveCloseParams};
 use super::super::messages::workspace::{
-    ActivateWorkspaceParams, CloseWorkspaceParams, OpenWorkspaceParams,
+    ActivateWorkspaceParams, CloseWorkspaceParams, MoveWorkspaceParams, OpenWorkspaceParams,
 };
 use super::super::messages::{EmptyParams, workspace::WorkspaceListSnapshot};
 use super::{
@@ -26,6 +26,10 @@ pub(super) const ROUTES: &[Route] = &[
     Route::new::<ActivateWorkspaceParams, WorkspaceListSnapshot>(
         "activate",
         RouteDefinition::active_workspace(activate_workspace),
+    ),
+    Route::new::<MoveWorkspaceParams, WorkspaceListSnapshot>(
+        "move",
+        RouteDefinition::full(move_workspace),
     ),
     Route::new::<CloseWorkspaceParams, CloseResultPayload>(
         "close",
@@ -71,6 +75,19 @@ fn activate_workspace(state: &mut core::State, request: &RequestEnvelope) -> Ser
             state,
             "workspace.not_found",
             "workspace does not exist",
+        ),
+        Err(response) => response,
+    }
+}
+
+fn move_workspace(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<MoveWorkspaceParams>(request) {
+        Ok(params) => command_response(
+            request.id,
+            state.move_workspace(params.workspace_id.into(), params.target_index),
+            state,
+            "workspace.move_failed",
+            "workspace could not be moved",
         ),
         Err(response) => response,
     }

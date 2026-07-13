@@ -2,6 +2,7 @@ import type {
   ActivateWorkspaceParams,
   CloseWorkspaceParams,
   CloseResultPayload,
+  MoveWorkspaceParams,
   ResolveCloseParams,
   OpenWorkspaceParams,
   WorkspaceId,
@@ -22,6 +23,10 @@ export function openWorkspace(path: string): Promise<WorkspaceListSnapshot> {
 
 export function activateWorkspace(workspaceId: WorkspaceId): Promise<WorkspaceListSnapshot> {
   return requestServer(DOMAIN, "activate", { workspaceId } satisfies ActivateWorkspaceParams);
+}
+
+export function moveWorkspace(params: MoveWorkspaceParams): Promise<WorkspaceListSnapshot> {
+  return requestServer(DOMAIN, "move", params);
 }
 
 export function closeWorkspace(workspaceId?: WorkspaceId | null): Promise<CloseResultPayload> {

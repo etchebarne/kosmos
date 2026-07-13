@@ -435,6 +435,31 @@ impl WorkspaceList {
         true
     }
 
+    pub fn move_workspace(&mut self, workspace_id: WorkspaceId, target_index: usize) -> bool {
+        let Some(current_index) = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id() == workspace_id)
+        else {
+            return false;
+        };
+        let target_index = target_index.min(self.workspaces.len());
+        let target_index = if target_index > current_index {
+            target_index - 1
+        } else {
+            target_index
+        };
+
+        if current_index == target_index {
+            return false;
+        }
+
+        let workspace = self.workspaces.remove(current_index);
+        self.workspaces.insert(target_index, workspace);
+
+        true
+    }
+
     pub fn close_active_workspace(&mut self) -> Option<Workspace> {
         let active_workspace = self.active_workspace?;
 
@@ -686,6 +711,41 @@ mod tests {
         assert!(!workspaces.add_workspace(workspace(1, 2, 2)));
 
         assert_eq!(workspaces.workspaces().len(), 1);
+    }
+
+    #[test]
+    fn moving_workspace_places_it_at_target_index_without_changing_active_workspace() {
+        let mut workspaces = WorkspaceList::new();
+        workspaces.add_workspace(workspace(1, 1, 1));
+        workspaces.add_workspace(workspace(2, 2, 2));
+        workspaces.add_workspace(workspace(3, 3, 3));
+
+        assert!(workspaces.move_workspace(WorkspaceId::new(1), 3));
+
+        let workspace_ids = workspaces
+            .workspaces()
+            .iter()
+            .map(Workspace::id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            workspace_ids,
+            vec![
+                WorkspaceId::new(2),
+                WorkspaceId::new(3),
+                WorkspaceId::new(1)
+            ]
+        );
+        assert_eq!(workspaces.active_workspace_id(), Some(WorkspaceId::new(3)));
+    }
+
+    #[test]
+    fn moving_workspace_rejects_missing_and_unchanged_positions() {
+        let mut workspaces = WorkspaceList::new();
+        workspaces.add_workspace(workspace(1, 1, 1));
+        workspaces.add_workspace(workspace(2, 2, 2));
+
+        assert!(!workspaces.move_workspace(WorkspaceId::new(99), 0));
+        assert!(!workspaces.move_workspace(WorkspaceId::new(1), 1));
     }
 
     #[test]

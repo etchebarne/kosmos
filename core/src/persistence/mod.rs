@@ -1691,6 +1691,38 @@ mod tests {
     }
 
     #[test]
+    fn saves_and_loads_workspace_order() {
+        let path = test_db_path("workspace-order");
+        let store = StateStore::open(&path).expect("store should open");
+        let mut state = State::new();
+        let first_workspace_id = state.open_workspace("/workspaces/first");
+        state.open_workspace("/workspaces/second");
+        state.open_workspace("/workspaces/third");
+
+        assert!(state.move_workspace(first_workspace_id, 3));
+        store.save(&state).expect("state should save");
+
+        let loaded = store.load().expect("state should load");
+        let directories = loaded
+            .workspaces()
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.directory().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            directories,
+            vec![
+                PathBuf::from("/workspaces/second"),
+                PathBuf::from("/workspaces/third"),
+                PathBuf::from("/workspaces/first")
+            ]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn saves_active_workspace_without_full_state_save() {
         let path = test_db_path("active-workspace");
         let store = StateStore::open(&path).expect("store should open");

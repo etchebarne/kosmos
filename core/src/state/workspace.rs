@@ -37,6 +37,11 @@ impl State {
         self.workspaces.activate_workspace(workspace_id)
     }
 
+    pub fn move_workspace(&mut self, workspace_id: WorkspaceId, target_index: usize) -> bool {
+        self.mark_persistent_change();
+        self.workspaces.move_workspace(workspace_id, target_index)
+    }
+
     pub fn close_workspace(&mut self, workspace_id: Option<WorkspaceId>) -> Option<Workspace> {
         self.mark_persistent_change();
 

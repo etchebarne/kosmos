@@ -481,6 +481,7 @@ export interface KosmosIpcTypes {
   WindowStateSnapshot?: WindowStateSnapshot;
   ActivateWorkspaceParams?: ActivateWorkspaceParams;
   CloseWorkspaceParams?: CloseWorkspaceParams;
+  MoveWorkspaceParams?: MoveWorkspaceParams;
   OpenWorkspaceParams?: OpenWorkspaceParams;
   LanguageServerApplyEditNotification?: LanguageServerApplyEditNotification;
   LanguageServerApplyEditCancelledNotification?: LanguageServerApplyEditCancelledNotification;
@@ -1961,6 +1962,14 @@ export interface ActivateWorkspaceParams {
  */
 export interface CloseWorkspaceParams {
   workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "MoveWorkspaceParams".
+ */
+export interface MoveWorkspaceParams {
+  targetIndex: number;
+  workspaceId: WorkspaceIdParam;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

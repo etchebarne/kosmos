@@ -13,6 +13,7 @@ import {
 import {
   activeWorkspaceFrom,
   mergeLocalSplitRatios,
+  moveWorkspaceLocally,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
 import { canConsumeRequest, createRequestGeneration } from "@/renderer/lib/request-generation";
@@ -24,6 +25,7 @@ import {
   closeTab as closeTabIpc,
   closeWorkspace as closeWorkspaceIpc,
   listWorkspaces,
+  moveWorkspace as moveWorkspaceIpc,
   moveTab as moveTabIpc,
   openEditorLocation as openEditorLocationIpc,
   openEditorTab as openEditorTabIpc,
@@ -107,6 +109,7 @@ type WorkspaceStore = {
   requestApplicationClose(): Promise<boolean>;
   resolvePendingClose(resolution: CloseResolution): Promise<void>;
   moveTab(paneId: PaneId, tabId: TabId, targetPaneId: PaneId, targetIndex: number): void;
+  moveWorkspace(workspaceId: WorkspaceId, targetIndex: number): void;
   openEditorTab(tabId: TabId, path: string): void;
   openEditorLocation(
     workspaceId: WorkspaceId,
@@ -142,6 +145,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let resizeNeedsReconciliation = false;
   let resizeRequestId = 0;
   const navigationRequests = createRequestGeneration();
+  const workspaceMoveRequests = createRequestGeneration();
   let navigationQueue = Promise.resolve();
   let applicationCloseResolver: ((completed: boolean) => void) | null = null;
 
@@ -437,6 +441,48 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       updateFromServer(() =>
         moveTabIpc({ workspaceId: activeWorkspace.id, paneId, tabId, targetPaneId, targetIndex }),
       );
+    },
+    moveWorkspace(workspaceId, targetIndex) {
+      const previousSnapshot = get().snapshot;
+      const snapshot = moveWorkspaceLocally(previousSnapshot, workspaceId, targetIndex);
+      if (snapshot === previousSnapshot) {
+        return;
+      }
+
+      const generation = workspaceMoveRequests.issue();
+      set({ error: null, snapshot });
+
+      void moveWorkspaceIpc({ workspaceId, targetIndex })
+        .then((nextSnapshot) => {
+          if (!workspaceMoveRequests.isCurrent(generation)) {
+            return;
+          }
+
+          set((state) => ({
+            snapshot: mergeLocalSplitRatios(nextSnapshot, state.snapshot),
+          }));
+        })
+        .catch(async (caughtError: unknown) => {
+          if (!workspaceMoveRequests.isCurrent(generation)) {
+            return;
+          }
+
+          let fallbackSnapshot = previousSnapshot;
+          try {
+            fallbackSnapshot = await listWorkspaces();
+          } catch {
+            // Keep the previous local order when the server cannot be reached.
+          }
+
+          if (workspaceMoveRequests.isCurrent(generation)) {
+            set((state) => ({
+              error: errorMessage(caughtError),
+              snapshot: fallbackSnapshot
+                ? mergeLocalSplitRatios(fallbackSnapshot, state.snapshot)
+                : fallbackSnapshot,
+            }));
+          }
+        });
     },
     openEditorTab(tabId, path) {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);

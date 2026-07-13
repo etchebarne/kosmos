@@ -19,6 +19,13 @@ pub(crate) struct ActivateWorkspaceParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct MoveWorkspaceParams {
+    pub(crate) workspace_id: WorkspaceIdParam,
+    pub(crate) target_index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CloseWorkspaceParams {
     pub(crate) workspace_id: Option<WorkspaceIdParam>,
 }

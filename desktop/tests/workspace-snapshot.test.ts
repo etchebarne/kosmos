@@ -4,6 +4,7 @@ import {
   activeWorkspaceFrom,
   closeWorkspaceLocally,
   mergeLocalSplitRatios,
+  moveWorkspaceLocally,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
 import type {
@@ -82,6 +83,33 @@ describe("workspace snapshot state", () => {
     };
 
     expect(closeWorkspaceLocally(snapshot, 99)).toBe(snapshot);
+  });
+
+  test("moves a workspace without mutating the snapshot or changing the active workspace", () => {
+    const first = workspace(1);
+    const second = workspace(2);
+    const third = workspace(3);
+    const snapshot: WorkspaceListSnapshot = {
+      activeWorkspaceId: third.id,
+      workspaces: [first, second, third],
+    };
+
+    expect(moveWorkspaceLocally(snapshot, first.id, 3)).toEqual({
+      activeWorkspaceId: third.id,
+      workspaces: [second, third, first],
+    });
+    expect(snapshot.workspaces).toEqual([first, second, third]);
+  });
+
+  test("preserves identity for invalid and unchanged workspace moves", () => {
+    const snapshot: WorkspaceListSnapshot = {
+      activeWorkspaceId: 1,
+      workspaces: [workspace(1), workspace(2)],
+    };
+
+    expect(moveWorkspaceLocally(snapshot, 99, 0)).toBe(snapshot);
+    expect(moveWorkspaceLocally(snapshot, 1, 1)).toBe(snapshot);
+    expect(moveWorkspaceLocally(snapshot, 1, -1)).toBe(snapshot);
   });
 
   test("resizes a matching split without mutating the snapshot", () => {
