@@ -1,6 +1,6 @@
 {
   "name": "kosmos-desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A code editor where every view is a tab you can place anywhere.",
   "author": {
     "name": "Martin Etchebarne",
