@@ -140,7 +140,13 @@ impl GitRepository {
         let repository_root = repository_root(directory.as_ref())?;
         let status = parse_status(&git(
             &repository_root,
-            ["status", "--porcelain=v1", "-z", "--branch"],
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--branch",
+                "--untracked-files=all",
+            ],
         )?)?;
         let branches = parse_branches(&git(
             &repository_root,
@@ -1866,6 +1872,74 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path(), "inside.txt");
         assert_eq!(changes[0].unstaged(), Some(GitChangeKind::Untracked));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_lists_untracked_files_inside_directories() {
+        let root = test_directory("snapshot-untracked-directories");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::create_dir_all(root.join("core/src/application"))
+            .expect("application directory should be created");
+        fs::create_dir_all(root.join("core/src/state")).expect("state directory should be created");
+        fs::write(root.join("core/src/application/editor_sessions.rs"), "")
+            .expect("editor sessions file should be written");
+        fs::write(root.join("core/src/application/mod.rs"), "")
+            .expect("application module should be written");
+        fs::write(root.join("core/src/state/mod.rs"), "").expect("state module should be written");
+
+        let snapshot = GitRepository::snapshot(&root).expect("status should load");
+        let paths = snapshot
+            .changes()
+            .iter()
+            .map(GitChange::path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            [
+                "core/src/application/editor_sessions.rs",
+                "core/src/application/mod.rs",
+                "core/src/state/mod.rs",
+            ]
+        );
+        assert!(snapshot.changes().iter().all(|change| {
+            change.staged().is_none() && change.unstaged() == Some(GitChangeKind::Untracked)
+        }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_keeps_nested_staged_and_untracked_files_individual() {
+        let root = test_directory("snapshot-mixed-nested-files");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::create_dir_all(root.join("core/src/state")).expect("state directory should be created");
+        fs::write(root.join("core/src/state/staged.rs"), "")
+            .expect("staged file should be written");
+        fs::write(root.join("core/src/state/untracked.rs"), "")
+            .expect("untracked file should be written");
+        GitRepository::stage_paths(&root, &["core/src/state/staged.rs".to_owned()])
+            .expect("file should be staged");
+
+        let snapshot = GitRepository::snapshot(&root).expect("status should load");
+        let staged = snapshot
+            .changes()
+            .iter()
+            .find(|change| change.path() == "core/src/state/staged.rs")
+            .expect("staged file should be listed");
+        let untracked = snapshot
+            .changes()
+            .iter()
+            .find(|change| change.path() == "core/src/state/untracked.rs")
+            .expect("untracked file should be listed");
+
+        assert_eq!(staged.staged(), Some(GitChangeKind::Added));
+        assert!(staged.unstaged().is_none());
+        assert!(untracked.staged().is_none());
+        assert_eq!(untracked.unstaged(), Some(GitChangeKind::Untracked));
+        assert_eq!(snapshot.changes().len(), 2);
 
         let _ = fs::remove_dir_all(root);
     }
