@@ -1,6 +1,6 @@
 # Maintainer: Martin Etchebarne <martin@etchebarne.net>
 pkgname=kosmos-bin
-pkgver=0.1.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="A code editor where every view is a tab you can place anywhere."
 arch=('x86_64')
