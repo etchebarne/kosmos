@@ -270,6 +270,8 @@ mod tests {
         assert_eq!(snapshot["categories"][0]["items"][0]["value"], 100.0);
         assert_eq!(snapshot["categories"][0]["items"][0]["defaultValue"], 100.0);
         assert!(snapshot["categories"][0]["items"][0]["default_value"].is_null());
+        assert_eq!(snapshot["categories"][2]["id"], "resources");
+        assert_eq!(snapshot["categories"][2]["items"][0]["value"], 25.0);
         assert_eq!(snapshot["revision"], 0);
         assert_eq!(snapshot["editor"]["softWrap"], false);
         assert_eq!(snapshot["appearance"]["zoomLevel"], 100.0);

@@ -1,5 +1,6 @@
 mod application;
 mod state;
+mod workloads;
 mod workspace_changes;
 
 pub mod events;
@@ -17,6 +18,7 @@ pub use application::{
 };
 pub use persistence::StateStore as DurableStore;
 pub use state::{FileTreeGitDecorationsError, OpenEditorLocation, State};
+pub use workloads::run_terminal_host;
 pub use workspace_changes::WorkspaceChangeWatcher;
 pub mod tabs;
 pub mod tree;

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::tree::{TabId, WorkspaceId};
+use crate::workloads::{TerminalHost, WorkloadScope, current_executable_supports_terminal_host};
 
 pub type Result<T> = std::result::Result<T, TerminalError>;
 
@@ -230,6 +231,7 @@ impl TerminalSessions {
         tab_id: TabId,
         cwd: &Path,
         size: TerminalSize,
+        memory_limit_percent: f64,
     ) -> Result<TerminalOutput> {
         let key = TerminalSessionKey::new(workspace_id, tab_id);
 
@@ -238,7 +240,7 @@ impl TerminalSessions {
             return session.read_output();
         }
 
-        let session = TerminalSession::spawn(cwd, size, None)?;
+        let session = TerminalSession::spawn(cwd, size, None, memory_limit_percent)?;
         self.sessions.insert(key, session);
         self.sessions
             .get_mut(&key)
@@ -279,6 +281,7 @@ impl TerminalSessions {
         cwd: &Path,
         size: TerminalSize,
         shell: &TerminalShell,
+        memory_limit_percent: f64,
     ) -> Result<TerminalOutput> {
         let key = TerminalSessionKey::new(workspace_id, tab_id);
 
@@ -286,7 +289,12 @@ impl TerminalSessions {
             return Err(TerminalError::SessionNotFound);
         }
 
-        let replacement = TerminalSession::spawn(cwd, size, Some(Path::new(shell.path())))?;
+        let replacement = TerminalSession::spawn(
+            cwd,
+            size,
+            Some(Path::new(shell.path())),
+            memory_limit_percent,
+        )?;
         self.sessions.insert(key, replacement);
         self.sessions
             .get_mut(&key)
@@ -378,24 +386,51 @@ struct TerminalSession {
     output: Arc<Mutex<TerminalOutputBuffer>>,
     exit_status: Option<TerminalExitStatus>,
     exit_observed_at: Option<Instant>,
+    scope: Option<WorkloadScope>,
 }
 
 impl TerminalSession {
-    fn spawn(cwd: &Path, size: TerminalSize, shell: Option<&Path>) -> Result<Self> {
+    fn spawn(
+        cwd: &Path,
+        size: TerminalSize,
+        shell: Option<&Path>,
+        memory_limit_percent: f64,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(size.pty_size())
             .map_err(TerminalError::pty)?;
         let portable_pty::PtyPair { master, slave } = pair;
-        let command = match shell {
-            Some(shell) => CommandBuilder::new(shell.as_os_str()),
-            None => CommandBuilder::new_default_prog(),
-        };
+        let shell = ShellSpec::resolve(shell);
+        let terminal_host = current_executable_supports_terminal_host()
+            .then(|| TerminalHost::prepare(&shell.path, shell.login, memory_limit_percent))
+            .transpose()
+            .map_err(TerminalError::pty)?;
+        let command = terminal_host
+            .as_ref()
+            .map(TerminalHost::command)
+            .unwrap_or_else(|| shell.command());
         let command = terminal_command(command, cwd);
 
-        let child = slave.spawn_command(command).map_err(TerminalError::pty)?;
+        let mut child = slave.spawn_command(command).map_err(TerminalError::pty)?;
         drop(slave);
 
+        let scope = if let Some(terminal_host) = &terminal_host {
+            let process_id = child.process_id().ok_or_else(|| {
+                TerminalError::pty("terminal host did not report a process identifier")
+            })?;
+            match terminal_host.finish(process_id) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    terminal_host.stop_scope();
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(TerminalError::pty(error));
+                }
+            }
+        } else {
+            None
+        };
         let reader = master.try_clone_reader().map_err(TerminalError::pty)?;
         let writer = master.take_writer().map_err(TerminalError::pty)?;
         let input = spawn_writer(writer);
@@ -410,6 +445,7 @@ impl TerminalSession {
             output,
             exit_status: None,
             exit_observed_at: None,
+            scope,
         })
     }
 
@@ -475,6 +511,34 @@ impl TerminalSession {
     }
 }
 
+struct ShellSpec {
+    path: PathBuf,
+    login: bool,
+}
+
+impl ShellSpec {
+    fn resolve(shell: Option<&Path>) -> Self {
+        match shell {
+            Some(shell) => Self {
+                path: shell.to_path_buf(),
+                login: false,
+            },
+            None => Self {
+                path: PathBuf::from(CommandBuilder::new_default_prog().get_shell()),
+                login: true,
+            },
+        }
+    }
+
+    fn command(&self) -> CommandBuilder {
+        if self.login {
+            CommandBuilder::new_default_prog()
+        } else {
+            CommandBuilder::new(self.path.as_os_str())
+        }
+    }
+}
+
 fn terminal_command(mut command: CommandBuilder, cwd: &Path) -> CommandBuilder {
     command.cwd(cwd.as_os_str());
     command.env("TERM", "xterm-256color");
@@ -498,6 +562,10 @@ fn terminal_input(input: &str) -> Result<Vec<u8>> {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        if let Some(scope) = &mut self.scope {
+            scope.stop();
+        }
+
         if self.exit_status.is_some() {
             return;
         }
@@ -718,6 +786,7 @@ fn spawn_writer(mut writer: Box<dyn Write + Send>) -> mpsc::SyncSender<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     #[test]
     fn terminal_size_rejects_zero_dimensions() {
@@ -799,6 +868,22 @@ mod tests {
         assert_eq!(
             command.get_env("TERM"),
             Some(std::ffi::OsStr::new("xterm-256color"))
+        );
+    }
+
+    #[test]
+    fn shell_specs_preserve_login_and_explicit_shell_semantics() {
+        let default = ShellSpec::resolve(None);
+        let explicit = ShellSpec::resolve(Some(Path::new("/bin/fish")));
+
+        assert!(default.login);
+        assert!(!default.path.as_os_str().is_empty());
+        assert!(!explicit.login);
+        assert_eq!(explicit.path, Path::new("/bin/fish"));
+        assert!(default.command().is_default_prog());
+        assert_eq!(
+            explicit.command().get_argv(),
+            &[OsString::from("/bin/fish")]
         );
     }
 

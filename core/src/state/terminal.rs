@@ -1,3 +1,4 @@
+use crate::settings::RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT;
 use crate::tabs::terminal::{TerminalError, TerminalOutput, TerminalSize, available_shells};
 use crate::tree::{TabId, WorkspaceId};
 
@@ -24,10 +25,18 @@ impl State {
             .unwrap_or(&workspace_directory)
             .to_path_buf();
         let size = TerminalSize::new(columns, rows)?;
+        let memory_limit_percent = self
+            .settings
+            .number(RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT)
+            .expect("development memory limit is numeric");
 
-        let output = self
-            .terminal_sessions
-            .open(workspace_id, tab_id, &directory, size)?;
+        let output = self.terminal_sessions.open(
+            workspace_id,
+            tab_id,
+            &directory,
+            size,
+            memory_limit_percent,
+        )?;
         let directory = self
             .terminal_sessions
             .working_directory(workspace_id, tab_id)
@@ -106,10 +115,19 @@ impl State {
             .into_iter()
             .find(|shell| shell.path() == shell_path)
             .ok_or_else(|| TerminalError::ShellNotAvailable(shell_path.to_owned()))?;
+        let memory_limit_percent = self
+            .settings
+            .number(RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT)
+            .expect("development memory limit is numeric");
 
-        let output =
-            self.terminal_sessions
-                .restart(workspace_id, tab_id, &directory, size, &shell)?;
+        let output = self.terminal_sessions.restart(
+            workspace_id,
+            tab_id,
+            &directory,
+            size,
+            &shell,
+            memory_limit_percent,
+        )?;
         self.update_terminal_view_state(workspace_id, tab_id, directory);
 
         Ok(output)

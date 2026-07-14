@@ -6,6 +6,8 @@ pub const APPEARANCE_ZOOM_LEVEL: &str = "appearance.zoomLevel";
 pub const EDITOR_SOFT_WRAP: &str = "editor.softWrap";
 pub const EDITOR_MINIMAP: &str = "editor.minimap";
 pub const EDITOR_FORMAT_ON_SAVE: &str = "editor.formatOnSave";
+pub const RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT: &str =
+    "resources.developmentMemoryLimitPercent";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
@@ -128,6 +130,14 @@ impl Settings {
                     SettingItem::Setting(self.definition(EDITOR_FORMAT_ON_SAVE)),
                 ],
             },
+            SettingCategory {
+                id: "resources",
+                label: "Resources",
+                description: Some("Control resources used by development workloads."),
+                items: vec![SettingItem::Setting(
+                    self.definition(RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT),
+                )],
+            },
         ]
     }
 
@@ -143,6 +153,13 @@ impl Settings {
     pub fn boolean(&self, id: &str) -> Option<bool> {
         match self.value(id) {
             Some(SettingValue::Boolean(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn number(&self, id: &str) -> Option<f64> {
+        match self.value(id) {
+            Some(SettingValue::Number(value)) => Some(value),
             _ => None,
         }
     }
@@ -402,6 +419,25 @@ fn setting_definition(id: &str) -> Option<SettingDefinition> {
         });
     }
 
+    if id == RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT {
+        return Some(SettingDefinition {
+            id: RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT,
+            label: "Development memory limit (%)",
+            description: Some(
+                "Limit memory across all processes launched by Kosmos terminals. Lower limits can stop running commands, while protecting the editor from system-wide out-of-memory failures. Changes apply when a terminal is next opened or restarted.",
+            ),
+            control: SettingControl::Input(SettingInput {
+                kind: SettingInputKind::Number,
+                placeholder: None,
+                min: Some(10.0),
+                max: Some(75.0),
+                step: Some(5.0),
+            }),
+            value: SettingValue::Number(25.0),
+            default_value: SettingValue::Number(25.0),
+        });
+    }
+
     let (label, description) = match id {
         EDITOR_SOFT_WRAP => (
             "Soft wrap",
@@ -473,11 +509,13 @@ mod tests {
         let settings = Settings::default();
         let categories = settings.categories();
 
-        assert_eq!(categories.len(), 2);
+        assert_eq!(categories.len(), 3);
         assert_eq!(categories[0].id(), "appearance");
         assert_eq!(categories[0].items().len(), 1);
         assert_eq!(categories[1].id(), "editor");
         assert_eq!(categories[1].items().len(), 3);
+        assert_eq!(categories[2].id(), "resources");
+        assert_eq!(categories[2].items().len(), 1);
         assert_eq!(
             settings.value(APPEARANCE_ZOOM_LEVEL),
             Some(SettingValue::Number(100.0))
@@ -485,6 +523,10 @@ mod tests {
         assert_eq!(settings.boolean(EDITOR_SOFT_WRAP), Some(false));
         assert_eq!(settings.boolean(EDITOR_MINIMAP), Some(false));
         assert_eq!(settings.boolean(EDITOR_FORMAT_ON_SAVE), Some(false));
+        assert_eq!(
+            settings.number(RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT),
+            Some(25.0)
+        );
     }
 
     #[test]
@@ -519,6 +561,49 @@ mod tests {
             settings.update("missing", SettingValue::Boolean(true)),
             Err(SettingsError::UnknownSetting(_))
         ));
+        assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn development_memory_limit_updates_and_resets() {
+        let mut settings = Settings::default();
+
+        assert!(
+            settings
+                .update(
+                    RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT,
+                    SettingValue::Number(50.0),
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            settings.number(RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT),
+            Some(50.0)
+        );
+        assert!(
+            settings
+                .update(
+                    RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT,
+                    SettingValue::Number(25.0),
+                )
+                .unwrap()
+        );
+        assert_eq!(settings.overrides().count(), 0);
+    }
+
+    #[test]
+    fn development_memory_limit_rejects_out_of_range_values() {
+        let mut settings = Settings::default();
+
+        for value in [9.0, 76.0, f64::NAN] {
+            assert!(matches!(
+                settings.update(
+                    RESOURCES_DEVELOPMENT_MEMORY_LIMIT_PERCENT,
+                    SettingValue::Number(value),
+                ),
+                Err(SettingsError::InvalidValue { .. })
+            ));
+        }
         assert_eq!(settings, Settings::default());
     }
 

@@ -2,6 +2,10 @@ use std::io;
 use std::path::PathBuf;
 
 fn main() -> io::Result<()> {
+    if let Some(result) = core::run_terminal_host(std::env::args_os()) {
+        return result;
+    }
+
     terminate_with_parent()?;
     let store = core::persistence::StateStore::open(database_path()?).map_err(io::Error::other)?;
     let language_server_manager = language_server_paths().and_then(|paths| {
