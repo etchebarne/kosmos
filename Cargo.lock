@@ -273,7 +273,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "flate2",
  "globset",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "kosmos-server"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "core",
  "libc",
