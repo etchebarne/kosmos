@@ -28,8 +28,11 @@ export type ApplyEditOwner = {
 };
 
 export type ServerRecoveryState = {
-  active: boolean;
-  generation: number;
+  readonly active: boolean;
+  readonly generation: number;
+  readonly restoringRenderer: boolean;
+  rendererAvailable(): void;
+  rendererComplete(generation: number, error?: string): void;
 };
 
 const validDomains = new Set<KosmosIpcDomain>([
@@ -64,6 +67,7 @@ export function registerIpcHandlers(
       return;
     }
     readyRenderers.add(event.sender.id);
+    serverRecovery.rendererAvailable();
     if (!watchedReadyRenderers.has(event.sender.id)) {
       watchedReadyRenderers.add(event.sender.id);
       const clearReady = () => readyRenderers.delete(event.sender.id);
@@ -93,12 +97,15 @@ export function registerIpcHandlers(
     ) {
       return;
     }
-    const error = "error" in result ? result.error : undefined;
-    if (typeof error === "string" && error.length > 0) {
-      dialog.showErrorBox("Kosmos server recovery failed", error.slice(0, 4_096));
+    const reportedError = "error" in result ? result.error : undefined;
+    if (reportedError !== undefined && typeof reportedError !== "string") {
       return;
     }
-    serverRecovery.active = false;
+    const error =
+      typeof reportedError === "string"
+        ? reportedError.slice(0, 4_096) || "Renderer recovery failed without an error message."
+        : undefined;
+    serverRecovery.rendererComplete(result.generation, error);
   });
 
   ipcMain.on("kosmos:cancelRequest", (event, requestKey: unknown) => {
@@ -247,7 +254,11 @@ function assertRequestAllowedDuringRecovery(
   if (!serverRecovery.active) {
     return;
   }
-  if (request.domain === "editor" && request.action === "restoreSession") {
+  if (
+    request.domain === "editor" &&
+    request.action === "restoreSession" &&
+    serverRecovery.restoringRenderer
+  ) {
     return;
   }
   if (

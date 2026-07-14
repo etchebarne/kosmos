@@ -1,4 +1,13 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, type IpcMainEvent } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  dialog,
+  type IpcMainEvent,
+  type MessageBoxOptions,
+  type MessageBoxReturnValue,
+} from "electron";
 
 import { errorMessage } from "./error-message";
 import {
@@ -8,6 +17,11 @@ import {
 } from "./ipc/handlers";
 import { KosmosServerClient } from "./server/client";
 import { KosmosServerProcess } from "./server/process";
+import {
+  createServerRecovery,
+  type DegradedRecoveryState,
+  type RecoveryChoice,
+} from "./server/recovery";
 import { loadBootstrapSettings, newerSettingsSnapshot } from "./settings-snapshot";
 import { createShutdownAttempt } from "./shutdown-attempt";
 import { startWithFatalHandler } from "./startup";
@@ -21,16 +35,22 @@ configureDevelopmentInstance(app);
 const serverClient = new KosmosServerClient();
 const serverProcess = new KosmosServerProcess(serverClient.socketPath, handleUnexpectedServerExit);
 const SERVER_SHUTDOWN_TIMEOUT_MS = 5_000;
-const MAX_SIDECAR_RESTARTS = 3;
-const SIDECAR_RESTART_WINDOW_MS = 60_000;
 const RENDERER_READY_TIMEOUT_MS = 10_000;
 const applyEditOwners = new Map<string, ApplyEditOwner>();
 const settingsSnapshots = new Map<number, SettingsSnapshot>();
 const readyRenderers = new Set<number>();
-const serverRecovery = { active: false, generation: 0 };
 let bypassShutdown = false;
-let sidecarRestart: Promise<void> | undefined;
-const sidecarRestartTimes: number[] = [];
+let pendingDegradedRecovery: DegradedRecoveryState | undefined;
+let recoveryDialogActive = false;
+let lifecycleDialogTail = Promise.resolve();
+const serverRecovery = createServerRecovery({
+  now: Date.now,
+  disconnectClient: () => serverClient.disconnect(),
+  startServer: () => serverProcess.start(),
+  reconnectClient: () => serverClient.reconnect(),
+  requestRendererRestore,
+  onDegraded: queueDegradedRecoveryDialog,
+});
 const shutdownAttempt = createShutdownAttempt(async () => {
   await flushAndStopServer();
   serverClient.disconnect();
@@ -127,13 +147,6 @@ async function startApp(): Promise<void> {
       }
     }
   });
-  serverClient.onReconnected(() => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.webContents.isDestroyed()) {
-        window.webContents.send("kosmos:serverReconnected", serverRecovery.generation);
-      }
-    }
-  });
   await createWindowWithSettings();
 
   app.on("activate", () => {
@@ -209,7 +222,7 @@ async function beginShutdown(window?: BrowserWindow): Promise<void> {
     return;
   }
   if (outcome === "failed") {
-    const { response } = await dialog.showMessageBox({
+    const { response } = await showLifecycleMessageBox({
       type: "error",
       title: "Kosmos is still running",
       message: "Shutdown could not be completed.",
@@ -317,38 +330,106 @@ function focusMainWindow(): void {
   window.focus();
 }
 
-function handleUnexpectedServerExit(exitError: Error): void {
-  if (bypassShutdown || shutdownAttempt.complete || sidecarRestart) {
+function handleUnexpectedServerExit(processToken: number, exitError: Error): void {
+  if (bypassShutdown || shutdownAttempt.complete) {
     return;
   }
 
-  serverClient.disconnect();
-  serverRecovery.generation += 1;
-  serverRecovery.active = true;
-  const now = Date.now();
-  while (sidecarRestartTimes[0] && now - sidecarRestartTimes[0] > SIDECAR_RESTART_WINDOW_MS) {
-    sidecarRestartTimes.shift();
+  serverRecovery.unexpectedExit(processToken, exitError);
+}
+
+function requestRendererRestore(generation: number): boolean {
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => !window.webContents.isDestroyed(),
+  );
+  if (
+    windows.length === 0 ||
+    windows.some((window) => !readyRenderers.has(window.webContents.id))
+  ) {
+    return false;
   }
-  if (sidecarRestartTimes.length >= MAX_SIDECAR_RESTARTS) {
-    dialog.showErrorBox(
-      "Kosmos server stopped",
-      `The Kosmos server repeatedly stopped and the application must close.\n\n${exitError.message}`,
-    );
-    quitImmediately(1);
+  for (const window of windows) {
+    window.webContents.send("kosmos:serverReconnected", generation);
+  }
+  return true;
+}
+
+function queueDegradedRecoveryDialog(state: DegradedRecoveryState): void {
+  pendingDegradedRecovery = state;
+  void showDegradedRecoveryDialogs();
+}
+
+async function showDegradedRecoveryDialogs(): Promise<void> {
+  if (recoveryDialogActive) {
     return;
   }
-  sidecarRestartTimes.push(now);
+  recoveryDialogActive = true;
+  try {
+    while (pendingDegradedRecovery) {
+      const degraded = pendingDegradedRecovery;
+      pendingDegradedRecovery = undefined;
+      if (
+        serverRecovery.state.phase !== "degraded" ||
+        serverRecovery.state.attemptToken !== degraded.attemptToken
+      ) {
+        continue;
+      }
+      const failure = degraded.failure.error.message.slice(0, 64 * 1024);
+      const context =
+        degraded.failure.stage === "renderer"
+          ? "The server restarted, but editor sessions could not be restored."
+          : "The server stopped and automatic recovery could not complete.";
+      const { response } = await showLifecycleMessageBox({
+        type: "error",
+        title: "Kosmos server stopped",
+        message: "Kosmos cannot currently use its server.",
+        detail: `${context} Windows and in-memory editor buffers remain open for review.\n\n${failure}`,
+        buttons: ["Retry Server", "Keep Kosmos Open", "Force Quit"],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      const outcome = serverRecovery.resolveDegraded(
+        degraded.attemptToken,
+        recoveryChoice(response),
+      );
+      if (outcome === "forceQuit") {
+        quitImmediately(1);
+        return;
+      }
+    }
+  } finally {
+    recoveryDialogActive = false;
+    if (pendingDegradedRecovery) {
+      void showDegradedRecoveryDialogs();
+    }
+  }
+}
 
-  sidecarRestart = serverProcess
-    .start()
-    .then(() => serverClient.reconnect())
-    .catch((error: unknown) => {
-      dialog.showErrorBox("Kosmos server could not restart", errorMessage(error));
-      quitImmediately(1);
-    })
-    .finally(() => {
-      sidecarRestart = undefined;
-    });
+async function showLifecycleMessageBox(
+  options: MessageBoxOptions,
+): Promise<MessageBoxReturnValue> {
+  const previous = lifecycleDialogTail;
+  let release!: () => void;
+  lifecycleDialogTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await dialog.showMessageBox(options);
+  } finally {
+    release();
+  }
+}
+
+function recoveryChoice(response: number): RecoveryChoice {
+  switch (response) {
+    case 0:
+      return "retry";
+    case 2:
+      return "forceQuit";
+    default:
+      return "keepOpen";
+  }
 }
 
 function quitImmediately(exitCode = 1): void {

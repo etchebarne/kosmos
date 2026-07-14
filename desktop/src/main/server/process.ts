@@ -11,24 +11,26 @@ const MAX_SERVER_ERROR_CHARS = 64 * 1024;
 
 export class KosmosServerProcess {
   private child: ChildProcess | undefined;
+  private childToken: number | undefined;
+  private nextChildToken = 1;
   private ready = false;
   private stderr = "";
   private stopping = false;
 
   constructor(
     private readonly socketPath: string,
-    private readonly onUnexpectedExit: (error: Error) => void,
+    private readonly onUnexpectedExit: (processToken: number, error: Error) => void,
   ) {}
 
-  async start(): Promise<void> {
+  async start(): Promise<number> {
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
-      return;
+      return this.childToken!;
     }
 
     this.ready = false;
     this.stderr = "";
     this.stopping = false;
-    const child = this.spawn();
+    const { child, processToken } = this.spawn();
     try {
       await waitForServerSocket(child, this.socketPath);
       if (this.child === child) {
@@ -37,10 +39,12 @@ export class KosmosServerProcess {
     } catch (error) {
       if (this.child === child) {
         this.child = undefined;
+        this.childToken = undefined;
         child.kill();
       }
       throw serverStartError(error, this.stderr);
     }
+    return processToken;
   }
 
   stop(): void {
@@ -52,6 +56,7 @@ export class KosmosServerProcess {
 
     this.child.kill();
     this.child = undefined;
+    this.childToken = undefined;
     try {
       fs.rmSync(this.socketPath, { force: true });
     } catch {
@@ -59,7 +64,7 @@ export class KosmosServerProcess {
     }
   }
 
-  private spawn(): ChildProcess {
+  private spawn(): { child: ChildProcess; processToken: number } {
     const serverPath = getServerBinaryPath();
     if (!fs.existsSync(serverPath)) {
       throw new Error(`Kosmos server binary was not found at ${serverPath}`);
@@ -73,8 +78,10 @@ export class KosmosServerProcess {
       },
       stdio: ["ignore", "ignore", "pipe"],
     });
+    const processToken = this.nextChildToken++;
 
     this.child = child;
+    this.childToken = processToken;
     child.stderr?.on("data", (chunk: Buffer | string) => {
       if (this.child === child) {
         this.stderr = `${this.stderr}${chunk.toString()}`.slice(-MAX_SERVER_ERROR_CHARS);
@@ -83,15 +90,16 @@ export class KosmosServerProcess {
     child.once("close", (exitCode, signal) => {
       if (this.child === child) {
         this.child = undefined;
+        this.childToken = undefined;
         const unexpected = this.ready && !this.stopping;
         this.ready = false;
         if (unexpected) {
-          this.onUnexpectedExit(serverExitError(exitCode, signal, this.stderr));
+          this.onUnexpectedExit(processToken, serverExitError(exitCode, signal, this.stderr));
         }
       }
     });
 
-    return child;
+    return { child, processToken };
   }
 }
 
