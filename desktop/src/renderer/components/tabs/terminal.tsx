@@ -22,6 +22,7 @@ import {
   writeTerminalInput,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
+import { terminalCopyText } from "@/renderer/lib/terminal-keybindings";
 import type { TabId, TerminalOutput, TerminalShell, WorkspaceId } from "@/shared/ipc";
 
 type TerminalTabProps = {
@@ -396,6 +397,15 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       terminal.focus();
     }
 
+    terminal.attachCustomKeyEventHandler((event) => {
+      const text = terminalCopyText(event, terminal.getSelection());
+      if (text === null) {
+        return true;
+      }
+
+      void window.kosmos.writeClipboardText(text).catch(() => undefined);
+      return false;
+    });
     const inputDisposable = terminal.onData(queueInput);
     const resizeObserver = new ResizeObserver(applySize);
     resizeObserver.observe(container);

@@ -74,6 +74,9 @@ const kosmos: KosmosApi = {
   revealPath(path: string): Promise<void> {
     return ipcRenderer.invoke("kosmos:revealPath", path) as Promise<void>;
   },
+  writeClipboardText(text: string): Promise<void> {
+    return ipcRenderer.invoke("kosmos:clipboard:writeText", text) as Promise<void>;
+  },
   onFlushState(callback: () => Promise<void>): () => void {
     const listener = () => {
       void callback().finally(() => ipcRenderer.send("kosmos:rendererStateFlushed"));

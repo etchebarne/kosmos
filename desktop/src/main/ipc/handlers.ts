@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   shell,
@@ -244,6 +245,14 @@ export function registerIpcHandlers(
     }
 
     shell.showItemInFolder(targetPath);
+  });
+  ipcMain.handle("kosmos:clipboard:writeText", (event, text: unknown) => {
+    assertTrustedIpcSender(event, rendererEntryPath);
+    if (typeof text !== "string") {
+      throw new Error("Clipboard text must be a string");
+    }
+
+    clipboard.writeText(text);
   });
 }
 

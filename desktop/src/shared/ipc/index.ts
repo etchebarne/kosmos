@@ -154,6 +154,7 @@ export type KosmosApi = {
   closeWindow(): Promise<void>;
   bootstrapSettings(): Promise<SettingsSnapshot>;
   revealPath(path: string): Promise<void>;
+  writeClipboardText(text: string): Promise<void>;
   onFlushState(callback: () => Promise<void>): () => void;
   onShutdownRequest(callback: () => Promise<boolean>): () => void;
   onSettingsSnapshot(callback: (snapshot: SettingsSnapshot) => void): () => void;
