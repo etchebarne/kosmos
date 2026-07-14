@@ -516,11 +516,12 @@ fn ensure_workload_slice(
     manager: &mut impl WorkloadManager,
     limits: MemoryLimits,
 ) -> Result<(), WorkloadError> {
-    let properties = slice_properties(limits);
     if manager.unit_exists(WORKLOAD_SLICE)? {
+        let properties = slice_runtime_properties(limits);
         return manager.set_unit_properties(WORKLOAD_SLICE, &properties);
     }
 
+    let properties = slice_properties(limits);
     manager.subscribe()?;
     let job = manager.start_transient_unit(WORKLOAD_SLICE, &properties)?;
     require_successful_job(manager.wait_for_job(&job, BOOTSTRAP_TIMEOUT)?)
@@ -555,6 +556,10 @@ fn require_successful_job(completion: JobCompletion) -> Result<(), WorkloadError
 }
 
 fn slice_properties(limits: MemoryLimits) -> Vec<Property> {
+    transient_resource_properties("Kosmos development workloads", limits, 2048)
+}
+
+fn slice_runtime_properties(limits: MemoryLimits) -> Vec<Property> {
     resource_properties("Kosmos development workloads", limits, 2048)
 }
 
@@ -563,12 +568,25 @@ fn scope_properties(
     process_id: u32,
     supports_scope_oom_policy: bool,
 ) -> Vec<Property> {
-    let mut properties = resource_properties("Kosmos terminal workload", limits, 1024);
+    let mut properties = transient_resource_properties("Kosmos terminal workload", limits, 1024);
     properties.push(("PIDs".into(), PropertyValue::ProcessIds(vec![process_id])));
     properties.push(("Slice".into(), PropertyValue::Text(WORKLOAD_SLICE.into())));
     if supports_scope_oom_policy {
         properties.push(("OOMPolicy".into(), PropertyValue::Text("kill".into())));
     }
+    properties
+}
+
+fn transient_resource_properties(
+    description: &str,
+    limits: MemoryLimits,
+    tasks_max: u64,
+) -> Vec<Property> {
+    let mut properties = resource_properties(description, limits, tasks_max);
+    properties.push((
+        "CollectMode".into(),
+        PropertyValue::Text("inactive-or-failed".into()),
+    ));
     properties
 }
 
@@ -587,10 +605,6 @@ fn resource_properties(description: &str, limits: MemoryLimits, tasks_max: u64) 
             PropertyValue::Unsigned(limits.swap_max),
         ),
         ("TasksMax".into(), PropertyValue::Unsigned(tasks_max)),
-        (
-            "CollectMode".into(),
-            PropertyValue::Text("inactive-or-failed".into()),
-        ),
     ]
 }
 
@@ -1238,6 +1252,11 @@ mod tests {
         };
 
         ensure_workload_slice(&mut manager, limits).unwrap();
+        assert!(
+            manager.properties.borrow()[0]
+                .iter()
+                .any(|(name, _)| name == "CollectMode")
+        );
         assert_eq!(
             manager.calls.into_inner(),
             vec![
@@ -1246,6 +1265,29 @@ mod tests {
                 format!("wait:/jobs/{WORKLOAD_SLICE}"),
             ]
         );
+    }
+
+    #[test]
+    fn existing_workload_slice_updates_only_runtime_properties() {
+        let limits = MemoryLimits {
+            high: 80,
+            max: 100,
+            swap_max: 40,
+        };
+        let mut manager = FakeManager {
+            exists: true,
+            ..FakeManager::default()
+        };
+
+        ensure_workload_slice(&mut manager, limits).unwrap();
+
+        assert_eq!(
+            manager.calls.into_inner(),
+            vec![format!("set:{WORKLOAD_SLICE}")]
+        );
+        let properties = manager.properties.into_inner();
+        assert!(!properties[0].iter().any(|(name, _)| name == "CollectMode"));
+        assert!(properties[0].contains(&("MemoryMax".into(), PropertyValue::Unsigned(100))));
     }
 
     #[test]
