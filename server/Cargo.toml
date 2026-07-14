@@ -1,10 +1,10 @@
 [package]
 name = "kosmos-server"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 
 [dependencies]
-core = { version = "0.5.1", path = "../core" }
+core = { version = "0.5.2", path = "../core" }
 libc = "0.2.186"
 schemars = { version = "=0.8.22", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
