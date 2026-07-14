@@ -207,9 +207,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   function trackFileTreeExpansionSave(promise: Promise<void>): Promise<void> {
     pendingFileTreeExpansionSaves.add(promise);
 
-    void promise.finally(() => {
-      pendingFileTreeExpansionSaves.delete(promise);
-    });
+    void promise.then(
+      () => pendingFileTreeExpansionSaves.delete(promise),
+      () => pendingFileTreeExpansionSaves.delete(promise),
+    );
 
     return promise;
   }
@@ -232,7 +233,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     await Promise.all(flushPromises);
 
     while (pendingFileTreeExpansionSaves.size > 0) {
-      await Promise.all(Array.from(pendingFileTreeExpansionSaves));
+      await Promise.all(
+        Array.from(pendingFileTreeExpansionSaves, (save) =>
+          save.catch((caughtError: unknown) => {
+            set({ error: errorMessage(caughtError) });
+          }),
+        ),
+      );
     }
   }
 
@@ -659,6 +666,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         .then(() => undefined)
         .catch((caughtError: unknown) => {
           set({ error: errorMessage(caughtError) });
+          throw caughtError;
         });
 
       return trackFileTreeExpansionSave(save);

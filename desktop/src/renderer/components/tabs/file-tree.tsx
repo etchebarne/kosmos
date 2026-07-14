@@ -40,6 +40,7 @@ import {
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
 import { fileTreeGitStatus } from "@/renderer/lib/file-tree-git-status";
+import { reconcileFileTreePaths } from "@/renderer/lib/file-tree-refresh";
 import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   FileTreeEntryKind,
@@ -63,7 +64,6 @@ type FileTreeLoadState =
       tabId: TabId;
       snapshot: FileTreeSnapshot;
       gitDecorations: FileTreeGitStatusSnapshot;
-      revision: number;
     }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
 
@@ -98,7 +98,6 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
     tabId,
   });
   const requestIdRef = useRef(0);
-  const revisionRef = useRef(0);
   const snapshotSignatureRef = useRef<string | null>(null);
   const observedWorkspaceRevisionRef = useRef(workspaceRevision);
   const revisionLoadInFlightRef = useRef(false);
@@ -135,18 +134,20 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
         }
 
         snapshotSignatureRef.current = signature;
-        revisionRef.current += 1;
         setLoadState({
           status: "loaded",
           workspaceId: targetWorkspaceId,
           tabId: targetTabId,
           snapshot,
           gitDecorations: gitStatusSnapshot,
-          revision: revisionRef.current,
         });
       }
     } catch (caughtError: unknown) {
       if (requestIdRef.current === requestId) {
+        if (!showLoading) {
+          return;
+        }
+
         snapshotSignatureRef.current = null;
         setLoadState({
           status: "error",
@@ -204,7 +205,6 @@ export function FileTreeTab({ workspaceId, tabId, onActivatePane }: FileTreeTabP
       ) : null}
       {currentLoadState.status === "loaded" ? (
         <LoadedFileTree
-          key={currentLoadState.revision}
           workspaceId={workspaceId}
           tabId={tabId}
           snapshot={currentLoadState.snapshot}
@@ -240,6 +240,9 @@ function LoadedFileTree({
     path: entry.path,
     status: fileTreeGitStatus(entry),
   }));
+  const gitStatusSignature = JSON.stringify(gitStatus);
+  const previousPathsRef = useRef(snapshot.paths);
+  const previousGitStatusSignatureRef = useRef(gitStatusSignature);
   const runMutation = async (mutation: () => Promise<unknown>) => {
     try {
       await mutation();
@@ -309,6 +312,15 @@ function LoadedFileTree({
     stickyFolders: true,
     unsafeCSS: rootActionPaddingCss(snapshot.rootPath),
   });
+  useEffect(() => {
+    reconcileFileTreePaths(model, previousPathsRef.current, snapshot.paths);
+    previousPathsRef.current = snapshot.paths;
+
+    if (previousGitStatusSignatureRef.current !== gitStatusSignature) {
+      previousGitStatusSignatureRef.current = gitStatusSignature;
+      model.setGitStatus(gitStatus);
+    }
+  }, [gitStatusSignature, model, snapshot.paths]);
   useEffect(() => {
     return model.onMutation("*", (event) => {
       if (event.operation === "remove") {
@@ -1146,28 +1158,37 @@ function FileTreeExpansionPersistence({
   );
   const saveFileTreeExpandedPaths = useWorkspaceStore((state) => state.saveFileTreeExpandedPaths);
   const persistedExpandedPathsRef = useRef(sortedUnique(snapshot.expandedPaths));
+  const targetExpandedPathsRef = useRef(persistedExpandedPathsRef.current);
   const pendingExpandedPathsRef = useRef<string[] | null>(null);
-
-  useEffect(() => {
-    persistedExpandedPathsRef.current = sortedUnique(snapshot.expandedPaths);
-    pendingExpandedPathsRef.current = null;
-  }, [snapshot.expandedPaths]);
+  const saveChainRef = useRef(Promise.resolve());
+  const pathSignature = snapshot.paths.join("\0");
 
   useEffect(() => {
     const directoryPaths = snapshot.paths.filter((path) => path.endsWith("/"));
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const persistExpandedPaths = (expandedPaths: string[]) => {
-      return saveFileTreeExpandedPaths({ workspaceId, tabId, expandedPaths });
+    const queueExpandedPathsSave = (expandedPaths: string[]): Promise<void> => {
+      const save = saveChainRef.current.catch(() => undefined).then(async () => {
+        await saveFileTreeExpandedPaths({ workspaceId, tabId, expandedPaths });
+        persistedExpandedPathsRef.current = expandedPaths;
+      });
+
+      saveChainRef.current = save;
+      void save.catch(() => {
+        if (stringArraysEqual(targetExpandedPathsRef.current, expandedPaths)) {
+          targetExpandedPathsRef.current = persistedExpandedPathsRef.current;
+        }
+      });
+      return save;
     };
 
     const saveExpandedPaths = (): Promise<void> | void => {
       const expandedPaths = expandedDirectoryPaths(model, directoryPaths);
-      const targetExpandedPaths = pendingExpandedPathsRef.current ?? persistedExpandedPathsRef.current;
-      if (stringArraysEqual(targetExpandedPaths, expandedPaths)) {
+      if (stringArraysEqual(targetExpandedPathsRef.current, expandedPaths)) {
         return;
       }
 
+      targetExpandedPathsRef.current = expandedPaths;
       pendingExpandedPathsRef.current = expandedPaths;
 
       if (saveTimeout !== null) {
@@ -1180,12 +1201,8 @@ function FileTreeExpansionPersistence({
         saveTimeout = null;
         pendingExpandedPathsRef.current = null;
 
-        if (
-          pendingExpandedPaths &&
-          !stringArraysEqual(persistedExpandedPathsRef.current, pendingExpandedPaths)
-        ) {
-          persistedExpandedPathsRef.current = pendingExpandedPaths;
-          void persistExpandedPaths(pendingExpandedPaths);
+        if (pendingExpandedPaths) {
+          void queueExpandedPathsSave(pendingExpandedPaths).catch(() => undefined);
         }
       }, EXPANSION_SAVE_DELAY_MS);
     };
@@ -1200,13 +1217,12 @@ function FileTreeExpansionPersistence({
 
       pendingExpandedPathsRef.current = null;
 
-      if (stringArraysEqual(persistedExpandedPathsRef.current, expandedPaths)) {
-        return undefined;
+      if (!stringArraysEqual(targetExpandedPathsRef.current, expandedPaths)) {
+        targetExpandedPathsRef.current = expandedPaths;
+        return queueExpandedPathsSave(expandedPaths);
       }
 
-      persistedExpandedPathsRef.current = expandedPaths;
-
-      return persistExpandedPaths(expandedPaths);
+      return saveChainRef.current;
     };
 
     const unsubscribe = model.subscribe(saveExpandedPaths);
@@ -1215,13 +1231,13 @@ function FileTreeExpansionPersistence({
     return () => {
       unsubscribe();
       unregisterFlusher();
-      void flushExpandedPaths();
+      void flushExpandedPaths()?.catch(() => undefined);
     };
   }, [
     model,
     registerFileTreeExpansionFlusher,
     saveFileTreeExpandedPaths,
-    snapshot.paths,
+    pathSignature,
     workspaceId,
     tabId,
   ]);

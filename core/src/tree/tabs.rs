@@ -81,8 +81,10 @@ impl TabKind {
 
     pub fn lifecycle(&self) -> TabLifecycle {
         match self {
-            Self::Diff | Self::Editor | Self::Search | Self::Terminal => TabLifecycle::KeepAlive,
-            Self::Blank | Self::FileTree | Self::Git => TabLifecycle::Ephemeral,
+            Self::Diff | Self::Editor | Self::FileTree | Self::Search | Self::Terminal => {
+                TabLifecycle::KeepAlive
+            }
+            Self::Blank | Self::Git => TabLifecycle::Ephemeral,
         }
     }
 }
@@ -96,6 +98,7 @@ mod tests {
         assert_eq!(TabKind::Terminal.lifecycle(), TabLifecycle::KeepAlive);
         assert_eq!(TabKind::Editor.lifecycle(), TabLifecycle::KeepAlive);
         assert_eq!(TabKind::Diff.lifecycle(), TabLifecycle::KeepAlive);
+        assert_eq!(TabKind::FileTree.lifecycle(), TabLifecycle::KeepAlive);
         assert_eq!(TabKind::Search.lifecycle(), TabLifecycle::KeepAlive);
     }
 }
