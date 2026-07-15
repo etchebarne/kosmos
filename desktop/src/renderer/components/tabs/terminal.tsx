@@ -131,6 +131,7 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       fontSize: TERMINAL_FONT_SIZE,
       letterSpacing: 0,
       lineHeight: TERMINAL_LINE_HEIGHT,
+      minimumContrastRatio: 4.5,
       scrollback: 5000,
       windowOptions: {
         getCellSizePixels: true,
