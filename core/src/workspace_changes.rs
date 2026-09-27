@@ -10,6 +10,7 @@ use notify::{ErrorKind, Event, EventKind, RecommendedWatcher, RecursiveMode, Wat
 
 use crate::tabs::git::repository_watch_paths;
 use crate::tree::{WorkspaceId, WorkspaceList};
+use crate::workspace_change_filter::WorkspaceChangeFilter;
 
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(100);
 const MAX_CHANGE_LATENCY: Duration = Duration::from_secs(1);
@@ -18,12 +19,14 @@ type WatchTargets = HashMap<PathBuf, HashSet<WorkspaceId>>;
 
 #[derive(Default)]
 struct WorkspaceWatchTargets {
+    filter: WorkspaceChangeFilter,
     git_paths: HashSet<PathBuf>,
     worktree_paths: HashSet<PathBuf>,
     workspace_ids: WatchTargets,
 }
 
 pub struct WorkspaceChangeWatcher {
+    filter: Arc<RwLock<WorkspaceChangeFilter>>,
     git_watcher: RecommendedWatcher,
     targets: Arc<RwLock<WatchTargets>>,
     watched_git_paths: HashMap<PathBuf, RecursiveMode>,
@@ -38,17 +41,20 @@ pub struct WorkspaceChangeWatcher {
 impl WorkspaceChangeWatcher {
     pub fn new() -> notify::Result<(Self, mpsc::Receiver<Vec<WorkspaceId>>)> {
         let targets = Arc::new(RwLock::new(WatchTargets::new()));
+        let filter = Arc::new(RwLock::new(WorkspaceChangeFilter::default()));
         let pending_changes = Arc::new(std::sync::Mutex::new(HashSet::new()));
         let (raw_changes, raw_change_receiver) = mpsc::sync_channel(1);
         let registrations_dirty = Arc::new(AtomicBool::new(false));
         let git_watcher = event_watcher(
             Arc::clone(&targets),
+            Arc::clone(&filter),
             Arc::clone(&pending_changes),
             raw_changes.clone(),
             Arc::clone(&registrations_dirty),
         )?;
         let worktree_watcher = event_watcher(
             Arc::clone(&targets),
+            Arc::clone(&filter),
             Arc::clone(&pending_changes),
             raw_changes,
             Arc::clone(&registrations_dirty),
@@ -59,6 +65,7 @@ impl WorkspaceChangeWatcher {
 
         Ok((
             Self {
+                filter,
                 git_watcher,
                 targets,
                 watched_git_paths: HashMap::new(),
@@ -86,6 +93,9 @@ impl WorkspaceChangeWatcher {
 
             if let Ok(mut targets) = self.targets.write() {
                 *targets = next_targets.workspace_ids;
+            }
+            if let Ok(mut filter) = self.filter.write() {
+                *filter = next_targets.filter;
             }
             self.git_paths = next_targets.git_paths;
             self.worktree_paths = next_targets.worktree_paths;
@@ -151,6 +161,10 @@ fn watch_targets(workspaces: &WorkspaceList) -> WorkspaceWatchTargets {
         }
     }
 
+    targets.filter = WorkspaceChangeFilter::new(
+        targets.worktree_paths.iter().cloned(),
+        targets.git_paths.iter().cloned(),
+    );
     targets
 }
 
@@ -267,6 +281,7 @@ fn reset_watcher(
 
 fn event_watcher(
     targets: Arc<RwLock<WatchTargets>>,
+    filter: Arc<RwLock<WorkspaceChangeFilter>>,
     pending_changes: Arc<std::sync::Mutex<HashSet<WorkspaceId>>>,
     raw_changes: mpsc::SyncSender<()>,
     registrations_dirty: Arc<AtomicBool>,
@@ -284,7 +299,7 @@ fn event_watcher(
                 return;
             }
         };
-        if !is_change_event(&event.kind) {
+        if !is_change_event(&event.kind) || !is_relevant_change(&filter, &event.paths) {
             return;
         }
 
@@ -325,6 +340,18 @@ fn affected_workspace_ids(targets: &WatchTargets, paths: &[PathBuf]) -> Vec<Work
     let mut workspace_ids = workspace_ids.into_iter().collect::<Vec<_>>();
     workspace_ids.sort_by_key(|workspace_id| workspace_id.value());
     workspace_ids
+}
+
+fn is_relevant_change(filter: &RwLock<WorkspaceChangeFilter>, paths: &[PathBuf]) -> bool {
+    if WorkspaceChangeFilter::touches_ignore_rules(paths)
+        && let Ok(mut filter) = filter.write()
+    {
+        filter.reload_ignore_rules();
+    }
+
+    filter
+        .read()
+        .map_or(true, |filter| filter.is_relevant(paths))
 }
 
 fn is_change_event(kind: &EventKind) -> bool {

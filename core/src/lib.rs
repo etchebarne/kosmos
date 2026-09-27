@@ -1,6 +1,7 @@
 mod application;
 mod state;
 mod workloads;
+mod workspace_change_filter;
 mod workspace_changes;
 
 pub mod events;

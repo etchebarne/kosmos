@@ -4483,6 +4483,14 @@ fn queue_watched_file_event(
     dirty: &AtomicBool,
     event: notify::Result<Event>,
 ) {
+    // Reads (opendir/open) never change watched files, and on large trees they flood the
+    // bounded queue, marking the registration dirty and forcing a full resync walk.
+    if event
+        .as_ref()
+        .is_ok_and(|event| matches!(event.kind, EventKind::Access(_)))
+    {
+        return;
+    }
     if event.is_err() {
         dirty.store(true, Ordering::Release);
     }
@@ -4607,7 +4615,7 @@ fn watched_file_resync(patterns: &[WatchPattern]) -> BTreeMap<PathBuf, u8> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if is_internal_workspace_edit_path(&path) {
+            if is_internal_workspace_edit_path(&path) || is_git_metadata_path(&path) {
                 continue;
             }
             let Ok(file_type) = entry.file_type() else {
@@ -4652,6 +4660,10 @@ fn watched_file_changes(event: &Event, patterns: &[WatchPattern]) -> Vec<Watched
             kind,
         })
         .collect()
+}
+
+fn is_git_metadata_path(path: &Path) -> bool {
+    path.file_name() == Some(std::ffi::OsStr::new(".git"))
 }
 
 fn is_internal_workspace_edit_path(path: &Path) -> bool {

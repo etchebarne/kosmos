@@ -6,13 +6,14 @@ import type {
   FileTreeDirectoryHandle,
   FileTreeDropResult,
   FileTreeItemHandle,
+  FileTreeMutationEvent,
   FileTreeRenameEvent,
   GitStatusEntry,
 } from "@pierre/trees";
 import { FileTree as PierreFileTree, useFileTree } from "@pierre/trees/react";
 import { FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/renderer/components/ui/button";
 import {
@@ -236,11 +237,15 @@ function LoadedFileTree({
   const [hasInlineCreate, setHasInlineCreate] = useState(false);
   const pendingCreatesRef = useRef<Map<string, PendingFileTreeCreate>>(new Map());
   const closeRowContextMenuRef = useRef<FileTreeContextMenuClose | null>(null);
-  const gitStatus: GitStatusEntry[] = gitDecorations.entries.map((entry) => ({
-    path: entry.path,
-    status: fileTreeGitStatus(entry),
-  }));
-  const gitStatusSignature = JSON.stringify(gitStatus);
+  const gitStatus = useMemo<GitStatusEntry[]>(
+    () =>
+      gitDecorations.entries.map((entry) => ({
+        path: entry.path,
+        status: fileTreeGitStatus(entry),
+      })),
+    [gitDecorations],
+  );
+  const gitStatusSignature = useMemo(() => JSON.stringify(gitStatus), [gitStatus]);
   const previousPathsRef = useRef(snapshot.paths);
   const previousGitStatusSignatureRef = useRef(gitStatusSignature);
   const runMutation = async (mutation: () => Promise<unknown>) => {
@@ -1161,10 +1166,9 @@ function FileTreeExpansionPersistence({
   const targetExpandedPathsRef = useRef(persistedExpandedPathsRef.current);
   const pendingExpandedPathsRef = useRef<string[] | null>(null);
   const saveChainRef = useRef(Promise.resolve());
-  const pathSignature = snapshot.paths.join("\0");
+  const knownDirectoryPathsRef = useKnownDirectoryPaths(model, snapshot.paths);
 
   useEffect(() => {
-    const directoryPaths = snapshot.paths.filter((path) => path.endsWith("/"));
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const queueExpandedPathsSave = (expandedPaths: string[]): Promise<void> => {
@@ -1183,7 +1187,7 @@ function FileTreeExpansionPersistence({
     };
 
     const saveExpandedPaths = (): Promise<void> | void => {
-      const expandedPaths = expandedDirectoryPaths(model, directoryPaths);
+      const expandedPaths = expandedDirectoryPaths(model, knownDirectoryPathsRef.current);
       if (stringArraysEqual(targetExpandedPathsRef.current, expandedPaths)) {
         return;
       }
@@ -1208,7 +1212,7 @@ function FileTreeExpansionPersistence({
     };
 
     const flushExpandedPaths = () => {
-      const expandedPaths = expandedDirectoryPaths(model, directoryPaths);
+      const expandedPaths = expandedDirectoryPaths(model, knownDirectoryPathsRef.current);
 
       if (saveTimeout !== null) {
         clearTimeout(saveTimeout);
@@ -1237,12 +1241,46 @@ function FileTreeExpansionPersistence({
     model,
     registerFileTreeExpansionFlusher,
     saveFileTreeExpandedPaths,
-    pathSignature,
+    knownDirectoryPathsRef,
     workspaceId,
     tabId,
   ]);
 
   return null;
+}
+
+/**
+ * Tracks every directory the tree has been given, including children loaded lazily after the
+ * snapshot, so expansion state can be computed without the tree exposing its full path list.
+ */
+function useKnownDirectoryPaths(model: FileTreeModel, snapshotPaths: string[]) {
+  const knownDirectoryPathsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    knownDirectoryPathsRef.current = new Set(snapshotPaths.filter(isDirectoryPath));
+  }, [snapshotPaths]);
+
+  useEffect(() => {
+    const rememberAddedDirectory = (event: FileTreeMutationEvent) => {
+      if (event.operation === "add" && isDirectoryPath(event.path)) {
+        knownDirectoryPathsRef.current.add(event.path);
+      }
+    };
+
+    return model.onMutation("*", (event) => {
+      if (event.operation === "batch") {
+        event.events.forEach(rememberAddedDirectory);
+      } else {
+        rememberAddedDirectory(event);
+      }
+    });
+  }, [model]);
+
+  return knownDirectoryPathsRef;
+}
+
+function isDirectoryPath(path: string): boolean {
+  return path.endsWith("/");
 }
 
 function FileTreeDeferredDirectoryLoader({
@@ -1333,9 +1371,9 @@ function FileTreeMessage({ message }: { message: string }) {
   );
 }
 
-function expandedDirectoryPaths(model: FileTreeModel, directoryPaths: string[]): string[] {
+function expandedDirectoryPaths(model: FileTreeModel, directoryPaths: Iterable<string>): string[] {
   return sortedUnique(
-    directoryPaths.filter((path) => {
+    [...directoryPaths].filter((path) => {
       const item = model.getItem(path);
       if (!isDirectoryHandle(item)) {
         return false;

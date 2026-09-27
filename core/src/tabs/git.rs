@@ -176,7 +176,7 @@ impl GitRepository {
 
     pub fn workspace_changes(directory: impl AsRef<Path>) -> Result<Vec<GitChange>> {
         let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
-        let status = parse_status(&git(
+        let status = parse_status(&git_with_paths(
             &repository_root,
             [
                 "status",
@@ -184,7 +184,9 @@ impl GitRepository {
                 "-z",
                 "--untracked-files=all",
                 "--ignored=matching",
+                "--",
             ],
+            &scoped_pathspecs(&workspace_prefix),
         )?)?;
 
         Ok(status
@@ -201,9 +203,16 @@ impl GitRepository {
         let workspace_relative_path = normalize_path(workspace_relative_path)?;
         let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
         let repository_path = prefixed_git_path(&workspace_prefix, &workspace_relative_path);
-        let status = parse_status(&git(
+        let status = parse_status(&git_with_paths(
             &repository_root,
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+            ],
+            &[literal_pathspec(&repository_path)],
         )?)?;
         let Some(change) = status
             .changes
@@ -1727,6 +1736,20 @@ fn workspace_repository(directory: &Path) -> Result<(PathBuf, String)> {
             })?;
 
     Ok((repository_root, git_path(workspace_prefix)?))
+}
+
+/// Limits a repository-wide command to the workspace so a package inside a monorepo does not
+/// pay for the status of the whole repository.
+fn scoped_pathspecs(workspace_prefix: &str) -> Vec<String> {
+    if workspace_prefix.is_empty() {
+        Vec::new()
+    } else {
+        vec![literal_pathspec(workspace_prefix)]
+    }
+}
+
+fn literal_pathspec(path: &str) -> String {
+    format!(":(literal){path}")
 }
 
 fn prefixed_git_path(prefix: &str, path: &str) -> String {

@@ -13,28 +13,6 @@ pub type Result<T> = std::result::Result<T, FileTreeError>;
 
 const MAX_FILE_TREE_PATHS: usize = 50_000;
 const EXCLUDED_DIRECTORY_NAMES: &[&str] = &[".git"];
-const IGNORED_DIRECTORY_NAMES: &[&str] = &[
-    ".angular",
-    ".cache",
-    ".hg",
-    ".mypy_cache",
-    ".next",
-    ".nuxt",
-    ".parcel-cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".svn",
-    ".svelte-kit",
-    ".turbo",
-    ".venv",
-    "__pycache__",
-    "build",
-    "coverage",
-    "dist",
-    "node_modules",
-    "target",
-    "venv",
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileTreeEntryKind {
@@ -68,20 +46,17 @@ impl FileTree {
         let root = root.into();
         ensure_directory(&root)?;
 
-        let mut paths = Vec::new();
-        let mut directory_paths = HashSet::new();
-        let mut deferred_paths = Vec::new();
-        collect_paths(
-            &root,
-            "",
-            &mut paths,
-            &mut directory_paths,
-            &mut deferred_paths,
-        )?;
-        let expanded_paths = normalize_expanded_paths(expanded_paths)
+        let requested_expanded_paths = normalize_expanded_paths(expanded_paths)
             .into_iter()
-            .filter(|path| directory_paths.contains(path))
-            .collect();
+            .collect::<HashSet<_>>();
+        let mut scan = DirectoryScan::default();
+        collect_paths(&root, "", &requested_expanded_paths, &mut scan)?;
+        scan.expanded_paths.sort();
+        let DirectoryScan {
+            paths,
+            expanded_paths,
+            deferred_paths,
+        } = scan;
 
         Ok(Self {
             root,
@@ -100,19 +75,13 @@ impl FileTree {
         let normalized_path = normalize_relative_path(directory_path)?;
         let directory = resolve_directory(root, &normalized_path)?;
         let relative_directory = path_to_str(&normalized_path);
-        let mut paths = Vec::new();
-        let mut deferred_paths = Vec::new();
+        let mut scan = DirectoryScan::default();
 
-        collect_child_paths(
-            &directory,
-            relative_directory,
-            &mut paths,
-            &mut deferred_paths,
-        )?;
+        collect_paths(&directory, relative_directory, &HashSet::new(), &mut scan)?;
 
         Ok(FileTreeDirectory {
-            paths,
-            deferred_paths,
+            paths: scan.paths,
+            deferred_paths: scan.deferred_paths,
         })
     }
 
@@ -726,58 +695,37 @@ struct EntryTransfer {
     destination: PathBuf,
 }
 
+#[derive(Default)]
+struct DirectoryScan {
+    paths: Vec<String>,
+    expanded_paths: Vec<String>,
+    deferred_paths: Vec<String>,
+}
+
+/// Lists `directory` and descends only into directories the user has expanded, so the
+/// cost of a scan is bounded by what is visible rather than by the size of the workspace.
 fn collect_paths(
     directory: &Path,
     relative_directory: &str,
-    paths: &mut Vec<String>,
-    directory_paths: &mut HashSet<String>,
-    deferred_paths: &mut Vec<String>,
+    expanded_paths: &HashSet<String>,
+    scan: &mut DirectoryScan,
 ) -> Result<()> {
-    for entry in sorted_entries(directory, paths.len())? {
+    for entry in sorted_entries(directory, scan.paths.len())? {
         let relative_path = relative_path(relative_directory, &entry.name);
 
-        if entry.is_directory {
-            let directory_path = format!("{relative_path}/");
-
-            push_path(paths, directory_path.clone())?;
-            directory_paths.insert(directory_path);
-
-            if is_ignored_directory_name(&entry.name) {
-                deferred_paths.push(format!("{relative_path}/"));
-                continue;
-            }
-
-            collect_paths(
-                &entry.path,
-                &relative_path,
-                paths,
-                directory_paths,
-                deferred_paths,
-            )?;
-        } else {
-            push_path(paths, relative_path)?;
+        if !entry.is_directory {
+            push_path(&mut scan.paths, relative_path)?;
+            continue;
         }
-    }
 
-    Ok(())
-}
+        let directory_path = format!("{relative_path}/");
+        push_path(&mut scan.paths, directory_path.clone())?;
 
-fn collect_child_paths(
-    directory: &Path,
-    relative_directory: &str,
-    paths: &mut Vec<String>,
-    deferred_paths: &mut Vec<String>,
-) -> Result<()> {
-    for entry in sorted_entries(directory, paths.len())? {
-        let relative_path = relative_path(relative_directory, &entry.name);
-
-        if entry.is_directory {
-            let directory_path = format!("{relative_path}/");
-
-            push_path(paths, directory_path.clone())?;
-            deferred_paths.push(directory_path);
+        if expanded_paths.contains(&directory_path) {
+            scan.expanded_paths.push(directory_path);
+            collect_paths(&entry.path, &relative_path, expanded_paths, scan)?;
         } else {
-            push_path(paths, relative_path)?;
+            scan.deferred_paths.push(directory_path);
         }
     }
 
@@ -829,10 +777,6 @@ fn ensure_path_capacity(current_path_count: usize) -> Result<()> {
             limit: MAX_FILE_TREE_PATHS,
         })
     }
-}
-
-fn is_ignored_directory_name(name: &str) -> bool {
-    IGNORED_DIRECTORY_NAMES.contains(&name)
 }
 
 fn is_excluded_directory_name(name: &str) -> bool {
@@ -911,29 +855,64 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn scans_directories_and_files_as_relative_tree_paths() {
+    fn scans_top_level_entries_and_defers_collapsed_directories() {
         let root = test_root("scan");
         fs::create_dir_all(root.join("src/components")).expect("test directory should be created");
         fs::create_dir(root.join("empty")).expect("empty test directory should be created");
         fs::write(root.join("README.md"), b"readme").expect("readme should be written");
         fs::write(root.join("src/main.rs"), b"fn main() {}").expect("main should be written");
-        fs::write(root.join("src/components/Button.tsx"), b"export {}")
-            .expect("component should be written");
 
         let tree = FileTree::scan(&root).expect("file tree should scan");
 
         assert_eq!(tree.root(), root.as_path());
+        assert_eq!(tree.paths(), &["empty/", "src/", "README.md"]);
+        assert_eq!(tree.deferred_paths(), &["empty/", "src/"]);
+        assert!(tree.expanded_paths().is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_descends_only_into_expanded_directories() {
+        let root = test_root("scan-expanded");
+        fs::create_dir_all(root.join("src/components")).expect("test directory should be created");
+        fs::create_dir_all(root.join("docs/guides")).expect("docs directory should be created");
+        fs::write(root.join("src/main.rs"), b"fn main() {}").expect("main should be written");
+        fs::write(root.join("src/components/Button.tsx"), b"export {}")
+            .expect("component should be written");
+
+        let tree = FileTree::scan_with_expanded_paths(
+            &root,
+            &["src/".to_owned(), "src/components/".to_owned()],
+        )
+        .expect("file tree should scan");
+
         assert_eq!(
             tree.paths(),
             &[
-                "empty/",
+                "docs/",
                 "src/",
                 "src/components/",
                 "src/components/Button.tsx",
                 "src/main.rs",
-                "README.md",
             ]
         );
+        assert_eq!(tree.deferred_paths(), &["docs/"]);
+        assert_eq!(tree.expanded_paths(), &["src/", "src/components/"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_skips_expanded_directories_below_collapsed_parents() {
+        let root = test_root("scan-collapsed-parent");
+        fs::create_dir_all(root.join("src/components")).expect("test directory should be created");
+
+        let tree = FileTree::scan_with_expanded_paths(&root, &["src/components/".to_owned()])
+            .expect("file tree should scan");
+
+        assert_eq!(tree.paths(), &["src/"]);
+        assert_eq!(tree.deferred_paths(), &["src/"]);
         assert!(tree.expanded_paths().is_empty());
 
         let _ = fs::remove_dir_all(root);
@@ -961,24 +940,20 @@ mod tests {
     }
 
     #[test]
-    fn scan_hides_git_and_keeps_generated_dependency_and_build_directories_collapsed() {
+    fn scan_hides_git_metadata_and_expands_dependency_directories_on_request() {
         let root = test_root("ignored-directories");
         fs::create_dir_all(root.join(".git/objects")).expect("git metadata should be created");
         fs::create_dir_all(root.join("node_modules/pkg")).expect("dependencies should be created");
-        fs::create_dir_all(root.join("src")).expect("source directory should be created");
         fs::create_dir_all(root.join("target/debug")).expect("build output should be created");
-        fs::write(root.join("node_modules/pkg/index.js"), b"export {}")
-            .expect("dependency file should be written");
-        fs::write(root.join("src/main.rs"), b"fn main() {}")
-            .expect("source file should be written");
 
-        let tree = FileTree::scan(&root).expect("file tree should scan");
+        let tree = FileTree::scan_with_expanded_paths(&root, &["node_modules/".to_owned()])
+            .expect("file tree should scan");
 
         assert_eq!(
             tree.paths(),
-            &["node_modules/", "src/", "src/main.rs", "target/"]
+            &["node_modules/", "node_modules/pkg/", "target/"]
         );
-        assert_eq!(tree.deferred_paths(), &["node_modules/", "target/"]);
+        assert_eq!(tree.deferred_paths(), &["node_modules/pkg/", "target/"]);
 
         let _ = fs::remove_dir_all(root);
     }
