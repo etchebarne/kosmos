@@ -157,26 +157,22 @@ impl FileTree {
         root: impl AsRef<Path>,
         source_paths: &[String],
         target_directory_path: Option<&str>,
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<Vec<EntryTransfer>> {
         let root = root.as_ref();
         ensure_directory(root)?;
         let target_directory = resolve_existing_directory(root, target_directory_path)?;
         let moves = prepare_directory_transfers(root, source_paths, &target_directory)?;
-        let destinations = moves
-            .iter()
-            .map(|entry_move| entry_move.destination.clone())
-            .collect::<Vec<_>>();
 
-        for entry_move in moves {
+        for entry_move in &moves {
             if entry_move.source == entry_move.destination {
                 continue;
             }
 
             fs::rename(&entry_move.source, &entry_move.destination)
-                .map_err(|error| io_error(entry_move.source, error))?;
+                .map_err(|error| io_error(entry_move.source.clone(), error))?;
         }
 
-        Ok(destinations)
+        Ok(moves)
     }
 
     pub fn copy_entries(
@@ -689,10 +685,11 @@ fn path_to_str(path: &Path) -> &str {
         .expect("validated file tree paths must be valid UTF-8")
 }
 
-#[derive(Debug)]
-struct EntryTransfer {
-    source: PathBuf,
-    destination: PathBuf,
+/// A selected entry and where a transfer placed it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntryTransfer {
+    pub source: PathBuf,
+    pub destination: PathBuf,
 }
 
 #[derive(Default)]
@@ -1127,11 +1124,16 @@ mod tests {
         fs::create_dir(root.join("dest")).expect("target parent should be created");
         fs::write(root.join("src/main.rs"), b"fn main() {}").expect("file should be written");
 
-        let destinations =
-            FileTree::move_entries(&root, &["src/main.rs".to_owned()], Some("dest/"))
-                .expect("entry should move");
+        let moves = FileTree::move_entries(&root, &["src/main.rs".to_owned()], Some("dest/"))
+            .expect("entry should move");
 
-        assert_eq!(destinations, &[root.join("dest/main.rs")]);
+        assert_eq!(
+            moves,
+            &[EntryTransfer {
+                source: root.join("src/main.rs"),
+                destination: root.join("dest/main.rs"),
+            }]
+        );
         assert!(!root.join("src/main.rs").exists());
         assert!(root.join("dest/main.rs").is_file());
 
@@ -1146,14 +1148,20 @@ mod tests {
         fs::write(root.join("src/components/button.tsx"), b"export {}")
             .expect("file should be written");
 
-        let destinations = FileTree::move_entries(
+        let moves = FileTree::move_entries(
             &root,
             &["src/".to_owned(), "src/components/button.tsx".to_owned()],
             Some("dest"),
         )
         .expect("parent selection should subsume its descendant");
 
-        assert_eq!(destinations, &[root.join("dest/src")]);
+        assert_eq!(
+            moves
+                .iter()
+                .map(|entry| &entry.destination)
+                .collect::<Vec<_>>(),
+            &[&root.join("dest/src")]
+        );
         assert!(root.join("dest/src/components/button.tsx").is_file());
 
         let _ = fs::remove_dir_all(root);

@@ -12,7 +12,7 @@ import { getGitDiff, saveGitDiffFile } from "@/renderer/ipc";
 import { editorSettings } from "@/renderer/lib/editor-settings";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
-import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
+import { confirmDialog, useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   GitChangeKind,
   GitDiff,
@@ -210,8 +210,8 @@ function LoadedDiff({
     return <DiffMessage message="No diff" />;
   }
 
-  const selectFile = (path: string) => {
-    if (hasUnsavedChanges && !window.confirm("Discard unsaved diff edits?")) {
+  const selectFile = async (path: string) => {
+    if (hasUnsavedChanges && !(await confirmDiscardDiffEdits())) {
       return;
     }
 
@@ -222,7 +222,7 @@ function LoadedDiff({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
-        <Select value={file.path} onValueChange={(path) => path && selectFile(path)}>
+        <Select value={file.path} onValueChange={(path) => path && void selectFile(path)}>
           <SelectTrigger size="sm" aria-label="Changed file" className="min-w-0 flex-1 justify-start">
             <SelectValue />
           </SelectTrigger>
@@ -248,6 +248,14 @@ function LoadedDiff({
   );
 }
 
+function confirmDiscardDiffEdits(): Promise<boolean> {
+  return confirmDialog({
+    title: "Discard unsaved diff edits?",
+    confirmLabel: "Discard",
+    destructive: true,
+  });
+}
+
 function DiffFileEditor({
   workspaceId,
   tabId,
@@ -264,8 +272,8 @@ function DiffFileEditor({
   const [sectionKind, setSectionKind] = useState<GitDiffSectionKind>(() => preferredSection(file).kind);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const section = file.sections.find((candidate) => candidate.kind === sectionKind) ?? preferredSection(file);
-  const selectSection = (kind: GitDiffSectionKind) => {
-    if (hasUnsavedChanges && !window.confirm("Discard unsaved diff edits?")) {
+  const selectSection = async (kind: GitDiffSectionKind) => {
+    if (hasUnsavedChanges && !(await confirmDiscardDiffEdits())) {
       return;
     }
 
@@ -289,7 +297,7 @@ function DiffFileEditor({
               size="sm"
               variant={candidate.kind === section.kind ? "secondary" : "ghost"}
               className="h-7 text-xs"
-              onClick={() => selectSection(candidate.kind)}
+              onClick={() => void selectSection(candidate.kind)}
             >
               {sectionLabel(candidate.kind)}
             </Button>

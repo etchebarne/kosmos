@@ -11,6 +11,8 @@ mod tooling;
 mod workspace;
 mod workspace_edits;
 
+pub use file_tree::EntryRelocation;
+
 use crate::formatters::FormatterManager;
 use crate::language_servers::{
     LanguageServerManager, LanguageServerPosition, LanguageServerTextEdit,
@@ -167,7 +169,7 @@ fn full_document_edit(text: &str, formatted: String) -> Vec<LanguageServerTextEd
     }]
 }
 
-fn remap_workspace_path(path: &str, source: &str, destination: &str) -> Option<String> {
+pub(crate) fn remap_workspace_path(path: &str, source: &str, destination: &str) -> Option<String> {
     if path == source {
         return Some(destination.to_owned());
     }
@@ -175,7 +177,7 @@ fn remap_workspace_path(path: &str, source: &str, destination: &str) -> Option<S
     Some(format!("{destination}/{suffix}"))
 }
 
-fn path_is_at_or_below(path: &str, parent: &str) -> bool {
+pub(crate) fn path_is_at_or_below(path: &str, parent: &str) -> bool {
     path == parent
         || path
             .strip_prefix(parent)
@@ -519,7 +521,10 @@ impl State {
         };
     }
 
-    fn resolve_workspace_id(&self, workspace_id: Option<WorkspaceId>) -> Option<WorkspaceId> {
+    pub(crate) fn resolve_workspace_id(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Option<WorkspaceId> {
         workspace_id.or_else(|| self.workspaces.active_workspace_id())
     }
 

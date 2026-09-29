@@ -13607,6 +13607,31 @@
         },
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TerminalReplaySegmentSnapshot": {
+              "properties": {
+                "columns": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "rows": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "columns",
+                "output",
+                "rows"
+              ],
+              "type": "object"
+            }
+          },
           "properties": {
             "exitCode": {
               "format": "uint32",
@@ -13622,6 +13647,12 @@
             "output": {
               "type": "string"
             },
+            "replay": {
+              "items": {
+                "$ref": "#/definitions/TerminalReplaySegmentSnapshot"
+              },
+              "type": "array"
+            },
             "signal": {
               "type": [
                 "string",
@@ -13635,6 +13666,7 @@
           "required": [
             "exited",
             "output",
+            "replay",
             "truncated",
             "exitCode",
             "signal"
@@ -13683,6 +13715,31 @@
         },
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TerminalReplaySegmentSnapshot": {
+              "properties": {
+                "columns": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "rows": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "columns",
+                "output",
+                "rows"
+              ],
+              "type": "object"
+            }
+          },
           "properties": {
             "exitCode": {
               "format": "uint32",
@@ -13698,6 +13755,12 @@
             "output": {
               "type": "string"
             },
+            "replay": {
+              "items": {
+                "$ref": "#/definitions/TerminalReplaySegmentSnapshot"
+              },
+              "type": "array"
+            },
             "signal": {
               "type": [
                 "string",
@@ -13711,6 +13774,7 @@
           "required": [
             "exited",
             "output",
+            "replay",
             "truncated",
             "exitCode",
             "signal"
@@ -13831,6 +13895,31 @@
         },
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TerminalReplaySegmentSnapshot": {
+              "properties": {
+                "columns": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "output": {
+                  "type": "string"
+                },
+                "rows": {
+                  "format": "uint16",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "columns",
+                "output",
+                "rows"
+              ],
+              "type": "object"
+            }
+          },
           "properties": {
             "exitCode": {
               "format": "uint32",
@@ -13846,6 +13935,12 @@
             "output": {
               "type": "string"
             },
+            "replay": {
+              "items": {
+                "$ref": "#/definitions/TerminalReplaySegmentSnapshot"
+              },
+              "type": "array"
+            },
             "signal": {
               "type": [
                 "string",
@@ -13859,6 +13954,7 @@
           "required": [
             "exited",
             "output",
+            "replay",
             "truncated",
             "exitCode",
             "signal"

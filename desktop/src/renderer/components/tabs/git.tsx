@@ -91,7 +91,7 @@ import {
 } from "@/renderer/components/ui/tooltip";
 import { errorMessage } from "@/renderer/lib/errors";
 import { pierreGitStatus } from "@/renderer/lib/git-status";
-import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
+import { confirmDialog, showErrorDialog, useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   GitChange,
   GitChangeKind,
@@ -224,6 +224,16 @@ const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
   },
 ];
 
+const IRREVERSIBLE_NOTICE = "This cannot be undone.";
+
+function showGitError(caughtError: unknown): void {
+  void showErrorDialog(errorMessage(caughtError), "Git command failed");
+}
+
+function confirmDestructive(title: string, confirmLabel: string, description?: string): Promise<boolean> {
+  return confirmDialog({ title, description, confirmLabel, destructive: true });
+}
+
 export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
   const gitRevision = useGitStore((state) => state.revisions[workspaceId] ?? 0);
@@ -329,7 +339,7 @@ export function GitTab({ workspaceId, tabId, onActivatePane }: GitTabProps) {
       await initGitRepository({ workspaceId, tabId });
       bumpGitRevision(workspaceId);
     } catch (caughtError: unknown) {
-      window.alert(errorMessage(caughtError));
+      showGitError(caughtError);
     } finally {
       finishOperation();
     }
@@ -489,7 +499,7 @@ function LoadedGitTab({
 
       return true;
     } catch (caughtError: unknown) {
-      window.alert(errorMessage(caughtError));
+      showGitError(caughtError);
       return false;
     } finally {
       onOperationFinish();
@@ -531,7 +541,7 @@ function LoadedGitTab({
 
   return (
     <TooltipProvider>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="scrollbar-themed flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-auto">
         <div className="flex min-h-10 shrink-0 items-center gap-2 border-b px-2 py-1.5">
           <GitToolbarTooltip label="Refresh git status">
             <Button
@@ -656,7 +666,7 @@ function LoadedGitTab({
           onTrackRemote={trackRemoteBranch}
         />
 
-        <div className="relative min-h-0 flex-1 overflow-hidden border-b">
+        <div className="relative min-h-24 flex-1 overflow-hidden border-b">
           {hasChanges ? (
             <GitChangeTree
               changes={snapshot.changes}
@@ -1062,8 +1072,8 @@ function GitBranchRow({
           size="icon-sm"
           disabled={busy}
           aria-label={`Delete ${branch.name}`}
-          onClick={() => {
-            if (!window.confirm(`Delete local branch ${branch.name}?`)) {
+          onClick={async () => {
+            if (!(await confirmDestructive(`Delete local branch ${branch.name}?`, "Delete"))) {
               return;
             }
 
@@ -1124,8 +1134,8 @@ function RemoteGitActions({
 }) {
   const primaryAction = remoteGitAction(primaryActionId);
   const primaryOperationId = remoteOperationId(primaryAction.id);
-  const runRemoteAction = (action: RemoteGitAction) => {
-    if (action.confirmMessage && !window.confirm(action.confirmMessage)) {
+  const runRemoteAction = async (action: RemoteGitAction) => {
+    if (action.confirmMessage && !(await confirmDestructive(action.confirmMessage, action.label))) {
       return;
     }
 
@@ -1148,7 +1158,7 @@ function RemoteGitActions({
         variant="outline"
         size="sm"
         disabled={busy}
-        onClick={() => runRemoteAction(primaryAction)}
+        onClick={() => void runRemoteAction(primaryAction)}
       >
         <OperationIcon
           defaultIcon={primaryAction.icon}
@@ -1172,7 +1182,7 @@ function RemoteGitActions({
               const ActionIcon = action.icon;
 
               return (
-                <DropdownMenuItem key={action.id} onClick={() => runRemoteAction(action)}>
+                <DropdownMenuItem key={action.id} onClick={() => void runRemoteAction(action)}>
                   <ActionIcon />
                   <RemoteGitActionLabel action={action} ahead={ahead} behind={behind} />
                 </DropdownMenuItem>
@@ -1274,8 +1284,8 @@ function GitActionsMenu({
           <DropdownMenuItem
             variant="destructive"
             disabled={!canDiscardStaged}
-            onClick={() => {
-              if (!window.confirm("Discard staged changes? This cannot be undone.")) {
+            onClick={async () => {
+              if (!(await confirmDestructive("Discard staged changes?", "Discard", IRREVERSIBLE_NOTICE))) {
                 return;
               }
 
@@ -1288,8 +1298,8 @@ function GitActionsMenu({
           <DropdownMenuItem
             variant="destructive"
             disabled={!canDiscardAll}
-            onClick={() => {
-              if (!window.confirm("Discard all changes? This cannot be undone.")) {
+            onClick={async () => {
+              if (!(await confirmDestructive("Discard all changes?", "Discard", IRREVERSIBLE_NOTICE))) {
                 return;
               }
 
@@ -1419,8 +1429,8 @@ function GitStashesDialog({
                       applyGitStash({ ...tabParams, selector: stash.selector }),
                     )
                   }
-                  onDrop={() => {
-                    if (!window.confirm(`Remove ${stash.selector}? This cannot be undone.`)) {
+                  onDrop={async () => {
+                    if (!(await confirmDestructive(`Remove ${stash.selector}?`, "Remove", IRREVERSIBLE_NOTICE))) {
                       return;
                     }
 
@@ -1614,8 +1624,8 @@ function GitRemotesDialog({
                   remote={remote}
                   busy={busy}
                   removing={activeAction === `remove:${remote.name}`}
-                  onRemove={() => {
-                    if (!window.confirm(`Remove remote ${remote.name}?`)) {
+                  onRemove={async () => {
+                    if (!(await confirmDestructive(`Remove remote ${remote.name}?`, "Remove"))) {
                       return;
                     }
 
@@ -1792,8 +1802,8 @@ function GitTagsDialog({
                   tag={tag}
                   busy={busy}
                   deleting={activeAction === `delete:${tag.name}`}
-                  onDelete={() => {
-                    if (!window.confirm(`Delete tag ${tag.name}?`)) {
+                  onDelete={async () => {
+                    if (!(await confirmDestructive(`Delete tag ${tag.name}?`, "Delete"))) {
                       return;
                     }
 

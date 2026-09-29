@@ -33,11 +33,11 @@ pub(super) const ROUTES: &[Route] = &[
     ),
     Route::new::<RenameFileTreeEntryParams, bool>(
         "renameEntry",
-        RouteDefinition::external(rename_entry),
+        RouteDefinition::application(rename_entry),
     ),
     Route::new::<TransferFileTreeEntriesParams, bool>(
         "moveEntries",
-        RouteDefinition::external(move_entries),
+        RouteDefinition::application(move_entries),
     ),
     Route::new::<TransferFileTreeEntriesParams, bool>(
         "copyEntries",
@@ -45,7 +45,7 @@ pub(super) const ROUTES: &[Route] = &[
     ),
     Route::new::<DeleteFileTreeEntriesParams, bool>(
         "deleteEntries",
-        RouteDefinition::external(delete_entries),
+        RouteDefinition::application(delete_entries),
     ),
     Route::new::<ResolveFileTreePathParams, FileTreeResolvedPath>(
         "resolvePath",
@@ -195,12 +195,12 @@ fn create_entry(state: &mut core::State, request: &RequestEnvelope) -> ServerMes
     }
 }
 
-fn rename_entry(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn rename_entry(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<RenameFileTreeEntryParams>(request) {
         Ok(params) => {
             let workspace_id = params.workspace_id.map(Into::into);
             let tab_id = params.tab_id.into();
-            let mapper = match file_tree_path_mapper(state, workspace_id, tab_id) {
+            let mapper = match file_tree_path_mapper(application.state(), workspace_id, tab_id) {
                 Ok(mapper) => mapper,
                 Err(error) => return file_tree_error(request.id, error),
             };
@@ -213,40 +213,60 @@ fn rename_entry(state: &mut core::State, request: &RequestEnvelope) -> ServerMes
                 Err(error) => return file_tree_error(request.id, error),
             };
 
-            match state.rename_file_tree_entry(
+            match application.rename_file_tree_entry(
                 workspace_id,
                 tab_id,
                 &source_path,
                 &destination_path,
             ) {
                 Ok(()) => ServerMessage::ok(request.id, true),
-                Err(error) => file_tree_error(request.id, error),
+                Err(error) => application_error(request.id, error),
             }
         }
         Err(response) => response,
     }
 }
 
-fn move_entries(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<TransferFileTreeEntriesParams>(request) {
-        Ok(params) => transfer_entries(state, request, params, false),
-        Err(response) => response,
+fn move_entries(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    let transfer = match parse_transfer(application.state(), request) {
+        Ok(transfer) => transfer,
+        Err(response) => return response,
+    };
+
+    match application.move_file_tree_entries(
+        transfer.workspace_id,
+        transfer.tab_id,
+        &transfer.source_paths,
+        transfer.target_directory_path.as_deref(),
+    ) {
+        Ok(()) => ServerMessage::ok(request.id, true),
+        Err(error) => application_error(request.id, error),
     }
 }
 
 fn copy_entries(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
-    match parse_params::<TransferFileTreeEntriesParams>(request) {
-        Ok(params) => transfer_entries(state, request, params, true),
-        Err(response) => response,
+    let transfer = match parse_transfer(state, request) {
+        Ok(transfer) => transfer,
+        Err(response) => return response,
+    };
+
+    match state.copy_file_tree_entries(
+        transfer.workspace_id,
+        transfer.tab_id,
+        &transfer.source_paths,
+        transfer.target_directory_path.as_deref(),
+    ) {
+        Ok(()) => ServerMessage::ok(request.id, true),
+        Err(error) => file_tree_error(request.id, error),
     }
 }
 
-fn delete_entries(state: &mut core::State, request: &RequestEnvelope) -> ServerMessage {
+fn delete_entries(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<DeleteFileTreeEntriesParams>(request) {
         Ok(params) => {
             let workspace_id = params.workspace_id.map(Into::into);
             let tab_id = params.tab_id.into();
-            let mapper = match file_tree_path_mapper(state, workspace_id, tab_id) {
+            let mapper = match file_tree_path_mapper(application.state(), workspace_id, tab_id) {
                 Ok(mapper) => mapper,
                 Err(error) => return file_tree_error(request.id, error),
             };
@@ -255,9 +275,9 @@ fn delete_entries(state: &mut core::State, request: &RequestEnvelope) -> ServerM
                 Err(error) => return file_tree_error(request.id, error),
             };
 
-            match state.delete_file_tree_entries(workspace_id, tab_id, &paths) {
+            match application.delete_file_tree_entries(workspace_id, tab_id, &paths) {
                 Ok(()) => ServerMessage::ok(request.id, true),
-                Err(error) => file_tree_error(request.id, error),
+                Err(error) => application_error(request.id, error),
             }
         }
         Err(response) => response,
@@ -290,47 +310,34 @@ fn resolve_path(state: &mut core::State, request: &RequestEnvelope) -> ServerMes
     }
 }
 
-fn transfer_entries(
-    state: &mut core::State,
+struct TransferRequest {
+    workspace_id: Option<core::tree::WorkspaceId>,
+    tab_id: core::tree::TabId,
+    source_paths: Vec<String>,
+    target_directory_path: Option<String>,
+}
+
+fn parse_transfer(
+    state: &core::State,
     request: &RequestEnvelope,
-    params: TransferFileTreeEntriesParams,
-    copy: bool,
-) -> ServerMessage {
+) -> Result<TransferRequest, ServerMessage> {
+    let params = parse_params::<TransferFileTreeEntriesParams>(request)?;
     let workspace_id = params.workspace_id.map(Into::into);
     let tab_id = params.tab_id.into();
-    let mapper = match file_tree_path_mapper(state, workspace_id, tab_id) {
-        Ok(mapper) => mapper,
-        Err(error) => return file_tree_error(request.id, error),
-    };
-    let source_paths = match relative_entry_paths(&mapper, &params.source_paths) {
-        Ok(paths) => paths,
-        Err(error) => return file_tree_error(request.id, error),
-    };
+    let mapper = file_tree_path_mapper(state, workspace_id, tab_id)
+        .map_err(|error| file_tree_error(request.id, error))?;
+    let source_paths = relative_entry_paths(&mapper, &params.source_paths)
+        .map_err(|error| file_tree_error(request.id, error))?;
     let target_directory_path =
-        match relative_optional_path(&mapper, params.target_directory_path.as_deref()) {
-            Ok(path) => path,
-            Err(error) => return file_tree_error(request.id, error),
-        };
-    let result = if copy {
-        state.copy_file_tree_entries(
-            workspace_id,
-            tab_id,
-            &source_paths,
-            target_directory_path.as_deref(),
-        )
-    } else {
-        state.move_file_tree_entries(
-            workspace_id,
-            tab_id,
-            &source_paths,
-            target_directory_path.as_deref(),
-        )
-    };
+        relative_optional_path(&mapper, params.target_directory_path.as_deref())
+            .map_err(|error| file_tree_error(request.id, error))?;
 
-    match result {
-        Ok(()) => ServerMessage::ok(request.id, true),
-        Err(error) => file_tree_error(request.id, error),
-    }
+    Ok(TransferRequest {
+        workspace_id,
+        tab_id,
+        source_paths,
+        target_directory_path,
+    })
 }
 
 fn file_tree_path_mapper(
@@ -361,6 +368,16 @@ fn relative_entry_paths(
         .iter()
         .map(|path| mapper.relative_entry_path(path))
         .collect()
+}
+
+fn application_error(id: u64, error: core::ApplicationError) -> ServerMessage {
+    match error {
+        core::ApplicationError::FileTree(error) => file_tree_error(id, error),
+        core::ApplicationError::UnsavedDocuments(_) => {
+            ServerMessage::error(id, "file_tree.unsaved_documents", error.to_string())
+        }
+        error => ServerMessage::error(id, "file_tree.editor_sync_failed", error.to_string()),
+    }
 }
 
 fn file_tree_error(id: u64, error: FileTreeError) -> ServerMessage {

@@ -45,6 +45,7 @@ export type SearchDocument = EditorDocument;
 
 export type TerminalShell = Generated.TerminalShellSnapshot;
 export type TerminalOutput = Generated.TerminalOutputSnapshot;
+export type TerminalReplaySegment = Generated.TerminalReplaySegmentSnapshot;
 
 export type SettingValue = Generated.SettingValuePayload;
 export type SettingControl = Generated.SettingControlPayload;

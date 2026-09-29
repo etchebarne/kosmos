@@ -1,12 +1,19 @@
 use std::path::{Path, PathBuf};
 
 use crate::tabs::file_tree::{
-    FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
+    EntryTransfer, FileTree, FileTreeDirectory, FileTreeEntryKind, FileTreeError, FileTreeViewState,
 };
 use crate::tabs::git::{FileTreeGitDecorations, GitError, GitRepository};
 use crate::tree::{TabId, WorkspaceId};
 
 use super::{FileTreeGitDecorationsError, State};
+
+/// A workspace-relative entry path that a file tree mutation moved elsewhere.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntryRelocation {
+    pub source: String,
+    pub destination: String,
+}
 
 impl State {
     pub fn file_tree(
@@ -114,9 +121,14 @@ impl State {
         tab_id: TabId,
         source_path: &str,
         destination_path: &str,
-    ) -> Result<(), FileTreeError> {
+    ) -> Result<Vec<EntryRelocation>, FileTreeError> {
         let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
-        FileTree::rename_entry(directory, source_path, destination_path).map(|_| ())
+        let destination = FileTree::rename_entry(directory, source_path, destination_path)?;
+        let transfer = EntryTransfer {
+            source: directory.join(source_path),
+            destination,
+        };
+        Ok(entry_relocations(directory, &[transfer]))
     }
 
     pub fn move_file_tree_entries(
@@ -125,9 +137,10 @@ impl State {
         tab_id: TabId,
         source_paths: &[String],
         target_directory_path: Option<&str>,
-    ) -> Result<(), FileTreeError> {
+    ) -> Result<Vec<EntryRelocation>, FileTreeError> {
         let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
-        FileTree::move_entries(directory, source_paths, target_directory_path).map(|_| ())
+        let transfers = FileTree::move_entries(directory, source_paths, target_directory_path)?;
+        Ok(entry_relocations(directory, &transfers))
     }
 
     pub fn copy_file_tree_entries(
@@ -160,4 +173,27 @@ impl State {
         let directory = self.file_tree_workspace_directory(workspace_id, tab_id)?;
         FileTree::resolve_path(directory, path)
     }
+}
+
+fn entry_relocations(root: &Path, transfers: &[EntryTransfer]) -> Vec<EntryRelocation> {
+    transfers
+        .iter()
+        .filter_map(|transfer| {
+            Some(EntryRelocation {
+                source: root_relative_path(root, &transfer.source)?,
+                destination: root_relative_path(root, &transfer.destination)?,
+            })
+        })
+        .filter(|relocation| relocation.source != relocation.destination)
+        .collect()
+}
+
+fn root_relative_path(root: &Path, path: &Path) -> Option<String> {
+    let components = path
+        .strip_prefix(root)
+        .ok()?
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    (!components.is_empty()).then(|| components.join("/"))
 }

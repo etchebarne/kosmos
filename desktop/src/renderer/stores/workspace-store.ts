@@ -4,6 +4,7 @@ import { errorMessage } from "@/renderer/lib/errors";
 import {
   disposeEditorBuffer,
   disposeAllEditorBuffers,
+  disposeEditorBuffersForTabKeys,
   disposeWorkspaceEditorBuffers,
   flushEditorBuffer,
   flushEditorBuffers,
@@ -14,6 +15,7 @@ import {
   activeWorkspaceFrom,
   mergeLocalSplitRatios,
   moveWorkspaceLocally,
+  closedTabKeys,
   resizeSplitLocally,
 } from "@/renderer/lib/workspace-snapshot";
 import { canConsumeRequest, createRequestGeneration } from "@/renderer/lib/request-generation";
@@ -342,6 +344,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     async refreshWorkspaces() {
       try {
         const snapshot = await listWorkspaces();
+        disposeEditorBuffersForTabKeys(closedTabKeys(get().snapshot, snapshot));
         set((state) => ({
           error: null,
           snapshot: mergeLocalSplitRatios(snapshot, state.snapshot),

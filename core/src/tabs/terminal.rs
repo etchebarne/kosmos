@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::error::Error as StdError;
 use std::fmt;
@@ -17,6 +17,7 @@ use crate::workloads::{TerminalHost, WorkloadScope, current_executable_supports_
 pub type Result<T> = std::result::Result<T, TerminalError>;
 
 const MAX_BUFFERED_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_HISTORY_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_INPUT_BYTES: usize = 256 * 1024;
 const MAX_PENDING_INPUTS: usize = 64;
 const EXIT_OUTPUT_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -151,6 +152,14 @@ impl TerminalSize {
         }
     }
 
+    pub fn columns(self) -> u16 {
+        self.columns
+    }
+
+    pub fn rows(self) -> u16 {
+        self.rows
+    }
+
     fn pty_size(self) -> PtySize {
         PtySize {
             rows: self.rows,
@@ -191,6 +200,25 @@ pub struct TerminalOutput {
     output: String,
     truncated: bool,
     exit_status: Option<TerminalExitStatus>,
+    replay: Vec<TerminalReplaySegment>,
+}
+
+/// Output a terminal produced while its PTY had `size`; replaying each segment at
+/// its own size keeps cursor-addressed redraws (such as prompt reflows) intact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalReplaySegment {
+    size: TerminalSize,
+    output: String,
+}
+
+impl TerminalReplaySegment {
+    pub fn size(&self) -> TerminalSize {
+        self.size
+    }
+
+    pub fn output(&self) -> &str {
+        &self.output
+    }
 }
 
 impl TerminalOutput {
@@ -199,6 +227,16 @@ impl TerminalOutput {
             output,
             truncated,
             exit_status,
+            replay: Vec::new(),
+        }
+    }
+
+    /// Moves the output into a replay of everything the terminal has shown.
+    fn into_replay(self, replay: Vec<TerminalReplaySegment>) -> Self {
+        Self {
+            output: String::new(),
+            replay,
+            ..self
         }
     }
 
@@ -216,6 +254,10 @@ impl TerminalOutput {
 
     pub fn exited(&self) -> bool {
         self.exit_status.is_some()
+    }
+
+    pub fn replay(&self) -> &[TerminalReplaySegment] {
+        &self.replay
     }
 }
 
@@ -237,7 +279,7 @@ impl TerminalSessions {
 
         if let Some(session) = self.sessions.get_mut(&key) {
             session.resize(size)?;
-            return session.read_output();
+            return session.replay_output();
         }
 
         let session = TerminalSession::spawn(cwd, size, None, memory_limit_percent)?;
@@ -387,6 +429,7 @@ struct TerminalSession {
     exit_status: Option<TerminalExitStatus>,
     exit_observed_at: Option<Instant>,
     scope: Option<WorkloadScope>,
+    history: TerminalHistory,
 }
 
 impl TerminalSession {
@@ -446,6 +489,7 @@ impl TerminalSession {
             exit_status: None,
             exit_observed_at: None,
             scope,
+            history: TerminalHistory::new(size),
         })
     }
 
@@ -466,14 +510,25 @@ impl TerminalSession {
             .is_some_and(|observed_at| observed_at.elapsed() >= EXIT_OUTPUT_GRACE_PERIOD);
         let (output, truncated, reader_finished) = self.drain_output(grace_period_elapsed)?;
         let exit_status = exit_status.filter(|_| reader_finished || grace_period_elapsed);
+        self.history.append(&output);
 
         Ok(TerminalOutput::new(output, truncated, exit_status))
+    }
+
+    /// Drains new output and returns the whole retained history so a freshly
+    /// mounted view can rebuild its scrollback.
+    fn replay_output(&mut self) -> Result<TerminalOutput> {
+        let output = self.read_output()?;
+
+        Ok(output.into_replay(self.history.segments()))
     }
 
     fn resize(&mut self, size: TerminalSize) -> Result<()> {
         self.master
             .resize(size.pty_size())
-            .map_err(TerminalError::pty)
+            .map_err(TerminalError::pty)?;
+        self.history.resize(size);
+        Ok(())
     }
 
     fn working_directory(&self) -> Option<PathBuf> {
@@ -704,6 +759,89 @@ impl TerminalOutputBuffer {
     }
 }
 
+/// Bounded copy of already drained output, split wherever the PTY size changed and
+/// trimmed from the front at line boundaries when possible so replays avoid starting
+/// mid-line or mid-escape.
+struct TerminalHistory {
+    segments: VecDeque<TerminalReplaySegment>,
+    len: usize,
+}
+
+impl TerminalHistory {
+    fn new(size: TerminalSize) -> Self {
+        Self {
+            segments: VecDeque::from([TerminalReplaySegment {
+                size,
+                output: String::new(),
+            }]),
+            len: 0,
+        }
+    }
+
+    fn resize(&mut self, size: TerminalSize) {
+        match self.segments.back_mut() {
+            Some(last) if last.size == size => {}
+            Some(last) if last.output.is_empty() => last.size = size,
+            _ => self.segments.push_back(TerminalReplaySegment {
+                size,
+                output: String::new(),
+            }),
+        }
+    }
+
+    fn append(&mut self, output: &str) {
+        if let Some(last) = self.segments.back_mut() {
+            last.output.push_str(output);
+            self.len += output.len();
+        }
+        self.trim_to_capacity();
+    }
+
+    fn trim_to_capacity(&mut self) {
+        while self.len > MAX_HISTORY_OUTPUT_BYTES {
+            let overflow = self.len - MAX_HISTORY_OUTPUT_BYTES;
+            let has_later_segments = self.segments.len() > 1;
+            let Some(first) = self.segments.front_mut() else {
+                return;
+            };
+            if first.output.len() <= overflow && has_later_segments {
+                self.len -= first.output.len();
+                self.segments.pop_front();
+                continue;
+            }
+            let start = history_trim_start(first.output.as_bytes(), overflow);
+            first.output.drain(..start);
+            self.len -= start;
+            return;
+        }
+    }
+
+    fn segments(&self) -> Vec<TerminalReplaySegment> {
+        self.segments
+            .iter()
+            .filter(|segment| !segment.output.is_empty())
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn contents(&self) -> String {
+        self.segments
+            .iter()
+            .map(|segment| segment.output.as_str())
+            .collect()
+    }
+}
+
+fn history_trim_start(bytes: &[u8], overflow: usize) -> usize {
+    let start = next_utf8_boundary(bytes, overflow);
+
+    bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(start, |newline| start + newline + 1)
+}
+
 fn next_utf8_boundary(bytes: &[u8], mut index: usize) -> usize {
     while index < bytes.len() && bytes[index] & 0b1100_0000 == 0b1000_0000 {
         index += 1;
@@ -922,6 +1060,111 @@ mod tests {
 
         assert!(String::from_utf8(bytes).is_ok());
         assert!(truncated);
+    }
+
+    #[test]
+    fn terminal_history_accumulates_drained_output() {
+        let mut history = TerminalHistory::new(TerminalSize::new(80, 24).unwrap());
+
+        history.append("first\n");
+        history.append("second");
+
+        assert_eq!(history.contents(), "first\nsecond");
+    }
+
+    #[test]
+    fn terminal_history_trims_at_line_boundaries() {
+        let mut history = TerminalHistory::new(TerminalSize::new(80, 24).unwrap());
+        let line = format!("{}\n", "x".repeat(99));
+
+        history.append(&"old\n".repeat(4));
+        history.append(&line.repeat(MAX_HISTORY_OUTPUT_BYTES / line.len() + 1));
+        history.append("tail");
+
+        assert!(history.contents().len() <= MAX_HISTORY_OUTPUT_BYTES);
+        assert!(!history.contents().contains("old"));
+        assert_eq!(history.contents().len() % line.len(), "tail".len());
+        assert!(history.contents().ends_with("tail"));
+    }
+
+    #[test]
+    fn terminal_history_trims_at_utf8_boundaries_without_newlines() {
+        let mut history = TerminalHistory::new(TerminalSize::new(80, 24).unwrap());
+
+        history.append(&"\u{20ac}".repeat(MAX_HISTORY_OUTPUT_BYTES / 3 + 2));
+
+        assert!(history.contents().len() <= MAX_HISTORY_OUTPUT_BYTES);
+        assert!(
+            history
+                .contents()
+                .chars()
+                .all(|character| character == '\u{20ac}')
+        );
+    }
+
+    #[test]
+    fn reopening_a_terminal_replays_drained_output() {
+        let mut sessions = TerminalSessions::default();
+        let (workspace_id, tab_id) = (WorkspaceId::new(1), TabId::new(1));
+        let size = TerminalSize::new(80, 24).unwrap();
+        let cwd = env::temp_dir();
+        sessions
+            .open(workspace_id, tab_id, &cwd, size, 100.0)
+            .expect("terminal should open");
+        sessions
+            .write_input(workspace_id, tab_id, "echo kosmos-replay\n")
+            .expect("input should be queued");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut drained = String::new();
+        while !drained.contains("kosmos-replay\r\n") && Instant::now() < deadline {
+            drained.push_str(sessions.read_output(workspace_id, tab_id).unwrap().output());
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        let wider = TerminalSize::new(120, 24).unwrap();
+        let reopened = sessions
+            .open(workspace_id, tab_id, &cwd, wider, 100.0)
+            .expect("terminal should reopen");
+
+        assert!(drained.contains("kosmos-replay\r\n"));
+        assert!(reopened.output().is_empty());
+        let replay = reopened.replay();
+        assert_eq!(replay[0].size(), size);
+        assert!(replay[0].output().starts_with(&drained));
+        assert!(replay.iter().skip(1).all(|segment| segment.size() == wider));
+    }
+
+    #[test]
+    fn terminal_history_splits_segments_when_the_size_changes() {
+        let narrow = TerminalSize::new(40, 10).unwrap();
+        let wide = TerminalSize::new(120, 10).unwrap();
+        let mut history = TerminalHistory::new(narrow);
+
+        history.append("narrow\n");
+        history.resize(narrow);
+        history.resize(wide);
+        history.append("wide");
+
+        let segments = history.segments();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(
+            (segments[0].size(), segments[0].output()),
+            (narrow, "narrow\n")
+        );
+        assert_eq!((segments[1].size(), segments[1].output()), (wide, "wide"));
+    }
+
+    #[test]
+    fn terminal_history_drops_whole_leading_segments_when_over_capacity() {
+        let mut history = TerminalHistory::new(TerminalSize::new(40, 10).unwrap());
+        history.append("old\n");
+        history.resize(TerminalSize::new(120, 10).unwrap());
+        history.append(&"x\n".repeat(MAX_HISTORY_OUTPUT_BYTES / 2));
+
+        assert_eq!(history.contents().len(), MAX_HISTORY_OUTPUT_BYTES);
+        assert!(!history.contents().contains("old"));
+        assert_eq!(history.segments().len(), 1);
     }
 
     #[test]

@@ -5,7 +5,11 @@ use crate::tabs::editor::{
 use crate::tabs::git::{GitError, GitLineHunk, GitRepository};
 use crate::tree::{TabId, TabKind, WorkspaceId};
 
-use super::{OpenEditorLocation, State};
+use super::file_tree::EntryRelocation;
+use super::{
+    OpenEditorLocation, State, path_is_at_or_below, remap_workspace_path,
+    tab_pane_id_in_workspace_list,
+};
 
 impl State {
     pub fn open_editor_tab(
@@ -234,5 +238,88 @@ impl State {
             Err(GitError::Discover { .. } | GitError::NotWorktree(_)) => Ok(Vec::new()),
             Err(error) => Err(error),
         }
+    }
+
+    /// Points editor tabs at the documents a file tree mutation relocated.
+    pub(crate) fn retarget_editor_tabs(
+        &mut self,
+        workspace_id: WorkspaceId,
+        relocations: &[EntryRelocation],
+    ) -> bool {
+        let mut changed = false;
+        for relocation in relocations {
+            for (tab_id, path) in self.relocated_editor_tabs(workspace_id, relocation) {
+                self.retarget_editor_tab(workspace_id, tab_id, path);
+                changed = true;
+            }
+        }
+        if changed {
+            self.mark_persistent_change();
+        }
+        changed
+    }
+
+    /// Closes editor tabs whose documents live at or below any of `paths`.
+    pub(crate) fn close_editor_tabs_at_or_below(
+        &mut self,
+        workspace_id: WorkspaceId,
+        paths: &[String],
+    ) -> bool {
+        let tab_ids = self.editor_tabs_at_or_below(workspace_id, paths);
+        let mut closed = false;
+        for tab_id in tab_ids {
+            if let Some(pane_id) =
+                tab_pane_id_in_workspace_list(&self.workspaces, workspace_id, tab_id)
+            {
+                closed |= self
+                    .close_tab(Some(workspace_id), pane_id, tab_id)
+                    .is_some();
+            }
+        }
+        closed
+    }
+
+    pub(crate) fn editor_tabs_at_or_below(
+        &self,
+        workspace_id: WorkspaceId,
+        paths: &[String],
+    ) -> Vec<TabId> {
+        self.editor_view_states
+            .iter()
+            .filter(|state| {
+                state.workspace_id() == workspace_id
+                    && paths
+                        .iter()
+                        .any(|path| path_is_at_or_below(state.path(), path))
+            })
+            .map(EditorViewState::tab_id)
+            .collect()
+    }
+
+    fn relocated_editor_tabs(
+        &self,
+        workspace_id: WorkspaceId,
+        relocation: &EntryRelocation,
+    ) -> Vec<(TabId, String)> {
+        self.editor_view_states
+            .iter()
+            .filter(|state| state.workspace_id() == workspace_id)
+            .filter_map(|state| {
+                remap_workspace_path(state.path(), &relocation.source, &relocation.destination)
+                    .map(|path| (state.tab_id(), path))
+            })
+            .collect()
+    }
+
+    fn retarget_editor_tab(&mut self, workspace_id: WorkspaceId, tab_id: TabId, path: String) {
+        let title = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        if let Some(state) = self
+            .editor_view_states
+            .iter_mut()
+            .find(|state| state.workspace_id() == workspace_id && state.tab_id() == tab_id)
+        {
+            state.set_path(path);
+        }
+        self.set_editor_tab_state(workspace_id, tab_id, TabKind::Editor, &title);
     }
 }

@@ -102,7 +102,7 @@ export function getOrCreateEditorBuffer(
   workspaceId: number,
   tabId: number,
   path: string,
-  content: string,
+  savedContent: string,
   createModel: () => editor.ITextModel,
 ): EditorBuffer {
   const key = bufferKey(workspaceId, tabId);
@@ -112,16 +112,17 @@ export function getOrCreateEditorBuffer(
     return existing;
   }
 
+  const model = createModel();
+  carryOverEditorBufferContent(existing, model);
   existing?.languageDocument.dispose();
   existing?.model.dispose();
 
-  const model = createModel();
   const buffer = {
     workspaceId,
     tabId,
     model,
     path,
-    savedContent: content,
+    savedContent,
     languageDocument: attachDocument(workspaceId, tabId, path, model),
     modelListeners: new Set<(model: editor.ITextModel) => void>(),
     lockState: existing?.lockState ?? {
@@ -142,6 +143,20 @@ export function getOrCreateEditorBuffer(
   buffers.set(key, buffer);
 
   return buffer;
+}
+
+/** Keeps unsynchronized edits when a tab's buffer moves to a renamed path. */
+function carryOverEditorBufferContent(
+  existing: EditorBuffer | undefined,
+  model: editor.ITextModel,
+): void {
+  if (!existing || existing.model.isDisposed()) {
+    return;
+  }
+  const content = existing.model.getValue();
+  if (model.getValue() !== content) {
+    model.setValue(content);
+  }
 }
 
 export function openEditorBufferSession(
@@ -517,15 +532,25 @@ export function restoreSuspendedEditorBuffer(
   restoreDetachedEditorBuffer(state.buffer, state.path, model);
 }
 
-export function reconcileEditorBuffer(buffer: EditorBuffer, content: string): boolean {
+export function reconcileEditorBuffer(buffer: EditorBuffer, document: EditorDocument): boolean {
   const wasDirty = buffer.model.getValue() !== buffer.savedContent;
-  buffer.savedContent = content;
+  buffer.savedContent = document.savedContent;
 
-  if (!wasDirty && buffer.model.getValue() !== content) {
-    buffer.model.setValue(content);
+  if (!wasDirty && buffer.model.getValue() !== document.savedContent) {
+    buffer.session.revision = Math.max(buffer.session.revision, document.revision);
+    replaceEditorBufferContent(buffer, document.savedContent);
   }
 
   return buffer.model.getValue() !== buffer.savedContent;
+}
+
+/** Replaces the whole buffer as one undoable edit so external reloads keep undo history. */
+function replaceEditorBufferContent(buffer: EditorBuffer, content: string): void {
+  buffer.model.pushEditOperations(
+    [],
+    [{ range: buffer.model.getFullModelRange(), text: content }],
+    () => null,
+  );
 }
 
 export function applyEditorSaveProjection(buffer: EditorBuffer, result: EditorSave): boolean {
@@ -572,6 +597,16 @@ export function disposeWorkspaceEditorBuffers(workspaceId: number): void {
     buffer.languageDocument.dispose();
     buffer.model.dispose();
     buffers.delete(key);
+  }
+}
+
+/** Disposes buffers whose tabs were closed elsewhere, such as by a file tree deletion. */
+export function disposeEditorBuffersForTabKeys(tabKeys: readonly string[]): void {
+  for (const key of tabKeys) {
+    const buffer = buffers.get(key);
+    if (buffer) {
+      disposeEditorBuffer(buffer.workspaceId, buffer.tabId);
+    }
   }
 }
 

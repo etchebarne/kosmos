@@ -1875,8 +1875,18 @@ export interface TerminalOutputSnapshot {
   exitCode: number | null;
   exited: boolean;
   output: string;
+  replay: TerminalReplaySegmentSnapshot[];
   signal: string | null;
   truncated: boolean;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "TerminalReplaySegmentSnapshot".
+ */
+export interface TerminalReplaySegmentSnapshot {
+  columns: number;
+  output: string;
+  rows: number;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

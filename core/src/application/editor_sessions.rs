@@ -4,6 +4,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use crate::language_servers::WorkspaceEditOpenDocument;
 use crate::language_servers::{StagedWorkspaceEdit, StagedWorkspaceEditOperation};
+use crate::state::{path_is_at_or_below, remap_workspace_path};
 use crate::tabs::editor::{MAX_EDITOR_FILE_BYTES, normalize_path};
 use crate::tree::{TabId, WorkspaceId};
 
@@ -231,6 +232,50 @@ impl EditorSessionRegistry {
         Ok(current.clone())
     }
 
+    /// Records the document's current disk content. A clean session follows the disk,
+    /// while a dirty session keeps its text and only moves its saved baseline.
+    pub fn observe_disk_content(&mut self, id: EditorSessionId, disk_content: String) {
+        let Some(current) = self.sessions.get_mut(&id) else {
+            return;
+        };
+        if current.saved_content == disk_content {
+            return;
+        }
+        if !current.is_dirty() {
+            current.content = disk_content.clone();
+            advance_revision(current);
+        }
+        current.saved_content = disk_content;
+    }
+
+    /// Moves sessions whose document path was renamed at or below `source`.
+    pub fn retarget_path(&mut self, workspace_id: WorkspaceId, source: &str, destination: &str) {
+        for session in self
+            .sessions
+            .values_mut()
+            .filter(|session| session.id.workspace_id == workspace_id)
+        {
+            if let Some(path) = remap_workspace_path(&session.path, source, destination) {
+                session.path = path;
+            }
+        }
+    }
+
+    /// Returns the sessions whose document lives at or below `path`.
+    pub fn at_or_below(&self, workspace_id: WorkspaceId, path: &str) -> Vec<EditorSessionSnapshot> {
+        self.sessions
+            .values()
+            .filter(|session| {
+                session.id.workspace_id == workspace_id && path_is_at_or_below(&session.path, path)
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn contains(&self, id: EditorSessionId) -> bool {
+        self.sessions.contains_key(&id)
+    }
+
     pub fn snapshot(&self, id: EditorSessionId) -> Option<EditorSessionSnapshot> {
         self.sessions.get(&id).cloned()
     }
@@ -315,7 +360,8 @@ impl EditorSessionRegistry {
                         .values_mut()
                         .filter(|session| session.id.workspace_id == *workspace_id)
                     {
-                        if let Some(path) = remap_path(&session.path, old_path, new_path) {
+                        if let Some(path) = remap_workspace_path(&session.path, old_path, new_path)
+                        {
                             session.path = path;
                             advance_revision(session);
                         }
@@ -329,13 +375,13 @@ impl EditorSessionRegistry {
                         .iter()
                         .filter(|(_, session)| {
                             session.id.workspace_id == *workspace_id
-                                && path_at_or_below(&session.path, path)
+                                && path_is_at_or_below(&session.path, path)
                         })
                         .map(|(id, _)| *id)
                         .collect::<Vec<_>>();
                     self.sessions.retain(|_, session| {
                         session.id.workspace_id != *workspace_id
-                            || !path_at_or_below(&session.path, path)
+                            || !path_is_at_or_below(&session.path, path)
                     });
                     for id in removed {
                         self.save_gates.remove(&id);
@@ -418,22 +464,6 @@ fn advance_revision(session: &mut EditorSessionSnapshot) {
     session.revision = session.revision.saturating_add(1);
 }
 
-fn remap_path(path: &str, source: &str, destination: &str) -> Option<String> {
-    if path == source {
-        return Some(destination.to_owned());
-    }
-    path.strip_prefix(source)
-        .and_then(|suffix| suffix.strip_prefix('/'))
-        .map(|suffix| format!("{destination}/{suffix}"))
-}
-
-fn path_at_or_below(path: &str, parent: &str) -> bool {
-    path == parent
-        || path
-            .strip_prefix(parent)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
 fn normalized_path(path: &str) -> Result<String, EditorSessionError> {
     normalize_path(path).map_err(|_| EditorSessionError::InvalidPath(path.to_owned()))
 }
@@ -485,6 +515,36 @@ mod tests {
         let stale = sessions.change(id(), "one".to_owned(), 1).unwrap();
         assert!(matches!(stale, EditorSessionUpdate::Stale(snapshot) if snapshot.content == "two"));
         assert_eq!(sessions.snapshot(id()).unwrap().revision, 2);
+    }
+
+    #[test]
+    fn disk_content_reloads_clean_sessions_and_rebases_dirty_ones() {
+        let mut sessions = EditorSessionRegistry::default();
+        sessions
+            .open(id(), "src/main.rs", "one".to_owned(), 1)
+            .unwrap();
+        sessions.observe_disk_content(id(), "disk".to_owned());
+        let clean = sessions.snapshot(id()).unwrap();
+        assert_eq!((clean.content.as_str(), clean.revision), ("disk", 2));
+
+        sessions.change(id(), "edited".to_owned(), 3).unwrap();
+        sessions.observe_disk_content(id(), "disk two".to_owned());
+        let dirty = sessions.snapshot(id()).unwrap();
+        assert_eq!(dirty.content, "edited");
+        assert_eq!(dirty.saved_content, "disk two");
+        assert_eq!(dirty.revision, 3);
+    }
+
+    #[test]
+    fn retargeting_moves_sessions_at_or_below_the_renamed_path() {
+        let mut sessions = EditorSessionRegistry::default();
+        sessions
+            .open(id(), "src/main.rs", "one".to_owned(), 1)
+            .unwrap();
+        sessions.retarget_path(WorkspaceId::new(1), "src", "app");
+        assert_eq!(sessions.snapshot(id()).unwrap().path, "app/main.rs");
+        assert_eq!(sessions.at_or_below(WorkspaceId::new(1), "app").len(), 1);
+        assert!(sessions.at_or_below(WorkspaceId::new(1), "ap").is_empty());
     }
 
     #[test]

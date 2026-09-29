@@ -871,7 +871,9 @@ fn persistence_error(request_id: u64, error: core::ApplicationError) -> ServerMe
         | core::ApplicationError::EditorSession(_)
         | core::ApplicationError::RequestCancelled
         | core::ApplicationError::CloseNotFound
-        | core::ApplicationError::InvalidCloseDecision => "persistence.operation_failed",
+        | core::ApplicationError::InvalidCloseDecision
+        | core::ApplicationError::FileTree(_)
+        | core::ApplicationError::UnsavedDocuments(_) => "persistence.operation_failed",
     };
     ServerMessage::error(request_id, code, error.to_string())
 }

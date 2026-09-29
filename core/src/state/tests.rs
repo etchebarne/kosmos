@@ -1554,6 +1554,42 @@ fn splitting_only_tab_keeps_source_pane_valid() {
 }
 
 #[test]
+fn splitting_only_tab_against_another_pane_relocates_the_pane() {
+    let mut state = State::new();
+    state.open_workspace("/workspaces/main");
+    state.open_tab(None, None, None, TabKind::Search);
+    assert!(state.split_tab(
+        None,
+        PaneId::new(1),
+        PaneId::new(1),
+        TabId::new(2),
+        SplitAxis::Horizontal,
+        false,
+    ));
+
+    assert!(state.split_tab(
+        None,
+        PaneId::new(2),
+        PaneId::new(1),
+        TabId::new(2),
+        SplitAxis::Vertical,
+        false,
+    ));
+
+    let workspace = state
+        .workspaces()
+        .active_workspace()
+        .expect("workspace should be active");
+    assert_eq!(workspace.root().pane_count(), 2);
+    let moved_pane = workspace
+        .root()
+        .find_pane(PaneId::new(2))
+        .expect("moved pane should keep its identity");
+    assert_eq!(moved_pane.tabs().len(), 1);
+    assert_eq!(moved_pane.active_tab().id(), TabId::new(2));
+}
+
+#[test]
 fn moving_pane_reuses_existing_pane() {
     let mut state = State::new();
     state.open_workspace("/workspaces/main");

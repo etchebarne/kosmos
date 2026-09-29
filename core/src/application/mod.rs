@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 mod editor_sessions;
+mod file_tree;
 
 pub use editor_sessions::{
     EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,
@@ -23,6 +24,7 @@ use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{ResolvedSettings, SettingValue, SettingsError};
 use crate::state::{FileTreeGitDecorationsError, OpenEditorLocation, PersistentStateCandidate};
 use crate::tabs::editor::EditorError;
+use crate::tabs::file_tree::FileTreeError;
 use crate::tabs::git::{FileTreeGitDecorations, GitError, GitLineHunk};
 use crate::tree::{PaneId, TabId, WorkspaceId};
 use crate::window::WindowState;
@@ -161,6 +163,8 @@ pub enum ApplicationError {
     RequestCancelled,
     CloseNotFound,
     InvalidCloseDecision,
+    FileTree(FileTreeError),
+    UnsavedDocuments(Vec<String>),
 }
 
 impl Application {
@@ -326,15 +330,16 @@ impl Application {
     }
 
     pub fn editor_session_document(
-        &self,
+        &mut self,
         workspace_id: Option<WorkspaceId>,
         tab_id: TabId,
     ) -> Result<EditorSessionSnapshot, ApplicationError> {
         let (workspace_id, path) = self.state.editor_session_target(workspace_id, tab_id)?;
-        if let Some(session) = self
-            .editor_sessions
-            .snapshot(EditorSessionId::new(workspace_id, tab_id))
-        {
+        let id = EditorSessionId::new(workspace_id, tab_id);
+        if self.editor_sessions.contains(id) {
+            self.observe_editor_session_disk_content(id);
+        }
+        if let Some(session) = self.editor_sessions.snapshot(id) {
             return Ok(session);
         }
         let document = self.state.editor_document(Some(workspace_id), tab_id)?;
@@ -345,6 +350,15 @@ impl Application {
             saved_content: document.content().to_owned(),
             revision: 0,
         })
+    }
+
+    /// Reconciles an open session with its document on disk; unreadable documents
+    /// (for example, deleted files) leave the session untouched.
+    fn observe_editor_session_disk_content(&mut self, id: EditorSessionId) {
+        if let Ok(document) = self.state.editor_document(Some(id.workspace_id), id.tab_id) {
+            self.editor_sessions
+                .observe_disk_content(id, document.content().to_owned());
+        }
     }
 
     /// Saves the current session text without invoking format-on-save policy.
@@ -669,31 +683,40 @@ impl Application {
     }
 
     fn persist_close(&mut self, target: CloseTarget) -> Result<(), ApplicationError> {
-        let mut operation = self.prepare_persistent_operation()?;
-        let closed = match target {
+        let closed = self.persist_state_change(|state| match target {
             CloseTarget::Tab {
                 workspace_id,
                 pane_id,
                 tab_id,
-            } => operation
-                .state_mut()
+            } => state
                 .close_tab(Some(workspace_id), pane_id, tab_id)
                 .is_some(),
-            CloseTarget::Workspace { workspace_id } => operation
-                .state_mut()
-                .close_workspace(Some(workspace_id))
-                .is_some(),
+            CloseTarget::Workspace { workspace_id } => {
+                state.close_workspace(Some(workspace_id)).is_some()
+            }
             CloseTarget::Application => true,
-        };
-        if !closed {
+        })?;
+        closed
+            .then_some(())
+            .ok_or(ApplicationError::InvalidCloseDecision)
+    }
+
+    /// Applies a state mutation durably; a mutation reporting no change is not persisted.
+    fn persist_state_change(
+        &mut self,
+        change: impl FnOnce(&mut State) -> bool,
+    ) -> Result<bool, ApplicationError> {
+        let mut operation = self.prepare_persistent_operation()?;
+        if !change(operation.state_mut()) {
             self.abandon_persistent_operation();
-            return Err(ApplicationError::InvalidCloseDecision);
+            return Ok(false);
         }
         if let Err(error) = operation.persist() {
             self.abandon_persistent_operation();
             return Err(error);
         }
-        self.complete_persistent_operation(operation)
+        self.complete_persistent_operation(operation)?;
+        Ok(true)
     }
 
     fn remove_sessions_for_target(&mut self, target: CloseTarget) {
@@ -916,6 +939,12 @@ impl fmt::Display for ApplicationError {
             Self::InvalidCloseDecision => {
                 formatter.write_str("close decision no longer matches application state")
             }
+            Self::FileTree(error) => error.fmt(formatter),
+            Self::UnsavedDocuments(paths) => write!(
+                formatter,
+                "save or discard unsaved changes first: {}",
+                paths.join(", ")
+            ),
         }
     }
 }
@@ -926,7 +955,9 @@ impl std::error::Error for ApplicationError {
             Self::Persistence(error) => Some(error),
             Self::Editor(error) => Some(error),
             Self::EditorSession(error) => Some(error),
-            Self::DurabilityInFlight
+            Self::FileTree(error) => Some(error),
+            Self::UnsavedDocuments(_)
+            | Self::DurabilityInFlight
             | Self::StalePreparedOperation
             | Self::RequestCancelled
             | Self::CloseNotFound
@@ -944,6 +975,12 @@ impl From<PersistenceError> for ApplicationError {
 impl From<EditorError> for ApplicationError {
     fn from(error: EditorError) -> Self {
         Self::Editor(error)
+    }
+}
+
+impl From<FileTreeError> for ApplicationError {
+    fn from(error: FileTreeError) -> Self {
+        Self::FileTree(error)
     }
 }
 
@@ -1814,6 +1851,241 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn external_change_reloads_a_clean_session() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("external-clean");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        std::fs::write(root.join("document.txt"), "external").unwrap();
+
+        let document = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+
+        assert_eq!(document.content, "external");
+        assert_eq!(document.saved_content, "external");
+        assert_eq!(document.revision, 2);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn external_change_keeps_unsaved_text_and_moves_the_saved_baseline() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("external-dirty");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .unwrap();
+        std::fs::write(root.join("document.txt"), "external").unwrap();
+
+        let document = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+
+        assert_eq!(document.content, "unsaved");
+        assert_eq!(document.saved_content, "external");
+        assert_eq!(document.revision, 2);
+        assert!(document.is_dirty());
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn file_tree_rename_retargets_the_open_editor_and_its_unsaved_session() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("file-tree-rename");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .unwrap();
+
+        application
+            .rename_file_tree_entry(
+                Some(workspace_id),
+                TabId::new(1),
+                "document.txt",
+                "renamed.txt",
+            )
+            .unwrap();
+
+        assert_eq!(
+            application.state().editor_view_states()[0].path(),
+            "renamed.txt"
+        );
+        assert_eq!(
+            tab_title(&application, workspace_id, tab_id).as_deref(),
+            Some("renamed.txt")
+        );
+        let document = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+        assert_eq!(document.path, "renamed.txt");
+        assert_eq!(document.content, "unsaved");
+        assert_eq!(document.saved_content, "before");
+
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
+            .unwrap();
+        application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("renamed.txt")).unwrap(),
+            "unsaved"
+        );
+        assert!(!root.join("document.txt").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn file_tree_move_retargets_editors_below_the_moved_directory() {
+        let (mut application, root, database, workspace_id, _) =
+            editor_application("file-tree-move");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("dest")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "lib").unwrap();
+        application
+            .state_mut()
+            .open_editor_tab(Some(workspace_id), TabId::new(1), "src/lib.rs")
+            .unwrap();
+
+        application
+            .move_file_tree_entries(
+                Some(workspace_id),
+                TabId::new(1),
+                &["src".to_owned()],
+                Some("dest"),
+            )
+            .unwrap();
+
+        let paths = application
+            .state()
+            .editor_view_states()
+            .iter()
+            .map(|state| state.path().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["document.txt", "dest/src/lib.rs"]);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn file_tree_delete_refuses_documents_with_unsaved_changes() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("file-tree-delete-dirty");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .unwrap();
+
+        let result = application.delete_file_tree_entries(
+            Some(workspace_id),
+            TabId::new(1),
+            &["document.txt".to_owned()],
+        );
+
+        assert!(
+            matches!(result, Err(ApplicationError::UnsavedDocuments(paths)) if paths == ["document.txt"])
+        );
+        assert!(root.join("document.txt").exists());
+        assert_eq!(application.state().editor_view_states().len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn file_tree_delete_closes_clean_editors() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("file-tree-delete-clean");
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                tab_id,
+                "document.txt",
+                "before".to_owned(),
+                1,
+            )
+            .unwrap();
+
+        application
+            .delete_file_tree_entries(
+                Some(workspace_id),
+                TabId::new(1),
+                &["document.txt".to_owned()],
+            )
+            .unwrap();
+
+        assert!(!root.join("document.txt").exists());
+        assert!(application.state().editor_view_states().is_empty());
+        assert_eq!(tab_title(&application, workspace_id, tab_id), None);
+        assert!(
+            !application
+                .editor_sessions
+                .contains(EditorSessionId::new(workspace_id, tab_id))
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    fn tab_title(
+        application: &Application,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Option<String> {
+        application
+            .state()
+            .workspaces()
+            .workspace(workspace_id)?
+            .root()
+            .find_pane(crate::tree::PaneId::new(1))?
+            .tabs()
+            .iter()
+            .find(|tab| tab.id() == tab_id)
+            .map(|tab| tab.title().to_owned())
     }
 
     fn editor_application(name: &str) -> (Application, PathBuf, PathBuf, WorkspaceId, TabId) {

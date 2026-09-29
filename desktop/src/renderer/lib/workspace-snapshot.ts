@@ -130,6 +130,38 @@ export function mergeLocalSplitRatios(
   return updated ? { ...snapshot, workspaces } : snapshot;
 }
 
+/** Lists `workspaceId:tabId` keys of tabs present in `previous` but gone from `next`. */
+export function closedTabKeys(
+  previous: WorkspaceListSnapshot | null,
+  next: WorkspaceListSnapshot,
+): string[] {
+  if (!previous) {
+    return [];
+  }
+  const nextKeys = openTabKeys(next);
+  return [...openTabKeys(previous)].filter((key) => !nextKeys.has(key));
+}
+
+function openTabKeys(snapshot: WorkspaceListSnapshot): Set<string> {
+  const keys = new Set<string>();
+  for (const workspace of snapshot.workspaces) {
+    collectTabKeys(workspace.id, workspace.root, keys);
+  }
+  return keys;
+}
+
+function collectTabKeys(workspaceId: number, node: PaneNodeSnapshot, keys: Set<string>): void {
+  if (node.type === "leaf") {
+    for (const tab of node.pane.tabs) {
+      keys.add(`${workspaceId}:${tab.id}`);
+    }
+    return;
+  }
+
+  collectTabKeys(workspaceId, node.first, keys);
+  collectTabKeys(workspaceId, node.second, keys);
+}
+
 function resizeNodeSplit(
   node: PaneNodeSnapshot,
   splitId: SplitPaneId,

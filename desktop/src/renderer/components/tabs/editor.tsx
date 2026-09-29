@@ -249,7 +249,7 @@ function LoadedEditor({
       workspaceId,
       tabId,
       document.path,
-      document.content,
+      document.savedContent,
       () => monaco.editor.createModel(document.content, undefined, uri),
     );
     bufferRef.current = buffer;
@@ -441,7 +441,7 @@ function LoadedEditor({
       return;
     }
 
-    const isDirty = reconcileEditorBuffer(buffer, document.content);
+    const isDirty = reconcileEditorBuffer(buffer, document);
     setTabDirty(workspaceId, tabId, isDirty);
     setSaveState((current) => {
       if (current.status === "saving") {
@@ -449,7 +449,7 @@ function LoadedEditor({
       }
       return isDirty ? { status: "dirty" } : { status: "clean" };
     });
-  }, [workspaceId, tabId, document.path, document.content, setTabDirty]);
+  }, [workspaceId, tabId, document, setTabDirty]);
 
   useEffect(() => {
     const buffer = bufferRef.current;

@@ -23,7 +23,13 @@ import {
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
 import { terminalCopyText } from "@/renderer/lib/terminal-keybindings";
-import type { TabId, TerminalOutput, TerminalShell, WorkspaceId } from "@/shared/ipc";
+import type {
+  TabId,
+  TerminalOutput,
+  TerminalReplaySegment,
+  TerminalShell,
+  WorkspaceId,
+} from "@/shared/ipc";
 
 type TerminalTabProps = {
   workspaceId: WorkspaceId;
@@ -302,6 +308,13 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
           return;
         }
 
+        await replayTerminalHistory(terminal, output.replay);
+
+        if (disposed) {
+          return;
+        }
+
+        terminal.resize(size.columns, size.rows);
         sessionOpen = true;
         setStatus({ kind: "running" });
 
@@ -506,6 +519,17 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       </div>
     </div>
   );
+}
+
+/** Rewrites earlier output at the sizes it was produced for, so redraws land correctly. */
+async function replayTerminalHistory(
+  terminal: XTerm,
+  segments: TerminalReplaySegment[],
+): Promise<void> {
+  for (const segment of segments) {
+    terminal.resize(segment.columns, segment.rows);
+    await new Promise<void>((resolve) => terminal.write(segment.output, resolve));
+  }
 }
 
 function TerminalStatusBadge({ status }: { status: TerminalStatus }) {

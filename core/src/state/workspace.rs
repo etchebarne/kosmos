@@ -245,8 +245,20 @@ impl State {
             return false;
         }
 
-        let fallback_tab =
-            (source_pane.tabs().len() == 1).then(|| self.next_tab(TabKind::Blank, None));
+        let is_last_tab = source_pane.tabs().len() == 1;
+        if is_last_tab && pane_id != target_pane_id {
+            // Splitting a pane's only tab relocates the whole pane instead of
+            // leaving an empty Blank pane behind.
+            return self.move_pane(
+                Some(workspace_id),
+                pane_id,
+                target_pane_id,
+                axis,
+                new_pane_first,
+            );
+        }
+
+        let fallback_tab = is_last_tab.then(|| self.next_tab(TabKind::Blank, None));
         let new_pane_id = self.next_pane_id();
         let split_id = self.next_split_id();
 

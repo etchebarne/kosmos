@@ -278,7 +278,7 @@ impl State {
         tab_title_in_node(workspace.root(), tab_id).map(str::to_owned)
     }
 
-    fn set_editor_tab_state(
+    pub(super) fn set_editor_tab_state(
         &mut self,
         workspace_id: WorkspaceId,
         tab_id: TabId,

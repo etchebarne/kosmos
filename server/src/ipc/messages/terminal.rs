@@ -1,4 +1,4 @@
-use core::tabs::terminal::{TerminalOutput, TerminalShell};
+use core::tabs::terminal::{TerminalOutput, TerminalReplaySegment, TerminalShell};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -73,6 +73,25 @@ pub(crate) struct TerminalOutputSnapshot {
     exited: bool,
     exit_code: Option<u32>,
     signal: Option<String>,
+    replay: Vec<TerminalReplaySegmentSnapshot>,
+}
+
+#[derive(Debug, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TerminalReplaySegmentSnapshot {
+    columns: u16,
+    rows: u16,
+    output: String,
+}
+
+impl TerminalReplaySegmentSnapshot {
+    fn from_segment(segment: &TerminalReplaySegment) -> Self {
+        Self {
+            columns: segment.size().columns(),
+            rows: segment.size().rows(),
+            output: segment.output().to_owned(),
+        }
+    }
 }
 
 impl TerminalOutputSnapshot {
@@ -85,6 +104,11 @@ impl TerminalOutputSnapshot {
             exited: output.exited(),
             exit_code: exit_status.map(|status| status.exit_code()),
             signal: exit_status.and_then(|status| status.signal().map(str::to_owned)),
+            replay: output
+                .replay()
+                .iter()
+                .map(TerminalReplaySegmentSnapshot::from_segment)
+                .collect(),
         }
     }
 }

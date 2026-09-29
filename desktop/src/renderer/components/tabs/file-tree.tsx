@@ -42,7 +42,7 @@ import {
 import { errorMessage } from "@/renderer/lib/errors";
 import { fileTreeGitStatus } from "@/renderer/lib/file-tree-git-status";
 import { reconcileFileTreePaths } from "@/renderer/lib/file-tree-refresh";
-import { useGitStore, useWorkspaceStore } from "@/renderer/stores";
+import { confirmDialog, showErrorDialog, useGitStore, useWorkspaceStore } from "@/renderer/stores";
 import type {
   FileTreeEntryKind,
   FileTreeGitStatusSnapshot,
@@ -231,6 +231,7 @@ function LoadedFileTree({
   onReload(): Promise<void>;
 }) {
   const openEditorTab = useWorkspaceStore((state) => state.openEditorTab);
+  const refreshWorkspaces = useWorkspaceStore((state) => state.refreshWorkspaces);
   const [clipboard, setClipboard] = useState<FileTreeClipboard | null>(null);
   const [rootContextMenuPosition, setRootContextMenuPosition] =
     useState<RootContextMenuPosition | null>(null);
@@ -252,9 +253,10 @@ function LoadedFileTree({
     try {
       await mutation();
     } catch (caughtError: unknown) {
-      window.alert(errorMessage(caughtError));
+      showFileTreeError(caughtError);
     } finally {
-      await onReload();
+      // Renames, moves and deletes can retarget or close editor tabs server-side.
+      await Promise.all([onReload(), refreshWorkspaces()]);
     }
   };
   const moveDroppedEntries = (event: FileTreeDropResult) => {
@@ -298,7 +300,7 @@ function LoadedFileTree({
       canDrag: (paths) => paths.length > 0 && !paths.includes(snapshot.rootPath),
       canDrop: (event) => event.target.kind === "root" || event.target.directoryPath !== null,
       onDropComplete: moveDroppedEntries,
-      onDropError: (message) => window.alert(message),
+      onDropError: (message) => void showErrorDialog(message, FILE_TREE_ERROR_TITLE),
     },
     density: "compact",
     flattenEmptyDirectories: false,
@@ -308,10 +310,7 @@ function LoadedFileTree({
     paths: snapshot.paths,
     renaming: {
       canRename: (item) => item.path !== snapshot.rootPath,
-      onError: (message) => {
-        removePendingCreates();
-        window.alert(message);
-      },
+      onError: (message) => void resumeRenamingAfterError(message),
       onRename: renameEntry,
     },
     stickyFolders: true,
@@ -410,6 +409,32 @@ function LoadedFileTree({
       removePendingCreate(pendingCreate.kind === "directory" ? `${sourcePath}/` : sourcePath);
     }
   };
+  const resumeRenaming = (path: string): boolean => {
+    return (
+      model.getItem(path) !== null &&
+      model.startRenaming(path, { removeIfCanceled: isPendingCreatePath(path) })
+    );
+  };
+  const resumeRenamingAfterError = async (message: string) => {
+    const path = model.getFocusedPath();
+    const typedName = renameInputValue(model);
+
+    await showErrorDialog(message, "Invalid name");
+    await nextAnimationFrame();
+
+    if (!path) {
+      removePendingCreates();
+      return;
+    }
+
+    if (!resumeRenaming(path)) {
+      removePendingCreate(path);
+      return;
+    }
+
+    await nextAnimationFrame();
+    restoreRenameInputValue(model, typedName);
+  };
   const startInlineCreate = (kind: FileTreeEntryKind, parentPath: string | null) => {
     const targetParentPath = parentPath ?? snapshot.rootPath;
     const placeholderPath = nextUntitledPath(model, targetParentPath, kind);
@@ -434,7 +459,7 @@ function LoadedFileTree({
     } catch (caughtError: unknown) {
       pendingCreatesRef.current.delete(sourcePath);
       setHasInlineCreate(false);
-      window.alert(errorMessage(caughtError));
+      showFileTreeError(caughtError);
     }
   };
   const openRootContextMenu = (event: MouseEvent<HTMLDivElement>) => {
@@ -686,9 +711,7 @@ function RootFileTreeContextMenu({
             <ContextMenuItem
               onClick={() => {
                 close();
-                void revealFileTreePath({ workspaceId, tabId }).catch((caughtError: unknown) =>
-                  window.alert(errorMessage(caughtError)),
-                );
+                void revealFileTreePath({ workspaceId, tabId }).catch(showFileTreeError);
               }}
             >
               Reveal in file manager
@@ -834,7 +857,7 @@ function FileTreeContextMenu({
               onClick={() => {
                 close();
                 void revealFileTreePath({ workspaceId, tabId, path: item.path }).catch(
-                  (caughtError: unknown) => window.alert(errorMessage(caughtError)),
+                  showFileTreeError,
                 );
               }}
             >
@@ -844,23 +867,23 @@ function FileTreeContextMenu({
             <ContextMenuItem
               variant="destructive"
               disabled={hasRootSelection}
-              onClick={() => {
+              onClick={async () => {
+                close();
+
                 if (selectedRealPaths.length === 0) {
-                  close();
                   selectedPendingPaths.forEach(onRemovePendingCreate);
                   return;
                 }
 
                 const deleteCount = selectedRealPaths.length + selectedPendingPaths.length;
-                const message =
+                const title =
                   deleteCount === 1 ? `Delete ${item.name}?` : `Delete ${deleteCount} items?`;
 
-                if (!window.confirm(message)) {
-                  close();
+                if (!(await confirmDialog({ title, confirmLabel: "Delete", destructive: true }))) {
                   return;
                 }
 
-                closeAndRun(async () => {
+                void onMutation(async () => {
                   selectedPendingPaths.forEach(onRemovePendingCreate);
                   await deleteFileTreeEntries({ workspaceId, tabId, paths: selectedRealPaths });
                 });
@@ -1125,6 +1148,41 @@ function placeholderPath(
   return kind === "directory" ? `${path}/` : path;
 }
 
+const FILE_TREE_ERROR_TITLE = "File operation failed";
+
+function showFileTreeError(caughtError: unknown): void {
+  void showErrorDialog(errorMessage(caughtError), FILE_TREE_ERROR_TITLE);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+// @pierre/trees has no public API to seed the inline rename value, so the typed
+// name is carried over through its rename input, which syncs via `input` events.
+function renameInput(model: FileTreeModel): HTMLInputElement | null {
+  return (
+    model
+      .getFileTreeContainer()
+      ?.shadowRoot?.querySelector<HTMLInputElement>("input[data-item-rename-input]") ?? null
+  );
+}
+
+function renameInputValue(model: FileTreeModel): string | null {
+  return renameInput(model)?.value ?? null;
+}
+
+function restoreRenameInputValue(model: FileTreeModel, value: string | null): void {
+  const input = renameInput(model);
+
+  if (!input || value === null) {
+    return;
+  }
+
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function renameSourcePath(path: string): string {
   return path.endsWith("/") ? path.slice(0, -1) : path;
 }
@@ -1330,7 +1388,7 @@ function FileTreeDeferredDirectoryLoader({
         }
       } catch (caughtError: unknown) {
         if (!disposed) {
-          window.alert(errorMessage(caughtError));
+          showFileTreeError(caughtError);
         }
       } finally {
         loadingPathsRef.current.delete(path);

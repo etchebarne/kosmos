@@ -45,6 +45,10 @@ type PreviewState =
 
 const SEARCH_DELAY_MS = 220;
 const EMPTY_RESULTS: WorkspaceSearchResults = { matches: [], limitReached: false };
+const SEARCH_MODES: ReadonlyArray<{ mode: SearchMode; label: string }> = [
+  { mode: "name", label: "Name" },
+  { mode: "content", label: "Content" },
+];
 
 export function SearchTab({ workspaceId, tabId, isActive, onActivatePane }: SearchTabProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -146,22 +150,17 @@ export function SearchTab({ workspaceId, tabId, isActive, onActivatePane }: Sear
           ) : null}
         </div>
         <ButtonGroup className="shrink-0 self-end sm:self-auto" aria-label="Search mode">
-          <Button
-            type="button"
-            variant={mode === "name" ? "secondary" : "outline"}
-            aria-pressed={mode === "name"}
-            onClick={() => selectMode("name")}
-          >
-            Name
-          </Button>
-          <Button
-            type="button"
-            variant={mode === "content" ? "secondary" : "outline"}
-            aria-pressed={mode === "content"}
-            onClick={() => selectMode("content")}
-          >
-            Content
-          </Button>
+          {SEARCH_MODES.map((option) => (
+            <Button
+              key={option.mode}
+              type="button"
+              variant={mode === option.mode ? "default" : "outline"}
+              aria-pressed={mode === option.mode}
+              onClick={() => selectMode(option.mode)}
+            >
+              {option.label}
+            </Button>
+          ))}
         </ButtonGroup>
       </div>
 
