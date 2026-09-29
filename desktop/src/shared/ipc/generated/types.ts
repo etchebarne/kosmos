@@ -12,6 +12,11 @@ export type TabIdParam = number;
 export type WorkspaceIdParam = number;
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "Boolean".
+ */
+export type Boolean = boolean;
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "PaneNodeSnapshot".
  */
 export type PaneNodeSnapshot =
@@ -49,9 +54,9 @@ export type SplitAxisPayload = "horizontal" | "vertical";
 export type EditorSaveWarningKindPayload = "formatting" | "languageServerNotification";
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "Boolean".
+ * via the `definition` "Nullable_EditorGitLineHunksPayload".
  */
-export type Boolean = boolean;
+export type Nullable_EditorGitLineHunksPayload = EditorGitLineHunksPayload | null;
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
  * via the `definition` "FileTreeEntryKindParam".
@@ -359,8 +364,10 @@ export type Nullable_WindowStateSnapshot = WindowStateSnapshot | null;
 
 export interface KosmosIpcTypes {
   ChangeEditorSessionParams?: ChangeEditorSessionParams;
-  EditorDocumentPayload?: EditorDocumentPayload;
+  EditorSessionAckPayload?: EditorSessionAckPayload;
   EditorDocumentParams?: EditorDocumentParams;
+  Boolean?: Boolean;
+  EditorDocumentPayload?: EditorDocumentPayload;
   EditorGitLineHunksPayload?: EditorGitLineHunksPayload;
   OpenEditorLocationParams?: OpenEditorLocationParams;
   OpenEditorLocationPayload?: OpenEditorLocationPayload;
@@ -370,8 +377,10 @@ export interface KosmosIpcTypes {
   RestoreEditorSessionParams?: RestoreEditorSessionParams;
   SaveEditorDocumentParams?: SaveEditorDocumentParams;
   SaveEditorDocumentPayload?: SaveEditorDocumentPayload;
+  SyncEditorDocumentParams?: SyncEditorDocumentParams;
+  SyncEditorDocumentPayload?: SyncEditorDocumentPayload;
+  Nullable_EditorGitLineHunksPayload?: Nullable_EditorGitLineHunksPayload;
   TransferFileTreeEntriesParams?: TransferFileTreeEntriesParams;
-  Boolean?: Boolean;
   CreateFileTreeEntryParams?: CreateFileTreeEntryParams;
   DeleteFileTreeEntriesParams?: DeleteFileTreeEntriesParams;
   GetFileTreeParams?: GetFileTreeParams;
@@ -498,21 +507,31 @@ export interface KosmosIpcTypes {
  * via the `definition` "ChangeEditorSessionParams".
  */
 export interface ChangeEditorSessionParams {
-  content: string;
+  baseRevision: number;
+  edits: EditorTextEditParam[];
   revision: number;
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
 }
 /**
+ * A text replacement addressed in UTF-16 code units of the document before the edit.
+ *
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
- * via the `definition` "EditorDocumentPayload".
+ * via the `definition` "EditorTextEditParam".
  */
-export interface EditorDocumentPayload {
+export interface EditorTextEditParam {
+  length: number;
+  offset: number;
+  text: string;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorSessionAckPayload".
+ */
+export interface EditorSessionAckPayload {
   accepted: boolean;
-  content: string;
-  path: string;
   revision: number;
-  savedContent: string;
+  savedGeneration: number;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -521,6 +540,20 @@ export interface EditorDocumentPayload {
 export interface EditorDocumentParams {
   tabId: TabIdParam;
   workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "EditorDocumentPayload".
+ */
+export interface EditorDocumentPayload {
+  content: string;
+  path: string;
+  revision: number;
+  /**
+   * Omitted when it equals `content`, which keeps clean documents to one copy.
+   */
+  savedContent: string | null;
+  savedGeneration: number;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
@@ -649,7 +682,11 @@ export interface SaveEditorDocumentParams {
  */
 export interface SaveEditorDocumentPayload {
   currentRevision: number;
-  savedContent: string;
+  /**
+   * Present only when saving changed the text, for example through format on save.
+   */
+  savedContent: string | null;
+  savedGeneration: number;
   savedRevision: number;
   warnings: EditorSaveWarningPayload[];
 }
@@ -661,6 +698,27 @@ export interface EditorSaveWarningPayload {
   code: string;
   kind: EditorSaveWarningKindPayload;
   message: string;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "SyncEditorDocumentParams".
+ */
+export interface SyncEditorDocumentParams {
+  knownRevision: number;
+  knownSavedGeneration: number;
+  tabId: TabIdParam;
+  workspaceId?: WorkspaceIdParam | null;
+}
+/**
+ * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema
+ * via the `definition` "SyncEditorDocumentPayload".
+ */
+export interface SyncEditorDocumentPayload {
+  /**
+   * Present only when the document changed since the caller's known version.
+   */
+  document: EditorDocumentPayload | null;
+  path: string;
 }
 /**
  * This interface was referenced by `KosmosIpcTypes`'s JSON-Schema

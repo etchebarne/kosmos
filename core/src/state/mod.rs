@@ -11,6 +11,7 @@ mod tooling;
 mod workspace;
 mod workspace_edits;
 
+pub use editor::{DocumentScope, DocumentSessionTarget};
 pub use file_tree::EntryRelocation;
 
 use crate::formatters::FormatterManager;

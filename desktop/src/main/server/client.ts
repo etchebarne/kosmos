@@ -22,7 +22,7 @@ type PendingRequest = {
   cleanup(): void;
 };
 
-const MAX_RESPONSE_FRAME_CHARS = 64 * 1024 * 1024;
+const MAX_RESPONSE_FRAME_CHARS = 128 * 1024 * 1024;
 
 export class KosmosIpcRequestError extends Error {
   constructor(
@@ -43,7 +43,9 @@ export class RequestCancelledError extends KosmosIpcRequestError {
 
 export class KosmosServerClient {
   private activeRequests = 0;
-  private buffer = "";
+  // Partial frame text, kept as chunks so large responses are not rescanned per chunk.
+  private frameChunks: string[] = [];
+  private frameChars = 0;
   private connecting: Promise<void> | undefined;
   private nextRequestId = 1;
   private shuttingDown = false;
@@ -207,7 +209,7 @@ export class KosmosServerClient {
       const onConnect = () => {
         socket.off("error", onConnectError);
         this.socket = socket;
-        this.buffer = "";
+        this.resetFrameBuffer();
         const reconnected = this.hasConnected;
         this.hasConnected = true;
 
@@ -245,25 +247,37 @@ export class KosmosServerClient {
   }
 
   private handleData(chunk: string | Buffer): void {
-    this.buffer += chunk.toString();
+    let text = chunk.toString();
+    let newline = text.indexOf("\n");
 
-    if (this.buffer.length > MAX_RESPONSE_FRAME_CHARS && !this.buffer.includes("\n")) {
+    while (newline !== -1) {
+      this.appendFrameText(text.slice(0, newline));
+      const frame = this.frameChunks.join("").trim();
+      this.resetFrameBuffer();
+      if (frame.length > 0) {
+        this.handleFrame(frame);
+      }
+      text = text.slice(newline + 1);
+      newline = text.indexOf("\n");
+    }
+
+    this.appendFrameText(text);
+  }
+
+  private appendFrameText(text: string): void {
+    if (text.length === 0) {
+      return;
+    }
+    this.frameChars += text.length;
+    if (this.frameChars > MAX_RESPONSE_FRAME_CHARS) {
       throw new Error(`IPC response exceeds the ${MAX_RESPONSE_FRAME_CHARS}-character limit`);
     }
+    this.frameChunks.push(text);
+  }
 
-    const frames = this.buffer.split("\n");
-    this.buffer = frames.pop() ?? "";
-
-    for (const frame of frames) {
-      if (frame.length > MAX_RESPONSE_FRAME_CHARS) {
-        throw new Error(`IPC response exceeds the ${MAX_RESPONSE_FRAME_CHARS}-character limit`);
-      }
-
-      const trimmed = frame.trim();
-      if (trimmed.length > 0) {
-        this.handleFrame(trimmed);
-      }
-    }
+  private resetFrameBuffer(): void {
+    this.frameChunks = [];
+    this.frameChars = 0;
   }
 
   private allocateRequestId(): number {

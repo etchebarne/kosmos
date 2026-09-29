@@ -1435,12 +1435,21 @@ export async function formatLanguageDocument(
 }
 
 
+/**
+ * Language servers receive the whole text on open and on every change for full-sync
+ * servers, so very large documents are edited without language features.
+ */
+const MAX_LANGUAGE_DOCUMENT_CHARS = 8 * 1024 * 1024;
+
 export function attachLanguageDocument(
   workspaceId: WorkspaceId,
   tabId: TabId,
   path: string,
   model: monaco.editor.ITextModel,
 ): LanguageDocumentHandle {
+  if (model.getValueLength() > MAX_LANGUAGE_DOCUMENT_CHARS) {
+    return { dispose() {} };
+  }
   const key = model.uri.toString();
   const candidate: LanguageDocumentCandidate = {
     workspaceId,

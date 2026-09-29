@@ -22,6 +22,7 @@ import {
   writeTerminalInput,
 } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
+import { appShortcutForEvent, isTerminalOwnedShortcut } from "@/renderer/lib/app-shortcuts";
 import { terminalCopyText } from "@/renderer/lib/terminal-keybindings";
 import type {
   TabId,
@@ -412,6 +413,11 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
     }
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const shortcut = appShortcutForEvent(event);
+      if (shortcut !== null && !isTerminalOwnedShortcut(shortcut)) {
+        return false;
+      }
+
       const text = terminalCopyText(event, terminal.getSelection());
       if (text === null) {
         return true;
@@ -473,8 +479,8 @@ export function TerminalTab({ workspaceId, tabId, isActive, onActivatePane }: Te
       onPointerDown={onActivatePane}
     >
       <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />
-      {!isRestarting && status.kind !== "running" ? <TerminalStatusBadge status={status} /> : null}
-      <div className="flex h-8 shrink-0 items-center justify-end gap-1 border-t border-white/10 bg-[#151515] px-1">
+      <div className="flex h-8 shrink-0 items-center gap-1 border-t border-white/10 bg-[#151515] px-1">
+        <TerminalStatusText status={isRestarting ? null : status} />
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -532,17 +538,17 @@ async function replayTerminalHistory(
   }
 }
 
-function TerminalStatusBadge({ status }: { status: TerminalStatus }) {
-  const message = terminalStatusMessage(status);
-
-  if (!message) {
-    return null;
-  }
+function TerminalStatusText({ status }: { status: TerminalStatus | null }) {
+  const message = status ? terminalStatusMessage(status) : null;
 
   return (
-    <div className="pointer-events-none absolute top-3 right-3 rounded-full border border-white/10 bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
+    <span
+      className="min-w-0 flex-1 truncate px-1.5 text-[11px] font-medium text-white/60"
+      role="status"
+      title={message ?? undefined}
+    >
       {message}
-    </div>
+    </span>
   );
 }
 

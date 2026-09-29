@@ -9,6 +9,7 @@ import { getSearchDocument, searchWorkspace } from "@/renderer/ipc";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
 import { useWorkspaceStore } from "@/renderer/stores";
+import { useQuickOpenStore } from "@/renderer/stores/quick-open-store";
 import type {
   SearchDocument,
   SearchMatch,
@@ -115,6 +116,12 @@ export function SearchTab({ workspaceId, tabId, isActive, onActivatePane }: Sear
       inputRef.current?.focus({ preventScroll: true });
     }
   }, [isActive]);
+
+  useQuickOpenFocus(workspaceId, tabId, () => {
+    selectMode("name");
+    inputRef.current?.focus({ preventScroll: true });
+    inputRef.current?.select();
+  });
 
   const selectedMatch = searchState.results.matches[selectedIndex] ?? null;
   const selectMode = (nextMode: SearchMode) => {
@@ -406,4 +413,21 @@ function sameSearch(left: PendingSearch, right: PendingSearch): boolean {
     left.query === right.query &&
     left.mode === right.mode
   );
+}
+
+/** Runs `onQuickOpen` once for each quick-open request aimed at this search tab. */
+function useQuickOpenFocus(workspaceId: WorkspaceId, tabId: TabId, onQuickOpen: () => void): void {
+  const request = useQuickOpenStore((state) => state.request);
+  const consumeQuickOpen = useQuickOpenStore((state) => state.consumeQuickOpen);
+  const onQuickOpenRef = useRef(onQuickOpen);
+  onQuickOpenRef.current = onQuickOpen;
+
+  useEffect(() => {
+    if (!request || request.workspaceId !== workspaceId || request.tabId !== tabId) {
+      return;
+    }
+
+    consumeQuickOpen(request.generation);
+    onQuickOpenRef.current();
+  }, [consumeQuickOpen, request, tabId, workspaceId]);
 }

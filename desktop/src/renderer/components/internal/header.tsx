@@ -6,7 +6,7 @@ import {
   minimizeWindow,
   toggleMaximizeWindow,
 } from "@/renderer/ipc";
-import { useWorkspaceStore } from "@/renderer/stores";
+import { useSettingsDialogStore, useWorkspaceStore } from "@/renderer/stores";
 import { Button } from "@/renderer/components/ui/button";
 import { ButtonGroup } from "@/renderer/components/ui/button-group";
 import {
@@ -35,7 +35,7 @@ type WorkspaceDropTarget = {
 export function Header() {
   const [draggedWorkspaceId, setDraggedWorkspaceId] = useState<WorkspaceId | null>(null);
   const [workspaceDropTarget, setWorkspaceDropTarget] = useState<WorkspaceDropTarget | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const openSettings = useSettingsDialogStore((state) => state.openSettings);
   const addWorkspace = useWorkspaceStore((state) => state.addWorkspace);
   const closeWorkspace = useWorkspaceStore((state) => state.closeWorkspace);
   const error = useWorkspaceStore((state) => state.error);
@@ -57,7 +57,7 @@ export function Header() {
             <Menu className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-44">
-            <DropdownMenuItem onClick={() => setIsSettingsOpen(true)}>
+            <DropdownMenuItem onClick={() => openSettings()}>
               <Settings />
               Settings
             </DropdownMenuItem>
@@ -203,7 +203,7 @@ export function Header() {
           <X className="size-3.5" />
         </Button>
       </div>
-      <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      <SettingsDialog />
     </header>
   );
 }

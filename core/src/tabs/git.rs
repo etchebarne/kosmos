@@ -1,15 +1,23 @@
 use std::error::Error as StdError;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use crate::tabs::editor::{EditorError, MAX_EDITOR_FILE_BYTES, save_document};
+use imara_diff::{Algorithm, Diff, InternedInput};
+
+use crate::tabs::editor::{EditorError, save_document};
 use crate::tree::{TabId, WorkspaceId};
 
 pub type Result<T> = std::result::Result<T, GitError>;
+
+/// Largest file the diff view loads. Kept independent of the editor limit
+/// because Monaco's diff editor degrades badly on very large inputs.
+pub const MAX_DIFF_FILE_BYTES: usize = 8 * 1024 * 1024;
+
+const LINE_COUNT_BUFFER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitRepositorySnapshot {
@@ -132,6 +140,11 @@ pub enum GitChangeKind {
 pub struct GitRepository;
 
 impl GitRepository {
+    /// The working tree root of the repository containing `directory`.
+    pub fn root_of(directory: impl AsRef<Path>) -> Result<PathBuf> {
+        repository_root(directory.as_ref())
+    }
+
     pub fn init(directory: impl AsRef<Path>) -> Result<()> {
         git(directory.as_ref(), ["init"]).map(|_| ())
     }
@@ -221,11 +234,7 @@ impl GitRepository {
         else {
             return Ok(Vec::new());
         };
-        let current_line_count = working_tree_content(&repository_root, &repository_path)?
-            .0
-            .as_deref()
-            .map(|content| line_count(content.as_bytes()))
-            .unwrap_or(0);
+        let current_line_count = working_tree_line_count(&repository_root, &repository_path)?;
 
         if change.staged() == Some(GitChangeKind::Added)
             || change.unstaged() == Some(GitChangeKind::Untracked)
@@ -251,6 +260,22 @@ impl GitRepository {
             ["diff", "--no-ext-diff", "--unified=0", "HEAD", "--"],
             &[repository_path],
         )?)
+    }
+
+    /// Line hunks between the file in `HEAD` and `content`, such as an editor's
+    /// unsaved text. Files missing from `HEAD` count as entirely added.
+    pub fn content_line_hunks(
+        directory: impl AsRef<Path>,
+        workspace_relative_path: &str,
+        content: &str,
+    ) -> Result<Vec<GitLineHunk>> {
+        let workspace_relative_path = normalize_path(workspace_relative_path)?;
+        let (repository_root, workspace_prefix) = workspace_repository(directory.as_ref())?;
+        let repository_path = prefixed_git_path(&workspace_prefix, &workspace_relative_path);
+        let head = git_blob_content(&repository_root, &format!("HEAD:{repository_path}"), true)?
+            .unwrap_or_default();
+
+        Ok(line_hunks_between(&head, content))
     }
 
     pub fn diff(directory: impl AsRef<Path>, focused_path: &str) -> Result<GitDiff> {
@@ -289,7 +314,10 @@ impl GitRepository {
             .find(|change| change.path() == path)
             .ok_or_else(|| GitError::InvalidPath(path.clone()))?;
 
-        if !change.is_unstaged() || change.unstaged() == Some(GitChangeKind::Deleted) {
+        if !change.is_unstaged()
+            || change.unstaged() == Some(GitChangeKind::Deleted)
+            || is_working_tree_symlink(&repository_root, &path)?
+        {
             return Err(GitError::InvalidPath(path));
         }
 
@@ -1422,23 +1450,53 @@ fn add_untracked_path_stats(path: &Path, stats: &mut GitDiffStats) -> Result<()>
     }
 
     if file_type.is_file() {
-        let bytes = fs::read(path).map_err(|error| io_error(path, error))?;
-        stats.insertions = stats.insertions.saturating_add(line_count(&bytes));
+        let lines = file_line_count(path).map_err(|error| io_error(path, error))?;
+        stats.insertions = stats.insertions.saturating_add(lines);
     }
 
     Ok(())
 }
 
-fn line_count(bytes: &[u8]) -> u32 {
-    if bytes.is_empty() {
-        return 0;
+/// Counts lines incrementally so large files never have to be held in memory.
+#[derive(Default)]
+struct LineCounter {
+    newlines: usize,
+    last_byte: Option<u8>,
+}
+
+impl LineCounter {
+    fn feed(&mut self, bytes: &[u8]) {
+        self.newlines += bytes.iter().filter(|byte| **byte == b'\n').count();
+        self.last_byte = bytes.last().copied().or(self.last_byte);
     }
 
-    let newline_count = bytes.iter().filter(|byte| **byte == b'\n').count();
-    let has_trailing_partial_line = bytes.last().is_some_and(|byte| *byte != b'\n');
-    let line_count = newline_count + usize::from(has_trailing_partial_line);
+    fn count(&self) -> u32 {
+        let has_trailing_partial_line = self.last_byte.is_some_and(|byte| byte != b'\n');
+        let line_count = self.newlines + usize::from(has_trailing_partial_line);
 
-    u32::try_from(line_count).unwrap_or(u32::MAX)
+        u32::try_from(line_count).unwrap_or(u32::MAX)
+    }
+}
+
+fn line_count(bytes: &[u8]) -> u32 {
+    let mut counter = LineCounter::default();
+    counter.feed(bytes);
+    counter.count()
+}
+
+fn file_line_count(path: &Path) -> io::Result<u32> {
+    let mut file = File::open(path)?;
+    let mut buffer = vec![0; LINE_COUNT_BUFFER_BYTES];
+    let mut counter = LineCounter::default();
+
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => return Ok(counter.count()),
+            Ok(read) => counter.feed(&buffer[..read]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn git<I, S>(repository_root: &Path, args: I) -> Result<Vec<u8>>
@@ -1552,34 +1610,82 @@ fn git_blob_content(
     })
 }
 
-fn working_tree_content(repository_root: &Path, path: &str) -> Result<(Option<String>, bool)> {
-    let full_path = repository_root.join(path);
-    let metadata = match fs::symlink_metadata(&full_path) {
+/// What a working tree path holds, read without following symlinks so git's
+/// view of a link (its target path) is preserved.
+enum WorkingTreeEntry {
+    Missing,
+    Symlink(String),
+    File { len: u64 },
+    Other,
+}
+
+fn working_tree_entry(full_path: &Path) -> Result<WorkingTreeEntry> {
+    let metadata = match fs::symlink_metadata(full_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok((Some(String::new()), false));
+            return Ok(WorkingTreeEntry::Missing);
         }
-        Err(error) => return Err(io_error(&full_path, error)),
+        Err(error) => return Err(io_error(full_path, error)),
     };
 
     if metadata.file_type().is_symlink() {
-        let target = fs::read_link(&full_path).map_err(|error| io_error(&full_path, error))?;
-        return Ok((Some(target.to_string_lossy().into_owned()), false));
+        let target = fs::read_link(full_path).map_err(|error| io_error(full_path, error))?;
+        return Ok(WorkingTreeEntry::Symlink(
+            target.to_string_lossy().into_owned(),
+        ));
     }
 
-    if !metadata.is_file() || metadata.len() > MAX_EDITOR_FILE_BYTES as u64 {
-        return Ok((None, false));
+    Ok(if metadata.is_file() {
+        WorkingTreeEntry::File {
+            len: metadata.len(),
+        }
+    } else {
+        WorkingTreeEntry::Other
+    })
+}
+
+fn working_tree_content(repository_root: &Path, path: &str) -> Result<(Option<String>, bool)> {
+    let full_path = repository_root.join(path);
+
+    match working_tree_entry(&full_path)? {
+        WorkingTreeEntry::Missing => Ok((Some(String::new()), false)),
+        WorkingTreeEntry::Symlink(target) => Ok((Some(target), false)),
+        WorkingTreeEntry::File { len } if len <= MAX_DIFF_FILE_BYTES as u64 => {
+            let bytes = fs::read(&full_path).map_err(|error| io_error(&full_path, error))?;
+            let content = diff_text(bytes);
+            let editable = content.is_some();
+
+            Ok((content, editable))
+        }
+        WorkingTreeEntry::File { .. } | WorkingTreeEntry::Other => Ok((None, false)),
     }
+}
 
-    let bytes = fs::read(&full_path).map_err(|error| io_error(&full_path, error))?;
-    let content = diff_text(bytes);
-    let editable = content.is_some();
+/// Git diffs a symlink as its target path, so its diff content is never saved
+/// through to the file the link points at.
+fn is_working_tree_symlink(repository_root: &Path, path: &str) -> Result<bool> {
+    Ok(matches!(
+        working_tree_entry(&repository_root.join(path))?,
+        WorkingTreeEntry::Symlink(_)
+    ))
+}
 
-    Ok((content, editable))
+/// Line count of a working tree path for gutter hunks, which unlike the diff
+/// view has no size limit.
+fn working_tree_line_count(repository_root: &Path, path: &str) -> Result<u32> {
+    let full_path = repository_root.join(path);
+
+    match working_tree_entry(&full_path)? {
+        WorkingTreeEntry::Symlink(target) => Ok(line_count(target.as_bytes())),
+        WorkingTreeEntry::File { .. } => {
+            file_line_count(&full_path).map_err(|error| io_error(&full_path, error))
+        }
+        WorkingTreeEntry::Missing | WorkingTreeEntry::Other => Ok(0),
+    }
 }
 
 fn diff_text(bytes: Vec<u8>) -> Option<String> {
-    if bytes.len() > MAX_EDITOR_FILE_BYTES {
+    if bytes.len() > MAX_DIFF_FILE_BYTES {
         None
     } else {
         String::from_utf8(bytes).ok()
@@ -1781,6 +1887,30 @@ fn strip_git_path_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
     path.strip_prefix(prefix)?
         .strip_prefix('/')
         .filter(|path| !path.is_empty())
+}
+
+fn line_hunks_between(before: &str, after: &str) -> Vec<GitLineHunk> {
+    let input = InternedInput::new(before, after);
+    Diff::compute(Algorithm::Histogram, &input)
+        .hunks()
+        .map(|hunk| {
+            GitLineHunk::new(
+                unified_range_start(&hunk.before),
+                hunk.before.len() as u32,
+                unified_range_start(&hunk.after),
+                hunk.after.len() as u32,
+            )
+        })
+        .collect()
+}
+
+/// Unified diffs number lines from 1 and place an empty range after the line before it.
+fn unified_range_start(range: &std::ops::Range<u32>) -> u32 {
+    if range.is_empty() {
+        range.start
+    } else {
+        range.start + 1
+    }
 }
 
 fn parse_line_hunks(bytes: &[u8]) -> Result<Vec<GitLineHunk>> {
@@ -2016,6 +2146,102 @@ mod tests {
             GitRepository::file_line_hunks(&workspace, "main.rs").expect("line hunks should load");
 
         assert_eq!(hunks, vec![GitLineHunk::new(0, 0, 1, 2)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn large_files_skip_the_diff_view_but_keep_line_hunks() {
+        let root = test_directory("large-diff");
+        GitRepository::init(&root).expect("repository should initialize");
+        let line = "0123456789abcdef\n";
+        let lines = MAX_DIFF_FILE_BYTES / line.len() + 1;
+        fs::write(root.join("large.txt"), line.repeat(lines)).expect("file should be written");
+
+        let diff = GitRepository::diff(&root, "large.txt").expect("diff should load");
+        let hunks =
+            GitRepository::file_line_hunks(&root, "large.txt").expect("line hunks should load");
+
+        assert_eq!(diff.files()[0].sections()[0].modified_content(), None);
+        assert!(!diff.files()[0].sections()[0].editable());
+        assert_eq!(hunks, vec![GitLineHunk::new(0, 0, 1, lines as u32)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn content_hunks_match_unified_zero_context_numbering() {
+        let before = "a\nb\nc\nd\n";
+
+        assert_eq!(
+            line_hunks_between(before, "a\nB\nc\nd\n"),
+            [GitLineHunk::new(2, 1, 2, 1)]
+        );
+        assert_eq!(
+            line_hunks_between(before, "a\nb\nnew\nc\nd\n"),
+            [GitLineHunk::new(2, 0, 3, 1)]
+        );
+        assert_eq!(
+            line_hunks_between(before, "a\nd\n"),
+            [GitLineHunk::new(2, 2, 1, 0)]
+        );
+        assert_eq!(
+            line_hunks_between("", "x\ny\n"),
+            [GitLineHunk::new(0, 0, 1, 2)]
+        );
+    }
+
+    #[test]
+    fn content_hunks_compare_unsaved_text_with_head() {
+        let root = test_directory("content-hunks");
+        git(&root, ["init", "--quiet"]).unwrap();
+        fs::write(root.join("notes.txt"), "one\ntwo\n").unwrap();
+        git(&root, ["add", "notes.txt"]).unwrap();
+        commit(&root, "notes");
+
+        let hunks =
+            GitRepository::content_line_hunks(&root, "notes.txt", "one\nTWO\nthree\n").unwrap();
+
+        assert_eq!(hunks, [GitLineHunk::new(2, 1, 2, 2)]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn counts_lines_across_buffer_boundaries() {
+        let root = test_directory("line-count");
+        let path = root.join("lines.txt");
+        let content = format!("{}partial", "x\n".repeat(LINE_COUNT_BUFFER_BYTES));
+        fs::write(&path, &content).expect("file should be written");
+
+        assert_eq!(
+            file_line_count(&path).expect("lines should count"),
+            line_count(content.as_bytes())
+        );
+        assert_eq!(line_count(b""), 0);
+        assert_eq!(line_count(b"a\nb"), 2);
+        assert_eq!(line_count(b"a\nb\n"), 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diff_saves_do_not_write_through_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_directory("symlink-diff-save");
+        GitRepository::init(&root).expect("repository should initialize");
+        fs::write(root.join("target.txt"), "target\n").expect("file should be written");
+        symlink("target.txt", root.join("link.txt")).expect("symlink should be created");
+
+        assert!(matches!(
+            GitRepository::save_diff_file(&root, "link.txt", "changed\n", false),
+            Err(GitError::InvalidPath(_))
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("target.txt")).expect("target should read"),
+            "target\n"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

@@ -7,6 +7,7 @@ import { WorkspaceEditRecovery } from "@/renderer/components/internal/workspace-
 import { WorkspaceTrustDialog } from "@/renderer/components/internal/workspace-trust-dialog";
 import { UnsavedChangesDialog } from "@/renderer/components/internal/unsaved-changes-dialog";
 import { AppDialogHost } from "@/renderer/components/internal/app-dialog-host";
+import { AppShortcutListener } from "@/renderer/components/internal/app-shortcut-listener";
 import { installEditorMiddleClickPasteGuard } from "@/renderer/lib/editor-input";
 import { setLanguageLocationOpener } from "@/renderer/lib/language-client";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
@@ -107,6 +108,7 @@ export function App() {
       <WorkspaceTrustDialog />
       <UnsavedChangesDialog />
       <AppDialogHost />
+      <AppShortcutListener />
     </main>
   );
 }

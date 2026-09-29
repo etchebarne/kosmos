@@ -123,7 +123,7 @@ type WorkspaceStore = {
   ): Promise<boolean>;
   consumePendingEditorSelection(generation: number): boolean;
   openGitDiffTab(tabId: TabId, path: string): void;
-  openTab(paneId: PaneId): void;
+  openTab(paneId: PaneId, kind?: OpenableTabKind): void;
   registerFileTreeExpansionFlusher(flusher: FileTreeExpansionFlusher): () => void;
   resizeSplit(splitId: SplitPaneId, ratio: number): void;
   saveFileTreeExpandedPaths(params: SetFileTreeExpandedPathsParams): Promise<void>;
@@ -586,14 +586,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         }),
       );
     },
-    openTab(paneId) {
+    openTab(paneId, kind = "blank") {
       const activeWorkspace = activeWorkspaceFrom(get().snapshot);
       if (!activeWorkspace) {
         return;
       }
 
       updateFromServer(() =>
-        openTabIpc({ workspaceId: activeWorkspace.id, paneId, kind: "blank" }),
+        openTabIpc({ workspaceId: activeWorkspace.id, paneId, kind }),
       );
     },
     registerFileTreeExpansionFlusher(flusher) {

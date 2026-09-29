@@ -226,6 +226,19 @@ const REMOTE_GIT_ACTIONS: RemoteGitAction[] = [
 
 const IRREVERSIBLE_NOTICE = "This cannot be undone.";
 
+function discardAllNotice(untrackedCount: number): string {
+  const untracked =
+    untrackedCount > 0
+      ? `permanently deletes ${untrackedCount} untracked ${untrackedCount === 1 ? "file" : "files"}`
+      : "permanently deletes untracked files";
+
+  return `This resets tracked files and ${untracked}. ${IRREVERSIBLE_NOTICE}`;
+}
+
+function isUntrackedChange(change: GitChange): boolean {
+  return !change.isStaged && change.unstaged === "untracked";
+}
+
 function showGitError(caughtError: unknown): void {
   void showErrorDialog(errorMessage(caughtError), "Git command failed");
 }
@@ -473,6 +486,7 @@ function LoadedGitTab({
   const treePaths = gitTreePaths(snapshot.changes);
   const stagedCount = snapshot.changes.filter((change) => change.isStaged).length;
   const unstagedCount = snapshot.changes.filter((change) => change.isUnstaged).length;
+  const untrackedCount = snapshot.changes.filter(isUntrackedChange).length;
   const busy = activeOperation !== null;
   const hasChanges = snapshot.changes.length > 0;
   const hasCommittedHistory = snapshot.latestCommit != null;
@@ -621,6 +635,7 @@ function LoadedGitTab({
               busy={busy}
               canDiscardAll={hasCommittedHistory && hasChanges}
               canDiscardStaged={hasCommittedHistory && stagedCount > 0}
+              untrackedCount={untrackedCount}
               tabParams={tabParams}
               onOpenStashes={() => onStashDialogOpenChange(true)}
               onOpenRemotes={() => onRemoteDialogOpenChange(true)}
@@ -1230,6 +1245,7 @@ function GitActionsMenu({
   busy,
   canDiscardAll,
   tabParams,
+  untrackedCount,
   onOpenRemotes,
   onOpenStashes,
   onOpenTags,
@@ -1241,6 +1257,7 @@ function GitActionsMenu({
   busy: boolean;
   canDiscardAll: boolean;
   tabParams: GitTabParams;
+  untrackedCount: number;
   onOpenRemotes(): void;
   onOpenStashes(): void;
   onOpenTags(): void;
@@ -1299,7 +1316,7 @@ function GitActionsMenu({
             variant="destructive"
             disabled={!canDiscardAll}
             onClick={async () => {
-              if (!(await confirmDestructive("Discard all changes?", "Discard", IRREVERSIBLE_NOTICE))) {
+              if (!(await confirmDestructive("Discard all changes?", "Discard", discardAllNotice(untrackedCount)))) {
                 return;
               }
 

@@ -149,23 +149,60 @@ impl State {
         EditorDocument::read(workspace.directory(), view_state.path())
     }
 
-    pub fn editor_session_target(
+    pub fn document_session_target(
         &self,
         workspace_id: Option<WorkspaceId>,
         tab_id: TabId,
-    ) -> Result<(WorkspaceId, String), EditorError> {
+        diff_path: Option<&str>,
+    ) -> Result<DocumentSessionTarget, EditorError> {
         let workspace_id = self
             .resolve_workspace_id(workspace_id)
             .ok_or(EditorError::WorkspaceNotFound)?;
-        if !self.is_editor_tab(workspace_id, tab_id) {
+        let workspace = self
+            .workspaces
+            .workspace(workspace_id)
+            .ok_or(EditorError::WorkspaceNotFound)?;
+        if self.is_editor_tab(workspace_id, tab_id) {
+            let path = self
+                .editor_view_state(workspace_id, tab_id)
+                .ok_or(EditorError::TabNotFound)?
+                .path()
+                .to_owned();
+            return Ok(DocumentSessionTarget {
+                workspace_id,
+                root: workspace.directory().to_path_buf(),
+                path,
+                scope: DocumentScope::Workspace,
+            });
+        }
+        if !self.is_git_diff_tab(workspace_id, tab_id) {
             return Err(EditorError::TabNotFound);
         }
-        let path = self
-            .editor_view_state(workspace_id, tab_id)
-            .ok_or(EditorError::TabNotFound)?
-            .path()
-            .to_owned();
-        Ok((workspace_id, path))
+        let path = normalize_editor_path(diff_path.ok_or(EditorError::TabNotFound)?)?;
+        let root = GitRepository::root_of(workspace.directory())
+            .map_err(|_| EditorError::InvalidPath(path.clone()))?;
+        Ok(DocumentSessionTarget {
+            workspace_id,
+            root,
+            path,
+            scope: DocumentScope::Repository,
+        })
+    }
+
+    /// Resolves the workspace of a tab that can own an editor session.
+    pub fn document_session_workspace(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<WorkspaceId, EditorError> {
+        let workspace_id = self
+            .resolve_workspace_id(workspace_id)
+            .ok_or(EditorError::WorkspaceNotFound)?;
+        if self.is_editor_tab(workspace_id, tab_id) || self.is_git_diff_tab(workspace_id, tab_id) {
+            Ok(workspace_id)
+        } else {
+            Err(EditorError::TabNotFound)
+        }
     }
 
     pub fn editor_location(
@@ -322,4 +359,23 @@ impl State {
         }
         self.set_editor_tab_state(workspace_id, tab_id, TabKind::Editor, &title);
     }
+}
+
+/// Which folder a session's document path is relative to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentScope {
+    /// An editor tab's file inside the workspace; participates in workspace-wide
+    /// operations such as renames and language-server edits.
+    Workspace,
+    /// A diff tab's working-tree file, relative to the git repository root.
+    Repository,
+}
+
+/// Where an editor session's document is read from and saved to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentSessionTarget {
+    pub workspace_id: WorkspaceId,
+    pub root: std::path::PathBuf,
+    pub path: String,
+    pub scope: DocumentScope,
 }

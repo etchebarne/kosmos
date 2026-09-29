@@ -88,9 +88,10 @@ impl Application {
     ) -> Result<(), ApplicationError> {
         let unsaved = paths
             .iter()
-            .flat_map(|path| self.editor_sessions.at_or_below(workspace_id, path))
-            .filter(|session| session.is_dirty())
-            .map(|session| session.path)
+            .flat_map(|path| {
+                self.editor_sessions
+                    .unsaved_paths_at_or_below(workspace_id, path)
+            })
             .collect::<Vec<_>>();
         if unsaved.is_empty() {
             Ok(())

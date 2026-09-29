@@ -2,9 +2,10 @@ use core::tabs::editor::EditorError;
 
 use super::super::messages::editor::{
     ChangeEditorSessionParams, EditorDocumentParams, EditorDocumentPayload,
-    EditorGitLineHunksPayload, OpenEditorLocationParams, OpenEditorLocationPayload,
-    OpenEditorSessionParams, OpenEditorTabParams, RestoreEditorSessionParams,
-    SaveEditorDocumentParams, SaveEditorDocumentPayload,
+    EditorGitLineHunksPayload, EditorSessionAckPayload, EditorTextEditParam,
+    OpenEditorLocationParams, OpenEditorLocationPayload, OpenEditorSessionParams,
+    OpenEditorTabParams, RestoreEditorSessionParams, SaveEditorDocumentParams,
+    SaveEditorDocumentPayload, SyncEditorDocumentParams, SyncEditorDocumentPayload,
 };
 use super::super::messages::envelope::{RequestEnvelope, ServerMessage};
 use super::super::messages::workspace::WorkspaceListSnapshot;
@@ -23,19 +24,31 @@ pub(super) const ROUTES: &[Route] = &[
         "document",
         RouteDefinition::application(document),
     ),
+    Route::new::<SyncEditorDocumentParams, SyncEditorDocumentPayload>(
+        "sync",
+        RouteDefinition::application(sync),
+    ),
     Route::new::<EditorDocumentParams, EditorGitLineHunksPayload>(
         "gitLineHunks",
         RouteDefinition::external(git_line_hunks),
     ),
-    Route::new::<OpenEditorSessionParams, EditorDocumentPayload>(
+    Route::new::<EditorDocumentParams, Option<EditorGitLineHunksPayload>>(
+        "unsavedGitLineHunks",
+        RouteDefinition::application(unsaved_git_line_hunks),
+    ),
+    Route::new::<OpenEditorSessionParams, EditorSessionAckPayload>(
         "openSession",
         RouteDefinition::application(open_session),
     ),
-    Route::new::<RestoreEditorSessionParams, EditorDocumentPayload>(
+    Route::new::<RestoreEditorSessionParams, EditorSessionAckPayload>(
         "restoreSession",
         RouteDefinition::application(restore_session),
     ),
-    Route::new::<ChangeEditorSessionParams, EditorDocumentPayload>(
+    Route::new::<EditorDocumentParams, bool>(
+        "closeSession",
+        RouteDefinition::application(close_session),
+    ),
+    Route::new::<ChangeEditorSessionParams, EditorSessionAckPayload>(
         "changeSession",
         RouteDefinition::application(change_session),
     ),
@@ -62,6 +75,25 @@ fn git_line_hunks(state: &mut core::State, request: &RequestEnvelope) -> ServerM
                 "editor.git_line_hunks_failed",
                 error.to_string(),
             ),
+        },
+        Err(response) => response,
+    }
+}
+
+fn unsaved_git_line_hunks(
+    application: &mut core::Application,
+    request: &RequestEnvelope,
+) -> ServerMessage {
+    match parse_params::<EditorDocumentParams>(request) {
+        Ok(params) => match application.unsaved_editor_git_line_hunks(
+            params.workspace_id.map(Into::into),
+            params.tab_id.into(),
+        ) {
+            Ok(hunks) => ServerMessage::ok(
+                request.id,
+                hunks.map(|hunks| EditorGitLineHunksPayload::from_hunks(&hunks)),
+            ),
+            Err(error) => application_error(request.id, error),
         },
         Err(response) => response,
     }
@@ -104,10 +136,31 @@ fn document(application: &mut core::Application, request: &RequestEnvelope) -> S
             match application
                 .editor_session_document(params.workspace_id.map(Into::into), params.tab_id.into())
             {
-                Ok(session) => ServerMessage::ok(
-                    request.id,
-                    EditorDocumentPayload::from_session(session, true),
-                ),
+                Ok(session) => {
+                    ServerMessage::ok(request.id, EditorDocumentPayload::from_session(session))
+                }
+                Err(error) => application_error(request.id, error),
+            }
+        }
+        Err(response) => response,
+    }
+}
+
+fn sync(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<SyncEditorDocumentParams>(request) {
+        Ok(params) => {
+            let known = core::EditorSessionAck {
+                revision: params.known_revision,
+                saved_generation: params.known_saved_generation,
+            };
+            match application.editor_session_document_if_changed(
+                params.workspace_id.map(Into::into),
+                params.tab_id.into(),
+                known,
+            ) {
+                Ok(sync) => {
+                    ServerMessage::ok(request.id, SyncEditorDocumentPayload::from_core(sync))
+                }
                 Err(error) => application_error(request.id, error),
             }
         }
@@ -151,13 +204,30 @@ fn restore_session(
     }
 }
 
+fn close_session(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
+    match parse_params::<EditorDocumentParams>(request) {
+        Ok(params) => match application
+            .close_editor_session(params.workspace_id.map(Into::into), params.tab_id.into())
+        {
+            Ok(()) => ServerMessage::ok(request.id, true),
+            Err(error) => application_error(request.id, error),
+        },
+        Err(response) => response,
+    }
+}
+
 fn change_session(application: &mut core::Application, request: &RequestEnvelope) -> ServerMessage {
     match parse_params::<ChangeEditorSessionParams>(request) {
         Ok(params) => match application.change_editor_session(
             params.workspace_id.map(Into::into),
             params.tab_id.into(),
-            params.content,
+            params.base_revision,
             params.revision,
+            &params
+                .edits
+                .into_iter()
+                .map(EditorTextEditParam::into_core)
+                .collect::<Vec<_>>(),
         ) {
             Ok(update) => ServerMessage::ok(request.id, session_update_payload(update)),
             Err(error) => application_error(request.id, error),
@@ -193,15 +263,8 @@ fn complete_save(
     }
 }
 
-fn session_update_payload(update: core::EditorSessionUpdate) -> EditorDocumentPayload {
-    match update {
-        core::EditorSessionUpdate::Applied(session) => {
-            EditorDocumentPayload::from_session(session, true)
-        }
-        core::EditorSessionUpdate::Stale(session) => {
-            EditorDocumentPayload::from_session(session, false)
-        }
-    }
+fn session_update_payload(update: core::EditorSessionUpdate) -> EditorSessionAckPayload {
+    EditorSessionAckPayload::from_update(update)
 }
 
 fn application_error(id: u64, error: core::ApplicationError) -> ServerMessage {
@@ -209,6 +272,9 @@ fn application_error(id: u64, error: core::ApplicationError) -> ServerMessage {
         core::ApplicationError::Editor(error) => editor_error_code(error),
         core::ApplicationError::EditorSession(core::EditorSessionError::ContentTooLarge) => {
             "editor.content_too_large"
+        }
+        core::ApplicationError::EditorSession(core::EditorSessionError::InvalidEdit) => {
+            "editor.invalid_edit"
         }
         core::ApplicationError::EditorSession(core::EditorSessionError::StaleRevision {
             ..
@@ -232,7 +298,7 @@ fn editor_error_code(error: &EditorError) -> &'static str {
         EditorError::WorkspaceNotDirectory(_) => "editor.workspace_not_directory",
         EditorError::InvalidPath(_) => "editor.invalid_path",
         EditorError::FileNotFound(_) => "editor.file_not_found",
-        EditorError::SymlinkNotAllowed(_) => "editor.symlink_not_allowed",
+        EditorError::DanglingSymlink(_) => "editor.dangling_symlink",
         EditorError::NotRegularFile(_) => "editor.not_regular_file",
         EditorError::PathOutsideWorkspace(_) => "editor.path_outside_workspace",
         EditorError::FileTooLarge { .. } => "editor.file_too_large",
@@ -294,14 +360,15 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
 
         let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 2));
         let response = serde_json::to_value(response).unwrap();
         assert_eq!(response["result"]["savedRevision"], 2);
         assert_eq!(response["result"]["currentRevision"], 2);
-        assert_eq!(response["result"]["savedContent"], "saved");
+        // Unformatted saves leave the editor text as-is, so the text is not echoed back.
+        assert_eq!(response["result"]["savedContent"], serde_json::Value::Null);
         assert_eq!(response["result"]["warnings"], serde_json::json!([]));
 
         let _ = std::fs::remove_dir_all(root);
@@ -321,7 +388,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "newer".to_owned(), 2)
             .unwrap();
 
         let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 1));
@@ -349,7 +416,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
         std::fs::remove_file(root.join("document.txt")).unwrap();
         std::fs::create_dir(root.join("document.txt")).unwrap();
@@ -381,12 +448,12 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
 
         let response = execute_save(&mut application, &save_request(1, workspace_id, tab_id, 2));
         let response = serde_json::to_value(response).unwrap();
-        assert_eq!(response["result"]["savedContent"], "saved");
+        assert_eq!(response["result"]["savedContent"], serde_json::Value::Null);
         assert_eq!(response["result"]["warnings"][0]["kind"], "formatting");
 
         let _ = std::fs::remove_dir_all(root);

@@ -2,10 +2,13 @@ import type { editor } from "monaco-editor";
 
 import {
   changeEditorSession,
+  closeEditorSession,
+  getEditorDocument,
   openEditorSession,
   restoreEditorSession,
+  syncEditorDocument,
 } from "@/renderer/ipc";
-import type { EditorDocument, EditorSave, EditorSaveWarning } from "@/shared/ipc";
+import type { EditorDocument, EditorSave, EditorSaveWarning, EditorTextEdit } from "@/shared/ipc";
 
 type LanguageDocumentHandle = { dispose(): void };
 type LanguageDocumentAttacher = (
@@ -20,12 +23,17 @@ type EditorBufferLockState = {
   operationEpoch: number;
 };
 type EditorSessionState = {
-  acknowledgedRevision: number;
   lastError: unknown | null;
   opening: Promise<void> | null;
-  queuedContent: string | null;
-  queuedRevision: number | null;
+  /** Edits made after `syncedRevision` that the server has not received yet. */
+  pendingEdits: EditorTextEdit[];
+  /** Set when an edit cannot be expressed incrementally, e.g. a line-ending change. */
+  needsFullSync: boolean;
+  /** The newest local revision, including pending edits. */
   revision: number;
+  /** The revision the server acknowledged; pending edits apply on top of it. */
+  syncedRevision: number;
+  savedGeneration: number;
   synchronization: Promise<void> | null;
 };
 
@@ -47,6 +55,7 @@ export function initializeEditorBufferRecovery(): void {
       .then(() => {
         if (sessionRecovery === recovery) {
           sessionRecovery = null;
+          resumeEditorBufferSynchronization();
         }
         window.kosmos.completeServerRecovery(generation);
       })
@@ -59,12 +68,18 @@ export function initializeEditorBufferRecovery(): void {
   });
 }
 
+const DETACHED_LANGUAGE_DOCUMENT: LanguageDocumentHandle = { dispose() {} };
+
 function attachDocument(
   workspaceId: number,
   tabId: number,
   path: string,
   model: editor.ITextModel,
+  languageFeatures = true,
 ): LanguageDocumentHandle {
+  if (!languageFeatures) {
+    return DETACHED_LANGUAGE_DOCUMENT;
+  }
   if (!attachLanguageDocument) {
     throw new Error("Language document attachment is not initialized.");
   }
@@ -76,12 +91,43 @@ export type EditorBuffer = {
   tabId: number;
   model: editor.ITextModel;
   path: string;
+  /** Whether the buffer is attached to language servers (diff drafts are not). */
+  languageFeatures: boolean;
   savedContent: string;
+  /** Monaco's alternative version id at which the model equals `savedContent`. */
+  savedVersionId: number | null;
+  /** True while applying server-originated text that must not be echoed back. */
+  applyingServerText: boolean;
   languageDocument: LanguageDocumentHandle;
   modelListeners: Set<(model: editor.ITextModel) => void>;
   lockState: EditorBufferLockState;
   session: EditorSessionState;
 };
+
+/** A tab's document path, with its text only when the tab's buffer lacks it. */
+export type LoadedEditorDocument = {
+  path: string;
+  document: EditorDocument | null;
+};
+
+/** Loads a tab's document, skipping the text when an existing buffer is current. */
+export async function loadEditorDocument(
+  workspaceId: number,
+  tabId: number,
+): Promise<LoadedEditorDocument> {
+  const buffer = editorBuffer(workspaceId, tabId);
+  if (!buffer || buffer.model.isDisposed()) {
+    const document = await getEditorDocument({ workspaceId, tabId });
+    return { path: document.path, document };
+  }
+  const sync = await syncEditorDocument({
+    workspaceId,
+    tabId,
+    knownRevision: buffer.session.syncedRevision,
+    knownSavedGeneration: buffer.session.savedGeneration,
+  });
+  return { path: sync.path, document: sync.document ?? null };
+}
 
 export type EditorBufferState = {
   buffer: EditorBuffer;
@@ -104,6 +150,7 @@ export function getOrCreateEditorBuffer(
   path: string,
   savedContent: string,
   createModel: () => editor.ITextModel,
+  { languageFeatures = true }: { languageFeatures?: boolean } = {},
 ): EditorBuffer {
   const key = bufferKey(workspaceId, tabId);
   const existing = buffers.get(key);
@@ -122,8 +169,11 @@ export function getOrCreateEditorBuffer(
     tabId,
     model,
     path,
+    languageFeatures,
     savedContent,
-    languageDocument: attachDocument(workspaceId, tabId, path, model),
+    savedVersionId: null,
+    applyingServerText: false,
+    languageDocument: attachDocument(workspaceId, tabId, path, model, languageFeatures),
     modelListeners: new Set<(model: editor.ITextModel) => void>(),
     lockState: existing?.lockState ?? {
       transactions: new Map<number, number>(),
@@ -131,18 +181,42 @@ export function getOrCreateEditorBuffer(
       operationEpoch: 0,
     },
     session: existing?.session ?? {
-      acknowledgedRevision: 0,
       lastError: null,
       opening: null,
-      queuedContent: null,
-      queuedRevision: null,
+      pendingEdits: [],
+      needsFullSync: false,
       revision: 0,
+      syncedRevision: 0,
+      savedGeneration: 0,
       synchronization: null,
     },
   };
   buffers.set(key, buffer);
+  markEditorBufferSavedIfEqual(buffer);
 
   return buffer;
+}
+
+/**
+ * Returns the tab's buffer for `loaded`, reusing the current one when the path is
+ * unchanged so no text is copied, and otherwise creating one from the loaded text.
+ */
+export function editorBufferForDocument(
+  workspaceId: number,
+  tabId: number,
+  loaded: LoadedEditorDocument,
+  createModel: (content: string) => editor.ITextModel,
+): EditorBuffer {
+  const existing = editorBuffer(workspaceId, tabId);
+  const current = existing && !existing.model.isDisposed() ? existing : null;
+  const { document } = loaded;
+  if (!document && !current) {
+    throw new Error(`The document ${loaded.path} is not loaded.`);
+  }
+  const savedContent = document ? (document.savedContent ?? document.content) : current!.savedContent;
+  return getOrCreateEditorBuffer(workspaceId, tabId, loaded.path, savedContent, () =>
+    createModel(document?.content ?? current!.model.getValue()),
+  );
 }
 
 /** Keeps unsynchronized edits when a tab's buffer moves to a renamed path. */
@@ -159,62 +233,158 @@ function carryOverEditorBufferContent(
   }
 }
 
+/**
+ * Attaches a buffer to its server session. A buffer built from the document the
+ * server just returned is already in sync, so only buffers carrying local text the
+ * server has not seen upload it.
+ */
 export function openEditorBufferSession(
   buffer: EditorBuffer,
-  document: EditorDocument,
+  document: EditorDocument | null,
 ): Promise<void> {
   if (buffer.session.opening) {
     return buffer.session.opening;
   }
-  const content = buffer.model.getValue();
-  const localRevision = Math.max(buffer.session.revision, document.revision);
-  const opening = (async () => {
-    const session = await openEditorSession({
-      workspaceId: buffer.workspaceId,
-      tabId: buffer.tabId,
-      path: buffer.path,
-      content,
-      revision: localRevision,
-    });
-    buffer.session.acknowledgedRevision = Math.max(
-      buffer.session.acknowledgedRevision,
-      session.revision,
-    );
-    buffer.session.revision = Math.max(buffer.session.revision, session.revision);
-    buffer.savedContent = session.savedContent;
-
-    if (content === document.content && content !== session.content) {
-      buffer.model.setValue(session.content);
-      return;
-    }
-    if (content !== session.content) {
-      queueEditorBufferSynchronization(buffer);
-    }
-  })();
+  if (document && !isEditorBufferModified(buffer, document)) {
+    adoptEditorDocumentVersion(buffer, document);
+    return Promise.resolve();
+  }
+  if (!document) {
+    return Promise.resolve();
+  }
+  const opening = uploadEditorBufferText(buffer, document.revision);
   buffer.session.opening = opening;
-  void opening.finally(() => {
-    if (buffer.session.opening === opening) {
-      buffer.session.opening = null;
-    }
-  }).catch(() => {});
+  void opening
+    .finally(() => {
+      if (buffer.session.opening === opening) {
+        buffer.session.opening = null;
+      }
+    })
+    .catch(() => {});
   return opening;
 }
 
-export function queueEditorBufferSynchronization(buffer: EditorBuffer): void {
-  if (buffer.model.isDisposed()) {
+/** Whether the model holds text the server's `document` does not contain. */
+function isEditorBufferModified(buffer: EditorBuffer, document: EditorDocument): boolean {
+  if (buffer.session.pendingEdits.length > 0 || buffer.session.needsFullSync) {
+    return true;
+  }
+  if (buffer.session.syncedRevision === document.revision && buffer.session.revision === document.revision) {
+    return false;
+  }
+  return buffer.model.getValue() !== document.content;
+}
+
+function adoptEditorDocumentVersion(buffer: EditorBuffer, document: EditorDocument): void {
+  buffer.session.revision = Math.max(buffer.session.revision, document.revision);
+  buffer.session.syncedRevision = document.revision;
+  buffer.session.savedGeneration = document.savedGeneration;
+}
+
+/** Replaces the server session text with the model's, e.g. after a rejected edit. */
+async function uploadEditorBufferText(buffer: EditorBuffer, serverRevision: number): Promise<void> {
+  buffer.session.pendingEdits = [];
+  buffer.session.needsFullSync = false;
+  const revision = nextEditorBufferRevision(buffer, serverRevision);
+  const ack = await openEditorSession({
+    workspaceId: buffer.workspaceId,
+    tabId: buffer.tabId,
+    path: buffer.path,
+    content: buffer.model.getValue(),
+    revision,
+  });
+  if (!ack.accepted) {
+    throw new Error(`Could not synchronize ${buffer.path}; the server has a newer version.`);
+  }
+  buffer.session.syncedRevision = revision;
+  buffer.session.savedGeneration = ack.savedGeneration;
+}
+
+function nextEditorBufferRevision(buffer: EditorBuffer, floor = 0): number {
+  buffer.session.revision = Math.max(
+    buffer.session.revision + 1,
+    floor + 1,
+    buffer.model.getVersionId(),
+  );
+  return buffer.session.revision;
+}
+
+/**
+ * Starts a server session holding the buffer's current text as its saved baseline;
+ * used by views, such as diffs, whose text does not come from an editor document.
+ */
+export function startEditorBufferSession(buffer: EditorBuffer): Promise<void> {
+  const opening = uploadEditorBufferText(buffer, buffer.session.syncedRevision);
+  buffer.session.opening = opening;
+  void opening
+    .finally(() => {
+      if (buffer.session.opening === opening) {
+        buffer.session.opening = null;
+      }
+    })
+    .catch(() => {});
+  return opening;
+}
+
+/**
+ * Makes `content` the buffer's new saved text, e.g. when a clean diff reloads after
+ * the file changed; the server session restarts with it as its baseline.
+ */
+export async function resetEditorBufferSession(
+  buffer: EditorBuffer,
+  content: string,
+): Promise<void> {
+  buffer.applyingServerText = true;
+  try {
+    replaceEditorBufferContent(buffer, content);
+  } finally {
+    buffer.applyingServerText = false;
+  }
+  buffer.savedContent = content;
+  buffer.session.pendingEdits = [];
+  buffer.session.needsFullSync = false;
+  buffer.savedVersionId = buffer.model.getAlternativeVersionId();
+  await closeEditorSession({ workspaceId: buffer.workspaceId, tabId: buffer.tabId });
+  await startEditorBufferSession(buffer);
+}
+
+/** Discards a tab's buffer and server session, including unsaved edits. */
+export async function closeEditorBufferSession(workspaceId: number, tabId: number): Promise<void> {
+  disposeEditorBuffer(workspaceId, tabId);
+  await closeEditorSession({ workspaceId, tabId });
+}
+
+/** Records a model change so it reaches the server as incremental edits. */
+export function queueEditorBufferSynchronization(
+  buffer: EditorBuffer,
+  event?: editor.IModelContentChangedEvent,
+): void {
+  if (buffer.model.isDisposed() || buffer.applyingServerText) {
     return;
   }
-  buffer.session.revision = Math.max(buffer.session.revision + 1, buffer.model.getVersionId());
-  buffer.session.queuedRevision = buffer.session.revision;
-  buffer.session.queuedContent = buffer.model.getValue();
-  if (sessionRecovery) {
-    return;
+  if (!event || event.isEolChange) {
+    buffer.session.needsFullSync = true;
+  } else {
+    buffer.session.pendingEdits.push(...event.changes.map(toEditorTextEdit));
   }
-  if (buffer.session.synchronization) {
+  nextEditorBufferRevision(buffer);
+  scheduleEditorBufferSynchronization(buffer);
+}
+
+function scheduleEditorBufferSynchronization(buffer: EditorBuffer): void {
+  if (sessionRecovery || buffer.session.synchronization) {
     return;
   }
   buffer.session.synchronization = Promise.resolve().then(() => synchronizeEditorBuffer(buffer));
   void buffer.session.synchronization.catch(() => {});
+}
+
+function toEditorTextEdit(change: editor.IModelContentChange): EditorTextEdit {
+  return { offset: change.rangeOffset, length: change.rangeLength, text: change.text };
+}
+
+function hasUnsyncedEditorChanges(buffer: EditorBuffer): boolean {
+  return buffer.session.pendingEdits.length > 0 || buffer.session.needsFullSync;
 }
 
 export async function flushEditorBuffer(buffer: EditorBuffer): Promise<void> {
@@ -223,11 +393,12 @@ export async function flushEditorBuffer(buffer: EditorBuffer): Promise<void> {
   if (buffer.session.lastError) {
     throw buffer.session.lastError;
   }
-  if (buffer.session.queuedContent === null && !buffer.session.synchronization) {
+  if (!hasUnsyncedEditorChanges(buffer) && !buffer.session.synchronization) {
     return;
   }
+  scheduleEditorBufferSynchronization(buffer);
   await buffer.session.synchronization;
-  if (buffer.session.queuedContent !== null) {
+  if (hasUnsyncedEditorChanges(buffer)) {
     await flushEditorBuffer(buffer);
   }
   if (buffer.session.lastError) {
@@ -244,43 +415,35 @@ async function restoreEditorBufferSessions(): Promise<void> {
         return;
       }
 
-      let minimumRevision = buffer.session.revision;
-      while (!buffer.model.isDisposed()) {
-        const content = buffer.model.getValue();
-        const revision = Math.max(minimumRevision, buffer.model.getVersionId());
-        let session = await restoreEditorSession({
-          workspaceId: buffer.workspaceId,
-          tabId: buffer.tabId,
-          path: buffer.path,
-          content,
-          savedContent: buffer.savedContent,
-          revision,
-        });
-        if (!session.accepted) {
-          session = await restoreEditorSession({
-            workspaceId: buffer.workspaceId,
-            tabId: buffer.tabId,
-            path: buffer.path,
-            content,
-            savedContent: buffer.savedContent,
-            revision: Math.max(revision, session.revision) + 1,
-          });
-        }
-        if (!session.accepted || session.content !== content) {
-          throw new Error(`Could not restore editor session ${buffer.path}`);
-        }
-        buffer.session.acknowledgedRevision = session.revision;
-        buffer.session.revision = session.revision;
-        buffer.session.lastError = null;
-        buffer.session.queuedContent = null;
-        buffer.session.queuedRevision = null;
-        if (buffer.model.getValue() === content) {
-          return;
-        }
-        minimumRevision = session.revision + 1;
+      // The restored text includes every edit made so far; later edits stay queued.
+      buffer.session.pendingEdits = [];
+      buffer.session.needsFullSync = false;
+      const revision = nextEditorBufferRevision(buffer);
+      const ack = await restoreEditorSession({
+        workspaceId: buffer.workspaceId,
+        tabId: buffer.tabId,
+        path: buffer.path,
+        content: buffer.model.getValue(),
+        savedContent: buffer.savedContent,
+        revision,
+      });
+      if (!ack.accepted) {
+        await uploadEditorBufferText(buffer, ack.revision);
+      } else {
+        buffer.session.syncedRevision = revision;
+        buffer.session.savedGeneration = ack.savedGeneration;
       }
+      buffer.session.lastError = null;
     }),
   );
+}
+
+function resumeEditorBufferSynchronization(): void {
+  for (const buffer of buffers.values()) {
+    if (hasUnsyncedEditorChanges(buffer)) {
+      scheduleEditorBufferSynchronization(buffer);
+    }
+  }
 }
 
 export async function flushEditorBuffers(): Promise<void> {
@@ -291,32 +454,8 @@ function synchronizeEditorBuffer(buffer: EditorBuffer): Promise<void> {
   return (async () => {
     try {
       await buffer.session.opening;
-      while (buffer.session.queuedContent !== null && buffer.session.queuedRevision !== null) {
-        const content = buffer.session.queuedContent;
-        const revision = buffer.session.queuedRevision;
-        buffer.session.queuedContent = null;
-        buffer.session.queuedRevision = null;
-        const session = await changeEditorSession({
-          workspaceId: buffer.workspaceId,
-          tabId: buffer.tabId,
-          content,
-          revision,
-        });
-        buffer.session.acknowledgedRevision = Math.max(
-          buffer.session.acknowledgedRevision,
-          session.revision,
-        );
-        buffer.session.revision = Math.max(buffer.session.revision, session.revision);
-        if (!session.accepted) {
-          if (buffer.model.getValue() === session.content) {
-            buffer.savedContent = session.savedContent;
-          } else {
-            buffer.session.revision = Math.max(buffer.session.revision, session.revision);
-            buffer.session.queuedRevision = buffer.session.revision + 1;
-            buffer.session.revision = buffer.session.queuedRevision;
-            buffer.session.queuedContent = buffer.model.getValue();
-          }
-        }
+      while (hasUnsyncedEditorChanges(buffer) && !buffer.model.isDisposed()) {
+        await sendEditorBufferChanges(buffer);
       }
       buffer.session.lastError = null;
     } catch (error) {
@@ -326,6 +465,29 @@ function synchronizeEditorBuffer(buffer: EditorBuffer): Promise<void> {
       buffer.session.synchronization = null;
     }
   })();
+}
+
+async function sendEditorBufferChanges(buffer: EditorBuffer): Promise<void> {
+  if (buffer.session.needsFullSync) {
+    await uploadEditorBufferText(buffer, buffer.session.syncedRevision);
+    return;
+  }
+  const edits = buffer.session.pendingEdits;
+  const revision = buffer.session.revision;
+  buffer.session.pendingEdits = [];
+  const ack = await changeEditorSession({
+    workspaceId: buffer.workspaceId,
+    tabId: buffer.tabId,
+    baseRevision: buffer.session.syncedRevision,
+    revision,
+    edits,
+  });
+  if (ack.accepted) {
+    buffer.session.syncedRevision = revision;
+    buffer.session.savedGeneration = ack.savedGeneration;
+    return;
+  }
+  await uploadEditorBufferText(buffer, ack.revision);
 }
 
 export function editorBuffersForPath(workspaceId: number, path: string): EditorBuffer[] {
@@ -357,11 +519,18 @@ export function rebindEditorBuffer(
   path: string,
   model: editor.ITextModel,
 ): void {
-  const languageDocument = attachDocument(buffer.workspaceId, buffer.tabId, path, model);
+  const languageDocument = attachDocument(
+    buffer.workspaceId,
+    buffer.tabId,
+    path,
+    model,
+    buffer.languageFeatures,
+  );
   const previousLanguageDocument = buffer.languageDocument;
   buffer.model = model;
   buffer.path = path;
   buffer.languageDocument = languageDocument;
+  markEditorBufferSavedIfEqual(buffer);
   for (const listener of buffer.modelListeners) {
     listener(model);
   }
@@ -454,7 +623,7 @@ export function assertEditorBufferEditable(buffer: EditorBuffer): void {
 }
 
 export function assertEditorBufferCleanForOverwrite(buffer: EditorBuffer): void {
-  if (buffer.model.getValue() !== buffer.savedContent) {
+  if (isEditorBufferDirty(buffer)) {
     throw new Error(`Cannot overwrite dirty open document ${buffer.path}.`);
   }
 }
@@ -485,6 +654,7 @@ export function revalidateEditorBuffer(buffer: EditorBuffer): void {
     buffer.tabId,
     buffer.path,
     buffer.model,
+    buffer.languageFeatures,
   );
 }
 
@@ -514,7 +684,14 @@ export function restoreDetachedEditorBuffer(
   }
   buffer.model = model;
   buffer.path = path;
-  buffer.languageDocument = attachDocument(buffer.workspaceId, buffer.tabId, path, model);
+  buffer.languageDocument = attachDocument(
+    buffer.workspaceId,
+    buffer.tabId,
+    path,
+    model,
+    buffer.languageFeatures,
+  );
+  markEditorBufferSavedIfEqual(buffer);
   buffers.set(key, buffer);
   for (const listener of buffer.modelListeners) {
     listener(model);
@@ -532,16 +709,66 @@ export function restoreSuspendedEditorBuffer(
   restoreDetachedEditorBuffer(state.buffer, state.path, model);
 }
 
-export function reconcileEditorBuffer(buffer: EditorBuffer, document: EditorDocument): boolean {
-  const wasDirty = buffer.model.getValue() !== buffer.savedContent;
-  buffer.savedContent = document.savedContent;
+/** O(1): compares Monaco's version with the one recorded when the text was saved. */
+export function isEditorBufferDirty(buffer: EditorBuffer): boolean {
+  return (
+    buffer.savedVersionId === null ||
+    buffer.model.getAlternativeVersionId() !== buffer.savedVersionId
+  );
+}
 
-  if (!wasDirty && buffer.model.getValue() !== document.savedContent) {
-    buffer.session.revision = Math.max(buffer.session.revision, document.revision);
-    replaceEditorBufferContent(buffer, document.savedContent);
+function markEditorBufferSavedIfEqual(buffer: EditorBuffer): void {
+  buffer.savedVersionId =
+    buffer.model.getValue() === buffer.savedContent
+      ? buffer.model.getAlternativeVersionId()
+      : null;
+}
+
+/**
+ * Applies a newer server document. A clean buffer takes the server text; a dirty one
+ * keeps its edits and only adopts the new saved baseline. Returns whether it is dirty.
+ */
+export function reconcileEditorBuffer(buffer: EditorBuffer, document: EditorDocument): boolean {
+  const wasDirty = isEditorBufferDirty(buffer);
+  const serverIsNewer = document.revision > buffer.session.syncedRevision;
+  buffer.savedContent = document.savedContent ?? document.content;
+  buffer.session.savedGeneration = document.savedGeneration;
+
+  if (serverIsNewer && !wasDirty && !hasUnsyncedEditorChanges(buffer)) {
+    adoptServerText(buffer, document.content, document.revision);
+  } else if (serverIsNewer) {
+    // Local edits win over a server change the renderer never saw.
+    buffer.session.needsFullSync = true;
+    scheduleEditorBufferSynchronization(buffer);
   }
 
-  return buffer.model.getValue() !== buffer.savedContent;
+  markEditorBufferSavedIfEqual(buffer);
+  return isEditorBufferDirty(buffer);
+}
+
+/** Puts server text into the model without echoing it back as local edits. */
+function adoptServerText(buffer: EditorBuffer, content: string, serverRevision: number): void {
+  buffer.applyingServerText = true;
+  try {
+    replaceEditorBufferContent(buffer, content);
+  } finally {
+    buffer.applyingServerText = false;
+  }
+  buffer.session.syncedRevision = serverRevision;
+  alignEditorBufferRevision(buffer);
+}
+
+/**
+ * Language features compare the server revision with Monaco's version id, so after
+ * adopting server text the (unchanged) session revision is advanced to match.
+ */
+function alignEditorBufferRevision(buffer: EditorBuffer): void {
+  if (buffer.model.getVersionId() <= buffer.session.syncedRevision) {
+    return;
+  }
+  buffer.session.pendingEdits.push({ offset: 0, length: 0, text: "" });
+  nextEditorBufferRevision(buffer);
+  scheduleEditorBufferSynchronization(buffer);
 }
 
 /** Replaces the whole buffer as one undoable edit so external reloads keep undo history. */
@@ -562,10 +789,14 @@ export function applyEditorSaveProjection(buffer: EditorBuffer, result: EditorSa
     return false;
   }
 
-  buffer.savedContent = result.savedContent;
-  if (buffer.model.getValue() !== result.savedContent) {
-    buffer.model.setValue(result.savedContent);
+  buffer.session.savedGeneration = result.savedGeneration;
+  if (result.savedContent == null) {
+    buffer.savedContent = buffer.model.getValue();
+  } else {
+    buffer.savedContent = result.savedContent;
+    adoptServerText(buffer, result.savedContent, result.currentRevision);
   }
+  buffer.savedVersionId = buffer.model.getAlternativeVersionId();
   return true;
 }
 

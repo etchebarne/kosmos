@@ -1,18 +1,25 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use ignore::{DirEntry, WalkBuilder};
 
-use super::editor::{EditorDocument, EditorError, MAX_EDITOR_FILE_BYTES};
+use super::editor::{EditorDocument, EditorError};
 
 pub type Result<T> = std::result::Result<T, SearchError>;
 
 const MAX_QUERY_BYTES: usize = 256;
 const MAX_WALKED_ENTRIES: usize = 50_000;
-const MAX_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+/// Total bytes content search may scan across all files before it stops and
+/// reports partial results.
+const MAX_SCANNED_BYTES: usize = 512 * 1024 * 1024;
+/// Files larger than this are not scanned; the results are reported as partial.
+const MAX_SEARCH_FILE_BYTES: u64 = 256 * 1024 * 1024;
+/// Leading bytes inspected for a NUL byte to skip binary files cheaply.
+const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+const READ_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_RESULTS: usize = 250;
 const MAX_MATCHES_PER_FILE: usize = 20;
 const MAX_PREVIEW_CHARS: usize = 240;
@@ -84,7 +91,7 @@ impl WorkspaceSearch {
 #[derive(Clone, Copy)]
 struct SearchLimits {
     walked_entries: usize,
-    content_bytes: usize,
+    scanned_bytes: usize,
     results: usize,
     matches_per_file: usize,
 }
@@ -93,7 +100,7 @@ impl Default for SearchLimits {
     fn default() -> Self {
         Self {
             walked_entries: MAX_WALKED_ENTRIES,
-            content_bytes: MAX_CONTENT_BYTES,
+            scanned_bytes: MAX_SCANNED_BYTES,
             results: MAX_RESULTS,
             matches_per_file: MAX_MATCHES_PER_FILE,
         }
@@ -123,7 +130,7 @@ fn search_with_limits(
     let query = query.to_lowercase();
     let mut matches = Vec::new();
     let mut walked_entries = 0;
-    let mut content_bytes = 0usize;
+    let mut scanned_bytes = 0usize;
     let mut limit_reached = false;
     let mut builder = WalkBuilder::new(workspace_directory);
     builder
@@ -170,38 +177,26 @@ fn search_with_limits(
                 }
             }
             SearchMode::Content => {
-                let Some(bytes) = read_searchable_file(entry.path()) else {
-                    continue;
-                };
-                if content_bytes.saturating_add(bytes.len()) > limits.content_bytes {
+                if exceeds_search_file_limit(&entry) {
                     limit_reached = true;
                     continue;
                 }
-                content_bytes += bytes.len();
-                let Ok(content) = std::str::from_utf8(&bytes) else {
-                    continue;
-                };
-                if content.contains('\0') {
-                    continue;
-                }
 
-                let mut file_matches = 0;
-                for (line_index, line) in content.lines().enumerate() {
-                    if !line.to_lowercase().contains(&query) {
-                        continue;
-                    }
-                    if file_matches == limits.matches_per_file {
-                        limit_reached = true;
-                        break;
-                    }
-
-                    matches.push(SearchMatch {
-                        path: path.clone(),
-                        line_number: u32::try_from(line_index + 1).ok(),
-                        preview: Some(truncated_preview(line)),
-                    });
-                    file_matches += 1;
-                    if matches.len() == limits.results {
+                let scan = scan_file_content(
+                    entry.path(),
+                    &path,
+                    &query,
+                    ScanLimits {
+                        matches: limits.matches_per_file.min(limits.results - matches.len()),
+                        bytes: limits.scanned_bytes - scanned_bytes,
+                    },
+                );
+                scanned_bytes += scan.scanned_bytes;
+                matches.extend(scan.matches);
+                match scan.end {
+                    ScanEnd::Complete => {}
+                    ScanEnd::MatchLimit => limit_reached = true,
+                    ScanEnd::ByteBudget => {
                         limit_reached = true;
                         break;
                     }
@@ -257,19 +252,108 @@ fn relative_utf8_path(root: &Path, path: &Path) -> Option<String> {
     Some(components.join("/"))
 }
 
-fn read_searchable_file(path: &Path) -> Option<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.file_type().is_file() || metadata.len() > MAX_EDITOR_FILE_BYTES as u64 {
+#[derive(Clone, Copy)]
+struct ScanLimits {
+    matches: usize,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct ContentScan {
+    matches: Vec<SearchMatch>,
+    scanned_bytes: usize,
+    end: ScanEnd,
+}
+
+/// Why a file scan stopped; anything but `Complete` means more matches may
+/// exist.
+#[derive(Default)]
+enum ScanEnd {
+    #[default]
+    Complete,
+    MatchLimit,
+    ByteBudget,
+}
+
+fn exceeds_search_file_limit(entry: &DirEntry) -> bool {
+    entry
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > MAX_SEARCH_FILE_BYTES)
+}
+
+/// Streams a text file line by line, collecting matches for the lowercase
+/// `query`. Binary, non-UTF-8 and unreadable files yield no matches.
+fn scan_file_content(
+    path: &Path,
+    relative_path: &str,
+    query: &str,
+    limits: ScanLimits,
+) -> ContentScan {
+    let mut scan = ContentScan::default();
+    let Some(mut reader) = open_text_file(path) else {
+        return scan;
+    };
+    let mut line = Vec::new();
+    let mut line_number = 0usize;
+
+    loop {
+        line.clear();
+        let Ok(read) = reader.read_until(b'\n', &mut line) else {
+            scan.matches.clear();
+            return scan;
+        };
+        if read == 0 {
+            return scan;
+        }
+        if scan.scanned_bytes + read > limits.bytes {
+            scan.end = ScanEnd::ByteBudget;
+            return scan;
+        }
+        scan.scanned_bytes += read;
+        line_number += 1;
+
+        let Some(text) = text_line(&line) else {
+            scan.matches.clear();
+            return scan;
+        };
+        if !text.to_lowercase().contains(query) {
+            continue;
+        }
+        if scan.matches.len() == limits.matches {
+            scan.end = ScanEnd::MatchLimit;
+            return scan;
+        }
+        scan.matches.push(SearchMatch {
+            path: relative_path.to_owned(),
+            line_number: u32::try_from(line_number).ok(),
+            preview: Some(truncated_preview(text)),
+        });
+    }
+}
+
+/// Opens a regular file for buffered reading, rejecting files whose leading
+/// bytes contain a NUL byte.
+fn open_text_file(path: &Path) -> Option<BufReader<io::Take<File>>> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::with_capacity(READ_BUFFER_BYTES, file.take(MAX_SEARCH_FILE_BYTES));
+    let head = reader.fill_buf().ok()?;
+    let sniffed = &head[..head.len().min(BINARY_SNIFF_BYTES)];
+
+    (!sniffed.contains(&0)).then_some(reader)
+}
+
+/// Decodes one raw line without its line ending, returning `None` for bytes
+/// that mark the file as binary or non-UTF-8.
+fn text_line(line: &[u8]) -> Option<&str> {
+    let line = match line.strip_suffix(b"\n") {
+        Some(line) => line.strip_suffix(b"\r").unwrap_or(line),
+        None => line,
+    };
+    if line.contains(&0) {
         return None;
     }
 
-    let file = File::open(path).ok()?;
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take((MAX_EDITOR_FILE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .ok()?;
-
-    (bytes.len() <= MAX_EDITOR_FILE_BYTES).then_some(bytes)
+    std::str::from_utf8(line).ok()
 }
 
 fn truncated_preview(line: &str) -> String {
@@ -374,7 +458,7 @@ mod tests {
         fs::write(root.join("matches.txt"), "match\nmatch\n").unwrap();
         let limits = SearchLimits {
             walked_entries: 10,
-            content_bytes: 1024,
+            scanned_bytes: 1024,
             results: 1,
             matches_per_file: 10,
         };
@@ -383,6 +467,66 @@ mod tests {
 
         assert_eq!(results.matches().len(), 1);
         assert!(results.limit_reached());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finds_matches_in_files_larger_than_the_editor_limit() {
+        let root = test_directory("large");
+        fs::create_dir_all(&root).unwrap();
+        let mut content = "filler line\n".repeat(200_000);
+        content.push_str("the Needle is last\r\n");
+        fs::write(root.join("large.log"), content).unwrap();
+
+        let results = WorkspaceSearch::query(&root, "needle", SearchMode::Content).unwrap();
+
+        assert_eq!(results.matches().len(), 1);
+        assert_eq!(results.matches()[0].line_number(), Some(200_001));
+        assert_eq!(results.matches()[0].preview(), Some("the Needle is last"));
+        assert!(!results.limit_reached());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skips_files_with_late_nul_bytes_or_invalid_utf8() {
+        let root = test_directory("late-binary");
+        fs::create_dir_all(&root).unwrap();
+        let mut late_nul = format!("needle\n{}", "filler\n".repeat(2_000)).into_bytes();
+        late_nul.extend_from_slice(b"tail\0");
+        fs::write(root.join("late-nul.dat"), late_nul).unwrap();
+        fs::write(root.join("latin1.txt"), b"needle\n\xff\n").unwrap();
+
+        let results = WorkspaceSearch::query(&root, "needle", SearchMode::Content).unwrap();
+
+        assert!(results.matches().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stops_scanning_at_per_file_match_and_byte_limits() {
+        let root = test_directory("scan-limits");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("many.txt"), "match\n".repeat(10)).unwrap();
+        let match_limits = SearchLimits {
+            walked_entries: 10,
+            scanned_bytes: 1024,
+            results: 100,
+            matches_per_file: 3,
+        };
+        let byte_limits = SearchLimits {
+            scanned_bytes: 20,
+            matches_per_file: 100,
+            ..match_limits
+        };
+
+        let per_file =
+            search_with_limits(&root, "match", SearchMode::Content, match_limits).unwrap();
+        let budget = search_with_limits(&root, "match", SearchMode::Content, byte_limits).unwrap();
+
+        assert_eq!(per_file.matches().len(), 3);
+        assert!(per_file.limit_reached());
+        assert_eq!(budget.matches().len(), 3);
+        assert!(budget.limit_reached());
         fs::remove_dir_all(root).unwrap();
     }
 

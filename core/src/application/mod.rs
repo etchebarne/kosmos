@@ -7,8 +7,8 @@ mod editor_sessions;
 mod file_tree;
 
 pub use editor_sessions::{
-    EditorSessionError, EditorSessionId, EditorSessionRegistry, EditorSessionSnapshot,
-    EditorSessionUpdate,
+    EditorSessionAck, EditorSessionError, EditorSessionId, EditorSessionRegistry,
+    EditorSessionSnapshot, EditorSessionUpdate, EditorTextEdit,
 };
 use editor_sessions::{EditorSessionSavePermit, EditorSessionSaveTicket};
 
@@ -22,10 +22,16 @@ use crate::language_servers::{
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::settings::{ResolvedSettings, SettingValue, SettingsError};
-use crate::state::{FileTreeGitDecorationsError, OpenEditorLocation, PersistentStateCandidate};
-use crate::tabs::editor::EditorError;
+use crate::state::{
+    DocumentScope, DocumentSessionTarget, FileTreeGitDecorationsError, OpenEditorLocation,
+    PersistentStateCandidate,
+};
+use crate::tabs::editor::{DocumentFingerprint, EditorDocument, EditorError, save_document};
 use crate::tabs::file_tree::FileTreeError;
-use crate::tabs::git::{FileTreeGitDecorations, GitError, GitLineHunk};
+use crate::tabs::git::{FileTreeGitDecorations, GitError, GitLineHunk, GitRepository};
+
+/// Largest unsaved document whose git line markers are recomputed while typing.
+const MAX_LIVE_GIT_HUNK_BYTES: usize = 8 * 1024 * 1024;
 use crate::tree::{PaneId, TabId, WorkspaceId};
 use crate::window::WindowState;
 
@@ -124,18 +130,28 @@ pub struct EditorSessionSaveWarning {
     message: String,
 }
 
+/// A tab's current document path, plus its document when it changed since the
+/// caller's known version.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditorSessionSync {
+    pub path: String,
+    pub document: Option<EditorSessionSnapshot>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditorSessionSaveResult {
     saved_revision: u64,
     saved_content: String,
+    reformatted: bool,
     current_revision: u64,
+    saved_generation: u64,
     warnings: Vec<EditorSessionSaveWarning>,
 }
 
 pub struct PreparedEditorSessionSave {
     state: State,
     id: EditorSessionId,
-    path: String,
+    target: DocumentSessionTarget,
     content: String,
     revision: u64,
     format_on_save: bool,
@@ -213,6 +229,31 @@ impl Application {
         self.state.editor_git_line_hunks(workspace_id, tab_id)
     }
 
+    /// Git line markers for a tab's unsaved text, or `None` when they cannot be
+    /// computed live (no workspace session, a very large document, or git failed), in
+    /// which case the saved file's markers remain the best answer.
+    pub fn unsaved_editor_git_line_hunks(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<Option<Vec<GitLineHunk>>, ApplicationError> {
+        let id = self.session_id(workspace_id, tab_id)?;
+        let Some(target) = self
+            .editor_sessions
+            .target(id)
+            .filter(|target| target.scope == DocumentScope::Workspace)
+        else {
+            return Ok(None);
+        };
+        let Some(content) = self
+            .editor_sessions
+            .content_within(id, MAX_LIVE_GIT_HUNK_BYTES)
+        else {
+            return Ok(None);
+        };
+        Ok(GitRepository::content_line_hunks(&target.root, &target.path, &content).ok())
+    }
+
     pub fn prepare_persistent_operation(
         &mut self,
     ) -> Result<PreparedPersistentOperation, ApplicationError> {
@@ -264,19 +305,11 @@ impl Application {
         content: String,
         revision: u64,
     ) -> Result<EditorSessionUpdate, ApplicationError> {
-        let (workspace_id, expected_path) =
-            self.state.editor_session_target(workspace_id, tab_id)?;
-        if expected_path != path {
-            return Err(EditorSessionError::PathMismatch {
-                expected: expected_path,
-                received: path.to_owned(),
-            }
-            .into());
-        }
+        let target = self.requested_session_target(workspace_id, tab_id, path)?;
         self.editor_sessions
             .open(
-                EditorSessionId::new(workspace_id, tab_id),
-                path,
+                EditorSessionId::new(target.workspace_id, tab_id),
+                &target,
                 content,
                 revision,
             )
@@ -292,19 +325,11 @@ impl Application {
         saved_content: String,
         revision: u64,
     ) -> Result<EditorSessionUpdate, ApplicationError> {
-        let (workspace_id, expected_path) =
-            self.state.editor_session_target(workspace_id, tab_id)?;
-        if expected_path != path {
-            return Err(EditorSessionError::PathMismatch {
-                expected: expected_path,
-                received: path.to_owned(),
-            }
-            .into());
-        }
+        let target = self.requested_session_target(workspace_id, tab_id, path)?;
         self.editor_sessions
             .restore(
-                EditorSessionId::new(workspace_id, tab_id),
-                path,
+                EditorSessionId::new(target.workspace_id, tab_id),
+                &target,
                 content,
                 saved_content,
                 revision,
@@ -312,52 +337,146 @@ impl Application {
             .map_err(ApplicationError::from)
     }
 
+    /// Resolves the document a renderer asks to track. Editor tabs must name their
+    /// own file; diff tabs name the changed file they edit.
+    fn requested_session_target(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        path: &str,
+    ) -> Result<DocumentSessionTarget, ApplicationError> {
+        let target = self
+            .state
+            .document_session_target(workspace_id, tab_id, Some(path))?;
+        if target.path != path {
+            return Err(EditorSessionError::PathMismatch {
+                expected: target.path,
+                received: path.to_owned(),
+            }
+            .into());
+        }
+        Ok(target)
+    }
+
+    /// Stops tracking a tab's document, discarding unsaved edits; used when a diff tab
+    /// moves to another file.
+    pub fn close_editor_session(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<(), ApplicationError> {
+        let id = self.session_id(workspace_id, tab_id)?;
+        self.editor_sessions.remove(id);
+        Ok(())
+    }
+
+    fn session_id(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<EditorSessionId, ApplicationError> {
+        let workspace_id = self
+            .state
+            .document_session_workspace(workspace_id, tab_id)?;
+        Ok(EditorSessionId::new(workspace_id, tab_id))
+    }
+
     pub fn change_editor_session(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        base_revision: u64,
+        revision: u64,
+        edits: &[EditorTextEdit],
+    ) -> Result<EditorSessionUpdate, ApplicationError> {
+        let id = self.session_id(workspace_id, tab_id)?;
+        self.editor_sessions
+            .change(id, base_revision, revision, edits)
+            .map_err(ApplicationError::from)
+    }
+
+    /// Replaces the session's whole text on top of its current revision.
+    pub fn replace_editor_session_content(
         &mut self,
         workspace_id: Option<WorkspaceId>,
         tab_id: TabId,
         content: String,
         revision: u64,
     ) -> Result<EditorSessionUpdate, ApplicationError> {
-        let (workspace_id, _) = self.state.editor_session_target(workspace_id, tab_id)?;
+        let id = self.session_id(workspace_id, tab_id)?;
         self.editor_sessions
-            .change(
-                EditorSessionId::new(workspace_id, tab_id),
-                content,
-                revision,
-            )
+            .replace(id, content, revision)
             .map_err(ApplicationError::from)
     }
 
+    /// Returns the tab's document, starting its session from disk when needed and
+    /// reconciling an existing session with changes made on disk.
     pub fn editor_session_document(
         &mut self,
         workspace_id: Option<WorkspaceId>,
         tab_id: TabId,
     ) -> Result<EditorSessionSnapshot, ApplicationError> {
-        let (workspace_id, path) = self.state.editor_session_target(workspace_id, tab_id)?;
-        let id = EditorSessionId::new(workspace_id, tab_id);
-        if self.editor_sessions.contains(id) {
-            self.observe_editor_session_disk_content(id);
-        }
-        if let Some(session) = self.editor_sessions.snapshot(id) {
-            return Ok(session);
-        }
-        let document = self.state.editor_document(Some(workspace_id), tab_id)?;
-        Ok(EditorSessionSnapshot {
-            id: EditorSessionId::new(workspace_id, tab_id),
-            path,
-            content: document.content().to_owned(),
-            saved_content: document.content().to_owned(),
-            revision: 0,
+        let target = self.synchronized_editor_session(workspace_id, tab_id)?;
+        let id = EditorSessionId::new(target.workspace_id, tab_id);
+        self.editor_sessions
+            .snapshot(id)
+            .ok_or_else(|| EditorSessionError::Missing(id).into())
+    }
+
+    /// Like [`Self::editor_session_document`], but skips the document text when the
+    /// caller already holds this revision and saved baseline.
+    pub fn editor_session_document_if_changed(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+        known: EditorSessionAck,
+    ) -> Result<EditorSessionSync, ApplicationError> {
+        let target = self.synchronized_editor_session(workspace_id, tab_id)?;
+        let id = EditorSessionId::new(target.workspace_id, tab_id);
+        let document = (self.editor_sessions.ack(id) != Some(known))
+            .then(|| self.editor_sessions.snapshot(id))
+            .flatten();
+        Ok(EditorSessionSync {
+            path: target.path,
+            document,
         })
     }
 
-    /// Reconciles an open session with its document on disk; unreadable documents
-    /// (for example, deleted files) leave the session untouched.
-    fn observe_editor_session_disk_content(&mut self, id: EditorSessionId) {
-        if let Ok(document) = self.state.editor_document(Some(id.workspace_id), id.tab_id) {
+    fn synchronized_editor_session(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        tab_id: TabId,
+    ) -> Result<DocumentSessionTarget, ApplicationError> {
+        let target = self
+            .state
+            .document_session_target(workspace_id, tab_id, None)?;
+        let id = EditorSessionId::new(target.workspace_id, tab_id);
+        if self.editor_sessions.contains(id) {
+            self.observe_editor_session_disk_content(id, &target);
+            return Ok(target);
+        }
+        let disk = DocumentFingerprint::read(&target.root, &target.path).ok();
+        let document = EditorDocument::read(&target.root, &target.path)?;
+        self.editor_sessions
+            .open_from_disk(id, &target, document.content(), disk)?;
+        Ok(target)
+    }
+
+    /// Reconciles an open session with its document on disk. The file is only read
+    /// when its metadata changed; unreadable documents (for example, deleted files)
+    /// leave the session untouched.
+    fn observe_editor_session_disk_content(
+        &mut self,
+        id: EditorSessionId,
+        target: &DocumentSessionTarget,
+    ) {
+        let disk = DocumentFingerprint::read(&target.root, &target.path).ok();
+        if disk.is_some() && disk == self.editor_sessions.disk_fingerprint(id) {
+            return;
+        }
+        if let Ok(document) = EditorDocument::read(&target.root, &target.path) {
             self.editor_sessions
-                .observe_disk_content(id, document.content().to_owned());
+                .observe_disk_content(id, document.content(), disk);
         }
     }
 
@@ -368,8 +487,11 @@ impl Application {
         tab_id: TabId,
         revision: u64,
     ) -> Result<EditorSessionSnapshot, ApplicationError> {
-        let (workspace_id, _) = self.state.editor_session_target(workspace_id, tab_id)?;
-        let id = EditorSessionId::new(workspace_id, tab_id);
+        let id = self.session_id(workspace_id, tab_id)?;
+        let target = self
+            .editor_sessions
+            .target(id)
+            .ok_or(EditorSessionError::Missing(id))?;
         let session = self
             .editor_sessions
             .snapshot(id)
@@ -381,8 +503,7 @@ impl Application {
             }
             .into());
         }
-        self.state
-            .save_editor_document(Some(workspace_id), tab_id, &session.content)?;
+        save_document(&target.root, &target.path, &session.content)?;
         self.editor_sessions
             .mark_saved(id, revision)
             .map_err(ApplicationError::from)
@@ -394,15 +515,21 @@ impl Application {
         tab_id: TabId,
         revision: u64,
     ) -> Result<PreparedEditorSessionSave, ApplicationError> {
-        let (workspace_id, path) = self.state.editor_session_target(workspace_id, tab_id)?;
-        let id = EditorSessionId::new(workspace_id, tab_id);
+        let id = self.session_id(workspace_id, tab_id)?;
+        let target = self
+            .editor_sessions
+            .target(id)
+            .ok_or(EditorSessionError::Missing(id))?;
         let (session, ticket) = self.editor_sessions.prepare_save(id, revision)?;
-        let format_on_save = self.state.resolved_settings().editor().format_on_save();
+        // Formatting and language-server notifications only apply to workspace files.
+        let in_workspace = target.scope == DocumentScope::Workspace;
+        let format_on_save =
+            in_workspace && self.state.resolved_settings().editor().format_on_save();
 
         Ok(PreparedEditorSessionSave {
             state: self.state.persistent_candidate().into_state(),
             id,
-            path,
+            target,
             content: session.content,
             revision,
             format_on_save,
@@ -420,21 +547,27 @@ impl Application {
             result,
         } = execution;
         let completed = result?;
-        let current_revision = match self.editor_sessions.complete_save(
+        let reformatted = completed.saved_content != prepared.content;
+        let current = match self.editor_sessions.complete_save(
             prepared.id,
             prepared.revision,
             completed.saved_content.clone(),
         ) {
-            Ok(session) => session.revision,
+            Ok(ack) => ack,
             // The tab can close after an atomic write. The write remains successful even
             // though there is no session baseline left to update.
-            Err(EditorSessionError::Missing(_)) => prepared.revision,
+            Err(EditorSessionError::Missing(_)) => EditorSessionAck {
+                revision: prepared.revision,
+                saved_generation: 0,
+            },
             Err(error) => return Err(error.into()),
         };
         let result = EditorSessionSaveResult {
             saved_revision: prepared.revision,
             saved_content: completed.saved_content,
-            current_revision,
+            reformatted,
+            current_revision: current.revision,
+            saved_generation: current.saved_generation,
             warnings: completed.warnings,
         };
         drop(permit);
@@ -780,7 +913,7 @@ impl PreparedEditorSessionSave {
         let saved_content = if self.format_on_save {
             match self.state.format_editor_session_content(
                 self.id.workspace_id,
-                &self.path,
+                &self.target.path,
                 self.revision,
                 &self.content,
                 cancellation,
@@ -801,15 +934,14 @@ impl PreparedEditorSessionSave {
         if cancellation.is_cancelled() {
             return Err(ApplicationError::RequestCancelled);
         }
-        self.state.save_editor_document(
-            Some(self.id.workspace_id),
-            self.id.tab_id,
-            &saved_content,
-        )?;
+        save_document(&self.target.root, &self.target.path, &saved_content)?;
 
-        if let Err(error) =
-            self.state
-                .notify_editor_session_saved(self.id.workspace_id, &self.path, &saved_content)
+        if self.target.scope == DocumentScope::Workspace
+            && let Err(error) = self.state.notify_editor_session_saved(
+                self.id.workspace_id,
+                &self.target.path,
+                &saved_content,
+            )
         {
             warnings.push(EditorSessionSaveWarning::language_server_notification(
                 error,
@@ -861,8 +993,18 @@ impl EditorSessionSaveResult {
         &self.saved_content
     }
 
+    /// Whether saving changed the text (for example, format on save), in which case
+    /// the editor must adopt [`Self::saved_content`].
+    pub fn reformatted(&self) -> bool {
+        self.reformatted
+    }
+
     pub fn current_revision(&self) -> u64 {
         self.current_revision
+    }
+
+    pub fn saved_generation(&self) -> u64 {
+        self.saved_generation
     }
 
     pub fn warnings(&self) -> &[EditorSessionSaveWarning] {
@@ -1296,7 +1438,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
 
         let prepared = application
@@ -1347,7 +1489,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
 
         let prepared = application
@@ -1388,7 +1530,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
         let prepared = application
             .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
@@ -1423,7 +1565,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
         let prepared = application
             .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
@@ -1462,7 +1604,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "newer".to_owned(), 2)
             .unwrap();
 
         assert!(matches!(
@@ -1494,13 +1636,13 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "first".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "first".to_owned(), 2)
             .unwrap();
         let prepared = application
             .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 3)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "newer".to_owned(), 3)
             .unwrap();
 
         let result = application
@@ -1540,13 +1682,13 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "first".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "first".to_owned(), 2)
             .unwrap();
         let first = application
             .prepare_save_editor_session(Some(workspace_id), tab_id, 2)
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "second".to_owned(), 3)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "second".to_owned(), 3)
             .unwrap();
         let second = application
             .prepare_save_editor_session(Some(workspace_id), tab_id, 3)
@@ -1617,7 +1759,7 @@ mod tests {
         assert_eq!(reloaded.workspaces().workspaces().len(), 1);
         assert!(
             reloaded
-                .editor_session_target(Some(workspace_id), tab_id)
+                .document_session_target(Some(workspace_id), tab_id, None)
                 .is_ok()
         );
 
@@ -1639,7 +1781,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "first".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "first".to_owned(), 2)
             .unwrap();
         let CloseIntentResult::RequiresDocumentDecision { close_id, .. } = application
             .begin_close(CloseIntent {
@@ -1654,7 +1796,7 @@ mod tests {
             panic!("dirty editor close should require a decision");
         };
         application
-            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 3)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "newer".to_owned(), 3)
             .unwrap();
 
         assert!(matches!(
@@ -1673,7 +1815,7 @@ mod tests {
         assert!(
             application
                 .state()
-                .editor_session_target(Some(workspace_id), tab_id)
+                .document_session_target(Some(workspace_id), tab_id, None)
                 .is_ok()
         );
 
@@ -1690,7 +1832,7 @@ mod tests {
         assert!(
             application
                 .state()
-                .editor_session_target(Some(workspace_id), tab_id)
+                .document_session_target(Some(workspace_id), tab_id, None)
                 .is_err()
         );
 
@@ -1712,7 +1854,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "changed".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "changed".to_owned(), 2)
             .unwrap();
         let CloseIntentResult::RequiresDocumentDecision { close_id, .. } = application
             .begin_close(CloseIntent {
@@ -1756,7 +1898,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
         let CloseIntentResult::RequiresDocumentDecision { close_id, .. } = application
             .begin_close(CloseIntent {
@@ -1788,7 +1930,7 @@ mod tests {
         assert!(
             application
                 .state()
-                .editor_session_target(Some(workspace_id), tab_id)
+                .document_session_target(Some(workspace_id), tab_id, None)
                 .is_err()
         );
 
@@ -1810,7 +1952,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "saved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "saved".to_owned(), 2)
             .unwrap();
         std::fs::remove_file(root.join("document.txt")).unwrap();
         std::fs::create_dir(root.join("document.txt")).unwrap();
@@ -1850,6 +1992,162 @@ mod tests {
             .unwrap();
 
         let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn sync_omits_the_document_while_the_known_version_is_current() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("sync-unchanged");
+        let document = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+        let known = EditorSessionAck {
+            revision: document.revision,
+            saved_generation: document.saved_generation,
+        };
+
+        let unchanged = application
+            .editor_session_document_if_changed(Some(workspace_id), tab_id, known)
+            .unwrap();
+        assert_eq!(unchanged.path, "document.txt");
+        assert!(unchanged.document.is_none());
+
+        std::fs::write(root.join("document.txt"), "changed on disk").unwrap();
+        let changed = application
+            .editor_session_document_if_changed(Some(workspace_id), tab_id, known)
+            .unwrap();
+        assert_eq!(changed.document.unwrap().content, "changed on disk");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn incremental_session_edits_are_saved_to_disk() {
+        let (mut application, root, database, workspace_id, tab_id) =
+            editor_application("incremental-save");
+        let document = application
+            .editor_session_document(Some(workspace_id), tab_id)
+            .unwrap();
+        let edit = EditorTextEdit {
+            offset: 0,
+            length: 0,
+            text: "fresh ".to_owned(),
+        };
+        application
+            .change_editor_session(
+                Some(workspace_id),
+                tab_id,
+                document.revision,
+                document.revision + 1,
+                &[edit],
+            )
+            .unwrap();
+
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), tab_id, document.revision + 1)
+            .unwrap();
+        let result = application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+
+        assert!(!result.reformatted());
+        assert_eq!(
+            std::fs::read_to_string(root.join("document.txt")).unwrap(),
+            "fresh before"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(database);
+    }
+
+    #[test]
+    fn diff_tab_sessions_edit_repository_files_and_block_closing_unsaved_edits() {
+        let (mut application, database) = test_application("diff-session");
+        let repository = std::env::temp_dir().join(format!(
+            "kosmos-application-diff-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(repository.join("app")).unwrap();
+        std::fs::write(repository.join("shared.txt"), "before").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .args(["-c", "user.email=a@b", "-c", "user.name=t"])
+                .args(args)
+                .current_dir(&repository)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-qm", "init"]);
+        std::fs::write(repository.join("shared.txt"), "changed").unwrap();
+        // The workspace is a subfolder, so the diff path lies outside it.
+        let workspace_id = application
+            .state_mut()
+            .open_workspace(repository.join("app"));
+        assert!(application.state_mut().set_tab_kind(
+            Some(workspace_id),
+            crate::tree::PaneId::new(1),
+            TabId::new(1),
+            crate::tree::TabKind::Git,
+        ));
+        application
+            .state_mut()
+            .open_git_diff_tab(Some(workspace_id), TabId::new(1), "shared.txt")
+            .unwrap();
+        let diff_tab = application.state().git_diff_view_states()[0].tab_id();
+
+        application
+            .open_editor_session(
+                Some(workspace_id),
+                diff_tab,
+                "shared.txt",
+                "changed".to_owned(),
+                1,
+            )
+            .unwrap();
+        application
+            .replace_editor_session_content(
+                Some(workspace_id),
+                diff_tab,
+                "edited in diff".to_owned(),
+                2,
+            )
+            .unwrap();
+
+        let close = application
+            .begin_close(CloseIntent {
+                target: CloseTarget::Workspace { workspace_id },
+            })
+            .unwrap();
+        assert!(matches!(
+            close,
+            CloseIntentResult::RequiresDocumentDecision { ref documents, .. }
+                if documents.len() == 1 && documents[0].path == "shared.txt"
+        ));
+
+        let prepared = application
+            .prepare_save_editor_session(Some(workspace_id), diff_tab, 2)
+            .unwrap();
+        application
+            .complete_save_editor_session(
+                prepared.execute(&LanguageServerRequestCancellation::new()),
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repository.join("shared.txt")).unwrap(),
+            "edited in diff"
+        );
+
+        let _ = std::fs::remove_dir_all(repository);
         let _ = std::fs::remove_file(database);
     }
 
@@ -1894,7 +2192,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
             .unwrap();
         std::fs::write(root.join("document.txt"), "external").unwrap();
 
@@ -1925,7 +2223,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
             .unwrap();
 
         application
@@ -2017,7 +2315,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "unsaved".to_owned(), 2)
             .unwrap();
 
         let result = application.delete_file_tree_entries(

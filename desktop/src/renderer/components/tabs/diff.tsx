@@ -8,7 +8,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/renderer/components/ui/select";
-import { getGitDiff, saveGitDiffFile } from "@/renderer/ipc";
+import { getGitDiff, saveEditorDocument, saveGitDiffFile } from "@/renderer/ipc";
+import {
+  applyEditorSaveProjection,
+  closeEditorBufferSession,
+  editorBuffer,
+  flushEditorBuffer,
+  getOrCreateEditorBuffer,
+  isEditorBufferDirty,
+  queueEditorBufferSynchronization,
+  resetEditorBufferSession,
+  startEditorBufferSession,
+  type EditorBuffer,
+} from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
@@ -215,6 +227,7 @@ function LoadedDiff({
       return;
     }
 
+    await discardDiffDraft(workspaceId, tabId);
     updateDirtyState(false);
     setSelectedPath(path);
   };
@@ -248,6 +261,13 @@ function LoadedDiff({
   );
 }
 
+/** Drops the tab's draft, including any unsaved edits the user chose to discard. */
+function discardDiffDraft(workspaceId: WorkspaceId, tabId: TabId): Promise<void> {
+  return editorBuffer(workspaceId, tabId)
+    ? closeEditorBufferSession(workspaceId, tabId)
+    : Promise.resolve();
+}
+
 function confirmDiscardDiffEdits(): Promise<boolean> {
   return confirmDialog({
     title: "Discard unsaved diff edits?",
@@ -277,6 +297,7 @@ function DiffFileEditor({
       return;
     }
 
+    await discardDiffDraft(workspaceId, tabId);
     setHasUnsavedChanges(false);
     onDirtyChange(false);
     setSectionKind(kind);
@@ -335,9 +356,8 @@ function MonacoDiffEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const originalModelRef = useRef<monaco.editor.ITextModel | null>(null);
-  const modifiedModelRef = useRef<monaco.editor.ITextModel | null>(null);
-  const savedContentRef = useRef(section.modifiedContent ?? "");
-  const saveRequestIdRef = useRef(0);
+  const draftRef = useRef<EditorBuffer | null>(null);
+  const plainModelRef = useRef<monaco.editor.ITextModel | null>(null);
   const saveInFlightRef = useRef(false);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const bumpGitRevision = useGitStore((state) => state.bumpGitRevision);
@@ -345,39 +365,47 @@ function MonacoDiffEditor({
   const unavailable = section.originalContent == null || section.modifiedContent == null;
   const conflicted = file.staged === "conflicted" || file.unstaged === "conflicted";
 
+  const reportDirtyState = () => {
+    const draft = draftRef.current;
+    const dirty = draft !== null && isEditorBufferDirty(draft);
+    setSaveState((current) =>
+      current.status === "saving" ? current : dirty ? { status: "dirty" } : { status: "clean" },
+    );
+    onDirtyChange(dirty);
+  };
+
   const save = async (stage: boolean) => {
-    const model = modifiedModelRef.current;
-    if (!model || !section.editable || saveInFlightRef.current) {
+    const draft = draftRef.current;
+    if (!draft || saveInFlightRef.current) {
       return;
     }
 
     saveInFlightRef.current = true;
-    editorRef.current?.getModifiedEditor().updateOptions({ readOnly: true });
-    const content = model.getValue();
-    const requestId = saveRequestIdRef.current + 1;
-    saveRequestIdRef.current = requestId;
     setSaveState({ status: "saving" });
-
     try {
-      await saveGitDiffFile({ workspaceId, tabId, path: file.path, content, stage });
-      if (saveRequestIdRef.current !== requestId) {
-        return;
+      await flushEditorBuffer(draft);
+      const saved = await saveEditorDocument({
+        workspaceId,
+        tabId,
+        revision: draft.session.revision,
+      });
+      applyEditorSaveProjection(draft, saved);
+      if (stage) {
+        await saveGitDiffFile({
+          workspaceId,
+          tabId,
+          path: file.path,
+          content: draft.model.getValue(),
+          stage,
+        });
       }
-
-      savedContentRef.current = content;
-      const dirty = model.getValue() !== content;
-      setSaveState(dirty ? { status: "dirty" } : { status: "clean" });
-      onDirtyChange(dirty);
+      setSaveState({ status: "clean" });
+      reportDirtyState();
       bumpGitRevision(workspaceId);
     } catch (caughtError: unknown) {
-      if (saveRequestIdRef.current === requestId) {
-        setSaveState({ status: "error", message: errorMessage(caughtError) });
-      }
+      setSaveState({ status: "error", message: errorMessage(caughtError) });
     } finally {
-      if (saveRequestIdRef.current === requestId) {
-        saveInFlightRef.current = false;
-        editorRef.current?.getModifiedEditor().updateOptions({ readOnly: false });
-      }
+      saveInFlightRef.current = false;
     }
   };
 
@@ -393,11 +421,18 @@ function MonacoDiffEditor({
       undefined,
       diffUri(workspaceId, file.path, section.kind, "original"),
     );
-    const modifiedModel = monaco.editor.createModel(
-      section.modifiedContent ?? "",
-      undefined,
-      diffUri(workspaceId, file.path, section.kind, "modified"),
-    );
+    const createModifiedModel = () =>
+      monaco.editor.createModel(
+        section.modifiedContent ?? "",
+        undefined,
+        diffUri(workspaceId, file.path, section.kind, "modified"),
+      );
+    // Editable diffs are drafts tracked by a server session, so unsaved edits count
+    // in every unsaved-changes check; read-only diffs use a plain model.
+    const draft = section.editable
+      ? diffDraftBuffer(workspaceId, tabId, file.path, section.modifiedContent ?? "", createModifiedModel)
+      : null;
+    const modifiedModel = draft?.model ?? createModifiedModel();
     const editor = monaco.editor.createDiffEditor(container, {
       automaticLayout: true,
       compactMode: true,
@@ -418,7 +453,7 @@ function MonacoDiffEditor({
       minimap: { enabled: false },
       originalEditable: false,
       padding: { top: 8 },
-      readOnly: !section.editable,
+      readOnly: draft === null,
       renderGutterMenu: false,
       renderIndicators: false,
       renderLineHighlight: "none",
@@ -431,16 +466,22 @@ function MonacoDiffEditor({
       theme: "kosmos",
       wordWrap: softWrap ? "on" : "off",
     });
+    // Closing the tab disposes the draft before React unmounts this view. The diff
+    // widget must let go of its models first, so this listener has to be registered
+    // before the widget registers its own.
+    const disposalSubscription = modifiedModel.onWillDispose(() => editor.setModel(null));
     editor.setModel({ original: originalModel, modified: modifiedModel });
     editorRef.current = editor;
     originalModelRef.current = originalModel;
-    modifiedModelRef.current = modifiedModel;
-    savedContentRef.current = section.modifiedContent ?? "";
+    draftRef.current = draft;
+    plainModelRef.current = draft ? null : modifiedModel;
+    reportDirtyState();
 
-    const contentSubscription = modifiedModel.onDidChangeContent(() => {
-      const dirty = modifiedModel.getValue() !== savedContentRef.current;
-      setSaveState(dirty ? { status: "dirty" } : { status: "clean" });
-      onDirtyChange(dirty);
+    const contentSubscription = modifiedModel.onDidChangeContent((event) => {
+      if (draft) {
+        queueEditorBufferSynchronization(draft, event);
+      }
+      reportDirtyState();
     });
     const saveAction = editor.getModifiedEditor().addAction({
       id: "kosmos.save-diff-file",
@@ -450,22 +491,33 @@ function MonacoDiffEditor({
     });
 
     return () => {
-      saveRequestIdRef.current += 1;
+      disposalSubscription.dispose();
       contentSubscription.dispose();
       saveAction.dispose();
       editor.dispose();
       originalModel.dispose();
-      modifiedModel.dispose();
+      // Drafts outlive the view (for example, when the tab moves to another pane).
+      if (!draft) {
+        modifiedModel.dispose();
+      }
       editorRef.current = null;
       originalModelRef.current = null;
-      modifiedModelRef.current = null;
+      draftRef.current = null;
+      plainModelRef.current = null;
     };
   }, [workspaceId, tabId, file.path, section.kind, softWrap, unavailable]);
 
   useEffect(() => {
+    // A file that stops being editable (for example, deleted on disk) must not accept
+    // edits that could no longer be saved in place.
+    editorRef.current
+      ?.getModifiedEditor()
+      .updateOptions({ readOnly: !section.editable || draftRef.current === null });
+  }, [section.editable]);
+
+  useEffect(() => {
     const originalModel = originalModelRef.current;
-    const modifiedModel = modifiedModelRef.current;
-    if (!originalModel || !modifiedModel || unavailable) {
+    if (!originalModel || unavailable) {
       return;
     }
 
@@ -474,13 +526,16 @@ function MonacoDiffEditor({
     if (originalModel.getValue() !== originalContent) {
       originalModel.setValue(originalContent);
     }
-    if (modifiedModel.getValue() === savedContentRef.current) {
-      savedContentRef.current = modifiedContent;
-      if (modifiedModel.getValue() !== modifiedContent) {
-        modifiedModel.setValue(modifiedContent);
+    const draft = draftRef.current;
+    if (draft) {
+      if (!isEditorBufferDirty(draft) && draft.savedContent !== modifiedContent) {
+        void resetEditorBufferSession(draft, modifiedContent).then(reportDirtyState);
       }
-      setSaveState({ status: "clean" });
-      onDirtyChange(false);
+      return;
+    }
+    const plainModel = plainModelRef.current;
+    if (plainModel && plainModel.getValue() !== modifiedContent) {
+      plainModel.setValue(modifiedContent);
     }
   }, [section.originalContent, section.modifiedContent, unavailable]);
 
@@ -514,10 +569,10 @@ function MonacoDiffEditor({
   return (
     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
       <div ref={containerRef} className="h-full min-h-0 min-w-0" />
-      {section.editable && (saveState.status !== "clean" || conflicted) ? (
+      {saveState.status !== "clean" || (section.editable && conflicted) ? (
         <div className="absolute right-3 bottom-3 flex items-center gap-2 rounded border border-border/70 bg-popover/95 p-1 shadow-sm">
           <SaveStatus state={saveState} />
-          {conflicted ? (
+          {section.editable && conflicted ? (
             <Button
               type="button"
               size="sm"
@@ -532,6 +587,31 @@ function MonacoDiffEditor({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Returns the diff tab's draft buffer for `path`, restarting the tab's server session
+ * when the previous draft was for another file (its edits were already discarded).
+ */
+function diffDraftBuffer(
+  workspaceId: WorkspaceId,
+  tabId: TabId,
+  path: string,
+  content: string,
+  createModel: () => monaco.editor.ITextModel,
+): EditorBuffer {
+  const previous = editorBuffer(workspaceId, tabId);
+  const closing =
+    previous && previous.path !== path
+      ? closeEditorBufferSession(workspaceId, tabId)
+      : Promise.resolve();
+  const draft = getOrCreateEditorBuffer(workspaceId, tabId, path, content, createModel, {
+    languageFeatures: false,
+  });
+  if (draft !== previous) {
+    void closing.then(() => startEditorBufferSession(draft)).catch(() => {});
+  }
+  return draft;
 }
 
 function selectedDiffPath(diff: GitDiff): string {

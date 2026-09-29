@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 
-import { getEditorDocument, getEditorGitLineHunks, saveEditorDocument } from "@/renderer/ipc";
 import {
-  getOrCreateEditorBuffer,
+  getEditorGitLineHunks,
+  getUnsavedEditorGitLineHunks,
+  saveEditorDocument,
+} from "@/renderer/ipc";
+import {
+  editorBufferForDocument,
   applyEditorSaveProjection,
   editorSaveWarningMessage,
   assertEditorBufferEditable,
   flushEditorBuffer,
+  isEditorBufferDirty,
   isEditorBufferLocked,
+  loadEditorDocument,
   openEditorBufferSession,
   queueEditorBufferSynchronization,
   reconcileEditorBuffer,
   subscribeEditorBufferLock,
   subscribeEditorBufferModel,
   type EditorBuffer,
+  type LoadedEditorDocument,
 } from "@/renderer/lib/editor-buffers";
 import { editorSettings } from "@/renderer/lib/editor-settings";
 import { formatLanguageDocument } from "@/renderer/lib/language-client";
@@ -21,7 +28,7 @@ import { editorGitDecorations } from "@/renderer/lib/editor-git-decorations";
 import { errorMessage } from "@/renderer/lib/errors";
 import { applyMonacoTheme, monaco } from "@/renderer/lib/monaco";
 import { useGitStore, useSettingsStore, useWorkspaceStore } from "@/renderer/stores";
-import type { EditorDocument, EditorGitLineHunk, TabId, WorkspaceId } from "@/shared/ipc";
+import type { EditorGitLineHunk, TabId, WorkspaceId } from "@/shared/ipc";
 
 type EditorTabProps = {
   workspaceId: WorkspaceId;
@@ -36,10 +43,12 @@ type EditorLoadState =
       status: "loaded";
       workspaceId: WorkspaceId;
       tabId: TabId;
-      document: EditorDocument;
+      document: LoadedEditorDocument;
       gitLineHunks: EditorGitLineHunk[];
     }
   | { status: "error"; workspaceId: WorkspaceId; tabId: TabId; message: string };
+
+const UNSAVED_GIT_HUNKS_DELAY_MS = 300;
 
 type SaveState =
   | { status: "clean" }
@@ -85,7 +94,7 @@ export function EditorTab({ workspaceId, tabId, isActive, onActivatePane }: Edit
         tabId: targetTabId,
       };
       const gitLineHunksRequest = getEditorGitLineHunks(params).catch(() => ({ hunks: [] }));
-      const document = await getEditorDocument(params);
+      const document = await loadEditorDocument(targetWorkspaceId, targetTabId);
 
       if (requestIdRef.current === requestId) {
         setLoadState((current) => ({
@@ -199,12 +208,12 @@ function LoadedEditor({
   workspaceId,
   tabId,
   document,
-  gitLineHunks,
+  gitLineHunks: savedGitLineHunks,
   isActive,
 }: {
   workspaceId: WorkspaceId;
   tabId: TabId;
-  document: EditorDocument;
+  document: LoadedEditorDocument;
   gitLineHunks: EditorGitLineHunk[];
   isActive: boolean;
 }) {
@@ -215,6 +224,11 @@ function LoadedEditor({
   const warningDocumentRef = useRef(`${workspaceId}:${tabId}:${document.path}`);
   const [saveState, setSaveState] = useState<SaveState>({ status: "clean" });
   const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
+  // Markers for unsaved text; null falls back to the saved file's markers.
+  const [unsavedGitLineHunks, setUnsavedGitLineHunks] = useState<EditorGitLineHunk[] | null>(
+    null,
+  );
+  const gitLineHunks = unsavedGitLineHunks ?? savedGitLineHunks;
   const pendingSelection = useWorkspaceStore((state) => state.pendingEditorSelection);
   const consumePendingEditorSelection = useWorkspaceStore(
     (state) => state.consumePendingEditorSelection,
@@ -245,12 +259,8 @@ function LoadedEditor({
       authority: `workspace-${workspaceId}`,
       path: `/${document.path}`,
     });
-    const buffer = getOrCreateEditorBuffer(
-      workspaceId,
-      tabId,
-      document.path,
-      document.savedContent,
-      () => monaco.editor.createModel(document.content, undefined, uri),
+    const buffer = editorBufferForDocument(workspaceId, tabId, document, (content) =>
+      monaco.editor.createModel(content, undefined, uri),
     );
     bufferRef.current = buffer;
     const { model } = buffer;
@@ -270,7 +280,7 @@ function LoadedEditor({
     editorRef.current = editor;
     decorationsRef.current = editor.createDecorationsCollection();
     const updateDirtyState = () => {
-      const isDirty = buffer.model.getValue() !== buffer.savedContent;
+      const isDirty = isEditorBufferDirty(buffer);
 
       setTabDirty(workspaceId, tabId, isDirty);
       setSaveState(isDirty ? { status: "dirty" } : { status: "clean" });
@@ -289,6 +299,21 @@ function LoadedEditor({
       for (const cancellation of operationCancellations) cancellation.cancel();
     };
     let contentSubscription: monaco.IDisposable | null = null;
+    let unsavedHunksTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+    const refreshUnsavedGitLineHunks = () => {
+      if (unsavedHunksTimer !== null) {
+        clearTimeout(unsavedHunksTimer);
+      }
+      unsavedHunksTimer = setTimeout(() => {
+        unsavedHunksTimer = null;
+        void loadUnsavedGitLineHunks(buffer).then((hunks) => {
+          if (!disposed && hunks !== undefined) {
+            setUnsavedGitLineHunks(hunks);
+          }
+        });
+      }, UNSAVED_GIT_HUNKS_DELAY_MS);
+    };
     const bindModel = (nextModel: monaco.editor.ITextModel) => {
       const viewState = editor.getModel() ? editor.saveViewState() : null;
       if (editor.getModel() !== nextModel) {
@@ -298,9 +323,10 @@ function LoadedEditor({
         }
       }
       contentSubscription?.dispose();
-      contentSubscription = nextModel.onDidChangeContent(() => {
-        queueEditorBufferSynchronization(buffer);
+      contentSubscription = nextModel.onDidChangeContent((event) => {
+        queueEditorBufferSynchronization(buffer, event);
         updateDirtyState();
+        refreshUnsavedGitLineHunks();
       });
       decorationsRef.current?.set(
         editorGitDecorations(gitLineHunks, nextModel.getLineCount()),
@@ -308,7 +334,7 @@ function LoadedEditor({
       updateDirtyState();
     };
     bindModel(model);
-    void openEditorBufferSession(buffer, document)
+    void openEditorBufferSession(buffer, document.document)
       .then(updateDirtyState)
       .catch((caughtError: unknown) => {
         setSaveState({ status: "error", message: errorMessage(caughtError) });
@@ -379,6 +405,10 @@ function LoadedEditor({
     });
 
     return () => {
+      disposed = true;
+      if (unsavedHunksTimer !== null) {
+        clearTimeout(unsavedHunksTimer);
+      }
       cancelOperations();
       unsubscribeModel();
       unsubscribeLock();
@@ -437,11 +467,11 @@ function LoadedEditor({
 
   useEffect(() => {
     const buffer = bufferRef.current;
-    if (!buffer || buffer.path !== document.path) {
+    if (!buffer || buffer.path !== document.path || !document.document) {
       return;
     }
 
-    const isDirty = reconcileEditorBuffer(buffer, document);
+    const isDirty = reconcileEditorBuffer(buffer, document.document);
     setTabDirty(workspaceId, tabId, isDirty);
     setSaveState((current) => {
       if (current.status === "saving") {
@@ -453,12 +483,19 @@ function LoadedEditor({
 
   useEffect(() => {
     const buffer = bufferRef.current;
+    if (buffer && !isEditorBufferDirty(buffer)) {
+      setUnsavedGitLineHunks(null);
+    }
+  }, [savedGitLineHunks]);
+
+  useEffect(() => {
+    const buffer = bufferRef.current;
     if (!buffer) {
       return;
     }
 
     decorationsRef.current?.set(editorGitDecorations(gitLineHunks, buffer.model.getLineCount()));
-  }, [document.content, gitLineHunks]);
+  }, [document, gitLineHunks]);
 
   useEffect(() => {
     if (minimap === undefined || softWrap === undefined) {
@@ -528,4 +565,26 @@ function EditorMessage({ message }: { message: string }) {
       <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
+}
+
+/**
+ * Fetches git markers for the buffer's unsaved text once the server has it. Returns
+ * null for a clean buffer (use the saved file's markers) and undefined when unknown.
+ */
+async function loadUnsavedGitLineHunks(
+  buffer: EditorBuffer,
+): Promise<EditorGitLineHunk[] | null | undefined> {
+  if (!isEditorBufferDirty(buffer)) {
+    return null;
+  }
+  try {
+    await flushEditorBuffer(buffer);
+    const payload = await getUnsavedEditorGitLineHunks({
+      workspaceId: buffer.workspaceId,
+      tabId: buffer.tabId,
+    });
+    return payload?.hunks;
+  } catch {
+    return undefined;
+  }
 }

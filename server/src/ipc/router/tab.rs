@@ -217,7 +217,7 @@ mod tests {
             )
             .unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "changed".to_owned(), 2)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "changed".to_owned(), 2)
             .unwrap();
         let response = close_tab(
             &mut application,
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(response["result"]["status"], "requiresDocumentDecision");
         let close_id = response["result"]["closeId"].as_u64().unwrap();
         application
-            .change_editor_session(Some(workspace_id), tab_id, "newer".to_owned(), 3)
+            .replace_editor_session_content(Some(workspace_id), tab_id, "newer".to_owned(), 3)
             .unwrap();
 
         let stale = resolve_close(
@@ -264,7 +264,7 @@ mod tests {
         assert!(
             application
                 .state()
-                .editor_session_target(Some(workspace_id), tab_id)
+                .document_session_target(Some(workspace_id), tab_id, None)
                 .is_ok()
         );
 

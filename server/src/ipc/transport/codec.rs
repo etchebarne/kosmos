@@ -2,8 +2,10 @@ use std::io::{self, BufRead, Read, Write};
 
 use crate::ipc::messages::envelope::ServerMessage;
 
-const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-const MAX_RESPONSE_FRAME_BYTES: usize = 64 * 1024 * 1024;
+// Requests carry whole documents when an editor opens or resynchronizes a session, and
+// responses carry them when one loads, so both fit the largest editable document.
+const MAX_FRAME_BYTES: usize = 128 * 1024 * 1024;
+const MAX_RESPONSE_FRAME_BYTES: usize = 128 * 1024 * 1024;
 
 struct FrameBuffer {
     bytes: Vec<u8>,

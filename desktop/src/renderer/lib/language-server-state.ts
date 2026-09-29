@@ -24,3 +24,10 @@ export function pendingServersAfterStatus(
   delete next[server.id];
   return next;
 }
+
+export function hasRunningLanguageServer(servers: readonly LanguageServerSnapshot[]): boolean {
+  return servers.some(
+    (server) =>
+      server.sessionCount > 0 && (server.runtimeState === "running" || server.runtimeState === "degraded"),
+  );
+}

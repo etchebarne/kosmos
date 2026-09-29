@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  activePaneOf,
   activeWorkspaceFrom,
+  adjacentTabId,
+  findTabOfKind,
   closeWorkspaceLocally,
   mergeLocalSplitRatios,
   moveWorkspaceLocally,
@@ -9,6 +12,7 @@ import {
 } from "@/renderer/lib/workspace-snapshot";
 import type {
   PaneNodeSnapshot,
+  TabKind,
   WorkspaceListSnapshot,
   WorkspaceSnapshot,
 } from "@/shared/ipc";
@@ -147,4 +151,51 @@ describe("workspace snapshot state", () => {
     expect(mergeLocalSplitRatios(serverSnapshot, null)).toBe(serverSnapshot);
   });
 
+});
+
+describe("pane tab navigation", () => {
+  const pane = (id: number, activeTabId: number, kinds: TabKind[]) => ({
+    id,
+    activeTabId,
+    tabs: kinds.map((kind, index) => ({
+      id: id * 100 + index,
+      kind,
+      lifecycle: "keepAlive" as const,
+      title: kind,
+    })),
+  });
+  const workspace = (activePaneId: number): WorkspaceSnapshot => ({
+    id: 1,
+    name: "kosmos",
+    directory: "/kosmos",
+    activePaneId,
+    root: {
+      type: "split",
+      id: 9,
+      axis: "horizontal",
+      ratio: 0.5,
+      first: { type: "leaf", pane: pane(1, 100, ["terminal", "search", "git"]) },
+      second: { type: "leaf", pane: pane(2, 201, ["search", "editor"]) },
+    },
+  });
+
+  test("cycles tabs and wraps around", () => {
+    const first = pane(1, 100, ["terminal", "search", "git"]);
+    expect(adjacentTabId(first, 1)).toBe(101);
+    expect(adjacentTabId(first, -1)).toBe(102);
+    expect(adjacentTabId({ ...first, activeTabId: 102 }, 1)).toBe(100);
+    expect(adjacentTabId(pane(3, 300, ["terminal"]), 1)).toBeNull();
+  });
+
+  test("resolves the active pane", () => {
+    expect(activePaneOf(workspace(2))?.id).toBe(2);
+    expect(activePaneOf(workspace(7))).toBeNull();
+  });
+
+  test("prefers a tab of the requested kind in the active pane", () => {
+    expect(findTabOfKind(workspace(2), "search")).toEqual({ paneId: 2, tabId: 200 });
+    expect(findTabOfKind(workspace(1), "search")).toEqual({ paneId: 1, tabId: 101 });
+    expect(findTabOfKind(workspace(2), "git")).toEqual({ paneId: 1, tabId: 102 });
+    expect(findTabOfKind(workspace(1), "fileTree")).toBeNull();
+  });
 });

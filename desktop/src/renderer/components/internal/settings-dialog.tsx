@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Minus, Plus } from "lucide-react";
 
 import { Button } from "@/renderer/components/ui/button";
@@ -21,7 +20,11 @@ import {
 } from "@/renderer/components/ui/select";
 import { Switch } from "@/renderer/components/ui/switch";
 import { cn } from "@/renderer/lib/utils";
-import { useSettingsStore } from "@/renderer/stores";
+import {
+  LANGUAGE_SERVERS_SETTINGS_SECTION,
+  useSettingsDialogStore,
+  useSettingsStore,
+} from "@/renderer/stores";
 import { LanguageServerSettings } from "./language-server-settings";
 import { FormatterSettings } from "./formatter-settings";
 import type {
@@ -31,23 +34,21 @@ import type {
   SettingValue,
 } from "@/shared/ipc";
 
-type SettingsDialogProps = {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-};
-
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+export function SettingsDialog() {
+  const open = useSettingsDialogStore((state) => state.open);
+  const onOpenChange = useSettingsDialogStore((state) => state.setSettingsOpen);
+  const selectedSectionId = useSettingsDialogStore((state) => state.sectionId);
+  const setSelectedSectionId = useSettingsDialogStore((state) => state.selectSettingsSection);
   const error = useSettingsStore((state) => state.error);
   const isLoading = useSettingsStore((state) => state.isLoading);
   const pendingSettingIds = useSettingsStore((state) => state.pendingSettingIds);
   const snapshot = useSettingsStore((state) => state.snapshot);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
   const categories = snapshot?.categories ?? [];
-  const resolvedSectionId = selectedSectionId ?? categories[0]?.id ?? "languageServers";
+  const resolvedSectionId = selectedSectionId ?? categories[0]?.id ?? LANGUAGE_SERVERS_SETTINGS_SECTION;
   const selectedCategory =
     categories.find((category) => category.id === resolvedSectionId) ?? categories[0];
-  const languageServersSelected = resolvedSectionId === "languageServers";
+  const languageServersSelected = resolvedSectionId === LANGUAGE_SERVERS_SETTINGS_SECTION;
   const formattersSelected = resolvedSectionId === "formatters";
 
   return (
@@ -91,7 +92,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 type="button"
                 variant={languageServersSelected ? "secondary" : "ghost"}
                 className="shrink-0 justify-start"
-                onClick={() => setSelectedSectionId("languageServers")}
+                onClick={() => setSelectedSectionId(LANGUAGE_SERVERS_SETTINGS_SECTION)}
               >
                 Language Servers
               </Button>

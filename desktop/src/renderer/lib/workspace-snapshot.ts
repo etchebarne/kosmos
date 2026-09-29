@@ -1,5 +1,9 @@
 import type {
+  PaneId,
   PaneNodeSnapshot,
+  PaneSnapshot,
+  TabId,
+  TabKind,
   SplitPaneId,
   WorkspaceId,
   WorkspaceListSnapshot,
@@ -16,6 +20,49 @@ export function activeWorkspaceFrom(
   return (
     snapshot.workspaces.find((workspace) => workspace.id === snapshot.activeWorkspaceId) ?? null
   );
+}
+
+export function workspacePanes(workspace: WorkspaceSnapshot): PaneSnapshot[] {
+  const panes: PaneSnapshot[] = [];
+  collectPanes(workspace.root, panes);
+  return panes;
+}
+
+export function activePaneOf(workspace: WorkspaceSnapshot): PaneSnapshot | null {
+  return workspacePanes(workspace).find((pane) => pane.id === workspace.activePaneId) ?? null;
+}
+
+/** Returns the tab `offset` positions away from the active one, wrapping around. */
+export function adjacentTabId(pane: PaneSnapshot, offset: number): TabId | null {
+  const count = pane.tabs.length;
+  const activeIndex = pane.tabs.findIndex((tab) => tab.id === pane.activeTabId);
+  if (count < 2 || activeIndex === -1) {
+    return null;
+  }
+
+  return pane.tabs[(((activeIndex + offset) % count) + count) % count]!.id;
+}
+
+/** Finds a tab of `kind`, preferring the active pane and its active tab. */
+export function findTabOfKind(
+  workspace: WorkspaceSnapshot,
+  kind: TabKind,
+): { paneId: PaneId; tabId: TabId } | null {
+  const panes = workspacePanes(workspace);
+  const ordered = [
+    ...panes.filter((pane) => pane.id === workspace.activePaneId),
+    ...panes.filter((pane) => pane.id !== workspace.activePaneId),
+  ];
+
+  for (const pane of ordered) {
+    const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId && candidate.kind === kind)
+      ?? pane.tabs.find((candidate) => candidate.kind === kind);
+    if (tab) {
+      return { paneId: pane.id, tabId: tab.id };
+    }
+  }
+
+  return null;
 }
 
 export function closeWorkspaceLocally(
@@ -151,15 +198,21 @@ function openTabKeys(snapshot: WorkspaceListSnapshot): Set<string> {
 }
 
 function collectTabKeys(workspaceId: number, node: PaneNodeSnapshot, keys: Set<string>): void {
+  const panes: PaneSnapshot[] = [];
+  collectPanes(node, panes);
+  for (const tab of panes.flatMap((pane) => pane.tabs)) {
+    keys.add(`${workspaceId}:${tab.id}`);
+  }
+}
+
+function collectPanes(node: PaneNodeSnapshot, panes: PaneSnapshot[]): void {
   if (node.type === "leaf") {
-    for (const tab of node.pane.tabs) {
-      keys.add(`${workspaceId}:${tab.id}`);
-    }
+    panes.push(node.pane);
     return;
   }
 
-  collectTabKeys(workspaceId, node.first, keys);
-  collectTabKeys(workspaceId, node.second, keys);
+  collectPanes(node.first, panes);
+  collectPanes(node.second, panes);
 }
 
 function resizeNodeSplit(

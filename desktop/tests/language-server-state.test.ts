@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  hasRunningLanguageServer,
   languageServerOperationInProgress,
   pendingServersAfterStatus,
   statusRetryDelay,
@@ -24,5 +25,13 @@ describe("language server status recovery", () => {
   test("retry backoff is bounded", () => {
     expect(statusRetryDelay(0)).toBe(250);
     expect(statusRetryDelay(20)).toBe(4_000);
+  });
+
+  test("a language server counts as running only with an active session", () => {
+    expect(hasRunningLanguageServer([])).toBe(false);
+    expect(hasRunningLanguageServer([{ ...server, sessionCount: 0 }])).toBe(false);
+    expect(hasRunningLanguageServer([{ ...server, sessionCount: 1, runtimeState: "crashed" }])).toBe(false);
+    expect(hasRunningLanguageServer([{ ...server, sessionCount: 1 }])).toBe(true);
+    expect(hasRunningLanguageServer([{ ...server, sessionCount: 2, runtimeState: "degraded" }])).toBe(true);
   });
 });

@@ -397,6 +397,6 @@ fn file_tree_error_code(error: &FileTreeError) -> &'static str {
         FileTreeError::EntryAlreadyExists(_) => "file_tree.entry_already_exists",
         FileTreeError::CannotMoveIntoSelf { .. } => "file_tree.cannot_move_into_self",
         FileTreeError::UnsupportedEntry(_) => "file_tree.unsupported_entry",
-        FileTreeError::Io { .. } => "file_tree.access_failed",
+        FileTreeError::Io { .. } | FileTreeError::RootNotFound(_) => "file_tree.access_failed",
     }
 }

@@ -286,6 +286,7 @@ pub enum FileTreeError {
         error: io::Error,
     },
     RootNotDirectory(PathBuf),
+    RootNotFound(PathBuf),
     TabNotFound,
     TooManyEntries {
         limit: usize,
@@ -317,12 +318,15 @@ impl fmt::Display for FileTreeError {
             }
             Self::InvalidName(name) => write!(formatter, "invalid file name: {name}"),
             Self::InvalidPath(path) => write!(formatter, "invalid file tree path: {path}"),
-            Self::Io { path, error } => {
-                write!(formatter, "could not access {}: {error}", path.display())
-            }
+            Self::Io { path, error } => write_io_error(formatter, path, error),
             Self::RootNotDirectory(path) => {
                 write!(formatter, "{} is not a directory", path.display())
             }
+            Self::RootNotFound(path) => write!(
+                formatter,
+                "The workspace folder {} no longer exists.",
+                display_name(path)
+            ),
             Self::TabNotFound => formatter.write_str("file tree tab does not exist"),
             Self::TooManyEntries { limit } => {
                 write!(formatter, "file tree contains more than {limit} entries")
@@ -346,6 +350,7 @@ impl StdError for FileTreeError {
             | Self::InvalidName(_)
             | Self::InvalidPath(_)
             | Self::RootNotDirectory(_)
+            | Self::RootNotFound(_)
             | Self::TabNotFound
             | Self::TooManyEntries { .. }
             | Self::UnsupportedEntry(_)
@@ -354,8 +359,35 @@ impl StdError for FileTreeError {
     }
 }
 
+fn write_io_error(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &Path,
+    error: &io::Error,
+) -> fmt::Result {
+    match error.kind() {
+        io::ErrorKind::NotFound => write!(formatter, "{} no longer exists.", display_name(path)),
+        io::ErrorKind::PermissionDenied => write!(
+            formatter,
+            "Kosmos does not have permission to access {}.",
+            display_name(path)
+        ),
+        _ => write!(
+            formatter,
+            "Could not access {}: {error}",
+            display_name(path)
+        ),
+    }
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn ensure_directory(root: &Path) -> Result<()> {
-    let metadata = fs::metadata(root).map_err(|error| io_error(root, error))?;
+    let metadata = fs::metadata(root).map_err(|error| root_metadata_error(root, error))?;
 
     if metadata.is_dir() {
         Ok(())
@@ -797,6 +829,14 @@ fn relative_path(relative_directory: &str, name: &str) -> String {
         name.to_owned()
     } else {
         format!("{relative_directory}/{name}")
+    }
+}
+
+fn root_metadata_error(root: &Path, error: io::Error) -> FileTreeError {
+    if error.kind() == io::ErrorKind::NotFound {
+        FileTreeError::RootNotFound(root.to_path_buf())
+    } else {
+        io_error(root, error)
     }
 }
 
@@ -1281,6 +1321,31 @@ mod tests {
         assert!(matches!(missing, FileTreeError::EntryNotFound(_)));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_root_reports_a_readable_message() {
+        let root = test_root("missing-root");
+        fs::remove_dir_all(&root).expect("test root should be removed");
+
+        let error = FileTree::scan(&root).expect_err("missing root should fail");
+
+        assert!(matches!(error, FileTreeError::RootNotFound(_)));
+        let name = root.file_name().unwrap().to_string_lossy();
+        assert_eq!(
+            error.to_string(),
+            format!("The workspace folder {name} no longer exists.")
+        );
+    }
+
+    #[test]
+    fn missing_entry_io_error_names_the_entry() {
+        let error = io_error(
+            PathBuf::from("/very/long/path/notes.md"),
+            io::Error::from(io::ErrorKind::NotFound),
+        );
+
+        assert_eq!(error.to_string(), "notes.md no longer exists.");
     }
 
     fn test_root(name: &str) -> PathBuf {

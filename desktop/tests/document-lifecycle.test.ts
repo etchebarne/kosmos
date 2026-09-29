@@ -5,21 +5,13 @@ import {
   flushEditorBuffer,
   getOrCreateEditorBuffer,
   initializeEditorBufferRecovery,
+  isEditorBufferDirty,
   queueEditorBufferSynchronization,
   setLanguageDocumentAttacher,
 } from "@/renderer/lib/editor-buffers";
 import type { KosmosApi, KosmosIpcRequest } from "@/shared/ipc";
 
-type MockModel = {
-  disposed: boolean;
-  value: string;
-  version: number;
-  getValue(): string;
-  getVersionId(): number;
-  isDisposed(): boolean;
-  dispose(): void;
-  setValue(value: string): void;
-};
+import { MockTextModel } from "./support/mock-text-model";
 
 setLanguageDocumentAttacher(() => ({ dispose() {} }));
 const originalWindow = globalThis.window;
@@ -32,60 +24,92 @@ afterEach(() => {
 });
 
 describe("document lifecycle", () => {
-  test("rapid editor changes coalesce before asynchronous session synchronization", async () => {
+  test("rapid edits reach the server as one ordered batch of incremental edits", async () => {
     const requests: KosmosIpcRequest[] = [];
     installApi((request) => {
       requests.push(request);
-      return sessionResult((request.params as { content: string; revision: number }).content,
-        (request.params as { content: string; revision: number }).revision);
+      return ack((request.params as { revision: number }).revision);
     });
-    const model = mockModel("before");
-    const buffer = getOrCreateEditorBuffer(901, 1, "document.txt", "before", () => model as never);
+    const model = new MockTextModel("hello");
+    const buffer = getOrCreateEditorBuffer(901, 1, "document.txt", "hello", () => model.asModel());
 
-    model.setValue("first");
-    queueEditorBufferSynchronization(buffer);
-    model.setValue("second");
-    queueEditorBufferSynchronization(buffer);
+    queueEditorBufferSynchronization(buffer, model.edit({ offset: 5, length: 0, text: " world" }));
+    queueEditorBufferSynchronization(buffer, model.edit({ offset: 0, length: 1, text: "H" }));
     await flushEditorBuffer(buffer);
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.action).toBe("changeSession");
-    expect((requests[0]?.params as { content: string }).content).toBe("second");
+    expect(requests[0]?.params).toMatchObject({
+      baseRevision: 0,
+      edits: [
+        { offset: 5, length: 0, text: " world" },
+        { offset: 0, length: 1, text: "H" },
+      ],
+    });
+    expect(buffer.session.syncedRevision).toBe(buffer.session.revision);
     disposeEditorBuffer(901, 1);
   });
 
-  test("a stale acknowledgement cannot mark a newer local buffer clean", async () => {
-    let calls = 0;
-    installApi(() => {
-      calls += 1;
-      return calls === 1
-        ? sessionResult("server", 4, false, "server")
-        : sessionResult("newer local text", 5);
+  test("edits never send the whole document", async () => {
+    const requests: KosmosIpcRequest[] = [];
+    installApi((request) => {
+      requests.push(request);
+      return ack((request.params as { revision: number }).revision);
     });
-    const model = mockModel("before");
-    const buffer = getOrCreateEditorBuffer(902, 1, "document.txt", "before", () => model as never);
+    const text = "x".repeat(100_000);
+    const model = new MockTextModel(text);
+    const buffer = getOrCreateEditorBuffer(907, 1, "big.txt", text, () => model.asModel());
 
-    model.setValue("newer local text");
-    queueEditorBufferSynchronization(buffer);
+    queueEditorBufferSynchronization(buffer, model.edit({ offset: 50_000, length: 0, text: "y" }));
     await flushEditorBuffer(buffer);
 
+    expect(JSON.stringify(requests[0]?.params).length).toBeLessThan(500);
+    disposeEditorBuffer(907, 1);
+  });
+
+  test("a rejected batch resynchronizes the model's full text without marking it clean", async () => {
+    const requests: KosmosIpcRequest[] = [];
+    installApi((request) => {
+      requests.push(request);
+      return request.action === "changeSession"
+        ? ack(4, false)
+        : ack((request.params as { revision: number }).revision);
+    });
+    const model = new MockTextModel("before");
+    const buffer = getOrCreateEditorBuffer(902, 1, "document.txt", "before", () => model.asModel());
+
+    queueEditorBufferSynchronization(buffer, model.setValue("newer local text"));
+    await flushEditorBuffer(buffer);
+
+    expect(requests.map((request) => request.action)).toEqual(["changeSession", "openSession"]);
+    expect(requests[1]?.params).toMatchObject({ content: "newer local text" });
+    expect((requests[1]?.params as { revision: number }).revision).toBeGreaterThan(4);
     expect(buffer.savedContent).toBe("before");
-    expect(buffer.model.getValue()).toBe("newer local text");
-    expect(calls).toBe(2);
+    expect(isEditorBufferDirty(buffer)).toBe(true);
     disposeEditorBuffer(902, 1);
   });
 
   test("typing queues IPC without awaiting it", () => {
     installApi(() => new Promise(() => {}));
-    const model = mockModel("before");
-    const buffer = getOrCreateEditorBuffer(903, 1, "document.txt", "before", () => model as never);
+    const model = new MockTextModel("before");
+    const buffer = getOrCreateEditorBuffer(903, 1, "document.txt", "before", () => model.asModel());
 
-    model.setValue("typed immediately");
-    queueEditorBufferSynchronization(buffer);
+    queueEditorBufferSynchronization(buffer, model.setValue("typed immediately"));
 
     expect(buffer.model.getValue()).toBe("typed immediately");
     expect(buffer.session.synchronization).not.toBeNull();
     disposeEditorBuffer(903, 1);
+  });
+
+  test("dirty state follows the model version without comparing text", () => {
+    installApi(() => new Promise(() => {}));
+    const model = new MockTextModel("saved");
+    const buffer = getOrCreateEditorBuffer(908, 1, "document.txt", "saved", () => model.asModel());
+
+    expect(isEditorBufferDirty(buffer)).toBe(false);
+    queueEditorBufferSynchronization(buffer, model.edit({ offset: 0, length: 0, text: "!" }));
+    expect(isEditorBufferDirty(buffer)).toBe(true);
+    disposeEditorBuffer(908, 1);
   });
 
   test("sidecar recovery preserves current text and the saved baseline", async () => {
@@ -94,16 +118,15 @@ describe("document lifecycle", () => {
     installApi(
       (request) => {
         requests.push(request);
-        const params = request.params as { content: string; revision: number; savedContent: string };
-        return sessionResult(params.content, params.revision, true, params.savedContent);
+        return ack((request.params as { revision: number }).revision);
       },
       (listener) => {
         reconnect = listener;
       },
     );
     initializeEditorBufferRecovery();
-    const model = mockModel("saved");
-    const buffer = getOrCreateEditorBuffer(904, 1, "document.txt", "saved", () => model as never);
+    const model = new MockTextModel("saved");
+    const buffer = getOrCreateEditorBuffer(904, 1, "document.txt", "saved", () => model.asModel());
     model.setValue("unsaved");
 
     reconnect?.(1);
@@ -111,10 +134,7 @@ describe("document lifecycle", () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.action).toBe("restoreSession");
-    expect(requests[0]?.params).toMatchObject({
-      content: "unsaved",
-      savedContent: "saved",
-    });
+    expect(requests[0]?.params).toMatchObject({ content: "unsaved", savedContent: "saved" });
     expect(buffer.savedContent).toBe("saved");
     expect(buffer.model.getValue()).toBe("unsaved");
     disposeEditorBuffer(904, 1);
@@ -127,10 +147,8 @@ describe("document lifecycle", () => {
     installApi(
       (request) => {
         requests.push(request);
-        const params = request.params as { content: string; revision: number; savedContent: string };
-        return requests.length === 1
-          ? sessionResult("server text", params.revision + 2, false, params.savedContent)
-          : sessionResult(params.content, params.revision, true, params.savedContent);
+        const revision = (request.params as { revision: number }).revision;
+        return requests.length === 1 ? ack(revision + 2, false) : ack(revision);
       },
       (listener) => {
         reconnect = listener;
@@ -141,18 +159,18 @@ describe("document lifecycle", () => {
       recovered = resolve;
     });
     initializeEditorBufferRecovery();
-    const model = mockModel("saved");
-    const buffer = getOrCreateEditorBuffer(905, 1, "document.txt", "saved", () => model as never);
+    const model = new MockTextModel("saved");
+    const buffer = getOrCreateEditorBuffer(905, 1, "document.txt", "saved", () => model.asModel());
     model.setValue("local text");
 
     reconnect?.(1);
     await recoveredPromise;
 
-    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.action)).toEqual(["restoreSession", "openSession"]);
     expect((requests[1]?.params as { revision: number }).revision).toBeGreaterThan(
-      (requests[0]?.params as { revision: number }).revision,
+      (requests[0]?.params as { revision: number }).revision + 2,
     );
-    expect(buffer.model.getValue()).toBe("local text");
+    expect(requests[1]?.params).toMatchObject({ content: "local text" });
     expect(buffer.savedContent).toBe("saved");
     disposeEditorBuffer(905, 1);
   });
@@ -165,14 +183,13 @@ describe("document lifecycle", () => {
     installApi(
       (request) => {
         requests.push(request);
-        const params = request.params as { content: string; revision: number; savedContent: string };
+        const revision = (request.params as { revision: number }).revision;
         if (requests.length === 1) {
           return new Promise((resolve) => {
-            resolveFirst = () =>
-              resolve(sessionResult(params.content, params.revision, true, params.savedContent));
+            resolveFirst = () => resolve(ack(revision));
           });
         }
-        return sessionResult(params.content, params.revision, true, params.savedContent);
+        return ack(revision);
       },
       (listener) => {
         reconnect = listener;
@@ -183,21 +200,26 @@ describe("document lifecycle", () => {
       recovered = resolve;
     });
     initializeEditorBufferRecovery();
-    const model = mockModel("saved");
-    const buffer = getOrCreateEditorBuffer(906, 1, "document.txt", "saved", () => model as never);
+    const model = new MockTextModel("saved");
+    const buffer = getOrCreateEditorBuffer(906, 1, "document.txt", "saved", () => model.asModel());
     model.setValue("first edit");
 
     reconnect?.(1);
     while (!resolveFirst) {
       await Promise.resolve();
     }
-    model.setValue("edit during recovery");
-    queueEditorBufferSynchronization(buffer);
+    queueEditorBufferSynchronization(buffer, model.setValue("edit during recovery"));
     resolveFirst?.();
     await recoveredPromise;
+    await flushEditorBuffer(buffer);
 
-    expect(requests).toHaveLength(2);
-    expect((requests[1]?.params as { content: string }).content).toBe("edit during recovery");
+    expect(requests.map((request) => request.action)).toEqual([
+      "restoreSession",
+      "changeSession",
+    ]);
+    expect(requests[1]?.params).toMatchObject({
+      edits: [{ offset: 0, length: "first edit".length, text: "edit during recovery" }],
+    });
     expect(buffer.model.getValue()).toBe("edit during recovery");
     expect(buffer.savedContent).toBe("saved");
     disposeEditorBuffer(906, 1);
@@ -229,30 +251,6 @@ function installApi(
   });
 }
 
-function sessionResult(content: string, revision: number, accepted = true, savedContent = "before") {
-  return { accepted, content, path: "document.txt", revision, savedContent };
-}
-
-function mockModel(value: string): MockModel {
-  return {
-    disposed: false,
-    value,
-    version: 1,
-    getValue() {
-      return this.value;
-    },
-    getVersionId() {
-      return this.version;
-    },
-    isDisposed() {
-      return this.disposed;
-    },
-    dispose() {
-      this.disposed = true;
-    },
-    setValue(next) {
-      this.value = next;
-      this.version += 1;
-    },
-  };
+function ack(revision: number, accepted = true) {
+  return { accepted, revision, savedGeneration: 0 };
 }

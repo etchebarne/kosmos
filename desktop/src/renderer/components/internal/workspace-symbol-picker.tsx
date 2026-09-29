@@ -5,11 +5,19 @@ import {
   resolveLanguageServerWorkspaceSymbol,
   type RequestCancellation,
 } from "@/renderer/ipc";
+import { appShortcutForEvent } from "@/renderer/lib/app-shortcuts";
 import { resolvedWorkspaceSymbolIsCurrent } from "@/renderer/lib/language-feature-adapters";
+import { hasRunningLanguageServer } from "@/renderer/lib/language-server-state";
 import { matchesCurrentQuery } from "@/renderer/lib/request-generation";
+import { useLanguageServerStore } from "@/renderer/stores/language-server-store";
+import {
+  LANGUAGE_SERVERS_SETTINGS_SECTION,
+  useSettingsDialogStore,
+} from "@/renderer/stores/settings-dialog-store";
 import { useWorkspaceStore } from "@/renderer/stores/workspace-store";
 import type { LanguageServerWorkspaceSymbol } from "@/shared/ipc";
 
+import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 
@@ -25,10 +33,15 @@ export function WorkspaceSymbolPicker() {
   const cancellationRef = useRef<ReturnType<typeof cancellationSource> | null>(null);
   const openCancellationRef = useRef<ReturnType<typeof cancellationSource> | null>(null);
   const queryGenerationRef = useRef(0);
+  const languageServersReady = useLanguageServersReady(open);
+  const languageServerRunning = useLanguageServerStore((state) => hasRunningLanguageServer(state.servers));
+  const languageServerStatusFailed = useLanguageServerStore((state) => state.error !== null);
+  const showLanguageServerHint =
+    languageServersReady && !languageServerStatusFailed && !languageServerRunning;
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "t") {
+      if (appShortcutForEvent(event) === "workspaceSymbols") {
         event.preventDefault();
         event.stopPropagation();
         setOpen(true);
@@ -175,7 +188,10 @@ export function WorkspaceSymbolPicker() {
               </span>
             </button>
           ))}
-          {!loading && results.symbols.length === 0 ? (
+          {!loading && results.symbols.length === 0 && showLanguageServerHint ? (
+            <LanguageServerHint onOpenSettings={() => setOpen(false)} />
+          ) : null}
+          {!loading && results.symbols.length === 0 && !showLanguageServerHint ? (
             <p className="px-4 py-5 text-center text-sm text-muted-foreground">No symbols found</p>
           ) : null}
           {loading ? (
@@ -185,6 +201,52 @@ export function WorkspaceSymbolPicker() {
       </DialogContent>
     </Dialog>
   );
+}
+
+function LanguageServerHint({ onOpenSettings }: { onOpenSettings(): void }) {
+  const openSettings = useSettingsDialogStore((state) => state.openSettings);
+
+  return (
+    <div className="flex flex-col items-center gap-3 px-4 py-5 text-center text-sm text-muted-foreground">
+      <p>
+        No language server is running for this workspace. Install one in Settings → Language
+        Servers, then open a supported file.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          onOpenSettings();
+          openSettings(LANGUAGE_SERVERS_SETTINGS_SECTION);
+        }}
+      >
+        Open Language Servers
+      </Button>
+    </div>
+  );
+}
+
+function useLanguageServersReady(open: boolean): boolean {
+  const initializeLanguageServers = useLanguageServerStore((state) => state.initializeLanguageServers);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    let active = true;
+    void initializeLanguageServers().then(() => {
+      if (active) {
+        setReady(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [initializeLanguageServers, open]);
+
+  return ready;
 }
 
 function cancellationSource(): { token: RequestCancellation; cancel(): void } {

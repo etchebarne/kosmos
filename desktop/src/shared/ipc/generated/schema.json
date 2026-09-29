@@ -6,6 +6,32 @@
         "params": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "definitions": {
+            "EditorTextEditParam": {
+              "description": "A text replacement addressed in UTF-16 code units of the document before the edit.",
+              "properties": {
+                "length": {
+                  "format": "uint",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "offset": {
+                  "format": "uint",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "length",
+                "offset",
+                "text"
+              ],
+              "type": "object"
+            },
             "TabIdParam": {
               "format": "uint64",
               "maximum": 9007199254740991,
@@ -20,8 +46,17 @@
             }
           },
           "properties": {
-            "content": {
-              "type": "string"
+            "baseRevision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "edits": {
+              "items": {
+                "$ref": "#/definitions/EditorTextEditParam"
+              },
+              "type": "array"
             },
             "revision": {
               "format": "uint64",
@@ -44,7 +79,8 @@
             }
           },
           "required": [
-            "content",
+            "baseRevision",
+            "edits",
             "revision",
             "tabId"
           ],
@@ -57,31 +93,70 @@
             "accepted": {
               "type": "boolean"
             },
-            "content": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
             "revision": {
               "format": "uint64",
               "maximum": 9007199254740991,
               "minimum": 0.0,
               "type": "integer"
             },
-            "savedContent": {
-              "type": "string"
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
             "accepted",
-            "content",
-            "path",
             "revision",
-            "savedContent"
+            "savedGeneration"
           ],
-          "title": "EditorDocumentPayload",
+          "title": "EditorSessionAckPayload",
           "type": "object"
+        }
+      },
+      "closeSession": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tabId"
+          ],
+          "title": "EditorDocumentParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "title": "Boolean",
+          "type": "boolean"
         }
       },
       "document": {
@@ -125,9 +200,6 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
-            "accepted": {
-              "type": "boolean"
-            },
             "content": {
               "type": "string"
             },
@@ -141,14 +213,24 @@
               "type": "integer"
             },
             "savedContent": {
-              "type": "string"
+              "description": "Omitted when it equals `content`, which keeps clean documents to one copy.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
-            "accepted",
             "content",
             "path",
             "revision",
+            "savedGeneration",
             "savedContent"
           ],
           "title": "EditorDocumentPayload",
@@ -569,30 +651,25 @@
             "accepted": {
               "type": "boolean"
             },
-            "content": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
             "revision": {
               "format": "uint64",
               "maximum": 9007199254740991,
               "minimum": 0.0,
               "type": "integer"
             },
-            "savedContent": {
-              "type": "string"
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
             "accepted",
-            "content",
-            "path",
             "revision",
-            "savedContent"
+            "savedGeneration"
           ],
-          "title": "EditorDocumentPayload",
+          "title": "EditorSessionAckPayload",
           "type": "object"
         }
       },
@@ -902,30 +979,25 @@
             "accepted": {
               "type": "boolean"
             },
-            "content": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
             "revision": {
               "format": "uint64",
               "maximum": 9007199254740991,
               "minimum": 0.0,
               "type": "integer"
             },
-            "savedContent": {
-              "type": "string"
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
             "accepted",
-            "content",
-            "path",
             "revision",
-            "savedContent"
+            "savedGeneration"
           ],
-          "title": "EditorDocumentPayload",
+          "title": "EditorSessionAckPayload",
           "type": "object"
         }
       },
@@ -1012,7 +1084,17 @@
               "type": "integer"
             },
             "savedContent": {
-              "type": "string"
+              "description": "Present only when saving changed the text, for example through format on save.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             },
             "savedRevision": {
               "format": "uint64",
@@ -1029,12 +1111,228 @@
           },
           "required": [
             "currentRevision",
-            "savedContent",
+            "savedGeneration",
             "savedRevision",
-            "warnings"
+            "warnings",
+            "savedContent"
           ],
           "title": "SaveEditorDocumentPayload",
           "type": "object"
+        }
+      },
+      "sync": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "knownRevision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "knownSavedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "knownRevision",
+            "knownSavedGeneration",
+            "tabId"
+          ],
+          "title": "SyncEditorDocumentParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "EditorDocumentPayload": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "savedContent": {
+                  "description": "Omitted when it equals `content`, which keeps clean documents to one copy.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "savedGeneration": {
+                  "format": "uint64",
+                  "maximum": 9007199254740991,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "content",
+                "path",
+                "revision",
+                "savedGeneration",
+                "savedContent"
+              ],
+              "type": "object"
+            }
+          },
+          "properties": {
+            "document": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EditorDocumentPayload"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present only when the document changed since the caller's known version."
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "document"
+          ],
+          "title": "SyncEditorDocumentPayload",
+          "type": "object"
+        }
+      },
+      "unsavedGitLineHunks": {
+        "params": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "TabIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "WorkspaceIdParam": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "properties": {
+            "tabId": {
+              "$ref": "#/definitions/TabIdParam"
+            },
+            "workspaceId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceIdParam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tabId"
+          ],
+          "title": "EditorDocumentParams",
+          "type": "object"
+        },
+        "result": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EditorGitLineHunksPayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "definitions": {
+            "EditorGitLineHunkPayload": {
+              "properties": {
+                "newLines": {
+                  "format": "uint32",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "newStart": {
+                  "format": "uint32",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "oldLines": {
+                  "format": "uint32",
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                "oldStart": {
+                  "format": "uint32",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "newLines",
+                "newStart",
+                "oldLines",
+                "oldStart"
+              ],
+              "type": "object"
+            },
+            "EditorGitLineHunksPayload": {
+              "properties": {
+                "hunks": {
+                  "items": {
+                    "$ref": "#/definitions/EditorGitLineHunkPayload"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "hunks"
+              ],
+              "type": "object"
+            }
+          },
+          "title": "Nullable_EditorGitLineHunksPayload"
         }
       }
     },
@@ -10702,9 +11000,6 @@
         "result": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
-            "accepted": {
-              "type": "boolean"
-            },
             "content": {
               "type": "string"
             },
@@ -10718,14 +11013,24 @@
               "type": "integer"
             },
             "savedContent": {
-              "type": "string"
+              "description": "Omitted when it equals `content`, which keeps clean documents to one copy.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "savedGeneration": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
-            "accepted",
             "content",
             "path",
             "revision",
+            "savedGeneration",
             "savedContent"
           ],
           "title": "EditorDocumentPayload",

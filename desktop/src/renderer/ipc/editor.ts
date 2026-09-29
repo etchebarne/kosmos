@@ -1,5 +1,7 @@
 import type {
   EditorDocument,
+  EditorDocumentSync,
+  EditorSessionAck,
   EditorSave,
   EditorGitLineHunks,
   EditorTabParams,
@@ -10,6 +12,7 @@ import type {
   RestoreEditorSessionParams,
   OpenEditorTabParams,
   SaveEditorDocumentParams,
+  SyncEditorDocumentParams,
   WorkspaceListSnapshot,
 } from "@/shared/ipc";
 
@@ -32,8 +35,20 @@ export function getEditorDocument(params: EditorTabParams): Promise<EditorDocume
   return requestServer(DOMAIN, "document", params);
 }
 
+/** Fetches the document only if it changed since the caller's known version. */
+export function syncEditorDocument(params: SyncEditorDocumentParams): Promise<EditorDocumentSync> {
+  return requestServer(DOMAIN, "sync", params);
+}
+
 export function getEditorGitLineHunks(params: EditorTabParams): Promise<EditorGitLineHunks> {
   return requestServer(DOMAIN, "gitLineHunks", params);
+}
+
+/** Git line markers for the tab's unsaved text, or null when they are not available. */
+export function getUnsavedEditorGitLineHunks(
+  params: EditorTabParams,
+): Promise<EditorGitLineHunks | null> {
+  return requestServer(DOMAIN, "unsavedGitLineHunks", params);
 }
 
 export function saveEditorDocument(
@@ -43,14 +58,21 @@ export function saveEditorDocument(
   return requestServer<EditorSave>(DOMAIN, "save", params, cancellation);
 }
 
-export function openEditorSession(params: OpenEditorSessionParams): Promise<EditorDocument> {
+export function openEditorSession(params: OpenEditorSessionParams): Promise<EditorSessionAck> {
   return requestServer(DOMAIN, "openSession", params);
 }
 
-export function restoreEditorSession(params: RestoreEditorSessionParams): Promise<EditorDocument> {
+export function restoreEditorSession(
+  params: RestoreEditorSessionParams,
+): Promise<EditorSessionAck> {
   return requestServer(DOMAIN, "restoreSession", params);
 }
 
-export function changeEditorSession(params: ChangeEditorSessionParams): Promise<EditorDocument> {
+/** Discards the tab's server session, including unsaved edits. */
+export function closeEditorSession(params: EditorTabParams): Promise<boolean> {
+  return requestServer(DOMAIN, "closeSession", params);
+}
+
+export function changeEditorSession(params: ChangeEditorSessionParams): Promise<EditorSessionAck> {
   return requestServer(DOMAIN, "changeSession", params);
 }
